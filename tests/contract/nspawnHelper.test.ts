@@ -35,6 +35,7 @@ import {
   safeGuestMountTarget,
   storageRootsFor,
   trustedPath,
+  UID_RANGE_BASE,
 } from '../../scripts/elowen-site-gateway.mjs';
 // @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
 import { createBoundSiteSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
@@ -807,6 +808,10 @@ describe('privileged helper: the disk identity record', () => {
       options: {
         storage,
         env: environment,
+        // The tree a real machine runs on belongs to its own uid range, which a test cannot give a file
+        // away to. An empty range registry allocates the first slot, so this is the range every envelope
+        // written through this fixture declares.
+        readOwner: () => UID_RANGE_BASE,
         readText: (path: string) => (path === '/etc/subuid' ? 'azureuser:100000:65536\n' : ''),
         writeAtomic: (path: string, content: Buffer, mode: number) => {
           writes.push({ path, content: content.toString('utf8'), mode });
@@ -924,6 +929,71 @@ describe('privileged helper: the disk identity record', () => {
     });
   });
 
+  it('keeps one uid range per environment, so a restored disk declares the range its files carry', async () => {
+    // A restore mints a new disk id and copies the trees across byte for byte, ownership included. Keyed
+    // on the disk, the restored generation was handed a range of its own and booted with a root filesystem
+    // its own root could not write, while /data stayed writable through its :rootidmap bind and hid it.
+    const RANGES = '/var/lib/elowen/nspawn-uid-ranges.json';
+    // The range this environment's files already carry, recorded the way the earlier per-disk key wrote it.
+    const registry: Record<string, number> = { [`project:54:${diskRef.diskId}`]: UID_RANGE_BASE + 7 * 65_536 };
+    const restored = { ...diskRef, diskId: 'b'.repeat(32), generation: 4, machine: 'elowen-project-54-g4' };
+    const envelope = async (ref: typeof diskRef) => {
+      mkdirSync(nspawnDiskPaths(storage, ref).rootfs, { recursive: true });
+      return await applyRequest({
+        domain: 'nspawn',
+        op: 'write-envelope',
+        ...ref,
+        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+        binds: [],
+        dropCapabilities: [],
+        privateNetwork: true,
+      }, undefined, {
+        storage,
+        env: environment,
+        readOwner: () => registry[`project:54:${diskRef.diskId}`],
+        readText: (path: string) => {
+          if (path === '/etc/subuid') return 'azureuser:100000:65536\n';
+          return path === RANGES ? JSON.stringify(registry) : '';
+        },
+        writeAtomic: (path: string, content: Buffer, mode: number) => {
+          if (path === RANGES) Object.assign(registry, JSON.parse(content.toString('utf8')));
+          else if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
+        },
+        runner: (file: string) => (file === '/usr/bin/getent'
+          ? { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' }
+          : { ok: true, stdout: '' }),
+      }) as { uidBase: number };
+    };
+
+    const original = await envelope(diskRef);
+    const next = await envelope(restored);
+
+    expect(original.uidBase).toBe(UID_RANGE_BASE + 7 * 65_536);
+    expect(next.uidBase).toBe(original.uidBase);
+    // Adopted under the environment key, so the disk id it was allocated against stops deciding anything.
+    expect(registry['project:54']).toBe(original.uidBase);
+  });
+
+  it('refuses an envelope over a root filesystem some other range owns', async () => {
+    // Nothing at boot chowns the tree: PrivateUsersOwnership is off on purpose. An envelope written over a
+    // tree of another range therefore reports a running machine whose own root owns none of its files, so
+    // the disagreement has to stop the operation that would otherwise succeed.
+    const fixture = diskFixture();
+    fixture.options.readOwner = () => UID_RANGE_BASE + 3 * 65_536;
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'write-envelope',
+      ...diskRef,
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+      binds: [],
+      dropCapabilities: [],
+      privateNetwork: true,
+    }, undefined, fixture.options)).rejects.toThrow(/root filesystem is owned by 1073938432 and this envelope declares the range at 1073741824/);
+    // No envelope and no identity record: the refusal comes before anything a machine could be started from.
+    expect(fixture.writes.map((write) => write.path).filter((path) => path.endsWith('.nspawn')
+      || path.endsWith('10-elowen.conf') || path === fixture.paths.identity)).toEqual([]);
+  });
+
   it('refuses a machine name that does not spell out the resource it claims', async () => {
     const fixture = diskFixture();
     await expect(applyRequest({
@@ -1036,6 +1106,7 @@ describe('privileged helper: the disk identity record', () => {
     }, undefined, {
       storage,
       env: environment,
+      readOwner: () => UID_RANGE_BASE,
       writeAtomic: (path: string, content: Buffer, mode: number) => {
         writes.push({ path, content: content.toString('utf8'), mode });
         if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
@@ -1074,7 +1145,7 @@ describe('privileged helper: the disk identity record', () => {
       binds,
       dropCapabilities: [],
       privateNetwork: true,
-    }, undefined, { storage, env: environment, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
+    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
 
     // A real repository already at that path is data, not a mount point to overwrite, and a file bound
     // over a directory fails the mount with a message that explains nothing.
@@ -1094,7 +1165,7 @@ describe('privileged helper: the disk identity record', () => {
       binds,
       dropCapabilities: [],
       privateNetwork: true,
-    }, undefined, { storage, env: environment, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) }))
+    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) }))
       .rejects.toThrow(/mount point is of the wrong kind/);
   });
 

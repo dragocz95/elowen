@@ -436,11 +436,9 @@ function sudoId(raw, label) {
   return value;
 }
 
-function serviceUser(runner, env) {
-  const name = typeof env.SUDO_USER === 'string' ? env.SUDO_USER : '';
+/** A named account as passwd has it, resolved through getent and validated whole. */
+function passwdUser(runner, name) {
   if (!SAFE_USER.test(name) || name === 'root') fail('the invoking service user cannot be determined');
-  const sudoUid = sudoId(env.SUDO_UID, 'user id');
-  const sudoGid = sudoId(env.SUDO_GID, 'group id');
   const result = runner('/usr/bin/getent', ['passwd', name]);
   if (!result.ok) fail('the invoking service user does not exist');
   const lines = String(result.stdout || '').trim().split('\n').filter(Boolean);
@@ -455,9 +453,47 @@ function serviceUser(runner, env) {
     || !home.startsWith('/') || home.includes('\0')) {
     fail('the invoking service user record is invalid');
   }
-  if (sudoUid !== uid) fail('the invoking service user id does not match sudo');
-  if (sudoGid !== gid) fail('the invoking service group id does not match sudo');
   return { name, uid, gid, home };
+}
+
+function serviceUser(runner, env) {
+  const name = typeof env.SUDO_USER === 'string' ? env.SUDO_USER : '';
+  if (!SAFE_USER.test(name) || name === 'root') fail('the invoking service user cannot be determined');
+  const sudoUid = sudoId(env.SUDO_UID, 'user id');
+  const sudoGid = sudoId(env.SUDO_GID, 'group id');
+  const user = passwdUser(runner, name);
+  if (sudoUid !== user.uid) fail('the invoking service user id does not match sudo');
+  if (sudoGid !== user.gid) fail('the invoking service group id does not match sudo');
+  return user;
+}
+
+/** Whether sudo is reporting root's OWN invocation rather than the service account's. The service user
+ *  reaches this executable only through the sudoers-pinned command, and sudo sets these variables itself
+ *  after clearing the environment, so it cannot present itself as root here. `root` therefore means an
+ *  operator ran the command from a root shell. */
+const invokedByRoot = (env) => env.SUDO_USER === 'root' && env.SUDO_UID === '0';
+
+/** The account the machine runtime is provisioned FOR, which is not always the account that invoked this
+ *  process. The daemon invokes it as the service user and sudo names that account, which is the only
+ *  source the trusted storage roots are ever derived from and is left exactly as it was.
+ *
+ *  An operator running `elowen install` or `elowen update` reaches the helper through their own root
+ *  shell, so the inner sudo can only report `root` and the derivation above has nothing to work with — the
+ *  documented operator path provisioned nothing at all and said the service user could not be determined.
+ *  A root caller may therefore name the account, because the two artefacts this decides — a polkit rule
+ *  scoped to that account and the readiness rows describing it — are files root already owns outright, and
+ *  the name is still resolved through passwd rather than believed. Nothing else accepts a named account,
+ *  and no operation that reads a storage root is reachable this way. */
+function machineServiceUser(runner, env, request) {
+  const named = request.user;
+  if (named !== undefined && typeof named !== 'string') fail('the machine runtime service user is invalid');
+  if (!invokedByRoot(env)) {
+    const user = serviceUser(runner, env);
+    if (named !== undefined && named !== user.name) fail('the machine runtime service user does not match the invoking account');
+    return user;
+  }
+  if (named === undefined) fail('running this as root requires naming the service account the environments belong to');
+  return passwdUser(runner, named);
 }
 
 function runAsServiceUser(runner, user, command, args) {
@@ -480,6 +516,12 @@ function packageInstalled(runner, name) {
 
 function defaultReadText(path) {
   try { return readFileSync(path, 'utf8'); } catch { return ''; }
+}
+
+/** Who owns a path on the host. Injected like `readMode` beside it, because a test cannot give a file
+ *  away to the uid range a machine actually runs on. */
+function defaultReadOwner(path) {
+  return lstatSync(path).uid;
 }
 
 /** The permission bits of a managed artefact, or -1 when it is not there at all. Content alone does not
@@ -786,7 +828,7 @@ const PYTHON = '/usr/bin/python3';
 /** Each environment owns a FIXED host uid range, allocated once and recorded in the disk identity. A
  *  per-boot range would re-chown the whole rootfs every time a tree is cloned; a fixed one makes the
  *  ownership pass one-time and boots deterministic. The base is far above every real host account. */
-const UID_RANGE_BASE = 1_073_741_824;
+export const UID_RANGE_BASE = 1_073_741_824;
 const UID_RANGE_SIZE = 65_536;
 const UID_RANGE_SLOTS = 4_096;
 
@@ -1202,23 +1244,38 @@ function nspawnExec(request, options) {
   };
 }
 
-function readUidRanges() {
+function readUidRanges(readText) {
   try {
-    const value = JSON.parse(readFileSync(NSPAWN_UID_STATE_PATH, 'utf8'));
+    const value = JSON.parse(readText(NSPAWN_UID_STATE_PATH));
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   } catch {
     return {};
   }
 }
 
-/** Allocate the environment's fixed range once and record it. The registry is the single owner of the
+/** Allocate the ENVIRONMENT's fixed range once and record it. The registry is the single owner of the
  *  allocation: deriving a range from the disk id instead would let two disks collide, and a collision
- *  means one machine's files are owned by another machine's guest root. */
-function uidRangeFor(paths, writeAtomic) {
-  const key = `${paths.kind}:${paths.resource}:${paths.diskId}`;
-  const ranges = readUidRanges();
-  const recorded = ranges[key];
-  if (Number.isSafeInteger(recorded)) return recorded;
+ *  means one machine's files are owned by another machine's guest root.
+ *
+ *  The key is the environment and not the disk it currently runs on. A restore mints a new disk id and
+ *  copies the trees across byte for byte, ownership included, so a range keyed on the disk handed the
+ *  restored generation a range its own files do not carry: the machine came up with a root filesystem its
+ *  own root could not write, while the `:rootidmap` binds stayed writable and hid it. One environment,
+ *  one range, which is also what keeps the ownership pass one-time.
+ *
+ *  A disk allocated under the earlier per-disk key keeps the range its files are already chowned to; it
+ *  is adopted under the environment key the first time the environment asks. */
+function uidRangeFor(paths, readText, writeAtomic) {
+  const key = `${paths.kind}:${paths.resource}`;
+  const ranges = readUidRanges(readText);
+  const recorded = Number.isSafeInteger(ranges[key]) ? ranges[key] : ranges[`${key}:${paths.diskId}`];
+  if (Number.isSafeInteger(recorded)) {
+    if (ranges[key] !== recorded) {
+      ranges[key] = recorded;
+      writeAtomic(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+    }
+    return recorded;
+  }
   const taken = new Set(Object.values(ranges).filter((value) => Number.isSafeInteger(value)));
   for (let slot = 0; slot < UID_RANGE_SLOTS; slot++) {
     const base = UID_RANGE_BASE + slot * UID_RANGE_SIZE;
@@ -1443,7 +1500,7 @@ function nspawnMaterialize(request, storage, options) {
     const machineIdPath = join(trustedPath(storage, etc), 'machine-id');
     if (existsSync(machineIdPath)) writeFileSync(machineIdPath, '');
   }
-  const base = uidRangeFor(paths, options.writeAtomic ?? atomicWrite);
+  const base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
   const user = serviceUser(runner, env);
   const podman = subordinateRangeFor(readText, user);
   const shifted = shiftOwnership(runner, target, {
@@ -1475,7 +1532,7 @@ function nspawnShiftOwnership(request, storage, options) {
     base = Number.isSafeInteger(recorded?.uidBase) ? recorded.uidBase : fail('the disk has no recorded uid range to reverse');
     if (request.uidBase !== podman.subStart) fail('the ownership shift receipt does not name this host\'s subordinate range');
   } else {
-    base = uidRangeFor(paths, options.writeAtomic ?? atomicWrite);
+    base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
   }
   const shifted = shiftOwnership(runner, rootfs, {
     mode: 'subid', target, base, size: UID_RANGE_SIZE, serviceId: podman.serviceId, previousBase: podman.subStart,
@@ -1655,7 +1712,15 @@ function nspawnWriteEnvelope(request, storage, options) {
   const binds = nspawnBinds(storage, request.binds ?? []);
   ensureNestedMountPoints(binds, options.writeAtomic === undefined);
   const dropCapabilities = nspawnDropCapabilities(request.dropCapabilities);
-  const uidBase = uidRangeFor(paths, writeAtomic);
+  const uidBase = uidRangeFor(paths, readText, writeAtomic);
+  // The envelope DECLARES a range and never establishes one: `PrivateUsersOwnership=off` is deliberate,
+  // so nothing at boot chowns the tree into the range written here. A tree that carries a different range
+  // therefore boots into a machine whose own root owns none of it — `/etc` reads back as `nobody:nogroup`
+  // and every write into the root filesystem is refused — while the `:rootidmap` binds stay writable and
+  // hide it behind a machine that reports `running`. The guest's root owns the machine root, so proving
+  // the two agree is one lstat, and it is exact.
+  const owner = (options.readOwner ?? defaultReadOwner)(rootfs);
+  if (owner !== uidBase) fail(`the root filesystem is owned by ${owner} and this envelope declares the range at ${uidBase}`);
   const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, dropCapabilities });
   const dropIn = renderMachineDropIn(rootfs, limits, uidBase);
   const settingsPath = join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`);
