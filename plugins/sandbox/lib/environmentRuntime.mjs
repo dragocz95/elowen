@@ -383,6 +383,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           AND json_extract(action_json,'$.kind')='migrate-disk' AND NOT (kind=? AND resource_id=?)`).get(kind, String(id));
         if (elsewhere) throw error('migration_active', 'Another environment disk migration is already under way');
       }
+      if (requested.kind === 'migrate-runtime') {
+        if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change an environment runtime', 403);
+        if (!row.spec.input.disk && !prior) throw error('not_rootfs_backed', 'Migrate this environment to a persistent disk before changing its runtime');
+        // A change that has already switched the row still has its Podman envelope to remove, so the
+        // request that carries its own idempotency key stays resumable; anything else is refused.
+        if (row.spec.input.disk?.runtime === 'nspawn' && !prior) throw error('already_nspawn', 'This environment already runs on systemd-nspawn');
+      }
       if (row.state === 'deleted') throw error('environment_deleted', 'The environment has been deleted');
       if (row.desired_state === 'deleted' && requested.kind !== 'delete') throw error('environment_deleting', 'The environment is deleting');
       if (prior) {
@@ -1253,7 +1260,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           await target().remove(candidate());
         }
         if (reached('shifted')) await target().shiftOwnership(candidate(), { target: 'podman', uidBase: state.previousUidBase });
-        for (const name of ['shifted', 'envelope-written', 'candidate-booted']) done.delete(name);
+        // `quiesced` goes with them: the environment is about to be running again on Podman, so the
+        // retry has to stop it before it may touch the disk's ownership a second time.
+        for (const name of ['quiesced', 'shifted', 'envelope-written', 'candidate-booted']) done.delete(name);
         delete state.candidateSpec.containerId;
         delete state.candidateClaimed;
         delete state.candidateEnvelopeId;

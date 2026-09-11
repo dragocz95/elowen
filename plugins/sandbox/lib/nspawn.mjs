@@ -72,8 +72,13 @@ export function helperFrame(request, input) {
 }
 
 export const unitFor = (machine) => `elowen-machine@${machine}.service`;
-const dropInPathFor = (machine) => join('/etc/systemd/system', `${unitFor(machine)}.d`, UNIT_DROPIN_NAME);
-const nspawnPathFor = (machine) => join(NSPAWN_CONFIG_DIR, `${machine}.nspawn`);
+/** Where the envelope's two files live. `configRoot` is the same kind of seam as the injected executor
+ *  beside it: trusted module code and the test harness choose it, and nothing reachable from a plugin
+ *  control does. The daemon only ever READS these paths; the helper is what writes them. */
+export function envelopePaths(machine, configRoot = '') {
+  return { nspawn: join(configRoot, NSPAWN_CONFIG_DIR, `${machine}.nspawn`),
+    dropIn: join(configRoot, '/etc/systemd/system', `${unitFor(machine)}.d`, UNIT_DROPIN_NAME) };
+}
 
 /** `systemctl show` renders every USec property through systemd's own timespan formatter, so
  *  `CPUQuota=75%` reads back as `750ms` and `CPUQuota=100%` as `1s`. There is no raw form to ask for.
@@ -112,24 +117,29 @@ function absent(path) {
 
 /** The envelope's own configuration files, read as bytes. The identity below hashes exactly what is on
  *  disk rather than what this process would have written, so the two sides of the contract do not have to
- *  agree on whitespace for an environment to stay ownable. */
-function readEnvelope(machine) {
+ *  agree on whitespace for an environment to stay ownable. Both live under root-owned system
+ *  configuration directories the service account cannot write, which is what makes them evidence. */
+function readEnvelope(paths) {
   const read = (path) => {
     const stat = lstatSync(path);
-    if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) throw new Error('Untrusted machine envelope file');
+    if (!stat.isFile() || (stat.mode & 0o022) !== 0) throw new Error('Untrusted machine envelope file');
     return readFileSync(path, 'utf8');
   };
-  return { nspawn: read(nspawnPathFor(machine)), dropIn: read(dropInPathFor(machine)) };
+  return { nspawn: read(paths.nspawn), dropIn: read(paths.dropIn) };
 }
 
-/** The disk's own record of which environment it belongs to, written by the helper as root. It is read
- *  directly rather than through a privileged round trip because `inspect` is on the execution path: the
- *  file is root-OWNED and group-readable by the service account, which keeps the daemon able to prove
- *  ownership in ten milliseconds while leaving the guest, which cannot reach the path at all, no way in. */
+/** The disk's own record of which environment it belongs to, written by the helper. It is read directly
+ *  rather than through a privileged round trip because `inspect` is on the execution path and a round
+ *  trip there would cost more than the whole state poll.
+ *
+ *  Its authority is its PLACE, not its owner: it sits in the disk directory, outside the root filesystem,
+ *  where the guest has no path to it at all — a marker inside the tree would prove nothing, because the
+ *  guest is root over that tree. What it defends against is a disk directory that belongs to another
+ *  environment, generation or uid range, and every field in it is held against the specification below. */
 function readIdentity(diskDirectory) {
   const path = join(diskDirectory, IDENTITY_RELATIVE);
   const stat = lstatSync(path);
-  if (!stat.isFile() || stat.uid !== 0 || stat.nlink !== 1 || (stat.mode & 0o027) !== 0) throw new Error('Untrusted environment disk identity');
+  if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o022) !== 0) throw new Error('Untrusted environment disk identity');
   if (stat.size > 8192) throw new Error('Environment disk identity exceeds its bound');
   return JSON.parse(readFileSync(path, 'utf8'));
 }
@@ -149,6 +159,7 @@ export class NspawnClient {
   #env;
   #images;
   #helperPath;
+  #configRoot;
   #timeoutMs;
   #outputLimit;
   #namespace;
@@ -159,6 +170,7 @@ export class NspawnClient {
     this.#images = options.images;
     this.#env = cleanPodmanEnv(options);
     this.#helperPath = options.helperPath ?? HELPER_PATH;
+    this.#configRoot = options.configRoot === undefined ? '' : hostPath(options.configRoot);
     this.#timeoutMs = positive(options.timeoutMs ?? 120_000, 15 * 60_000, 'timeout');
     this.#outputLimit = positive(options.outputLimitBytes ?? OUTPUT_LIMIT, 16 * 1024 * 1024, 'output');
     this.#namespace = options.namespace === undefined ? null : resourceToken(options.namespace);
@@ -232,13 +244,15 @@ export class NspawnClient {
 
   #diskDirectory(spec) { return dirname(spec.disk.rootfsPath); }
 
+  #envelopePaths(machine) { return envelopePaths(machine, this.#configRoot); }
+
   #limitProperties(limits) {
     return [`CPUQuota=${limits.cpus * 100}%`, `MemoryMax=${limits.memoryMb}M`, `TasksMax=${limits.pidsLimit}`];
   }
 
   async containerExists(spec) {
-    const machine = this.#machine(spec);
-    return !absent(nspawnPathFor(machine)) && !absent(dropInPathFor(machine));
+    const paths = this.#envelopePaths(this.#machine(spec));
+    return !absent(paths.nspawn) && !absent(paths.dropIn);
   }
 
   /** Every machine of a namespace and whether it is up. `machinectl list` reports only RUNNING machines,
@@ -263,19 +277,20 @@ export class NspawnClient {
   async inspect(spec) {
     const machine = this.#machine(spec);
     if (!await this.containerExists(spec)) return null;
-    const envelope = readEnvelope(machine);
+    const paths = this.#envelopePaths(machine);
+    const envelope = readEnvelope(paths);
     const rootfs = realpathSync(spec.disk.rootfsPath);
     const shown = await this.#systemctl(['show', unitFor(machine), '-p',
       'LoadState,FragmentPath,DropInPaths,Environment,ActiveState,SubState,FreezerState,MemoryMax,TasksMax,CPUQuotaPerSecUSec,Slice']);
     const unit = unitProperties(shown.stdout);
     const mismatches = [];
     if (unit.LoadState !== 'loaded') mismatches.push('loadState');
-    if (unit.FragmentPath !== UNIT_TEMPLATE_PATH) mismatches.push('unitTemplate');
+    if (unit.FragmentPath !== join(this.#configRoot, UNIT_TEMPLATE_PATH)) mismatches.push('unitTemplate');
     // Only OUR drop-in is compared. The `50-*` files systemd writes under `/etc/systemd/system.control/`
     // for a live `set-property` are its own record of the applied limits, which the effective values
     // below already hold against the specification.
     const dropIns = String(unit.DropInPaths ?? '').split(/\s+/).filter((path) => path && !path.startsWith(CONTROL_DROPIN_PREFIX));
-    if (dropIns.length !== 1 || dropIns[0] !== dropInPathFor(machine)) mismatches.push('dropIn');
+    if (dropIns.length !== 1 || dropIns[0] !== paths.dropIn) mismatches.push('dropIn');
     if (!String(unit.Environment ?? '').split(/\s+/).includes(`ELOWEN_MACHINE_DIRECTORY=${rootfs}`)) mismatches.push('directory');
     if (unit.Slice !== 'machine.slice') mismatches.push('slice');
     if (Number(unit.MemoryMax) !== spec.limits.memoryMb * 1024 * 1024) mismatches.push('memory');
@@ -329,7 +344,7 @@ export class NspawnClient {
   }
 
   async create(spec) {
-    const machine = this.#machine(spec);
+    this.#machine(spec);
     if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
     if (await this.containerExists(spec)) throw new Error('Container already exists; lifecycle adoption must validate it');
     checkedHostPath(spec.disk.rootfsPath);
