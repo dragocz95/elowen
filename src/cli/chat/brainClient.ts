@@ -38,15 +38,26 @@ export interface BrainUsageView {
   tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number;
   /** Cumulative per-session breakdown (absent on older daemons — treat as 0/unknown). */
   input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number;
-  /** Average output tokens/sec over the session's measured generations; null when none measured. */
+  /** Average output tokens/sec over the session's measured generations (post-header window); null when
+   *  none measured. Legacy figure — the statusline shows `effectiveTps` instead. */
   outputTps?: number | null;
+  /** Effective tokens/sec of the conversation's LATEST completed measured model call: output tokens
+   *  (reasoning and tool-call tokens included) over the whole logical request from its initiation —
+   *  header waits, prompt processing, retries and backoff included, tool execution excluded. Absent
+   *  on older daemons and before anything has been measured. */
+  effectiveTps?: number | null;
+  /** Wait, in ms, from that call's initiation to its first streamed content (thinking, text, or a tool
+   *  call). For a buffered delivery this spans the whole generation. Present only on single-attempt
+   *  calls; absent on older daemons. */
+  firstContentMs?: number | null;
 }
 /** Per-model token/cost usage, one record per model (exec spec), matching the /usage/by-model wire shape.
  *  `measuredOutput` is the output slice `outputTps` was measured over — the weight for the Σ average (its
- *  seconds are measuredOutput / outputTps); `output` would overstate an untimed-heavy bucket. */
+ *  seconds are measuredOutput / outputTps); `output` would overstate an untimed-heavy bucket. The
+ *  `effective*` pair carries the same contract over the end-to-end window. */
 export interface ModelUsageView {
   id?: string; exec: string; program?: string | null; provider?: string | null; model?: string;
-  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; costUsd: number | null; costSource?: string; outputTps?: number | null; measuredOutput?: number };
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; costUsd: number | null; costSource?: string; outputTps?: number | null; measuredOutput?: number; effectiveTps?: number | null; effectiveMeasuredOutput?: number };
 }
 export type BrainWorkMode = 'build' | 'plan' | 'workflow';
 /** Single source of truth for the chat work-mode label (status chip / modal) and the toggle notice.

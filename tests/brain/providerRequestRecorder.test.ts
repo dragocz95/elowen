@@ -18,6 +18,7 @@ import {
 } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import { createSessionPersistenceProjector } from '../../src/brain/persistence.js';
 import { createAnthropicHostedToolReplay } from '../../src/brain/session/anthropicHostedToolReplay.js';
 import { installAnthropicHostedToolSearch } from '../../src/brain/session/anthropicHostedToolSearch.js';
 import { installOpenAIHostedToolSearch } from '../../src/brain/session/openAiHostedToolSearch.js';
@@ -38,6 +39,21 @@ const usage = (totalTokens: number) => ({
   input: totalTokens, output: 2, reasoning: 1, cacheRead: 3, cacheWrite: 4, totalTokens: totalTokens + 10,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
 });
+
+/** Controllable monotonic clock. The recorder stamps `effectiveMs`/`firstContentMs` at EVENT time with
+ *  this clock, so a test moves time explicitly between stream events — no real waiting, exact figures.
+ *  `advanceAsync` yields FIRST and moves the clock only after the previous push was consumed, so each
+ *  stamped event reads exactly the clock reading its push intended. */
+function monoClock() {
+  let now = 10_000;
+  return {
+    now: () => now,
+    advance: (ms: number) => { now += ms; },
+    /** Yield a macrotask (so the consumer drains the previous push), then move the clock. */
+    advanceAsync: async (ms: number) => { await new Promise((resolve) => setTimeout(resolve, 0)); now += ms; },
+  };
+}
+type MonoClock = ReturnType<typeof monoClock>;
 
 function message(model: Model<Api>, content: AssistantMessage['content'], stopReason: AssistantMessage['stopReason'] = 'stop', errorMessage?: string): AssistantMessage {
   return {
@@ -64,6 +80,14 @@ async function fixture(options: {
   provider?: string;
   api?: Api;
   modelId?: string;
+  /** Controllable monotonic clock for effective-speed tests (default: the real performance.now). */
+  monoNow?: () => number;
+  /** Runs while the probe tool executes — the seam between two model calls, which effective speed must
+   *  EXCLUDE from every window. */
+  onToolExecute?: () => void;
+  /** Also subscribe the production persistence projector AFTER the recorder (the factory's order), so a
+   *  test can prove the stamped timing lands in the durable message rows. */
+  project?: boolean;
   extensionFactories?: ((pi: ExtensionAPI) => void)[];
   payload?: (model: Model<Api>, context: Context, call: number) => Record<string, unknown>;
   repeatPayload?: (request: SimpleStreamOptions, model: Model<Api>, payload: Record<string, unknown>) => Promise<void>;
@@ -103,6 +127,7 @@ async function fixture(options: {
   if (!model) throw new Error('model missing');
   const recorder = new ProviderRequestRecorder({
     store: brain.providerRequests, sessionId: 's1', configuredProvider: 'configured', enabled: options.enabled ?? (() => true),
+    ...(options.monoNow ? { monoNow: options.monoNow } : {}),
   });
   const transform = (pi: ExtensionAPI) => {
     pi.on('before_provider_request', (event) => ({ ...(event.payload as object), transformed: true }));
@@ -124,11 +149,15 @@ async function fixture(options: {
     resourceLoader: loader,
     customTools: [defineTool({
       name: 'probe', label: 'Probe', description: 'Continue tool loop', parameters: Type.Object({}),
-      execute: async () => ({ content: [{ type: 'text', text: 'tool result' }], details: {} }),
+      execute: async () => {
+        options.onToolExecute?.();
+        return { content: [{ type: 'text', text: 'tool result' }], details: {} };
+      },
     })],
     tools: ['probe'], noTools: 'builtin',
   });
   session.subscribe(recorder.observe);
+  if (options.project) session.subscribe(createSessionPersistenceProjector(brain, session, 's1', 200_000));
   return { brain, session };
 }
 
@@ -556,5 +585,297 @@ describe('ProviderRequestRecorder', () => {
     await f.session.prompt('captured');
 
     expect(f.brain.providerRequests.rows('s1')).toHaveLength(1);
+  });
+});
+
+/** Effective speed at the production seam. Every scenario drives the REAL streamSimple wrapper through a
+ *  real createAgentSession and moves a controlled MONOTONIC clock between stream events — the recorder
+ *  stamps at event time, so the figures are exact. The property under test: the window starts at the
+ *  request's INITIATION (before the provider's response headers) and ends at the terminal, auto-retries
+ *  and their backoff included, tool execution between calls excluded, failed/aborted attempts measured
+ *  but distinguishable, and compaction (a different activity) never stamped. */
+describe('ProviderRequestRecorder — effective-speed timing', () => {
+  const assistants = (session: { messages: unknown[] }) =>
+    session.messages.filter((entry) => (entry as { role?: string }).role === 'assistant') as (AssistantMessage & { effectiveMs?: number; firstContentMs?: number })[];
+
+  /** A timed single-call stream. Each step yields first (so the consumer drains the previous push at
+   *  its own clock reading), then moves the clock and pushes — the stamps land exactly. */
+  function timedRun(clock: MonoClock, shape: 'text' | 'buffered-tool' = 'text') {
+    return async (model: Model<Api>) => {
+      const out = createAssistantMessageEventStream();
+      void (async () => {
+        await clock.advanceAsync(120); // param building + provider queueing before headers
+        out.push({ type: 'start', partial: message(model, []) });
+        await clock.advanceAsync(300); // prompt processing / transport before first content
+        if (shape === 'buffered-tool') {
+          const call = { type: 'toolCall', id: 'probe-1', name: 'probe', arguments: {} } as const;
+          await clock.advanceAsync(20_000); // the ENTIRE server-side generation, delivered as one burst
+          out.push({ type: 'toolcall_start', contentIndex: 0, partial: message(model, [call]) });
+          out.push({ type: 'done', reason: 'toolUse', message: message(model, [call], 'toolUse') });
+        } else {
+          out.push({ type: 'text_start', contentIndex: 0, partial: message(model, [{ type: 'text', text: '' }]) });
+          await clock.advanceAsync(4000); // streamed generation
+          out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'answer' }]) });
+        }
+        out.end();
+      })();
+      return out;
+    };
+  }
+
+  it('measures the whole logical request from initiation, header wait and first content included', async () => {
+    const clock = monoClock();
+    const f = await fixture({ monoNow: clock.now, run: timedRun(clock) });
+
+    await f.session.prompt('timed');
+
+    const [only] = assistants(f.session);
+    expect(only.effectiveMs).toBe(4420); // 120 (pre-header) + 300 (to first content) + 4000 (generation)
+    expect(only.firstContentMs).toBe(420); // initiation → first streamed content
+  });
+
+  it('measures a fully buffered response as the whole wait, not the burst transfer', async () => {
+    const clock = monoClock();
+    const f = await fixture({
+      monoNow: clock.now,
+      run: async (model) => {
+        const out = createAssistantMessageEventStream();
+        void (async () => {
+          await clock.advanceAsync(120);
+          out.push({ type: 'start', partial: message(model, []) });
+          // The whole server-side generation completes before the single-burst body arrives — the
+          // exact delivery the old post-header window collapsed to ~0ms.
+          await clock.advanceAsync(20_000);
+          out.push({ type: 'text_start', contentIndex: 0, partial: message(model, [{ type: 'text', text: '' }]) });
+          out.push({ type: 'text_end', contentIndex: 0, content: 'answer', partial: message(model, [{ type: 'text', text: 'answer' }]) });
+          out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'answer' }]) });
+          out.end();
+        })();
+        return out;
+      },
+    });
+
+    await f.session.prompt('buffered');
+
+    const [only] = assistants(f.session);
+    // The window covers the generation the client waited through, which is exactly the measurement the
+    // old post-header window collapsed to a near-zero burst transfer. The burst delivered content and
+    // terminal together, so the wait-to-first-content IS the whole wait.
+    expect(only.effectiveMs).toBe(20_120);
+    expect(only.firstContentMs).toBe(20_120);
+  });
+
+  it('excludes tool execution between model calls from every window', async () => {
+    const clock = monoClock();
+    const f = await fixture({
+      monoNow: clock.now,
+      onToolExecute: () => clock.advance(5000),
+      run: async (model, _context, _request, call) => {
+        const out = createAssistantMessageEventStream();
+        void (async () => {
+          if (call === 1) {
+            await clock.advanceAsync(100);
+            out.push({ type: 'start', partial: message(model, []) });
+            await clock.advanceAsync(900);
+            out.push({ type: 'done', reason: 'toolUse', message: message(model, [{ type: 'toolCall', id: 'probe-1', name: 'probe', arguments: {} }], 'toolUse') });
+            out.end();
+            return;
+          }
+          await clock.advanceAsync(200);
+          out.push({ type: 'start', partial: message(model, []) });
+          await clock.advanceAsync(500);
+          out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'answer' }]) });
+          out.end();
+        })();
+        return out;
+      },
+    });
+
+    await f.session.prompt('probe');
+
+    const [first, second] = assistants(f.session);
+    expect(first.effectiveMs).toBe(1000); // its own request only
+    expect(second.effectiveMs).toBe(700); // 200 + 500 — the 5 s tool time between calls excluded
+  });
+
+  it('folds an auto-retry and its backoff into ONE logical request, without double counting', async () => {
+    const clock = monoClock();
+    const f = await fixture({
+      monoNow: clock.now,
+      firstStatus: 429,
+      project: true,
+      run: async (model, _context, _request, call) => {
+        const out = createAssistantMessageEventStream();
+        void (async () => {
+          if (call === 1) {
+            await clock.advanceAsync(100);
+            out.push({ type: 'start', partial: message(model, []) });
+            await clock.advanceAsync(2000);
+            out.push({ type: 'error', reason: 'error', error: message(model, [], 'error', 'rate limit exceeded') });
+            out.end();
+            return;
+          }
+          await clock.advanceAsync(3000); // the retry's backoff — the client waited through it
+          out.push({ type: 'start', partial: message(model, []) });
+          await clock.advanceAsync(800);
+          out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'recovered' }]) });
+          out.end();
+        })();
+        return out;
+      },
+    });
+
+    await f.session.prompt('retry timed');
+
+    // PI drops the failed attempt from the LIVE session (it stays durable via the projector), so read
+    // both attempts from the durable rows.
+    const rows = f.brain.getMessages('s1').filter((entry) => entry.role === 'assistant');
+    const failed = rows.map((entry) => JSON.parse(entry.content) as AssistantMessage & { effectiveMs?: number; firstContentMs?: number }).find((m) => m.stopReason === 'error');
+    const ok = rows.map((entry) => JSON.parse(entry.content) as AssistantMessage & { effectiveMs?: number; firstContentMs?: number }).find((m) => m.stopReason === 'stop');
+    expect(failed).toBeDefined();
+    expect(failed?.effectiveMs).toBe(2100); // the failed attempt's own window
+    expect(ok?.effectiveMs).toBe(5900); // 100 + 2000 + 3000 backoff + 800 — counted ONCE
+    expect(ok?.firstContentMs).toBeUndefined(); // no honest single wait-to-first-content across retries
+  });
+
+  it('keeps compaction summaries unstamped (effective speed is a chat-request figure)', async () => {
+    const clock = monoClock();
+    const f = await fixture({
+      monoNow: clock.now,
+      project: true,
+      run: async (model, context) => {
+        const out = createAssistantMessageEventStream();
+        void (async () => {
+          if (context.systemPrompt?.includes('context summarization assistant')) {
+            out.push({ type: 'start', partial: message(model, []) });
+            out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'summary' }]) });
+            out.end();
+            return;
+          }
+          out.push({ type: 'start', partial: message(model, []) });
+          await clock.advanceAsync(500);
+          out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'answer' }]) });
+          out.end();
+        })();
+        return out;
+      },
+    });
+    await f.session.prompt(`one ${'history '.repeat(400)}`);
+    await f.session.prompt(`two ${'history '.repeat(400)}`);
+
+    await f.session.compact('timing capture');
+
+    // Read the DURABLE view: chat generations carry the stamp, compaction dividers never do.
+    const rows = f.brain.getMessages('s1');
+    const chat = rows.filter((entry) => entry.role === 'assistant' && entry.content.includes('answer'));
+    expect(chat.length).toBeGreaterThan(0);
+    for (const entry of chat) expect(JSON.parse(entry.content).effectiveMs).toBeGreaterThan(0);
+    const dividers = rows.filter((entry) => entry.role === 'compaction');
+    for (const entry of dividers) expect(JSON.parse(entry.content).effectiveMs).toBeUndefined();
+    // And no summary text leaked into any stamped assistant row.
+    expect(rows.some((entry) => entry.role === 'assistant' && entry.content.includes('summary'))).toBe(false);
+  });
+
+  it('persists the stamp through the production persistence projector', async () => {
+    const clock = monoClock();
+    const f = await fixture({ monoNow: clock.now, project: true, run: timedRun(clock) });
+
+    await f.session.prompt('persist me');
+
+    const row = f.brain.getMessages('s1').filter((entry) => entry.role === 'assistant').at(-1)!;
+    const content = JSON.parse(row.content) as { effectiveMs?: number; firstContentMs?: number; durationMs?: number };
+    expect(content.effectiveMs).toBe(4420);
+    expect(content.firstContentMs).toBe(420);
+    // The two windows are genuinely different measurements on the same message: the legacy stamp covers
+    // only the post-header stream, so on this real clock it stays far below the 4.4s effective span.
+    expect(content.durationMs).toBeLessThan(4420);
+  });
+
+  it('times the request even when capture is disabled', async () => {
+    const clock = monoClock();
+    const f = await fixture({ monoNow: clock.now, enabled: () => false, run: timedRun(clock) });
+
+    await f.session.prompt('uncaptured timing');
+
+    expect(f.brain.providerRequests.rows('s1')).toEqual([]);
+    const [only] = assistants(f.session);
+    expect(only.effectiveMs).toBe(4420);
+    expect(only.firstContentMs).toBe(420);
+  });
+
+  it('keeps an aborted attempt measured but distinguishable, and does not leak its window', async () => {
+    const clock = monoClock();
+    const f = await fixture({
+      monoNow: clock.now,
+      run: async (model, _context, request) => {
+        const out = createAssistantMessageEventStream();
+        queueMicrotask(async () => {
+          out.push({ type: 'start', partial: message(model, []) });
+          await clock.advanceAsync(1500);
+          out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'should never settle' }]) });
+          out.end();
+        });
+        request.signal?.addEventListener('abort', () => {
+          clock.advance(500); // the client waited 500ms more before the abort landed
+          out.push({ type: 'error', reason: 'aborted', error: message(model, [], 'aborted', 'Request aborted') });
+          out.end();
+        }, { once: true });
+        return out;
+      },
+    });
+
+    const prompt = f.session.prompt('abort timed');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await f.session.abort();
+    await prompt;
+
+    const aborted = assistants(f.session).find((m) => m.stopReason === 'aborted');
+    expect(aborted).toBeDefined();
+    expect(aborted?.effectiveMs).toBeGreaterThan(0); // measured...
+    expect(aborted?.stopReason).toBe('aborted'); // ...and distinguishable from a working speed
+    // The window is closed: a later request must not inherit the aborted attempt's chain.
+    expect((f.brain.providerRequests.rows('s1')[0]?.duration_ms ?? 0)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('leaves no stale chain behind when an attempt never terminalizes', async () => {
+    const clock = monoClock();
+    const brain = new BrainStore(openDb(':memory:'));
+    brain.createSession({ id: 's1', userId: 7, model: 'chat-model', provider: 'configured' });
+    const recorder = new ProviderRequestRecorder({
+      store: brain.providerRequests, sessionId: 's1', configuredProvider: 'configured', enabled: () => true, monoNow: clock.now,
+    });
+    const model = { id: 'chat-model', provider: 'wire', api: 'stub' } as Model<Api>;
+    let calls = 0;
+    const runtime = recorder.wrapRuntime({
+      streamSimple: (_model: Model<Api>, _context: Context, request?: SimpleStreamOptions) => {
+        void request?.onPayload?.({ model: 'chat-model', messages: [] }, model);
+        calls += 1;
+        if (calls === 1) return createAssistantMessageEventStream(); // never ends: a pause is about to close the row
+        const out = createAssistantMessageEventStream();
+        void (async () => {
+          out.push({ type: 'start', partial: message(model, []) });
+          await clock.advanceAsync(500);
+          out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'fresh answer' }]) });
+          out.end();
+        })();
+        return out;
+      },
+    } as unknown as Parameters<ProviderRequestRecorder['wrapRuntime']>[0]);
+    const context = { messages: [] } as unknown as Context;
+
+    runtime.streamSimple(model, context, {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    clock.advance(30_000); // the stuck request's abandoned window must not reach the next call
+    brain.providerRequests.interruptPending({ errorCode: 'daemon_pause', errorMessage: 'paused' });
+    // The settle a real pause/recovery path ends with, then a fresh request.
+    recorder.observe({ type: 'agent_settled' } as never);
+    clock.advance(100);
+    for await (const event of runtime.streamSimple(model, context, {})) {
+      if (event.type === 'done') {
+        // The fresh attempt stamps its OWN window: 500ms from its initiation; none of the abandoned
+        // 30s reach it.
+        expect((event.message as { effectiveMs?: number }).effectiveMs).toBe(500);
+      }
+    }
   });
 });

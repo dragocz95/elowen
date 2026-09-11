@@ -1041,13 +1041,14 @@ describe('BrainStore', () => {
     /** Append an assistant row carrying the full PI `usage` breakdown (+ a top-level ms `timestamp` and,
      *  when given, the PI `$.model` the row was produced with — the per-row attribution basis). The
      *  optional `durationMs` mirrors the persistence projector's generation-timing stamp. */
-    const usageMsg = (session: string, id: string, u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens: number; cost?: number }, tsMs = Date.now(), model?: string, durationMs?: number) =>
+    const usageMsg = (session: string, id: string, u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens: number; cost?: number }, tsMs = Date.now(), model?: string, durationMs?: number, effectiveMs?: number) =>
       store.appendMessage({
         id, sessionId: session, parentId: null, role: 'assistant',
         content: {
           role: 'assistant',
           ...(model == null ? {} : { model }),
           ...(durationMs == null ? {} : { durationMs }),
+          ...(effectiveMs == null ? {} : { effectiveMs }),
           usage: {
             input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0,
             reasoning: u.reasoning ?? 0, totalTokens: u.totalTokens, ...(u.cost == null ? {} : { cost: { total: u.cost } }),
@@ -1080,6 +1081,41 @@ describe('BrainStore', () => {
       usageMsg('brain-a', 'm2', { output: 50, totalTokens: 100 }, Date.now(), undefined, 5000);
       const [row] = store.usageByModel(1);
       expect(row!.usage.outputTps).toBeCloseTo(25);
+    });
+
+    it('measures the effective window ONLY where the recorder stamped it — legacy rows are never reinterpreted', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+      // History written before effective timing existed: a legacy post-header stamp only. Its window
+      // must never leak into the effective figure.
+      usageMsg('brain-a', 'legacy1', { output: 100, totalTokens: 200 }, Date.now(), undefined, 1000);
+      usageMsg('brain-a', 'legacy2', { output: 50, totalTokens: 100 }, Date.now(), undefined, 4000);
+      // One end-to-end sample: 100 output over the whole logical request (2 s).
+      usageMsg('brain-a', 'eff1', { output: 100, totalTokens: 200 }, Date.now(), undefined, 100, 2000);
+      const [row] = store.usageByModel(1);
+      expect(row!.usage.outputTps).toBeCloseTo(49.02, 1); // (100+50+100) / (1+4+0.1) s — legacy window over ALL stamps
+      expect(row!.usage.effectiveMeasuredOutput).toBe(100);
+      expect(row!.usage.effectiveTps).toBeCloseTo(50);   // 100 / 2 s — ONLY the effective sample
+    });
+
+    it('keeps an effective stamp without usable output out of the effective figure', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+      // An errored attempt: the window was measured but delivered nothing — no invented numerator.
+      usageMsg('brain-a', 'm1', { output: 0, totalTokens: 10 }, Date.now(), undefined, undefined, 5000);
+      usageMsg('brain-a', 'm2', { output: 400, totalTokens: 500 }, Date.now(), undefined, undefined, 8000);
+      const [row] = store.usageByModel(1);
+      expect(row!.usage.effectiveMeasuredOutput).toBe(400);
+      expect(row!.usage.effectiveTps).toBeCloseTo(50); // 400 / 8 s — the empty attempt drags nothing
+    });
+
+    it('groups effective speed per model, so a model switch never blends the windows', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'glm-5.3-flash', provider: 'ollama' });
+      usageMsg('brain-a', 'glm1', { output: 200, totalTokens: 300 }, Date.now(), 'glm-5.3-flash', undefined, 1000);
+      usageMsg('brain-a', 'opus1', { output: 300, totalTokens: 400 }, Date.now(), 'claude-opus-5', undefined, 6000);
+      const rows = store.usageByModel(1);
+      const glm = rows.find((r) => r.model === 'glm-5.3-flash');
+      const opus = rows.find((r) => r.model === 'claude-opus-5');
+      expect(glm?.usage.effectiveTps).toBeCloseTo(200);
+      expect(opus?.usage.effectiveTps).toBeCloseTo(50);
     });
 
     it('EXCLUDES an aborted generation (timing but NO output) from the tok/s denominator', () => {
@@ -1438,6 +1474,39 @@ describe('BrainStore', () => {
         usageMsg('brain-a', 'k2', { output: 10, totalTokens: 20 });
         store.compactSessionMessages('brain-a', { id: 'sum2', role: 'compaction', content: { role: 'compactionSummary', summary: 's' } }, 1);
         expect(store.usageByModel(1)[0]!.usage.outputTps).toBeCloseTo(50);
+      });
+
+      it('keeps the dropped generations EFFECTIVE timing so the end-to-end rate survives compaction', () => {
+        store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+        // Effective-stamped rows dropped by the compaction roll their windows onto the divider…
+        usageMsg('brain-a', 'old1', { output: 100, totalTokens: 200 }, Date.now(), undefined, undefined, 2000);
+        usageMsg('brain-a', 'old2', { output: 50, totalTokens: 100 }, Date.now(), undefined, undefined, 5000);
+        // …and combine with the KEPT row's own effective stamp: (100+50+150)/(2+5+3) s = 30 tok/s.
+        usageMsg('brain-a', 'keep1', { output: 150, totalTokens: 300 }, Date.now(), undefined, undefined, 3000);
+        store.compactSessionMessages('brain-a', { id: 'sum', role: 'compaction', content: { role: 'compactionSummary', summary: 's' } }, 1);
+        const [row] = store.usageByModel(1);
+        expect(row!.usage.effectiveTps).toBeCloseTo(30);
+        // These rows never carried a legacy post-header stamp, so the legacy figure stays honestly null.
+        expect(row!.usage.outputTps).toBeNull();
+      });
+
+      it('reads a rollup bucket written BEFORE effective timing existed as unmeasured (never reinterpreted)', () => {
+        store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+        // A divider shaped by hand the way pre-effective buckets were written: the legacy measured pair
+        // intact, no effective fields at all. Spend counts; the effective rate must not be invented.
+        store.appendMessage({
+          id: 'sum', sessionId: 'brain-a', parentId: null, role: 'compaction',
+          content: {
+            role: 'compactionSummary', summary: 's',
+            usageRollup: [{ model: 'claude-opus-4-8', input: 0, output: 40_000, cacheRead: 0, cacheWrite: 0, totalTokens: 41_000, reasoning: 0, at: Date.now(), durationMs: 100_000, measuredOutput: 40_000 }],
+          },
+        });
+        expect(store.usageByModel(1)[0]!.usage.total).toBe(41_000); // spend still counted
+        expect(store.usageByModel(1)[0]!.usage.effectiveTps).toBeNull();
+        expect(store.usageByModel(1)[0]!.usage.outputTps).toBeCloseTo(400); // the legacy window still answers
+        // …and it neither inflates nor dilutes an effective generation standing next to it.
+        usageMsg('brain-a', 'm1', { output: 100, totalTokens: 200 }, Date.now(), undefined, undefined, 2000);
+        expect(store.usageByModel(1)[0]!.usage.effectiveTps).toBeCloseTo(50);
       });
 
       it('keeps dropped assistant rows spend in usageByModel + usageByDay', () => {

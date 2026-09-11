@@ -6,6 +6,8 @@ import type { AskQuestion, BrainUsage, BrainGoalState, BrainMessageImage } from 
 import type { ProcessInfo } from './processRegistry.js';
 import { extractReason } from './toolReason.js';
 import { collapseWhitespace } from '../shared/text.js';
+import { speedOf } from '../shared/effectiveSpeed.js';
+import type { EffectiveRequestTiming } from './session/providerRequestRecorder.js';
 import { residentContextUsageOf } from './contextBreakdown.js';
 import { IMAGE_PREVIEW_TOOL, storeToolResultImage } from './chatImages.js';
 
@@ -724,10 +726,11 @@ function usageOf(session: AgentSession): BrainUsage {
   let reasoning = 0;
   let measuredOutput = 0;
   let measuredMs = 0;
-  for (const m of session.messages as {
+  for (const m of session.messages as ({
     usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens?: number; cost?: { total?: number } };
     durationMs?: number;
-  }[]) {
+    stopReason?: string;
+  } & EffectiveRequestTiming)[]) {
     totalTokens += m.usage?.totalTokens ?? 0;
     cost += m.usage?.cost?.total ?? 0;
     input += m.usage?.input ?? 0;
@@ -735,13 +738,34 @@ function usageOf(session: AgentSession): BrainUsage {
     cacheRead += m.usage?.cacheRead ?? 0;
     cacheWrite += m.usage?.cacheWrite ?? 0;
     reasoning += m.usage?.reasoning ?? 0;
-    // Speed only over generations that carry the projector's timing stamp — same measured-only
-    // weighting as the store's per-model aggregate.
+    // Legacy speed only over generations that carry the projector's post-header timing stamp — same
+    // measured-only weighting as the store's per-model aggregate. Superseded for display by
+    // `effectiveTps` below; kept because the shape still ships it and it remains the only window
+    // older (pre-effective-timing) generations were ever measured over.
     if (m.durationMs && m.durationMs > 0 && m.usage?.output) { measuredOutput += m.usage.output; measuredMs += m.durationMs; }
   }
   return {
     tokens: ctx?.tokens ?? null, contextWindow: ctx?.contextWindow ?? 0, percent: ctx?.percent ?? null, totalTokens, cost,
     input, output, cacheRead, cacheWrite, reasoning,
     outputTps: measuredMs > 0 ? measuredOutput / (measuredMs / 1000) : null,
+    ...latestEffectiveCall(session),
   };
+}
+
+/** The LATEST COMPLETED measured model call — the figure the statusline shows instead of a
+ *  session-wide blend (which used to average every generation of the session, across model switches,
+ *  old slow turns and compaction summaries, into one number). A call qualifies when it carries the
+ *  recorder's effective timing stamp, delivered output tokens, and a non-failure stop reason: failed
+ *  and aborted attempts stay recorded on their own messages but never read as a working speed.
+ *  Effective timing is only stamped on chat requests, so compaction summaries are skipped implicitly. */
+function latestEffectiveCall(session: AgentSession): Pick<BrainUsage, 'effectiveTps' | 'firstContentMs'> {
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    const m = session.messages[i] as { role?: string; stopReason?: string; usage?: { output?: number } } & EffectiveRequestTiming;
+    if (m.role !== 'assistant') continue;
+    if (m.stopReason === 'error' || m.stopReason === 'aborted') continue;
+    const tps = speedOf(m.usage?.output ?? 0, m.effectiveMs ?? 0);
+    if (tps == null) continue;
+    return { effectiveTps: tps, ...(m.firstContentMs != null ? { firstContentMs: m.firstContentMs } : {}) };
+  }
+  return {};
 }

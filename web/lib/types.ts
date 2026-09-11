@@ -1227,6 +1227,16 @@ export interface TokenUsage {
    *  buckets by this (their seconds are measuredOutput / outputTps), never by `output`. 0 when nothing was
    *  measured; absent on older daemons, which makes the bucket unweightable → keep it out of the average. */
   measuredOutput?: number;
+  /** EFFECTIVE tokens/sec: provider-reported output tokens (reasoning and tool-call tokens included)
+   *  over the WHOLE logical model request, measured from its initiation — before the provider's
+   *  response headers were awaited — to the complete response, retries and backoff included, tool
+   *  execution excluded. An end-to-end rate the client experienced, not a pure decode rate. Only
+   *  generations carrying the recorder's effective stamp count, so history written before it existed
+   *  never leaks its narrower post-header window into this figure (null = nothing effective measured). */
+  effectiveTps?: number | null;
+  /** The output tokens `effectiveTps` was measured over — same contract as `measuredOutput` over the
+   *  end-to-end window. Cross-bucket averages prefer this pair. */
+  effectiveMeasuredOutput?: number;
 }
 
 /** Total token/cost usage aggregated for one executor identity. `exec` is the backward-compatible id. */

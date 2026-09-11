@@ -24,7 +24,8 @@
         "tests/e2e/**",
         "playwright.config.ts",
         "lib/chatPresentation.ts",
-        "lib/codeDiff.ts"
+        "lib/codeDiff.ts",
+        "lib/effectiveSpeed.ts"
       ],
       "playwright": false
     },

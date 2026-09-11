@@ -26,7 +26,22 @@ export interface ProviderRequestRecorderOptions {
   configuredProvider: string;
   enabled: () => boolean;
   now?: () => number;
+  /** Monotonic clock for effective-speed timing (wall `now` can jump). Defaults to performance.now. */
+  monoNow?: () => number;
 }
+
+/** Effective-speed timing stamped onto the terminal assistant message, measured at the streamSimple
+ *  seam — the request's INITIATION, before the provider's response headers are awaited — and persisted
+ *  by the session projector alongside the legacy post-header `durationMs`. Both live on the message,
+ *  so the statusline, the stats aggregates and rehydrated history read one representation:
+ *  - `effectiveMs`: the whole logical request, monotonic ms. Includes the wait for the provider's
+ *    response headers (prompt processing, queueing, and — for a buffered delivery — the entire
+ *    server-side generation that never streams), plus every auto-retry and its backoff. Excludes tool
+ *    execution between model calls, which happens outside any single request.
+ *  - `firstContentMs`: single-attempt calls only, from initiation to the FIRST streamed content event
+ *    (thinking, text, or a tool call). A retried call has no honest single wait-to-first-content, so
+ *    the field is absent there rather than faked. It is NOT a time-to-first-hidden-token figure. */
+export interface EffectiveRequestTiming { effectiveMs?: number; firstContentMs?: number }
 
 function assistantUsage(message: AssistantMessage): ProviderRequestUsage {
   const usage = message.usage;
@@ -51,13 +66,19 @@ function eventError(event: AssistantMessageEvent): AssistantMessage | undefined 
 }
 
 /**
- * Correlates PI provider calls with its serial AgentSession lifecycle.
+ * Correlates PI provider calls with its serial AgentSession lifecycle, and times those calls the way
+ * the client experienced them.
  *
  * AgentSession's normal stream installs extension callbacks into ModelRuntime options, but PI's manual and
  * automatic summarization paths call the same ModelRuntime directly and omit those callbacks. Wrapping the
  * session-scoped runtime is therefore the only seam that covers BOTH paths. Its onPayload callback first
  * runs PI's complete extension chain, then records the returned value, so capture still observes the final
  * post-transform body while compaction no longer disappears from the log.
+ *
+ * The same wrapper is the canonical effective-speed seam: a logical request is timed with a monotonic
+ * clock from the streamSimple call (before any header wait) to its terminal event, across PI auto-retries,
+ * and stamped onto the terminal message as {@link EffectiveRequestTiming}. It works for every transport
+ * (HTTP and the Codex WebSocket) because it never depends on transport-specific hooks.
  */
 export class ProviderRequestRecorder {
   readonly observe: (event: AgentSessionEvent) => void;
@@ -71,9 +92,20 @@ export class ProviderRequestRecorder {
   private compactionActive = false;
   private captureBroken = false;
   private readonly now: () => number;
+  private readonly mono: () => number;
+  /** Effective-speed chain state. `requestStartMono` is the open logical request's monotonic start;
+   *  it survives a FAILED attempt (a retry carries the same request forward, backoff included) and is
+   *  cleared when the request completes, a new agent run starts, or the session settles. Timing is
+   *  capture-independent: capture rows gate only the request debugger, never these numbers. */
+  private requestStartMono: number | null = null;
+  private requestAttempts = 0;
+  private requestRetryCarried = false;
+  private attemptStartMono = 0;
+  private attemptFirstContentMs: number | null = null;
 
   constructor(private readonly options: ProviderRequestRecorderOptions) {
     this.now = options.now ?? Date.now;
+    this.mono = options.monoNow ?? (() => performance.now());
     this.observe = (event) => {
       try {
         switch (event.type) {
@@ -81,6 +113,14 @@ export class ProviderRequestRecorder {
           // Disable a broken capture for its turn, not for the lifetime of a reused session.
           this.captureBroken = false;
           this.turn += 1;
+          // A new agent run is a new logical request — no stale chain may reach into it. PI's
+          // auto-retry is the one exception: the retry re-enters the loop as a NEW run (a fresh
+          // agent_start) while the client has been waiting through ONE logical request, so a carried
+          // retry keeps the chain it was handed.
+          if (!this.requestRetryCarried) {
+            this.requestStartMono = null;
+            this.requestAttempts = 0;
+          }
           return;
         case 'compaction_start':
           this.compaction += 1;
@@ -105,6 +145,9 @@ export class ProviderRequestRecorder {
           return;
         }
         case 'auto_retry_start':
+          // The retry continues the SAME logical request for effective-speed timing (its backoff
+          // included), whether or not capture wrote rows for either attempt.
+          this.requestRetryCarried = true;
           if (this.activeRequestId) {
             this.breakCapture(`provider request correlation invariant: retry started while ${this.activeRequestId} is pending`);
             return;
@@ -125,6 +168,11 @@ export class ProviderRequestRecorder {
         case 'agent_settled':
           this.retryOf = undefined;
           this.lastFailedRequestId = null;
+          // The run is over: an open logical request (an attempt that never terminalized) stays open
+          // no longer, so its wait can never bleed into the next turn.
+          this.requestStartMono = null;
+          this.requestAttempts = 0;
+          this.requestRetryCarried = false;
           return;
         case 'message_end': {
           if (event.message.role !== 'assistant') return;
@@ -199,6 +247,22 @@ export class ProviderRequestRecorder {
     const originalPayload = options?.onPayload;
     const originalResponse = options?.onResponse;
     let capturedRequestId: string | undefined;
+    // Effective-speed timing starts HERE — the request's initiation, before the provider's response
+    // headers are awaited (the projector's post-header `durationMs` cannot see header waits or a
+    // buffered delivery). A chat attempt whose predecessor FAILED carries the same logical request
+    // forward: PI's auto-retries and their backoff are part of what the client waited through. Tool
+    // execution between calls never touches this state — it happens between streamSimple calls, and
+    // only a retry carries the chain on. Compaction is decided from PI's compaction bracket, not from
+    // capture rows, so capture being off can never misclassify a stream.
+    const attemptStartMono = this.mono();
+    const isCompaction = this.compactionActive;
+    if (!isCompaction) {
+      if (this.requestRetryCarried && this.requestStartMono != null) this.requestAttempts += 1;
+      else { this.requestStartMono = attemptStartMono; this.requestAttempts = 1; }
+      this.requestRetryCarried = false;
+    }
+    this.attemptStartMono = attemptStartMono;
+    this.attemptFirstContentMs = null;
     const wrappedOptions = {
       ...options,
       onPayload: async (payload: unknown, requestModel: Model<Api>) => {
@@ -241,6 +305,7 @@ export class ProviderRequestRecorder {
           // first call pending when the second opened. compaction_end still closes an attempt that never
           // produced a terminal event (an abort before the first token).
           else if (event.type === 'done' && capturedRequestId && this.activeKind === 'compaction') this.closeCompactionCall(capturedRequestId, event.message);
+          if (!isCompaction) this.timeStreamEvent(event);
           out.push(event);
         }
         out.end();
@@ -254,12 +319,53 @@ export class ProviderRequestRecorder {
           },
           stopReason: 'error', errorMessage, timestamp: this.now(),
         };
+        if (!isCompaction) this.timeFailedAttempt(failed);
         if (capturedRequestId) this.closeStreamError(capturedRequestId, failed);
         out.push({ type: 'error', reason: 'error', error: failed });
         out.end();
       }
     })();
     return out;
+  }
+
+  /** Effective-speed timing over one chat stream. The first content event fixes this attempt's
+   *  wait-to-first-content; a terminal stamps the timing onto the terminal message — the very object
+   *  the agent loop replays as `message_end`, so the projector persists it with the message. */
+  private timeStreamEvent(event: AssistantMessageEvent): void {
+    if (event.type === 'text_start' || event.type === 'thinking_start' || event.type === 'toolcall_start') {
+      if (this.attemptFirstContentMs == null) this.attemptFirstContentMs = Math.max(0, this.mono() - this.attemptStartMono);
+      return;
+    }
+    if (event.type === 'done') {
+      // The logical request is over: stamp its whole span, then close the chain so the NEXT
+      // streamSimple call (the next tool-loop step) starts a fresh one.
+      this.stampEffective(event.message, true);
+      return;
+    }
+    if (event.type === 'error') this.stampEffective(event.error, false);
+  }
+
+  /** A stream that THREW (no terminal event) still waited: stamp the synthetic failure message the
+   *  wrapper emits so the attempt's window is measured and distinguishable via its error stopReason. */
+  private timeFailedAttempt(message: AssistantMessage): void {
+    this.stampEffective(message, false);
+  }
+
+  /** Stamp the logical-request timing onto the terminal message. The numerator stays whatever output
+   *  the provider reports (set separately on `usage`); nothing is invented or clipped here. A
+   *  COMPLETED call closes the chain — a later streamSimple call is a new logical request. A FAILED
+   *  one keeps the chain open for the retry that may follow. */
+  private stampEffective(message: AssistantMessage, completed: boolean): void {
+    if (this.requestStartMono == null) return;
+    const effectiveMs = Math.max(0, this.mono() - this.requestStartMono);
+    (message as { effectiveMs?: number }).effectiveMs = effectiveMs;
+    if (completed && this.requestAttempts === 1 && this.attemptFirstContentMs != null) {
+      (message as { firstContentMs?: number }).firstContentMs = this.attemptFirstContentMs;
+    }
+    if (completed) {
+      this.requestStartMono = null;
+      this.requestAttempts = 0;
+    }
   }
 
   private openAttempt(model: Model<Api>, payload: unknown): string | undefined {
@@ -400,6 +506,11 @@ export class ProviderRequestRecorder {
     this.retryOf = undefined;
     this.lastFailedRequestId = null;
     this.captureBroken = true;
+    // Timing state cannot survive a broken correlation either: a fresh chain keeps the next call's
+    // measurement honest instead of silently extending a window that was lost.
+    this.requestStartMono = null;
+    this.requestAttempts = 0;
+    this.requestRetryCarried = false;
     if (!pending) return;
     try {
       this.options.store.finish({

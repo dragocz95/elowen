@@ -65,6 +65,25 @@ describe('buildUsageSummary', () => {
     expect(buildUsageSummary([mk('a', 100, 1)]).avgSpeedLabel).toBe('—');
   });
 
+  it('prefers the EFFECTIVE pair for the average and falls back to legacy only when nothing measured end-to-end', () => {
+    const s = buildUsageSummary([
+      // x measured end-to-end (100 over 2 s → 50 tok/s); y only ever carried a legacy pair.
+      { exec: 'x', usage: { input: 0, output: 200, cacheRead: 0, cacheWrite: 0, total: 200, costUsd: null, effectiveTps: 50, effectiveMeasuredOutput: 100, outputTps: 400, measuredOutput: 50 } },
+      { exec: 'y', usage: { input: 0, output: 5000, cacheRead: 0, cacheWrite: 0, total: 100, costUsd: null, outputTps: 10, measuredOutput: 5000 } },
+    ]);
+    expect(s.avgSpeedLabel).toBe('50 tok/s'); // y's legacy window must not leak into the effective average
+    expect(s.rows.find((r) => r.exec === 'x')!.speedLabel).toBe('50 tok/s');
+    expect(s.rows.find((r) => r.exec === 'y')!.speedLabel).toBe('10 tok/s'); // legacy answers for its history
+  });
+
+  it('weights the legacy pairs as before when nothing measured end-to-end', () => {
+    const s = buildUsageSummary([
+      { exec: 'a', usage: { input: 0, output: 100, cacheRead: 0, cacheWrite: 0, total: 100, costUsd: null, outputTps: 100, measuredOutput: 100 } },
+      { exec: 'b', usage: { input: 0, output: 50, cacheRead: 0, cacheWrite: 0, total: 50, costUsd: null, outputTps: 10, measuredOutput: 50 } },
+    ]);
+    expect(s.avgSpeedLabel).toBe('25 tok/s');
+  });
+
   it('computes the cache hit rate per row, null when nothing was read', () => {
     const s = buildUsageSummary([
       { exec: 'a', usage: { input: 25, output: 0, cacheRead: 75, cacheWrite: 0, total: 100, costUsd: null } },
