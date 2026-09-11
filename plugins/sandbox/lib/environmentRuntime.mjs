@@ -652,11 +652,35 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     store.save(row);
   }
   async function refreshSiteSourceBinding(row, userId) {
-    if (row.kind !== 'site' || typeof row.spec.registration?.sourceRel !== 'string') return;
+    if (row.kind !== 'site' || typeof row.spec.registration?.sourceRel !== 'string') return null;
+    const previousSourcePath = row.spec.binding.sourcePath;
     const registration = await authorize('site', row.resource_id, userId, true);
     if (registration.sourceRel !== row.spec.registration.sourceRel) throw error('site_binding_changed', 'The trusted Site source reference changed', 409);
     row.spec.registration = registration;
     row.spec.binding.sourcePath = registration.sourcePath;
+    return { previousSourcePath, sourcePath: registration.sourcePath };
+  }
+  async function rebuildMovedSiteContainer(row, op) {
+    if (row.kind !== 'site' || !row.spec.containerId || typeof row.spec.registration?.sourceRel !== 'string') return;
+    const previousRow = { ...row, spec: JSON.parse(JSON.stringify(row.spec)) };
+    const moved = await refreshSiteSourceBinding(row, op.user_id);
+    if (!moved || moved.previousSourcePath === moved.sourcePath) { store.save(row); return; }
+    ctx.logger.info(`site ${row.resource_id}: source path moved from ${moved.previousSourcePath} to ${moved.sourcePath}, rebuilding container`);
+    const previous = specFor(previousRow.spec);
+    await cancelLeases(previousRow);
+    const current = await podman.inspect(previous);
+    if (current) {
+      if (current.state === 'paused') await podman.unpause(previous);
+      if (['running', 'paused', 'stopping'].includes(current.state)) {
+        await podman.stop(previous);
+        const stopped = await podman.inspect(previous);
+        if (stopped && !['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('stop_unverified', 'Container stop could not be verified');
+        await sites.afterStop(row.resource_id);
+      }
+      await podman.remove(previous);
+    }
+    delete row.spec.containerId;
+    store.save(row);
   }
   async function ensureInitialContainer(row, op) {
     let spec = specFor(row.spec);
@@ -726,6 +750,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       });
       store.save(row); checkpoint(op, { imageReady: true });
     }
+    await rebuildMovedSiteContainer(row, op);
     step(op, 'storage');
     if (!row.spec.containerId) {
       await storage.prepare(specFor(row.spec));
