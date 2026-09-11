@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { userInfo } from 'node:os';
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync, statfsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseImage.mjs';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
@@ -13,6 +13,20 @@ const INPUT_LIMIT = 1024 * 1024;
 const OUTPUT_LIMIT = 256 * 1024;
 /** The socket `systemd-run` connects to inside the guest; its presence is what makes an execution possible. */
 const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
+const DISK_TREE_INVENTORY_PY = `def inventory(root):
+ rows=[]; links={}
+ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+  names.sort(); files.sort()
+  for name in names+files:
+   path=os.path.join(directory,name); st=os.lstat(path); rel=os.path.relpath(path,root)
+   hardlink=''
+   if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
+    key=(st.st_dev,st.st_ino)
+    if key not in links: links[key]=len(links)
+    hardlink=links[key]
+   attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
+   rows.append([rel,stat.S_IFMT(st.st_mode),st.st_size if stat.S_ISREG(st.st_mode) else 0,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else ''])
+ return rows`;
 const isolatedStores = new WeakSet();
 
 function positive(value, max, name) {
@@ -289,7 +303,10 @@ export class PodmanClient {
     if (spec.expectedId && row.Id !== spec.expectedId) mismatches.push('expectedId');
     if (row.Name?.replace(/^\//, '') !== spec.name) mismatches.push('name');
     if (!labelsMatch(row.Config?.Labels, spec.labels)) mismatches.push('labels');
-    if (row.ImageName !== spec.image) mismatches.push('image');
+    if (spec.disk) {
+      if (row.Image !== '' || row.ImageName !== '' || row.Rootfs !== realpathSync(spec.disk.rootfsPath)) mismatches.push('rootfs');
+      if (row.Path !== '/sbin/init' || row.Config?.SystemdMode !== true || row.Config?.StopSignal !== 37) mismatches.push('rootfsConfig');
+    } else if (row.ImageName !== spec.image) mismatches.push('image');
     if (!mountsMatch) mismatches.push('mounts');
     if (!networkMatches) mismatches.push('network');
     if (host.Privileged !== false) mismatches.push('privileged');
@@ -316,7 +333,9 @@ export class PodmanClient {
   async #owned(spec) {
     const container = await this.inspect(spec);
     if (!container) throw new Error('Container is missing');
-    await this.#inspectVolumes(spec, spec.volumes.map((volume) => volume.component));
+    // A disk-backed envelope owns no volume handles: its components are bind mounts of the disk's own
+    // directories, and `inspect` above has already held every mount source against the specification.
+    if (!spec.disk) await this.#inspectVolumes(spec, spec.volumes.map((volume) => volume.component));
     return container;
   }
 
@@ -325,16 +344,17 @@ export class PodmanClient {
     if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
     await this.#assertRootless();
     if (await this.#exists('container', spec.name)) throw new Error('Container already exists; lifecycle adoption must validate it');
-    for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
+    if (!spec.disk) for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
     for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' });
     if (spec.envFile) checkedHostPath(spec.envFile, { file: true });
-    const args = ['create', '--name', spec.name];
+    const args = ['create', ...(spec.disk ? ['--rootfs'] : []), '--name', spec.name];
     for (const [key, value] of Object.entries(spec.labels)) args.push('--label', `${key}=${value}`);
-    args.push('--cgroups=split', '--systemd=always', `--ipc=${spec.ipcMode}`, `--memory=${spec.limits.memoryMb}m`, `--memory-swap=${spec.limits.memoryMb}m`,
-      `--cpus=${spec.limits.cpus}`, `--pids-limit=${spec.limits.pidsLimit}`, `--network=${spec.network}`, `--workdir=${spec.workdir}`, '--env=HOME=/root');
+    args.push('--cgroups=split', '--systemd=always', ...(spec.disk ? ['--stop-signal', 'SIGRTMIN+3'] : []), `--ipc=${spec.ipcMode}`, `--memory=${spec.limits.memoryMb}m`, `--memory-swap=${spec.limits.memoryMb}m`,
+      `--cpus=${spec.limits.cpus}`, `--pids-limit=${spec.limits.pidsLimit}`, `--network=${spec.network}`, `--workdir=${spec.workdir}`, '--env=HOME=/root', ...(spec.disk ? ['--env=container=podman'] : []));
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const mount of spec.mounts) args.push('--mount', `type=${mount.type},src=${mount.source},dst=${mount.target}${mount.readOnly ? ',ro' : ''}`);
-    args.push(spec.image);
+    if (spec.disk) args.push(spec.disk.rootfsPath, '/sbin/init');
+    else args.push(spec.image);
     await this.#run(args);
     return await this.#owned(spec);
   }
@@ -510,7 +530,7 @@ export class PodmanClient {
     if (record.snapshotId !== snapshotId || record.resource?.kind !== spec.resource.kind || record.resource?.id !== spec.resource.id || record.generation !== spec.generation || record.specHash !== spec.specHash) throw new Error('Incomplete snapshot ownership mismatch');
     try { lstatSync(join(directory, 'manifest.json')); throw new Error('A completed snapshot cannot be discarded as incomplete'); }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    await this.removeSnapshotImage(spec, snapshotId);
+    if (!spec.disk) await this.removeSnapshotImage(spec, snapshotId);
     await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
   }
 
@@ -620,6 +640,269 @@ export class PodmanClient {
     const directory = join(spec.storageRoot, 'storage', String(spec.generation));
     try { checkedHostPath(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
     await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
+  }
+
+  async materializeRootfs(spec, pendingPath) {
+    this.#assertScope(spec);
+    if (!spec.disk) throw new Error('A rootfs-backed specification is required');
+    const pending = checkedHostPath(pendingPath);
+    const directory = checkedHostPath(dirname(pending));
+    const archive = join(directory, 'rootfs.tar.pending');
+    const seed = `${spec.namespace}-disk-${spec.disk.id.slice(0, 16)}-seed`;
+    resourceToken(seed);
+    await this.#assertRootless();
+    if (await this.#exists('container', seed)) {
+      await this.#run(['rm', '--force', seed]);
+      if (await this.#exists('container', seed)) throw new Error('Rootfs materialization seed removal was not verified');
+    }
+    await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive]);
+    try {
+      await this.#run(['create', '--name', seed, spec.disk.sourceImage]);
+      await this.#run(['export', '--output', archive, seed], { timeoutMs: 15 * 60_000 });
+      await this.#run(['unshare', '/usr/bin/tar', '--extract', '--file', archive, '--directory', pending,
+        '--numeric-owner', '--same-owner', '--xattrs', '--xattrs-include=*', '--sparse'], { timeoutMs: 15 * 60_000 });
+      const verifyScript = `set -eu
+image=$1; target=$2; shift 2
+engine=("$@")
+source=$("${'${engine[@]}'}" image mount "$image")
+trap '"${'${engine[@]}'}" image unmount "$image" >/dev/null' EXIT
+/usr/bin/python3 - "$source" "$target" <<'PY'
+import os,stat,sys
+from itertools import zip_longest
+${DISK_TREE_INVENTORY_PY}
+expected=inventory(sys.argv[1]); actual=inventory(sys.argv[2])
+if expected != actual:
+ mismatch=next((pair for pair in zip_longest(expected,actual) if pair[0] != pair[1]),(None,None))
+ print(f'Materialized rootfs metadata inventory differs from source image: expected={mismatch[0]!r} actual={mismatch[1]!r}'[:2000],file=sys.stderr); sys.exit(1)
+PY
+`;
+      await this.#run(['unshare', '/bin/bash', '-c', verifyScript, 'elowen-verify-materialization', spec.disk.sourceImage, pending, '/usr/bin/podman', ...this.#prefix], { timeoutMs: 15 * 60_000 });
+      await this.#run(['rm', seed]);
+      const imageId = await this.imageIdentity(spec.disk.sourceImage);
+      await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive]);
+      return imageId;
+    } catch (cause) {
+      if (await this.#exists('container', seed)) await this.#run(['rm', '--force', seed], { allowFailure: true });
+      await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive], { allowFailure: true });
+      throw cause;
+    }
+  }
+
+  /** The immutable identity of an image reference, which is what a disk manifest records as the template
+   *  it was materialized from. */
+  async imageIdentity(reference) {
+    if (typeof reference !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(reference)) throw new Error('Invalid container image');
+    const row = oneJson(await this.#run(['image', 'inspect', reference]));
+    if (!/^(sha256:)?[a-f0-9]{64}$/.test(row.Id)) throw new Error('Invalid source image identity');
+    return row.Id;
+  }
+
+  /** Refuse a migration before anything is stopped when the host cannot hold the export archive and the
+   *  extracted tree at the same time.
+   *
+   *  What `podman export` writes is the MERGED root filesystem, so the figure has to be the container's
+   *  own reported size — its image layers plus everything its writable layer has accumulated — and never
+   *  the image alone: an environment that has installed packages for a year carries most of its bytes in
+   *  that layer, and an image-only estimate underestimates the requirement by whatever it has written.
+   *  The archive and the extracted tree both exist at once, hence twice that size plus a tenth, and hence
+   *  a preflight that runs while the environment is still up rather than after it has been quiesced. */
+  async preflightRootfsMigration(spec, destinationPath) {
+    this.#assertScope(spec);
+    if (spec.disk) throw new Error('Only a legacy image-backed environment is migrated');
+    const destination = checkedHostPath(destinationPath, { create: true });
+    const container = await this.#owned(spec);
+    const row = oneJson(await this.#run(['container', 'inspect', '--size', container.id]));
+    const rootFsBytes = Number(row.SizeRootFs);
+    const writableBytes = Number(row.SizeRw ?? 0);
+    if (!Number.isSafeInteger(rootFsBytes) || rootFsBytes < 1 || !Number.isSafeInteger(writableBytes) || writableBytes < 0) throw new Error('Invalid container size report');
+    const sizeBytes = rootFsBytes + writableBytes;
+    const requiredBytes = sizeBytes * 2 + Math.ceil(sizeBytes / 10);
+    const filesystem = statfsSync(destination);
+    const freeBytes = filesystem.bavail * filesystem.bsize;
+    if (freeBytes < requiredBytes) throw new Error(`Insufficient free space to migrate the root filesystem: need ${requiredBytes} bytes, have ${freeBytes}`);
+    return { requiredBytes, freeBytes, sizeBytes, writableBytes };
+  }
+
+  /** Export the merged root filesystem of a STOPPED legacy container into a host-owned archive. The
+   *  mounted workspace, HOME, data, Site source and broker paths are not part of `podman export`: they
+   *  are already separate durable directories, they stay where they are, and the disk specification
+   *  records them rather than moving them. */
+  async exportContainerRootfs(spec, archivePath) {
+    if (spec.disk) throw new Error('Only a legacy image-backed container is exported for migration');
+    const row = await this.#owned(spec);
+    if (!['created', 'configured', 'stopped', 'exited'].includes(row.state)) throw new Error('Stop the container before exporting its root filesystem');
+    const archive = hostPath(archivePath);
+    checkedHostPath(dirname(archive), { create: true });
+    try { lstatSync(archive); throw new Error('Migration export archive already exists'); }
+    catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    await this.#run(['export', '--output', archive, row.id], { timeoutMs: 15 * 60_000 });
+    checkedHostPath(archive, { file: true });
+    return row.id;
+  }
+
+  async extractRootfsArchive(archivePath, targetPath) {
+    const archive = checkedHostPath(archivePath, { file: true });
+    const target = checkedHostPath(targetPath);
+    await this.#run(['unshare', '/usr/bin/tar', '--extract', '--file', archive, '--directory', target,
+      '--numeric-owner', '--same-owner', '--xattrs', '--xattrs-include=*', '--sparse'], { timeoutMs: 15 * 60_000 });
+  }
+
+  /** Hold the extracted tree against the archive's OWN member list, which is the inventory the export
+   *  produced: every member has to be present with the same type, numeric owner, mode, size, symlink
+   *  target and hard-link identity, and the tree may carry nothing the archive did not name.
+   *
+   *  Extended attributes are compared in the `user.*` namespace. Those are the ones a rootless extraction
+   *  is guaranteed to be able to restore, so a mismatch there is a real failure rather than a property of
+   *  the namespace the extraction ran in. */
+  async verifyExtractedRootfs(archivePath, targetPath) {
+    const archive = checkedHostPath(archivePath, { file: true });
+    const target = checkedHostPath(targetPath);
+    const script = `import json,os,stat,sys,tarfile
+archive,target=sys.argv[1],sys.argv[2]
+failures=[]; seen=set()
+with tarfile.open(archive,'r|') as tar:
+ for member in tar:
+  rel=os.path.normpath(member.name).lstrip('/')
+  if rel in ('.',''): continue
+  seen.add(rel); path=os.path.join(target,rel)
+  try: st=os.lstat(path)
+  except FileNotFoundError: failures.append('missing '+rel); continue
+  if member.isdir(): expected=stat.S_IFDIR
+  elif member.issym(): expected=stat.S_IFLNK
+  elif member.ischr(): expected=stat.S_IFCHR
+  elif member.isblk(): expected=stat.S_IFBLK
+  elif member.isfifo(): expected=stat.S_IFIFO
+  elif member.isreg() or member.islnk(): expected=stat.S_IFREG
+  else: failures.append('unsupported member type '+rel); continue
+  if stat.S_IFMT(st.st_mode)!=expected: failures.append('type '+rel)
+  elif member.issym():
+   if os.readlink(path)!=member.linkname: failures.append('symlink target '+rel)
+  else:
+   if st.st_uid!=member.uid or st.st_gid!=member.gid: failures.append('owner '+rel)
+   if stat.S_IMODE(st.st_mode)!=stat.S_IMODE(member.mode): failures.append('mode '+rel)
+   if member.islnk():
+    link=os.path.join(target,os.path.normpath(member.linkname).lstrip('/'))
+    try: other=os.lstat(link)
+    except FileNotFoundError: other=None
+    if other is None or (other.st_dev,other.st_ino)!=(st.st_dev,st.st_ino): failures.append('hardlink '+rel)
+   elif member.isreg() and st.st_size!=member.size: failures.append('size '+rel)
+   for key,value in member.pax_headers.items():
+    if not key.startswith('SCHILY.xattr.user.'): continue
+    name=key[len('SCHILY.xattr.'):]
+    try: actual=os.getxattr(path,name,follow_symlinks=False).decode('latin-1')
+    except OSError: actual=None
+    if actual!=value: failures.append('xattr '+name+' '+rel)
+  if len(failures)>20: break
+if not failures:
+ extra=[]
+ for directory,names,files in os.walk(target,topdown=True,followlinks=False):
+  for name in names+files:
+   rel=os.path.relpath(os.path.join(directory,name),target)
+   if rel not in seen: extra.append(rel)
+ if extra: failures.append('unexpected entries '+','.join(sorted(extra)[:20]))
+if failures:
+ print(('Migrated rootfs differs from its export archive: '+'; '.join(failures[:20]))[:2000],file=sys.stderr); sys.exit(1)
+print(json.dumps({'members':len(seen)}))`;
+    const result = await this.#run(['unshare', '/usr/bin/python3', '-c', script, archive, target], { timeoutMs: 15 * 60_000 });
+    if (result.truncated) throw new Error('Migrated rootfs verification output exceeded its bound');
+    const value = JSON.parse(result.stdout);
+    if (!Number.isSafeInteger(value.members) || value.members < 1) throw new Error('The migration export archive named no members');
+    return value;
+  }
+
+  /** What systemd inside the guest says about its own boot. `running` and `degraded` both mean it
+   *  reached its target; anything else is a boot that has not finished, which is what a migrated
+   *  candidate has to prove before the runtime row is switched to it. */
+  async systemRunning(spec, { timeoutMs = 120_000 } = {}) {
+    const row = await this.#owned(spec);
+    const deadline = Date.now() + positive(timeoutMs, 15 * 60_000, 'system state timeout');
+    for (;;) {
+      const status = await this.#run(['exec', row.id, 'systemctl', 'is-system-running'], { allowFailure: true, timeoutMs: 30_000 });
+      const state = status.stdout.trim();
+      if (['running', 'degraded'].includes(state)) return state;
+      if (Date.now() >= deadline) throw new Error(`Guest systemd did not reach a running state within ${Math.round(timeoutMs / 1000)}s (systemd reports ${state || 'nothing'})`);
+      await new Promise((resolve) => { setTimeout(resolve, 250); });
+    }
+  }
+
+  async copyDiskTree(sourcePath, targetPath) {
+    const source = checkedHostPath(sourcePath);
+    const target = checkedHostPath(targetPath);
+    const script = `set -eu
+source=$1; target=$2
+cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/
+/usr/bin/python3 - "$source" "$target" <<'PY'
+import os,stat,sys
+${DISK_TREE_INVENTORY_PY}
+source_rows=inventory(sys.argv[1]); target_rows=inventory(sys.argv[2])
+if source_rows != target_rows:
+ print('Copied disk tree metadata inventory differs from source',file=sys.stderr); sys.exit(1)
+PY
+`;
+    await this.#run(['unshare', '/bin/bash', '-c', script, 'elowen-copy-tree', source, target], { timeoutMs: 15 * 60_000 });
+  }
+
+  async fingerprintDiskTree(path) {
+    const root = checkedHostPath(path);
+    const script = `import hashlib,json,os,stat,sys
+root=sys.argv[1]
+h=hashlib.sha256(); logical=0; allocated=0; links={}
+for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+ names.sort(); files.sort()
+ for name in names+files:
+  path=os.path.join(directory,name); rel=os.path.relpath(path,root); st=os.lstat(path)
+  logical+=st.st_size; allocated+=st.st_blocks*512; hardlink=''
+  if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
+   key=(st.st_dev,st.st_ino)
+   if key not in links: links[key]=len(links)
+   hardlink=links[key]
+  attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
+  row=[rel,stat.S_IFMT(st.st_mode),st.st_size,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else '']
+  h.update(json.dumps(row,separators=(',',':')).encode()); h.update(b'\\n')
+print(json.dumps({'logicalBytes':logical,'allocatedBytes':allocated,'digest':h.hexdigest()}))`;
+    const result = await this.#run(['unshare', '/usr/bin/python3', '-c', script, root], { timeoutMs: 15 * 60_000 });
+    if (result.truncated) throw new Error('Disk tree fingerprint exceeded its bound');
+    const value = JSON.parse(result.stdout);
+    if (!Number.isSafeInteger(value.logicalBytes) || !Number.isSafeInteger(value.allocatedBytes) || !/^[a-f0-9]{64}$/.test(value.digest)) throw new Error('Invalid disk tree fingerprint');
+    return value;
+  }
+
+  async preflightDiskCopy(sourcePaths, destinationPath) {
+    if (!Array.isArray(sourcePaths) || sourcePaths.length < 1) throw new Error('Disk copy preflight requires source trees');
+    const sources = sourcePaths.map((path) => checkedHostPath(path));
+    const destination = checkedHostPath(destinationPath);
+    const script = `import json,os,sys
+sources=json.loads(sys.argv[1]); destination=sys.argv[2]; required=0
+for root in sources:
+ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+  for name in names+files: required+=os.lstat(os.path.join(directory,name)).st_size
+margin=max(64*1024*1024,required//10); fs=os.statvfs(destination); free=fs.f_bavail*fs.f_frsize
+if free < required+margin:
+ print(f'Insufficient free space for disk copy: need {required+margin} bytes including margin, have {free}',file=sys.stderr); sys.exit(1)
+print(json.dumps({'requiredBytes':required,'marginBytes':margin,'freeBytes':free}))`;
+    const result = await this.#run(['unshare', '/usr/bin/python3', '-c', script, JSON.stringify(sources), destination], { timeoutMs: 15 * 60_000 });
+    if (result.truncated) throw new Error('Disk copy preflight output exceeded its bound');
+    const value = JSON.parse(result.stdout);
+    if (!Number.isSafeInteger(value.requiredBytes) || !Number.isSafeInteger(value.marginBytes) || !Number.isSafeInteger(value.freeBytes)) throw new Error('Invalid disk copy preflight');
+    return value;
+  }
+
+  async syncDiskTree(path) {
+    const root = checkedHostPath(path);
+    const script = `import os,stat,sys
+root=sys.argv[1]
+for directory,names,files in os.walk(root,topdown=False,followlinks=False):
+ for name in files:
+  path=os.path.join(directory,name); st=os.lstat(path)
+  if stat.S_ISREG(st.st_mode):
+   fd=os.open(path,os.O_RDONLY); os.fsync(fd); os.close(fd)
+ fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY); os.fsync(fd); os.close(fd)`;
+    await this.#run(['unshare', '/usr/bin/python3', '-c', script, root], { timeoutMs: 15 * 60_000 });
+  }
+
+  async removeDiskPath(path) {
+    const target = hostPath(path);
+    await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', target], { timeoutMs: 15 * 60_000 });
   }
 
   /** `onOutput` receives each line the build writes, so the caller can show what a fifteen-minute image

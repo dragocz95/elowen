@@ -133,6 +133,8 @@ export interface SiteEnvironmentRegistration {
   sitesDataDir: string;
   brokerDir: string;
   workspaceReadOnly: boolean;
+  /** New registrations use an exploded persistent rootfs; absent preserves legacy image-backed rows. */
+  persistentRootfs?: boolean;
   network: 'shared' | 'isolated';
   limits: EnvironmentLimits;
   /** Copied from the Sites lifecycle checkpoint, not inferred from current container state. */
@@ -188,6 +190,10 @@ export interface SiteRuntimeAuthority {
   containerSeed?(siteId: string): Promise<Extract<SiteRuntimeArtifact, { kind: 'data' }> | null>;
   /** Sites owns privileged ingress preparation and application readiness, never the Podman lifecycle. */
   beforeStart(siteId: string): Promise<void>;
+  /** Confirm the application answers through its own ingress. Sandbox calls it where a container that
+   *  merely runs is not enough — the disk migration proves the candidate envelope before switching the
+   *  runtime row to it — and rejects the candidate when it throws. */
+  verifyReady?(siteId: string): Promise<void>;
   afterStop(siteId: string): Promise<void>;
 }
 export interface SiteEnvironment extends Omit<ProjectEnvironment, 'projectId'> { siteId: string }

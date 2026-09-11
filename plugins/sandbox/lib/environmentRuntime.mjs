@@ -9,7 +9,7 @@ import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from 
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createLegacyProjectSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
+import { createContainerSpec, createEnvironmentDiskSpec, createLegacyProjectSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
@@ -32,6 +32,7 @@ const STEP_PLANS = {
   snapshot: [['quiesce', 1], ['capture', 8], ['record', 1]],
   restore: [['quiesce', 1], ['stop', 2], ['import', 8], ['container', 2], ['boot', 2], ['switch', 1], ['cleanup', 1]],
   limits: [['apply', 1]],
+  'migrate-disk': [['quiesce', 1], ['stop', 2], ['export', 8], ['materialize', 8], ['storage', 1], ['container', 2], ['boot', 2], ['verify', 2], ['switch', 1], ['cleanup', 1]],
   delete: [['stop', 2], ['containers', 2], ['images', 2], ['volumes', 2], ['storage', 2], ['records', 1]],
 };
 /** Every Sites-only action and the image jobs: one step, honestly unlabelled, rather than a fabricated
@@ -95,7 +96,9 @@ function action(value, kind) {
   // `recreate` is a project-only repair: it removes the container this runtime can no longer verify and
   // builds a new one from the current specification. The storage volumes are untouched, so the project's
   // files come back with it — which is exactly why it is an explicit action and never an automatic one.
-  const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'],
+  // `migrate-disk` turns a legacy image-backed environment into a rootfs-backed one. It is the same
+  // shape for a project and for a Site because the disk, not the resource kind, is what it changes.
+  const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'], 'migrate-disk': [],
     ...(kind === 'project' ? { recreate: [] } : {}),
     ...(kind === 'site' ? { prepare: [], 'cleanup-stage': [], 'provision-image': ['imageKind'], 'import-data': ['artifactId'], 'export-data': ['artifactId'], 'import-snapshot': ['artifactId'], 'remove-artifact': ['artifactId'], 'export-project': ['artifactId'] } : {}) };
   if (value.imageKind !== undefined && !['base', 'static', 'node'].includes(value.imageKind)) throw error('invalid_action', 'Unknown fixed Sites image recipe', 400);
@@ -209,7 +212,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
   function siteRecord(registration, generation) {
     const effective = limits(registration.limits);
-    return { registration, input: { resource: { kind: 'site', id: registration.siteId }, generation, image: registration.image, network: registration.network,
+    const resource = { kind: 'site', id: registration.siteId };
+    const disk = registration.persistentRootfs
+      ? createEnvironmentDiskSpec({ resource, image: registration.image }, { sitesDataDir: registration.sitesDataDir, namespace }, randomUUID().replaceAll('-', ''))
+      : undefined;
+    return { registration, input: { resource, generation, image: registration.image, ...(disk ? { disk } : {}), network: registration.network,
       workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
       binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
   }
@@ -252,7 +259,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
     if (!row) {
       const effective = configuredDefaults(ctx.config);
-      const spec = { input: { resource: { kind: 'project', id: Number(id) }, generation: 1, image: PROJECT_BASE_IMAGE_TAG, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths: { sandboxDataDir: dataDir, namespace } };
+      const paths = { sandboxDataDir: dataDir, namespace };
+      const resource = { kind: 'project', id: Number(id) };
+      const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_BASE_IMAGE_TAG }, paths, randomUUID().replaceAll('-', ''));
+      const spec = { input: { resource, generation: 1, image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
     return row;
@@ -349,6 +359,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       assertGeneration(row, input.expectedGeneration);
       if (requested.kind === 'limits' && !stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change resource limits', 403);
+      if (requested.kind === 'migrate-disk') {
+        if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may migrate an environment to a persistent disk', 403);
+        // A migration that has already switched the row still has its legacy envelope to remove, so the
+        // request that carries its own idempotency key stays resumable; anything else is refused.
+        if (row.spec.input.disk && !prior) throw error('already_rootfs_backed', 'This environment already runs on a persistent disk');
+        // One migration on the host at a time. Each one exports a whole root filesystem and extracts it
+        // again, so two of them share the free space this operation refuses to start without.
+        const elsewhere = db.prepare(`SELECT id FROM p_sandbox_runtime_operations WHERE status IN ('pending','running')
+          AND json_extract(action_json,'$.kind')='migrate-disk' AND NOT (kind=? AND resource_id=?)`).get(kind, String(id));
+        if (elsewhere) throw error('migration_active', 'Another environment disk migration is already under way');
+      }
       if (row.state === 'deleted') throw error('environment_deleted', 'The environment has been deleted');
       if (row.desired_state === 'deleted' && requested.kind !== 'delete') throw error('environment_deleting', 'The environment is deleting');
       if (prior) {
@@ -701,7 +722,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     let current = await podman.inspect(spec);
     if (row.spec.containerId) {
       if (current) return current;
-      if (!op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
+      if (!row.spec.input.disk && !op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
       delete row.spec.containerId;
       // The missing container ended the old creation identity. A replacement is created with the limits
       // currently effective for the environment, then future live updates preserve those as its baseline.
@@ -721,12 +742,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!current) {
       if (row.kind === 'site') {
         await sites.beforeCreate?.(row.resource_id);
-        const seed = await sites.containerSeed?.(row.resource_id);
-        if (seed) {
-          if (seed.kind !== 'data') throw error('invalid_site_seed', 'Sites returned an invalid container seed');
-          // The archive contains only the disposable bootstrap stage. Import overlays that directory and
-          // leaves every application-owned path already present in the persistent data volume untouched.
-          await podman.siteDataArchive(spec, 'import', seed.archivePath);
+        if (!spec.disk || row.spec.diskSeeded !== true) {
+          const seed = await sites.containerSeed?.(row.resource_id);
+          if (seed) {
+            if (seed.kind !== 'data') throw error('invalid_site_seed', 'Sites returned an invalid container seed');
+            // Legacy rows seed every replacement rootfs. Persistent disks consume the bootstrap once and
+            // retain the installed application and system configuration across envelope replacement.
+            await podman.siteDataArchive(spec, 'import', seed.archivePath);
+          }
+          if (spec.disk) { row.spec.diskSeeded = true; store.save(row); }
         }
       }
       current = await podman.create(spec);
@@ -757,6 +781,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         store.log(row.kind, row.resource_id, sanitize(line));
         step(op, 'image', buildFraction(line), true);
       });
+      if (row.spec.input.disk?.sourceImage === PROJECT_BASE_IMAGE_TAG) {
+        row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image }, row.spec.paths, row.spec.input.disk.id);
+      }
       store.save(row); checkpoint(op, { imageReady: true });
     }
     await rebuildMovedSiteContainer(row, op);
@@ -851,6 +878,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = specFor(row.spec);
     const kind = op.action.kind;
     if (kind === 'provision-image') {
+      if (spec.disk) throw error('legacy_only', 'Persistent rootfs Sites materialize directly from their registered image');
       const image = await siteImages.provision(op.action.imageKind);
       if (image !== row.spec.input.image) throw error('site_image_mismatch', 'The fixed recipe does not match the registered Site image');
       return;
@@ -928,9 +956,202 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     throw error('invalid_site_action', 'Unknown Sites lifecycle action');
   }
 
+  /** Where a specification RECORD's disk directories are derived from. A Site's roots come from its
+   *  trusted binding and a project's from its stored paths; both are host-derived, never carried in the
+   *  record's disk field, which is why the disk spec is rebuilt from them rather than copied. */
+  const diskPathsFor = (record) => record.input.resource.kind === 'site'
+    ? { sitesDataDir: record.binding.sitesDataDir, namespace: record.binding.namespace }
+    : record.paths;
+
+  /** A migrated Site is not proven by a running container. Its ingress socket has to be back on the host
+   *  side of the broker mount, which is the path a visitor's request actually travels, and Sites itself
+   *  has to agree the application answers through it. */
+  async function verifySiteReadiness(row, spec) {
+    await podman.systemRunning(spec);
+    const socket = join(row.spec.binding.brokerDir, 'app.sock');
+    const deadline = Date.now() + 120_000;
+    while (!forwarderSocketPresent(socket)) {
+      if (Date.now() >= deadline) throw error('site_ingress_missing', 'The migrated Site did not re-establish its ingress socket');
+      await wait(250);
+    }
+    if (sites.verifyReady) await sites.verifyReady(row.resource_id);
+  }
+
+  /** Turn a legacy image-backed environment into a rootfs-backed persistent disk without ever leaving
+   *  the only copy of it at risk.
+   *
+   *  Each name below is a durable receipt on the operation row, in this order:
+   *
+   *    claimed → quiesced → exported → materialized → candidate-created → candidate-booted → switched
+   *      → legacy-removed → complete
+   *
+   *  A retry resumes at the first one that is missing and repeats nothing that already has a receipt.
+   *  Only two steps here are destructive, and both come last: the runtime row is switched only after the
+   *  candidate has booted and answered, and the legacy envelope is removed only after that switch is
+   *  durable. Until then the environment is still the old container's, so a candidate that will not boot
+   *  is removed on its own — the materialized disk and the export archive stay for diagnosis and the old
+   *  container comes back up. */
+  async function migrateDisk(row, op) {
+    if (!stores().usersRead.isAdmin(op.user_id)) throw error('admin_required', 'Disk migration authority was revoked', 403);
+    const state = op.checkpoint.migration ?? {};
+    // Read the row's driver only for a migration that has not claimed it yet. Past the switch the row IS
+    // rootfs-backed, and this operation is the reason: refusing it there would strand the legacy envelope
+    // it still has to remove.
+    if (!state.done?.length) {
+      if (row.spec.input.disk) throw error('already_rootfs_backed', 'This environment already runs on a persistent disk');
+      if (row.spec.legacyWorkspaceLayout) throw error('legacy_workspace_layout', 'Recreate this environment at its named project mount before migrating its disk');
+    }
+    const done = new Set(state.done ?? []);
+    const reached = (name) => done.has(name);
+    const mark = (name, values = {}) => {
+      done.add(name);
+      Object.assign(state, values, { done: [...done] });
+      checkpoint(op, { migration: state });
+      store.log(row.kind, row.resource_id, `migrate-disk reached ${name}`);
+    };
+    if (!reached('claimed')) {
+      if (!row.spec.containerId) throw error('migration_source_missing', 'Start this environment once before migrating its root filesystem');
+      const observed = await podman.inspect(specFor(row.spec));
+      if (!observed) throw error('migration_source_missing', 'The legacy container is missing; its root filesystem cannot be exported');
+      // A candidate needs a name of its own, and the name carries the generation — so the migration
+      // reserves the next one the same way a restore does, and the old envelope keeps its own.
+      const reserved = db.prepare("SELECT MAX(json_extract(checkpoint_json,'$.newSpec.input.generation')) AS generation FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?").get(row.kind, row.resource_id);
+      const candidateGeneration = Math.max(row.generation, Number(reserved?.generation ?? 0)) + 1;
+      const candidate = JSON.parse(JSON.stringify(row.spec));
+      candidate.input.generation = candidateGeneration;
+      candidate.input.disk = createEnvironmentDiskSpec({ resource: candidate.input.resource, image: candidate.input.image },
+        diskPathsFor(candidate), randomUUID().replaceAll('-', ''), row.generation);
+      candidate.creationLimits = candidate.input.limits;
+      // The exported root filesystem and the existing data directory already carry the Site bootstrap.
+      // Replaying the seed over them would overwrite the data this migration exists to preserve.
+      if (row.kind === 'site') candidate.diskSeeded = true;
+      delete candidate.containerId;
+      checkpoint(op, { oldSpec: JSON.parse(JSON.stringify(row.spec)), oldGeneration: row.generation });
+      mark('claimed', { migrationId: `migration-${op.id.slice(4)}`, oldContainerId: observed.id, oldContainerName: specFor(row.spec).name,
+        sourceImage: row.spec.input.image, diskId: candidate.input.disk.id, candidateGeneration,
+        wasRunning: row.desired_state === 'running', candidateSpec: candidate });
+    }
+    const old = { ...row, spec: op.checkpoint.oldSpec, generation: op.checkpoint.oldGeneration };
+    const oldSpec = specFor(old.spec);
+    const candidate = () => specFor(state.candidateSpec);
+    if (!reached('quiesced')) {
+      // Before anything stops: a host that cannot hold the archive and the extracted tree must refuse
+      // the migration while the environment is still running rather than halfway through it.
+      await podman.preflightRootfsMigration(oldSpec, join(oldSpec.storageRoot, 'disks'));
+      step(op, 'stop');
+      await stopRow(old);
+      mark('quiesced');
+    }
+    if (!reached('exported')) {
+      step(op, 'export', null);
+      const stopped = await podman.inspect(oldSpec);
+      if (!stopped || stopped.id !== state.oldContainerId) throw error('migration_source_changed', 'The legacy container identity changed before its root filesystem was exported');
+      if (!['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('migration_source_running', 'The legacy container is not stopped');
+      const capture = await storage.captureRootfsExport(oldSpec, state.migrationId);
+      if (capture.containerId !== state.oldContainerId) throw error('migration_source_changed', 'The export archive belongs to another container');
+      mark('exported', { export: capture });
+    }
+    if (!reached('materialized')) {
+      step(op, 'materialize', null);
+      await storage.materializeMigratedDisk(candidate(), state.export);
+      mark('materialized');
+    }
+    /** The candidate is the ONLY thing this undoes. The disk and the archive are kept for diagnosis, the
+     *  runtime row is still bound to the old container, and an environment that was running goes back up
+     *  on it. Dropping the candidate receipts is what lets a later retry build a fresh envelope over the
+     *  disk that is already materialized. */
+    const rollback = async (cause) => {
+      try {
+        if (await podman.containerExists(candidate())) {
+          const observed = await podman.inspect(candidate());
+          if (observed?.state === 'paused') await podman.unpause(candidate());
+          if (observed && ['running', 'paused', 'stopping'].includes(observed.state)) await podman.stop(candidate());
+          await podman.remove(candidate());
+        }
+        for (const name of ['candidate-created', 'candidate-booted']) done.delete(name);
+        delete state.candidateSpec.containerId;
+        delete state.candidateClaimed;
+        delete state.candidateContainerId;
+        state.done = [...done];
+        checkpoint(op, { migration: state });
+        store.log(row.kind, row.resource_id, `migrate-disk candidate removed and rolled back: ${cause.message}`);
+        if (state.wasRunning) {
+          if (row.kind === 'site') await sites.beforeStart(row.resource_id);
+          if ((await podman.inspect(oldSpec))?.state !== 'running') await podman.start(oldSpec);
+          if ((await podman.inspect(oldSpec))?.state !== 'running') throw new Error('the legacy container did not restart');
+          if (row.kind === 'project') {
+            await podman.waitForSystemBus(oldSpec);
+            await establishPublications(old);
+          }
+        }
+      } catch (failure) { throw new AggregateError([cause, failure], `${cause.message}; rollback to the legacy container failed: ${failure.message}`); }
+      throw cause;
+    };
+    if (!reached('candidate-created')) {
+      try {
+        step(op, 'storage');
+        await storage.prepare(candidate());
+        step(op, 'container');
+        const existing = await podman.containerExists(candidate()) ? await podman.inspect(candidate()) : null;
+        if (existing && !state.candidateClaimed) throw error('migration_candidate_unclaimed', 'A candidate container exists without this migration checkpoint');
+        if (!state.candidateClaimed) { state.candidateClaimed = true; checkpoint(op, { migration: state }); }
+        if (row.kind === 'site' && !existing) await sites.beforeCreate?.(row.resource_id);
+        const created = existing ?? await podman.create(candidate());
+        state.candidateSpec.containerId = created.id;
+        mark('candidate-created', { candidateContainerId: created.id });
+      } catch (cause) { await rollback(cause); }
+    }
+    if (!reached('candidate-booted')) {
+      try {
+        step(op, 'boot');
+        if (state.wasRunning) {
+          if (row.kind === 'site') await sites.beforeStart(row.resource_id);
+          if ((await podman.inspect(candidate()))?.state !== 'running') await podman.start(candidate());
+          if ((await podman.inspect(candidate()))?.state !== 'running') throw error('migration_start_failed', 'The migrated candidate container did not start');
+          step(op, 'verify', null);
+          if (row.kind === 'project') {
+            await podman.waitForSystemBus(candidate());
+            await podman.systemRunning(candidate());
+          } else await verifySiteReadiness(row, candidate());
+        }
+        mark('candidate-booted');
+      } catch (cause) { await rollback(cause); }
+    }
+    if (!reached('switched')) {
+      step(op, 'switch');
+      store.transaction(() => {
+        row.spec = state.candidateSpec;
+        row.generation = row.spec.input.generation;
+        row.state = state.wasRunning ? 'running' : 'stopped';
+        row.error = null;
+        store.save(row);
+        // `switched` is also what recovery reads to know which generation a resumed operation belongs to.
+        checkpoint(op, { switched: true, newSpec: state.candidateSpec });
+        mark('switched');
+      });
+      if (row.kind === 'project' && state.wasRunning) await establishPublications(row);
+    }
+    if (!reached('legacy-removed')) {
+      step(op, 'cleanup');
+      const observed = await podman.containerExists(oldSpec) ? await podman.inspect(oldSpec) : null;
+      if (observed) {
+        if (observed.state === 'paused') await podman.unpause(oldSpec);
+        if (['running', 'paused', 'stopping'].includes(observed.state)) await podman.stop(oldSpec);
+        await podman.remove(oldSpec);
+      }
+      mark('legacy-removed');
+    }
+    if (!reached('complete')) {
+      // Nothing can read the archive any more: the disk is active, the candidate answered and the legacy
+      // envelope is gone. A failed migration never reaches here and keeps its archive.
+      await storage.discardRootfsExport(oldSpec, state.migrationId);
+      mark('complete');
+    }
+  }
+
   async function perform(row, op) {
     const kind = op.action.kind;
-    if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore'].includes(kind)) {
+    if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore', 'migrate-disk'].includes(kind)) {
       step(op, 'quiesce');
       await cancelLeases(row);
       await transfers.quiesce({ row });
@@ -985,7 +1206,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         const next = JSON.parse(JSON.stringify(old.spec));
         const reserved = db.prepare("SELECT MAX(json_extract(checkpoint_json,'$.newSpec.input.generation')) AS generation FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?").get(row.kind, row.resource_id);
         next.input.generation = Math.max(old.generation, Number(reserved?.generation ?? 0)) + 1;
-        next.input.image = manifest.image.reference; next.creationLimits = next.input.limits;
+        if (manifest.version === 2) {
+          if (!old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A disk snapshot requires a rootfs-backed environment');
+          next.input.image = manifest.sourceImage.reference;
+          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image }, diskPathsFor(next), randomUUID().replaceAll('-', ''));
+        } else {
+          if (old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A legacy snapshot requires a legacy environment');
+          next.input.image = manifest.image.reference;
+        }
+        next.creationLimits = next.input.limits;
         delete next.containerId;
         checkpoint(op, { newSpec: next });
       }
@@ -998,7 +1227,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       let target = specFor(op.checkpoint.newSpec);
       step(op, 'import');
       if (!op.checkpoint.imported) {
-        if (row.kind === 'site' && op.action.restoreData === false) {
+        if (row.kind === 'site' && op.action.restoreData === false && !target.disk) {
           const backupId = `preserve-${op.id.slice(4)}`;
           await snapshot(old, op, backupId, 'Restore data checkpoint');
           await storage.readSnapshot(specFor(old.spec), backupId);
@@ -1041,6 +1270,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       step(op, 'cleanup');
       if (await podman.inspect(specFor(old.spec))) await podman.remove(specFor(old.spec));
       // Old volumes are retained until explicit Project deletion, providing a non-destructive rollback checkpoint.
+    } else if (kind === 'migrate-disk') {
+      await migrateDisk(row, op);
     } else if (kind === 'limits') {
       step(op, 'apply');
       if (!stores().usersRead.isAdmin(op.user_id)) throw error('admin_required', 'Resource-limit authority was revoked', 403);
@@ -1077,7 +1308,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         const owned = specFor(JSON.parse(saved.spec_json), true);
         const manifest = JSON.parse(saved.manifest_json);
         if (manifest.retained) await podman.removeRetainedSiteImage(owned, manifest.image.reference, manifest.image.id);
-        else await podman.removeSnapshotImage(owned, manifest.snapshotId);
+        else if (manifest.version !== 2) await podman.removeSnapshotImage(owned, manifest.snapshotId);
       }
       step(op, 'volumes');
       for (const recipe of recipes.values()) {
@@ -1085,6 +1316,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
       }
       step(op, 'storage');
+      for (const saved of snapshots) await podman.removeSnapshotStorage(specFor(JSON.parse(saved.spec_json), true), JSON.parse(saved.manifest_json).snapshotId);
+      const ownedSpecs = [...recipes.values()].map((recipe) => specFor(recipe, true));
+      const disks = new Map(ownedSpecs.filter((owned) => owned.disk).map((owned) => [owned.disk.id, owned]));
+      for (const disk of disks.values()) await storage.removeDisk(disk, ownedSpecs);
       await podman.removeStorage(spec);
       checkpoint(op, { storageRemoved: true });
       step(op, 'records');
