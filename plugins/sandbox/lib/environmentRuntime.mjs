@@ -317,7 +317,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     account(input.accountUserId, true);
     if (kind === 'project' && releasingAdoptions.has(Number(id))) throw error('environment_busy', 'An adopted workspace is being released');
     const requested = action(input.action, kind);
-    await rowFor(kind, id, input.accountUserId, true, false, input.handover === true && requested.kind === 'delete');
+    const bindingHandover = kind === 'site' && requested.kind === 'delete' && input.handover === true;
+    await rowFor(kind, id, input.accountUserId, true, false, bindingHandover);
     if (requested.kind === 'delete' && kind === 'project') await assertNoPublishedSites(id);
     if (input.requestId !== undefined && !isRequestId(input.requestId)) throw error('invalid_request_id', 'Invalid idempotency key', 400);
     return store.transaction(() => {
@@ -328,23 +329,35 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       let active = store.active(kind, id);
       const prior = input.requestId ? store.prior(kind, id, input.accountUserId, input.requestId) : null;
       if (prior && !same(prior.action, requested)) throw error('request_conflict', 'Idempotency key belongs to another action');
-      if (prior && prior.status !== 'failed') return operationView(prior);
+      if (prior && prior.status !== 'failed') {
+        if (bindingHandover && prior.checkpoint.bindingHandover !== true) {
+          prior.checkpoint.bindingHandover = true;
+          store.saveOperation(prior);
+        }
+        return operationView(prior);
+      }
       assertGeneration(row, input.expectedGeneration);
       if (requested.kind === 'limits' && !stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change resource limits', 403);
       if (row.state === 'deleted') throw error('environment_deleted', 'The environment has been deleted');
       if (row.desired_state === 'deleted' && requested.kind !== 'delete') throw error('environment_deleting', 'The environment is deleting');
       if (prior) {
+        if (bindingHandover) prior.checkpoint.bindingHandover = true;
         if (!active) { prior.status = 'pending'; prior.error = null; store.saveOperation(prior); }
+        else if (bindingHandover) store.saveOperation(prior);
         return operationView(prior);
       }
       if (active?.status === 'pending' && active.checkpoint.autoRecovery && ['stop', 'delete'].includes(requested.kind)) {
         active.status = 'failed'; active.error = `Superseded by explicit ${requested.kind}`; store.saveOperation(active); active = null;
       }
       if (active) {
-        if (!input.requestId && active.user_id === input.accountUserId && same(active.action, requested)) return operationView(active);
+        if (!input.requestId && active.user_id === input.accountUserId && same(active.action, requested)) {
+          if (bindingHandover) { active.checkpoint.bindingHandover = true; store.saveOperation(active); }
+          return operationView(active);
+        }
         throw error('environment_busy', 'An environment lifecycle operation is already pending');
       }
       const op = store.enqueue(row, input.accountUserId, requested, input.requestId);
+      if (bindingHandover) op.checkpoint.bindingHandover = true;
       if (requested.kind === 'delete') {
         if (kind === 'project' && !stores().projects.beginDeletion(Number(id))) throw error('project_deletion_changed', 'Core Project deletion intent could not be recorded');
         row.desired_state = 'deleted'; row.state = 'deleting';
@@ -1152,7 +1165,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
             op.status = 'succeeded'; op.error = null; op.percent = 100; store.saveOperation(op); publishOperation(op);
             continue;
           }
-          const row = op.user_id === null ? await siteCleanup.rowForOperation(op) : await rowFor(op.kind, op.resource_id, op.user_id, true, true);
+          const row = op.user_id === null ? await siteCleanup.rowForOperation(op) : await rowFor(op.kind, op.resource_id, op.user_id, true, true,
+            op.kind === 'site' && op.action.kind === 'delete' && op.checkpoint.bindingHandover === true);
           const expected = op.checkpoint.switched ? op.checkpoint.newSpec.input.generation : op.generation;
           if (row.generation !== expected) throw error('generation_changed', 'Queued environment generation changed');
           store.log(row.kind, row.resource_id, `${op.action.kind} started (${op.id})`);

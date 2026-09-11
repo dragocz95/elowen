@@ -755,13 +755,19 @@ describe('site environment tombstones', () => {
     return { ...state, registration, changeBinding: () => { current = { ...registration, sourcePath: join(state.root, 'moved-sources') }; } };
   }
 
-  it('accepts a Site delete handover after its trusted binding changed', async () => {
-    const { runtime, changeBinding } = mismatchedSite();
+  it('completes a Site delete handover after its trusted binding changed', async () => {
+    const { runtime, db, changeBinding } = mismatchedSite();
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
     changeBinding();
 
-    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-delete',
-      handover: true, action: { kind: 'delete' } })).resolves.toMatchObject({ action: { kind: 'delete' } });
+    const requested = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-delete',
+      handover: true, action: { kind: 'delete' } });
+    await runtime.reconcile();
+
+    await expect(runtime.siteEnvironmentOperation({ operationId: requested.id, accountUserId: 1 }))
+      .resolves.toMatchObject({ status: 'succeeded', action: { kind: 'delete' } });
+    expect(db.prepare("SELECT state,desired_state,error FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get())
+      .toEqual({ state: 'deleted', desired_state: 'deleted', error: null });
   });
 
   it('rejects a Site start handover after its trusted binding changed', async () => {
