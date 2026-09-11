@@ -222,13 +222,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = same(input.limits, record.input.limits) ? base : withContainerLimits(base, record.input.limits);
     return record.containerId ? bindContainerIdentity(spec, record.containerId) : spec;
   }
-  async function rowFor(kind, id, userId, manage = false, internal = false) {
+  async function rowFor(kind, id, userId, manage = false, internal = false, allowBindingHandover = false) {
     const authority = await authorize(kind, id, userId, manage, internal);
     let row = store.get(kind, id);
     if (kind === 'site') {
       if (!row) throw error('site_not_registered', 'Register the trusted Site binding before requesting lifecycle work');
       const binding = (value) => Object.fromEntries(Object.entries(value).filter(([key]) => !['limits', 'initialIntent', 'snapshotRetention', 'staging'].includes(key)).sort(([a], [b]) => a.localeCompare(b)));
-      if (!same(binding(authority), binding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
+      if (!allowBindingHandover && !same(binding(authority), binding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
     }
     if (row && kind === 'project' && !row.spec.input.workspaceTarget) {
       // A row created before project mounts carried a name was built against `/workspace`. Fill in the
@@ -317,7 +317,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     account(input.accountUserId, true);
     if (kind === 'project' && releasingAdoptions.has(Number(id))) throw error('environment_busy', 'An adopted workspace is being released');
     const requested = action(input.action, kind);
-    await rowFor(kind, id, input.accountUserId, true);
+    await rowFor(kind, id, input.accountUserId, true, false, input.handover === true && requested.kind === 'delete');
     if (requested.kind === 'delete' && kind === 'project') await assertNoPublishedSites(id);
     if (input.requestId !== undefined && !isRequestId(input.requestId)) throw error('invalid_request_id', 'Invalid idempotency key', 400);
     return store.transaction(() => {

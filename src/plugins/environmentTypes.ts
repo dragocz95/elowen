@@ -202,7 +202,7 @@ export interface SiteEnvironmentControl {
   connectSitesRuntime(authority: SiteRuntimeAuthority): void;
   registerSiteEnvironment(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
   siteEnvironmentFor(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
-  requestSiteEnvironment(input: { siteId: string; accountUserId: number; action: SiteEnvironmentAction; expectedGeneration?: number; requestId?: string }): Promise<SiteEnvironmentOperation>;
+  requestSiteEnvironment(input: { siteId: string; accountUserId: number; action: SiteEnvironmentAction; expectedGeneration?: number; requestId?: string; handover?: boolean }): Promise<SiteEnvironmentOperation>;
   siteEnvironmentOperation(input: { operationId: string; accountUserId: number }): Promise<SiteEnvironmentOperation | null>;
   siteEnvironmentExec(input: { siteId: string; accountUserId: number; command: string; workdir?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<{ stdout: string; stderr: string; code: number; truncated: boolean }>;
   siteEnvironmentLogs(input: { siteId: string; accountUserId: number; lines?: number }): Promise<{ lifecycle: string; journal: string }>;

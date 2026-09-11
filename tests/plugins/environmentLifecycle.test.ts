@@ -743,6 +743,44 @@ describe('site environment tombstones', () => {
     await runtime.reconcile();
     expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 2 });
   });
+
+  function mismatchedSite() {
+    const state = setup();
+    const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared' as const,
+      workspaceReadOnly: false, sitesDataDir: join(state.root, 'sites'), sourcePath: join(state.root, 'sources'), brokerDir: join(state.root, 'brokers'),
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
+    let current = registration;
+    mkdirSync(registration.sourcePath, { recursive: true });
+    state.runtime.connectSitesRuntime({ resolve: async () => current, beforeStart: async () => {}, afterStop: async () => {} });
+    return { ...state, registration, changeBinding: () => { current = { ...registration, sourcePath: join(state.root, 'moved-sources') }; } };
+  }
+
+  it('accepts a Site delete handover after its trusted binding changed', async () => {
+    const { runtime, changeBinding } = mismatchedSite();
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    changeBinding();
+
+    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-delete',
+      handover: true, action: { kind: 'delete' } })).resolves.toMatchObject({ action: { kind: 'delete' } });
+  });
+
+  it('rejects a Site start handover after its trusted binding changed', async () => {
+    const { runtime, changeBinding } = mismatchedSite();
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    changeBinding();
+
+    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-start',
+      handover: true, action: { kind: 'start' } })).rejects.toMatchObject({ code: 'site_binding_changed' });
+  });
+
+  it('rejects a Site delete without handover after its trusted binding changed', async () => {
+    const { runtime, changeBinding } = mismatchedSite();
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    changeBinding();
+
+    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'ordinary-delete',
+      action: { kind: 'delete' } })).rejects.toMatchObject({ code: 'site_binding_changed' });
+  });
 });
 
 describe('durable project publications', () => {
