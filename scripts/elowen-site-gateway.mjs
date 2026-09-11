@@ -1,10 +1,11 @@
 #!/usr/bin/node
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
-  chmodSync, chownSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync,
-  renameSync, rmSync, writeFileSync,
+  chmodSync, chownSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync,
+  readdirSync, realpathSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
 export const NGINX_PATH = '/etc/nginx/conf.d/elowen-sites-gateway.conf';
@@ -395,7 +396,9 @@ function defaultCommandRunner(file, args) {
 
 export function helperRequestFields(request) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) fail('request is invalid');
-  const fields = Object.keys(request);
+  // `domain` is the transport discriminator, not an operation argument: the daemon sends it on every
+  // request, and it has already been validated before dispatch.
+  const fields = Object.keys(request).filter((field) => field !== 'domain');
   if (request.op !== 'environments-status' && request.op !== 'environments-provision') {
     fail('environment operation is invalid');
   }
@@ -710,8 +713,778 @@ function runtimeSocketRequest(request) {
   fail('runtime socket operation is not supported');
 }
 
+/* ===========================================================================
+ * nspawn domain
+ *
+ * One executable, one sudoers line, two typed domains. Every request carries `domain`; the dispatch
+ * tables, the validation and the readiness rows below are separate from the Sites ones above and share
+ * nothing but the transport and the root-owned deployment record.
+ *
+ * The boundary guarded here is the HOST: which operation runs, which Elowen machine it targets, which
+ * host paths it derives, and that nothing escapes into the host. Everything on the guest side of that
+ * line is intended capability — running an arbitrary command inside a managed environment is what the
+ * environment is for, so `exec` treats the guest argv as opaque payload.
+ * =========================================================================== */
+
+/** A machine name is `<namespace>-<kind>-<id>-g<generation>`, already the container name the runtime
+ *  uses. The pattern admits only lowercase letters, digits and dashes, so the value is a single safe
+ *  filename component for the per-machine `.nspawn` file and unit drop-in — it is never used to derive
+ *  a DISK path, which always comes from the trusted storage roots plus a validated resource and disk id. */
+const NSPAWN_MACHINE = /^elowen-(project|site)-[a-z0-9-]{1,64}-g[0-9]{1,9}$/;
+/** The guest unit `systemd-run` creates inside the machine; bounded so it cannot be read as an option. */
+const NSPAWN_EXECUTION_UNIT = /^[a-zA-Z0-9][a-zA-Z0-9:_.-]{0,190}\.service$/;
+const SAFE_RESOURCE_TOKEN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SAFE_SHA256 = /^[a-f0-9]{64}$/;
+const SAFE_GUEST_MOUNT = /^\/[a-z0-9][a-z0-9-]{0,63}(?:\/[a-z0-9][a-z0-9-]{0,63})?$/;
+
+export const NSPAWN_PACKAGE = 'systemd-container';
+export const MACHINE_UNIT_PATH = '/etc/systemd/system/elowen-machine@.service';
+export const POLKIT_RULE_PATH = '/etc/polkit-1/rules.d/49-elowen-nspawn.rules';
+const NSPAWN_SETTINGS_ROOT = '/etc/systemd/nspawn';
+const NSPAWN_UID_STATE_PATH = '/var/lib/elowen/nspawn-uid-ranges.json';
+const PYTHON = '/usr/bin/python3';
+
+/** Each environment owns a FIXED host uid range, allocated once and recorded in the disk identity. A
+ *  per-boot range would re-chown the whole rootfs every time a tree is cloned; a fixed one makes the
+ *  ownership pass one-time and boots deterministic. The base is far above every real host account. */
+const UID_RANGE_BASE = 1_073_741_824;
+const UID_RANGE_SIZE = 65_536;
+const UID_RANGE_SLOTS = 4_096;
+
+const EXEC_ARGUMENT_LIMIT = 256;
+const EXEC_ARGUMENT_BYTES = 64 * 1024;
+const EXEC_OUTPUT_LIMIT = 16 * 1024 * 1024;
+const EXEC_MAX_SECONDS = 15 * 60;
+/** Grace over `RuntimeMaxSec` so systemd's own stop (TimeoutStopSec=5s) is what ends a timed-out
+ *  execution; this backstop only covers a `systemd-run` that never returns at all. */
+const EXEC_GRACE_SECONDS = 10;
+
+/** Denied to the guest on top of nspawn's default bound. Every one of these is also denied by rootless
+ *  Podman's default set, so this is the capability parity the Podman runtime already provides. */
+const NSPAWN_DROP_CAPABILITIES = Object.freeze([
+  'CAP_AUDIT_CONTROL', 'CAP_AUDIT_READ', 'CAP_SYS_PTRACE', 'CAP_SYS_TTY_CONFIG', 'CAP_LEASE',
+  'CAP_LINUX_IMMUTABLE', 'CAP_IPC_LOCK', 'CAP_IPC_OWNER', 'CAP_BLOCK_SUSPEND', 'CAP_WAKE_ALARM',
+  'CAP_SYSLOG', 'CAP_MAC_ADMIN', 'CAP_MAC_OVERRIDE', 'CAP_SYS_MODULE', 'CAP_SYS_RAWIO',
+  'CAP_SYS_TIME', 'CAP_SYS_PACCT',
+]);
+
+/** The shipped `systemd-nspawn@.service` hardcodes `/var/lib/machines/%i`, which the disk layout does
+ *  not use, so the envelope is our own template: the same unit with the directory taken from the
+ *  per-machine drop-in, no journal link into the host, and `--settings=override` so the `.nspawn` file
+ *  wins over the unit's own command line. */
+export const MACHINE_UNIT_TEMPLATE = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+[Unit]
+Description=Elowen machine %i
+Documentation=man:systemd-nspawn(1)
+Wants=modprobe@tun.service modprobe@loop.service modprobe@dm_mod.service
+PartOf=machines.target
+Before=machines.target
+After=network.target modprobe@tun.service modprobe@loop.service modprobe@dm_mod.service
+
+[Service]
+ExecStart=systemd-nspawn --quiet --keep-unit --boot --link-journal=no --settings=override --directory=\${ELOWEN_MACHINE_DIRECTORY} --machine=%i
+KillMode=mixed
+Type=notify
+RestartForceExitStatus=133
+SuccessExitStatus=133
+Slice=machine.slice
+Delegate=yes
+DelegateSubgroup=supervisor
+TasksMax=16384
+WatchdogSec=3min
+DevicePolicy=closed
+DeviceAllow=char-pts rw
+DeviceAllow=/dev/net/tun rwm
+`;
+
+/** The lifecycle runs as the service user with no sudo, over this rule. It is scoped to units named
+ *  `elowen-machine@elowen-*` and to the four verbs the runtime issues; every other unit and verb falls
+ *  through to the system default, so restarting an unrelated service stays refused. */
+export function renderPolkitRule(user) {
+  if (!SAFE_USER.test(user) || user === 'root') fail('the invoking service user cannot be determined');
+  return `// Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "${user}") return polkit.Result.NOT_HANDLED;
+    if (action.id !== "org.freedesktop.systemd1.manage-units") return polkit.Result.NOT_HANDLED;
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+    if (!unit || unit.indexOf("elowen-machine@elowen-") !== 0) return polkit.Result.NOT_HANDLED;
+    if (verb === "start" || verb === "stop" || verb === "restart" || verb === "set-property") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});
+`;
+}
+
+/** veth is off by default: a veth machine can address the host at the gateway address, which the Podman
+ *  runtime's `allow_host_loopback=false` does not expose. These two rules are the condition for enabling
+ *  it, they are reported and never applied — the daemon does not mutate the firewall. */
+export const NSPAWN_FIREWALL_RULES = Object.freeze([
+  Object.freeze({
+    id: 'firewall:docker-user',
+    label: 'Container forwarding rule',
+    chain: 'DOCKER-USER',
+    rule: '-i ve-+ -j ACCEPT',
+    detail: "without it Docker's FORWARD DROP silently kills all machine networking",
+  }),
+  Object.freeze({
+    id: 'firewall:host-guard',
+    label: 'Machine-to-host forwarding guard',
+    chain: 'FORWARD',
+    rule: '-i ve-+ -d 127.0.0.0/8 -j DROP',
+    detail: 'without it a veth machine can address the host at the gateway address',
+  }),
+]);
+
+export function machineUnitFor(machine) {
+  if (typeof machine !== 'string' || !NSPAWN_MACHINE.test(machine)) fail('the machine name is invalid');
+  return `elowen-machine@${machine}.service`;
+}
+
+function trustedStorageRoot(value) {
+  if (typeof value !== 'string' || !value.startsWith('/') || normalize(value) !== value || value.endsWith('/')
+    || /[\0\r\n,:]/.test(value) || value.split('/').length < 3) fail('a trusted storage root is invalid');
+  return value;
+}
+
+/** The storage roots the nspawn operations derive every path from. They live in the same root-owned
+ *  record as the Sites deployment and are never accepted from a request. Reading them is deliberately
+ *  independent of the Sites half of that record: an instance with no published-sites domain still runs
+ *  environments. */
+export function storageRootsFrom(raw) {
+  const storage = raw && typeof raw === 'object' ? raw.storage : null;
+  if (!storage || typeof storage !== 'object') fail('the deployment record carries no trusted storage roots');
+  return Object.freeze({
+    sandboxDataDir: trustedStorageRoot(storage.sandboxDataDir),
+    sitesDataDir: trustedStorageRoot(storage.sitesDataDir),
+  });
+}
+
+function readStorageRoots() {
+  return storageRootsFrom(JSON.parse(readFileSync(DEPLOYMENT_PATH, 'utf8')));
+}
+
+/** Mirrors `createEnvironmentDiskSpec` in the Sandbox plugin, which is the single owner of this layout;
+ *  a standalone root helper cannot import it, and `tests/contract/nspawnHelper.test.ts` keeps the two in
+ *  step. Nothing here comes from the request but a resource id, a disk id and a component generation,
+ *  each validated as a value rather than as a path. */
+export function nspawnDiskPaths(storage, location) {
+  const kind = location?.resource?.kind;
+  const id = location?.resource?.id;
+  if (kind === 'project') {
+    if (!Number.isSafeInteger(id) || id < 1) fail('the resource id is invalid');
+  } else if (kind === 'site') {
+    if (typeof id !== 'string' || !SAFE_RESOURCE_TOKEN.test(id)) fail('the resource id is invalid');
+  } else {
+    fail('the resource kind is invalid');
+  }
+  if (typeof location.diskId !== 'string' || !SAFE_RESOURCE_TOKEN.test(location.diskId)) fail('the disk id is invalid');
+  const generation = location.componentGeneration;
+  if (generation !== undefined && (!Number.isSafeInteger(generation) || generation < 1 || generation > 1_000_000_000)) {
+    fail('the component generation is invalid');
+  }
+  const storageRoot = kind === 'project'
+    ? join(storage.sandboxDataDir, 'projects', String(id))
+    : join(storage.sitesDataDir, id, 'environment');
+  const directory = join(storageRoot, 'disks', location.diskId);
+  return Object.freeze({
+    kind,
+    id,
+    diskId: location.diskId,
+    storageRoot,
+    directory,
+    // A disk migrated from an older generation keeps its durable component directories where they
+    // already are; only the root filesystem moved into the disk directory.
+    componentRoot: generation === undefined ? directory : join(storageRoot, 'storage', String(generation)),
+    rootfs: join(directory, 'rootfs'),
+    identity: join(directory, '.elowen', 'identity.json'),
+  });
+}
+
+const NSPAWN_COMPONENTS = Object.freeze({ project: ['workspace', 'home', 'data'], site: ['data'] });
+
+/** The component allow-list is fixed per resource kind. `disk` names the disk directory itself, which is
+ *  what removal walks; `broker` is the Sites ingress directory, which this helper already owns. */
+export function nspawnComponentPath(paths, component) {
+  if (component === 'rootfs') return paths.rootfs;
+  if (component === 'disk') return paths.directory;
+  if (component === 'broker') {
+    return paths.kind === 'project' ? join(paths.storageRoot, 'broker') : dirname(runtimeSocketPathFor(paths.id));
+  }
+  if (!NSPAWN_COMPONENTS[paths.kind].includes(component)) fail('the disk component is invalid');
+  return join(paths.componentRoot, component);
+}
+
+/** Walk every ancestor without following a symlink. The storage roots are root-owned configuration, but
+ *  the directories under them are written by the service user and by guests, so a symlink planted
+ *  anywhere along the path would redirect a root-owned copy, chown or removal. */
+function checkedStoragePath(path, { create = false } = {}) {
+  const parts = path.slice(1).split('/');
+  let current = '';
+  for (const part of parts) {
+    current += `/${part}`;
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT' || !create) throw error;
+      mkdirSync(current, { mode: 0o700 });
+      stat = lstatSync(current);
+    }
+    if (stat.isSymbolicLink()) fail('a symlink appears in a trusted storage path');
+    if (!stat.isDirectory()) fail('a trusted storage path is not a directory');
+  }
+  return path;
+}
+
+/** The `systemd-run` command line, built here and never taken from the request. The guest argv is opaque
+ *  payload: it is placed after `--`, where it can no longer be read as an option, and passed through
+ *  untouched. The bounds below are transport hygiene — they protect the command line and the pipe, not
+ *  the guest — and are the same ones the Podman runtime applies today. */
+export function nspawnExecArgs(request) {
+  const machine = typeof request.machine === 'string' && NSPAWN_MACHINE.test(request.machine) ? request.machine : fail('the machine name is invalid');
+  const unit = typeof request.unit === 'string' && NSPAWN_EXECUTION_UNIT.test(request.unit) ? request.unit : fail('the execution unit name is invalid');
+  const argv = request.argv;
+  if (!Array.isArray(argv) || argv.length === 0 || argv.length > EXEC_ARGUMENT_LIMIT
+    || argv.some((argument) => typeof argument !== 'string' || argument.includes('\0'))
+    || argv.reduce((bytes, argument) => bytes + Buffer.byteLength(argument), 0) > EXEC_ARGUMENT_BYTES
+    || !argv[0].startsWith('/')) {
+    fail('the guest command arguments are invalid');
+  }
+  const cwd = request.cwd;
+  if (typeof cwd !== 'string' || !cwd.startsWith('/') || /[\0\r\n]/.test(cwd) || cwd.length > 4096) {
+    fail('the guest working directory is invalid');
+  }
+  const seconds = request.timeoutSeconds;
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > EXEC_MAX_SECONDS) fail('the execution timeout is invalid');
+  return [
+    '-M', machine, '--quiet', '--pipe', '--wait', '--collect', `--unit=${unit}`,
+    '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s',
+    '--property=TasksMax=infinity', `--property=RuntimeMaxSec=${seconds}s`,
+    `--working-directory=${cwd}`, '--', ...argv,
+  ];
+}
+
+/** stdin is INHERITED, not buffered: the entry point read the request header with exact byte counts and
+ *  left the remainder of the pipe untouched, so the guest receives its own input directly. stdout and
+ *  stderr stay separate and are returned base64-encoded, because the response itself travels on stdout. */
+function nspawnExec(request, options) {
+  const args = nspawnExecArgs(request);
+  const run = options.spawn ?? spawnSync;
+  const result = run('/usr/bin/systemd-run', args, {
+    stdio: ['inherit', 'pipe', 'pipe'],
+    timeout: (request.timeoutSeconds + EXEC_GRACE_SECONDS) * 1000,
+    killSignal: 'SIGKILL',
+    maxBuffer: EXEC_OUTPUT_LIMIT,
+    env: { PATH: SYSTEM_PATH },
+  });
+  const code = result.error && typeof result.error === 'object' ? result.error.code : undefined;
+  const truncated = code === 'ENOBUFS';
+  const timedOut = code === 'ETIMEDOUT';
+  if (code !== undefined && !truncated && !timedOut) fail(`the machine execution could not start: ${result.error.message}`);
+  const encode = (value) => Buffer.from(value ?? '').toString('base64');
+  return {
+    ok: true,
+    exitCode: Number.isSafeInteger(result.status) ? result.status : null,
+    signal: result.signal ?? null,
+    timedOut,
+    truncated,
+    stdout: encode(result.stdout),
+    stderr: encode(result.stderr),
+  };
+}
+
+function readUidRanges() {
+  try {
+    const value = JSON.parse(readFileSync(NSPAWN_UID_STATE_PATH, 'utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Allocate the environment's fixed range once and record it. The registry is the single owner of the
+ *  allocation: deriving a range from the disk id instead would let two disks collide, and a collision
+ *  means one machine's files are owned by another machine's guest root. */
+function uidRangeFor(paths, writeAtomic) {
+  const key = `${paths.kind}:${paths.id}:${paths.diskId}`;
+  const ranges = readUidRanges();
+  const recorded = ranges[key];
+  if (Number.isSafeInteger(recorded)) return recorded;
+  const taken = new Set(Object.values(ranges).filter((value) => Number.isSafeInteger(value)));
+  for (let slot = 0; slot < UID_RANGE_SLOTS; slot++) {
+    const base = UID_RANGE_BASE + slot * UID_RANGE_SIZE;
+    if (taken.has(base)) continue;
+    ranges[key] = base;
+    writeAtomic(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+    return base;
+  }
+  return fail('no machine uid range is available');
+}
+
+/** Shift a tree onto the machine's own uid range. `offset` is the freshly extracted case, where the
+ *  archive carries guest-relative ids; `subid` is the migration case, where the tree was extracted
+ *  inside `podman unshare` and carries the service user's subordinate ids. Nothing is copied. */
+const OWNERSHIP_SHIFT_PY = `import json,os,sys
+spec=json.loads(sys.argv[1]); root=sys.argv[2]; base=spec['base']; size=spec['size']
+def guest(uid):
+ if spec['mode']=='offset':
+  if uid<0 or uid>=size: raise SystemExit('id %d is outside the guest range' % uid)
+  return uid
+ if uid==spec['serviceId']: return 0
+ if spec['subStart']<=uid<=spec['subEnd']: return uid-spec['subStart']+1
+ raise SystemExit('id %d belongs to no known mapping' % uid)
+shifted=0
+for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+ for name in [os.curdir]+names+files:
+  path=os.path.join(directory,name); st=os.lstat(path)
+  os.lchown(path,base+guest(st.st_uid),base+guest(st.st_gid)); shifted+=1
+print(json.dumps({'entries':shifted}))`;
+
+function shiftOwnership(runner, root, spec) {
+  const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root]);
+  if (!result.ok) fail(`the machine ownership pass failed: ${String(result.stderr || '').slice(-400)}`);
+  return JSON.parse(String(result.stdout || '{}'));
+}
+
+/** The service user's own mapping, which a tree extracted inside `podman unshare` carries. */
+function subordinateRangeFor(readText, user) {
+  const entry = subidEntries(readText, '/etc/subuid').find((row) => row.name === user.name);
+  if (!entry) fail('the service user has no subordinate id range');
+  return { serviceId: user.uid, subStart: entry.start, subEnd: entry.end };
+}
+
+function nspawnIdentity(paths) {
+  try {
+    const value = JSON.parse(readFileSync(paths.identity, 'utf8'));
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeIdentity(paths, fields, writeAtomic) {
+  const identity = { ...(nspawnIdentity(paths) ?? {}), ...fields, updatedAt: new Date().toISOString() };
+  checkedStoragePath(dirname(paths.identity), { create: true });
+  writeAtomic(paths.identity, Buffer.from(`${JSON.stringify(identity, null, 2)}\n`), 0o600);
+  return identity;
+}
+
+function nspawnMaterialize(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const writeAtomic = options.writeAtomic ?? atomicWrite;
+  const paths = nspawnDiskPaths(storage, request);
+  checkedStoragePath(paths.directory, { create: true });
+  // The archive is where the daemon was told to put it, not where the request says: the only thing the
+  // request carries is the receipt proving this is the archive it prepared.
+  const archive = join(paths.directory, 'rootfs.tar');
+  if (typeof request.archiveDigest !== 'string' || !SAFE_SHA256.test(request.archiveDigest)) fail('the archive receipt is invalid');
+  if (!Number.isSafeInteger(request.archiveBytes) || request.archiveBytes < 1) fail('the archive receipt is invalid');
+  const stat = lstatSync(archive);
+  if (!stat.isFile() || stat.size !== request.archiveBytes) fail('the export archive does not match its receipt');
+  if (createHash('sha256').update(readFileSync(archive)).digest('hex') !== request.archiveDigest) {
+    fail('the export archive does not match its receipt');
+  }
+  const rootfs = checkedStoragePath(paths.rootfs, { create: true });
+  if (readdirSync(rootfs).length > 0) fail('the disk root filesystem is not empty');
+  const extracted = runner('/usr/bin/tar', [
+    '--extract', '--file', archive, '--directory', rootfs, '--numeric-owner', '--preserve-permissions', '--same-owner',
+  ]);
+  if (!extracted.ok) fail(`the root filesystem could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
+  // A machine id copied from the template would make every machine built from it the same host to
+  // systemd, journald and D-Bus. Truncated, systemd generates one on first boot.
+  const machineIdPath = join(checkedStoragePath(join(rootfs, 'etc')), 'machine-id');
+  if (existsSync(machineIdPath)) writeFileSync(machineIdPath, '');
+  const base = uidRangeFor(paths, writeAtomic);
+  const shifted = shiftOwnership(runner, rootfs, { mode: 'offset', base, size: UID_RANGE_SIZE });
+  rmSync(archive, { force: true });
+  const identity = writeIdentity(paths, {
+    namespace: 'elowen',
+    resource: { kind: paths.kind, id: paths.id },
+    diskId: paths.diskId,
+    runtime: 'nspawn',
+    uidBase: base,
+    uidCount: UID_RANGE_SIZE,
+  }, writeAtomic);
+  return { ok: true, rootfsPath: rootfs, uidBase: base, uidCount: UID_RANGE_SIZE, entries: shifted.entries, identity };
+}
+
+function nspawnShiftOwnership(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
+  const writeAtomic = options.writeAtomic ?? atomicWrite;
+  const env = options.env ?? process.env;
+  const paths = nspawnDiskPaths(storage, request);
+  const rootfs = checkedStoragePath(paths.rootfs);
+  const identity = nspawnIdentity(paths);
+  if (identity && identity.ownershipShifted === true) {
+    return { ok: true, rootfsPath: rootfs, uidBase: identity.uidBase, entries: 0, alreadyShifted: true };
+  }
+  const base = uidRangeFor(paths, writeAtomic);
+  const user = serviceUser(runner, env);
+  const shifted = shiftOwnership(runner, rootfs, { mode: 'subid', base, size: UID_RANGE_SIZE, ...subordinateRangeFor(readText, user) });
+  writeIdentity(paths, {
+    namespace: 'elowen',
+    resource: { kind: paths.kind, id: paths.id },
+    diskId: paths.diskId,
+    runtime: 'nspawn',
+    uidBase: base,
+    uidCount: UID_RANGE_SIZE,
+    ownershipShifted: true,
+  }, writeAtomic);
+  return { ok: true, rootfsPath: rootfs, uidBase: base, entries: shifted.entries, alreadyShifted: false };
+}
+
+function nspawnLimits(raw) {
+  if (!raw || typeof raw !== 'object') fail('the machine limits are invalid');
+  const { cpus, memoryMb, pidsLimit } = raw;
+  if (!Number.isFinite(cpus) || cpus <= 0 || cpus > 1024 || !Number.isSafeInteger(cpus * 1e6)) fail('the machine limits are invalid');
+  for (const value of [memoryMb, pidsLimit]) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > 2 ** 30) fail('the machine limits are invalid');
+  }
+  return { cpus, memoryMb, pidsLimit };
+}
+
+function nspawnBinds(paths, raw) {
+  if (!Array.isArray(raw) || raw.length > 8) fail('the machine binds are invalid');
+  return raw.map((entry) => {
+    if (!entry || typeof entry !== 'object') fail('the machine binds are invalid');
+    if (typeof entry.target !== 'string' || !SAFE_GUEST_MOUNT.test(entry.target)) fail('the machine binds are invalid');
+    if (entry.readOnly !== undefined && typeof entry.readOnly !== 'boolean') fail('the machine binds are invalid');
+    return { source: nspawnComponentPath(paths, entry.component), target: entry.target, readOnly: entry.readOnly === true };
+  });
+}
+
+/** `:rootidmap` gives the guest's root the identity of the directory's host owner, which is the same
+ *  semantics rootless Podman provides today: a file the guest writes appears on the host as the service
+ *  user, and a service-user file appears inside the machine as root. */
+export function renderMachineSettings(binds, { veth = false, uidBase }) {
+  if (!Number.isSafeInteger(uidBase) || uidBase < UID_RANGE_BASE) fail('the machine uid range is invalid');
+  const lines = [
+    '# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.',
+    '[Exec]',
+    // Ownership was applied once when the disk was materialized, so the boot does not repeat a chown
+    // over the whole tree.
+    `PrivateUsers=${uidBase}:${UID_RANGE_SIZE}`,
+    'PrivateUsersOwnership=off',
+    'NoNewPrivileges=yes',
+    `DropCapability=${NSPAWN_DROP_CAPABILITIES.join(' ')}`,
+    'LinkJournal=no',
+  ];
+  if (binds.length > 0) {
+    lines.push('', '[Files]');
+    for (const bind of binds) {
+      lines.push(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);
+    }
+  }
+  lines.push('', '[Network]', veth ? 'VirtualEthernet=yes' : 'Private=yes');
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderMachineDropIn(rootfsRealPath, limits, uidBase) {
+  return `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+[Service]
+Environment=ELOWEN_MACHINE_DIRECTORY=${rootfsRealPath}
+Environment=ELOWEN_MACHINE_UID_BASE=${uidBase}
+CPUQuota=${Math.round(limits.cpus * 100)}%
+MemoryMax=${limits.memoryMb}M
+TasksMax=${limits.pidsLimit}
+`;
+}
+
+function nspawnWriteEnvelope(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const writeAtomic = options.writeAtomic ?? atomicWrite;
+  const machine = typeof request.machine === 'string' && NSPAWN_MACHINE.test(request.machine) ? request.machine : fail('the machine name is invalid');
+  const paths = nspawnDiskPaths(storage, request);
+  const rootfs = checkedStoragePath(paths.rootfs);
+  const identity = nspawnIdentity(paths);
+  if (!identity || !Number.isSafeInteger(identity.uidBase)) fail('the disk has no recorded identity; materialize it first');
+  if (request.specHash !== undefined && (typeof request.specHash !== 'string' || !SAFE_SHA256.test(request.specHash))) {
+    fail('the specification hash is invalid');
+  }
+  if (request.veth !== undefined && typeof request.veth !== 'boolean') fail('the machine network request is invalid');
+  const limits = nspawnLimits(request.limits);
+  const binds = nspawnBinds(paths, request.binds ?? []);
+  const settings = renderMachineSettings(binds, { veth: request.veth === true, uidBase: identity.uidBase });
+  const dropIn = renderMachineDropIn(realpathSync(rootfs), limits, identity.uidBase);
+  const settingsPath = join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`);
+  const dropInPath = join('/etc/systemd/system', `elowen-machine@${machine}.service.d`, '10-elowen.conf');
+  writeAtomic(settingsPath, Buffer.from(settings), 0o644);
+  writeAtomic(dropInPath, Buffer.from(dropIn), 0o644);
+  runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
+  const envelopeDigest = createHash('sha256')
+    .update(JSON.stringify(['elowen', machine, paths.diskId, realpathSync(rootfs), settings, dropIn]))
+    .digest('hex');
+  writeIdentity(paths, {
+    machine,
+    unit: machineUnitFor(machine),
+    envelopeDigest,
+    ...(request.specHash === undefined ? {} : { specHash: request.specHash }),
+  }, writeAtomic);
+  return { ok: true, machine, unit: machineUnitFor(machine), settingsPath, dropInPath, envelopeDigest };
+}
+
+/* The tree primitives keep the Python implementations the Podman runtime already uses; only the process
+ * that runs them moves from `podman unshare` to this helper, because the rootfs is owned by the
+ * machine's uid range and the service user cannot read it. `tests/contract/nspawnHelper.test.ts`
+ * compares the inventory source with the runtime's own copy so the two cannot drift apart. */
+const DISK_TREE_INVENTORY_PY = `def inventory(root):
+ rows=[]; links={}
+ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+  names.sort(); files.sort()
+  for name in names+files:
+   path=os.path.join(directory,name); st=os.lstat(path); rel=os.path.relpath(path,root)
+   hardlink=''
+   if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
+    key=(st.st_dev,st.st_ino)
+    if key not in links: links[key]=len(links)
+    hardlink=links[key]
+   attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
+   rows.append([rel,stat.S_IFMT(st.st_mode),st.st_size if stat.S_ISREG(st.st_mode) else 0,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else ''])
+ return rows`;
+
+const DISK_TREE_COPY_SH = `set -eu
+source=$1; target=$2
+cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/
+${PYTHON} - "$source" "$target" <<'PY'
+import os,stat,sys
+${DISK_TREE_INVENTORY_PY}
+source_rows=inventory(sys.argv[1]); target_rows=inventory(sys.argv[2])
+if source_rows != target_rows:
+ print('Copied disk tree metadata inventory differs from source',file=sys.stderr); sys.exit(1)
+PY
+`;
+
+const DISK_TREE_FINGERPRINT_PY = `import hashlib,json,os,stat,sys
+root=sys.argv[1]
+h=hashlib.sha256(); logical=0; allocated=0; links={}
+for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+ names.sort(); files.sort()
+ for name in names+files:
+  path=os.path.join(directory,name); rel=os.path.relpath(path,root); st=os.lstat(path)
+  logical+=st.st_size; allocated+=st.st_blocks*512; hardlink=''
+  if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
+   key=(st.st_dev,st.st_ino)
+   if key not in links: links[key]=len(links)
+   hardlink=links[key]
+  attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
+  row=[rel,stat.S_IFMT(st.st_mode),st.st_size,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else '']
+  h.update(json.dumps(row,separators=(',',':')).encode()); h.update(b'\\n')
+print(json.dumps({'logicalBytes':logical,'allocatedBytes':allocated,'digest':h.hexdigest()}))`;
+
+const DISK_TREE_PREFLIGHT_PY = `import json,os,sys
+sources=json.loads(sys.argv[1]); destination=sys.argv[2]; required=0
+for root in sources:
+ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+  for name in names+files: required+=os.lstat(os.path.join(directory,name)).st_size
+margin=max(64*1024*1024,required//10); fs=os.statvfs(destination); free=fs.f_bavail*fs.f_frsize
+if free < required+margin:
+ print(f'Insufficient free space for disk copy: need {required+margin} bytes including margin, have {free}',file=sys.stderr); sys.exit(1)
+print(json.dumps({'requiredBytes':required,'marginBytes':margin,'freeBytes':free}))`;
+
+const DISK_TREE_SYNC_PY = `import os,stat,sys
+root=sys.argv[1]
+for directory,names,files in os.walk(root,topdown=False,followlinks=False):
+ for name in files:
+  path=os.path.join(directory,name); st=os.lstat(path)
+  if stat.S_ISREG(st.st_mode):
+   fd=os.open(path,os.O_RDONLY); os.fsync(fd); os.close(fd)
+ fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY); os.fsync(fd); os.close(fd)`;
+
+export const DISK_TREE_SCRIPTS = Object.freeze({
+  inventory: DISK_TREE_INVENTORY_PY,
+  fingerprint: DISK_TREE_FINGERPRINT_PY,
+  preflight: DISK_TREE_PREFLIGHT_PY,
+  sync: DISK_TREE_SYNC_PY,
+});
+
+function treePathFor(storage, location) {
+  const paths = nspawnDiskPaths(storage, location);
+  return { paths, path: nspawnComponentPath(paths, location.component) };
+}
+
+function nspawnTreeCopy(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const source = treePathFor(storage, request.source ?? {});
+  const destination = treePathFor(storage, request.destination ?? {});
+  checkedStoragePath(source.path);
+  checkedStoragePath(destination.path, { create: true });
+  const preflight = runner(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, JSON.stringify([source.path]), destination.path]);
+  if (!preflight.ok) fail(`the disk copy preflight refused the copy: ${String(preflight.stderr || '').slice(-400)}`);
+  const copied = runner('/bin/bash', ['-c', DISK_TREE_COPY_SH, 'elowen-copy-tree', source.path, destination.path]);
+  if (!copied.ok) fail(`the disk tree copy failed: ${String(copied.stderr || '').slice(-400)}`);
+  return { ok: true, sourcePath: source.path, targetPath: destination.path, preflight: JSON.parse(String(preflight.stdout || '{}')) };
+}
+
+function nspawnTreeFingerprint(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const { path } = treePathFor(storage, request);
+  checkedStoragePath(path);
+  const result = runner(PYTHON, ['-c', DISK_TREE_FINGERPRINT_PY, path]);
+  if (!result.ok) fail(`the disk tree fingerprint failed: ${String(result.stderr || '').slice(-400)}`);
+  const value = JSON.parse(String(result.stdout || '{}'));
+  if (!Number.isSafeInteger(value.logicalBytes) || !Number.isSafeInteger(value.allocatedBytes) || !SAFE_SHA256.test(String(value.digest))) {
+    fail('the disk tree fingerprint is invalid');
+  }
+  return { ok: true, path, ...value };
+}
+
+function nspawnTreeSync(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const { path } = treePathFor(storage, request);
+  checkedStoragePath(path);
+  const result = runner(PYTHON, ['-c', DISK_TREE_SYNC_PY, path]);
+  if (!result.ok) fail(`the disk tree sync failed: ${String(result.stderr || '').slice(-400)}`);
+  return { ok: true, path };
+}
+
+function nspawnTreeRemove(request, storage) {
+  const { path } = treePathFor(storage, request);
+  checkedStoragePath(path);
+  rmSync(path, { recursive: true, force: true });
+  return { ok: true, path };
+}
+
+function nspawnDestroy(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const machine = typeof request.machine === 'string' && NSPAWN_MACHINE.test(request.machine) ? request.machine : fail('the machine name is invalid');
+  const paths = nspawnDiskPaths(storage, request);
+  // Stop before the envelope goes: a running machine holds the root directory this removes.
+  runner('/usr/bin/systemctl', ['stop', machineUnitFor(machine)]);
+  rmSync(join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`), { force: true });
+  rmSync(join('/etc/systemd/system', `elowen-machine@${machine}.service.d`), { recursive: true, force: true });
+  runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
+  if (request.removeDisk === true) {
+    checkedStoragePath(paths.directory);
+    rmSync(paths.directory, { recursive: true, force: true });
+  }
+  return { ok: true, machine, directory: paths.directory, diskRemoved: request.removeDisk === true };
+}
+
+function firewallRulePresent(runner, rule) {
+  const result = runner('/usr/sbin/iptables', ['-C', rule.chain, ...rule.rule.split(' ')]);
+  return result.ok;
+}
+
+/** The same readiness shape the Podman environment rows use, reported through the same item contract.
+ *  The firewall rows appear only when veth is requested, and they are only ever REPORTED: the daemon
+ *  never mutates the firewall. */
+function nspawnStatus(request, options = {}) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
+  const env = options.env ?? process.env;
+  if (request.veth !== undefined && typeof request.veth !== 'boolean') fail('the machine network request is invalid');
+  const user = serviceUser(runner, env);
+  const os = supportedEnvironmentOs(readText('/etc/os-release'));
+  const installed = packageInstalled(runner, NSPAWN_PACKAGE);
+  const polkit = renderPolkitRule(user.name);
+  const polkitInstalled = readText(POLKIT_RULE_PATH) === polkit;
+  const unitInstalled = readText(MACHINE_UNIT_PATH) === MACHINE_UNIT_TEMPLATE;
+  const items = [
+    { id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail },
+    {
+      id: `package:${NSPAWN_PACKAGE}`,
+      label: 'systemd container tools',
+      ok: installed,
+      detail: installed ? 'installed' : 'not installed',
+    },
+    {
+      id: 'polkit:machines',
+      label: 'Machine lifecycle authorization',
+      ok: polkitInstalled,
+      detail: polkitInstalled ? `scoped to elowen-machine units for ${user.name}` : 'the polkit rule is missing or differs',
+    },
+    {
+      id: 'unit:elowen-machine',
+      label: 'Machine unit template',
+      ok: unitInstalled,
+      detail: unitInstalled ? 'installed' : 'the unit template is missing or differs',
+    },
+  ];
+  if (request.veth === true) {
+    for (const rule of NSPAWN_FIREWALL_RULES) {
+      const ok = firewallRulePresent(runner, rule);
+      items.push({
+        id: rule.id,
+        label: rule.label,
+        ok,
+        detail: ok ? `present in ${rule.chain}` : `add manually: iptables -I ${rule.chain} ${rule.rule} — ${rule.detail}`,
+      });
+    }
+  }
+  return { ok: true, ready: items.every((item) => item.ok), items };
+}
+
+function nspawnProvision(request, options = {}) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
+  const writeAtomic = options.writeAtomic ?? atomicWrite;
+  const env = options.env ?? process.env;
+  const os = supportedEnvironmentOs(readText('/etc/os-release'));
+  if (!os.ok) fail(os.detail);
+  const user = serviceUser(runner, env);
+  if (!packageInstalled(runner, NSPAWN_PACKAGE)) {
+    runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
+    runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');
+  }
+  const polkit = renderPolkitRule(user.name);
+  if (readText(POLKIT_RULE_PATH) !== polkit) writeAtomic(POLKIT_RULE_PATH, Buffer.from(polkit), 0o644);
+  if (readText(MACHINE_UNIT_PATH) !== MACHINE_UNIT_TEMPLATE) {
+    writeAtomic(MACHINE_UNIT_PATH, Buffer.from(MACHINE_UNIT_TEMPLATE), 0o644);
+    runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
+  }
+  const status = nspawnStatus(request, { runner, readText, env });
+  return {
+    ...status,
+    ...(status.ready ? {} : { detail: 'machine runtime support remains incomplete' }),
+  };
+}
+
+const NSPAWN_OPERATIONS = Object.freeze({
+  status: (request, _storage, options) => nspawnStatus(request, options),
+  provision: (request, _storage, options) => nspawnProvision(request, options),
+  materialize: nspawnMaterialize,
+  'write-envelope': nspawnWriteEnvelope,
+  'shift-ownership': nspawnShiftOwnership,
+  exec: (request, _storage, options) => nspawnExec(request, options),
+  freeze: (request, _storage, options) => nspawnMachineState(request, 'freeze', options),
+  thaw: (request, _storage, options) => nspawnMachineState(request, 'thaw', options),
+  'tree-copy': nspawnTreeCopy,
+  'tree-fingerprint': nspawnTreeFingerprint,
+  'tree-sync': nspawnTreeSync,
+  'tree-remove': (request, storage) => nspawnTreeRemove(request, storage),
+  destroy: nspawnDestroy,
+});
+
+/** The operations that need no trusted storage root at all, so they never read the deployment record. */
+const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'freeze', 'thaw']);
+
+function nspawnMachineState(request, verb, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const unit = machineUnitFor(request.machine);
+  runRequired(runner, '/usr/bin/systemctl', [verb, unit], `the machine could not be ${verb === 'freeze' ? 'frozen' : 'thawed'}`);
+  return { ok: true, machine: request.machine, unit };
+}
+
+export function applyNspawnRequest(request, options = {}) {
+  const handler = Object.hasOwn(NSPAWN_OPERATIONS, request.op) ? NSPAWN_OPERATIONS[request.op] : null;
+  if (!handler) fail('machine operation is not supported');
+  const storage = NSPAWN_RECORD_FREE_OPERATIONS.includes(request.op)
+    ? null
+    : options.storage ?? readStorageRoots();
+  return handler(request, storage, options);
+}
+
 export async function applyRequest(request, deployment, options = {}) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') fail('request is invalid');
+  // An absent `domain` means `sites`. The helper is installed independently of the daemon that invokes
+  // it, so a helper carrying this change can meet a daemon that predates the discriminator; the daemon
+  // side always sends it explicitly. There is no such compatibility direction for `nspawn`, which no
+  // older daemon can ask for.
+  if (request.domain !== undefined && request.domain !== 'sites' && request.domain !== 'nspawn') fail('request domain is invalid');
+  if (request.domain === 'nspawn') return applyNspawnRequest(request, options);
   if (request.op === 'environments-status' || request.op === 'environments-provision') {
     helperRequestFields(request);
     return request.op === 'environments-status' ? environmentStatus(options) : provisionEnvironments(options);
@@ -751,41 +1524,85 @@ const processAlive = (pid) => {
   try { process.kill(pid, 0); return true; } catch { return false; }
 };
 
-async function acquireMutationLock() {
-  mkdirSync(dirname(LOCK_PATH), { recursive: true, mode: 0o755 });
+async function acquireMutationLock(lockPath = LOCK_PATH) {
+  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o755 });
   const deadline = Date.now() + 9 * 60_000;
   while (Date.now() < deadline) {
     try {
-      const fd = openSync(LOCK_PATH, 'wx', 0o600);
+      const fd = openSync(lockPath, 'wx', 0o600);
       try { writeFileSync(fd, `${process.pid}\n`); fsyncSync(fd); } finally { closeSync(fd); }
-      return () => rmSync(LOCK_PATH, { force: true });
+      return () => rmSync(lockPath, { force: true });
     } catch (error) {
       if (!error || typeof error !== 'object' || error.code !== 'EEXIST') throw error;
       let owner = 0;
-      try { owner = Number.parseInt(readFileSync(LOCK_PATH, 'utf8'), 10); } catch { /* stale or partial */ }
-      if (!processAlive(owner)) { rmSync(LOCK_PATH, { force: true }); continue; }
+      try { owner = Number.parseInt(readFileSync(lockPath, 'utf8'), 10); } catch { /* stale or partial */ }
+      if (!processAlive(owner)) { rmSync(lockPath, { force: true }); continue; }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
-  fail('another site gateway mutation did not finish in time');
+  return fail('another site gateway mutation did not finish in time');
 }
 
-async function readStdin() {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of process.stdin) {
-    size += chunk.length;
-    if (size > MAX_INPUT_BYTES) fail('request is too large');
-    chunks.push(chunk);
+export const HELPER_FRAME_HEADER_BYTES = 9;
+const MAX_FRAMED_REQUEST_BYTES = 256 * 1024;
+
+/** The header is exactly eight decimal digits and a newline, naming the byte length of the JSON request
+ *  that follows it. */
+export function parseFrameHeader(header) {
+  if (!Buffer.isBuffer(header) || header.length !== HELPER_FRAME_HEADER_BYTES || !/^[0-9]{8}\n$/.test(header.toString('latin1'))) {
+    fail('request framing is invalid');
   }
+  const length = Number(header.toString('latin1').slice(0, 8));
+  if (length < 1 || length > MAX_FRAMED_REQUEST_BYTES) fail('request is too large');
+  return length;
+}
+
+function readExact(fd, length) {
+  const buffer = Buffer.allocUnsafe(length);
+  let filled = 0;
+  while (filled < length) {
+    const read = readSync(fd, buffer, filled, length - filled, null);
+    if (read === 0) fail('the request ended before its declared length');
+    filled += read;
+  }
+  return buffer;
+}
+
+function parseRequest(bytes) {
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return JSON.parse(bytes.toString('utf8'));
   } catch {
-    fail('request is not valid JSON');
+    return fail('request is not valid JSON');
   }
+}
+
+/** Read the request WITHOUT consuming the rest of the pipe. A guest execution carries up to 1 MB of its
+ *  own stdin behind the header, and the child inherits fd 0 to read it; a buffered read would take that
+ *  input into this process and silently truncate what the guest receives. So the header and the request
+ *  body are read with exact `readSync` byte counts and nothing beyond them is touched. */
+export function readFramedRequest(fd = 0) {
+  const first = readExact(fd, 1);
+  // Compatibility: a daemon that predates the framing sends a bare JSON object and no guest stdin. The
+  // helper is installed independently of the daemon invoking it, so both directions of that skew exist.
+  if (first[0] === 0x7b) {
+    const chunks = [first];
+    let size = 1;
+    for (;;) {
+      const buffer = Buffer.allocUnsafe(8192);
+      const read = readSync(fd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      size += read;
+      if (size > MAX_INPUT_BYTES) fail('request is too large');
+      chunks.push(buffer.subarray(0, read));
+    }
+    return parseRequest(Buffer.concat(chunks));
+  }
+  const length = parseFrameHeader(Buffer.concat([first, readExact(fd, HELPER_FRAME_HEADER_BYTES - 1)]));
+  return parseRequest(readExact(fd, length));
 }
 
 export function helperRequestNeedsDeployment(request) {
+  if (request?.domain === 'nspawn') return false;
   return request?.op === 'status'
     || request?.op === 'sync-sites'
     || request?.op === 'ensure-site'
@@ -793,32 +1610,41 @@ export function helperRequestNeedsDeployment(request) {
     || request?.op === 'deny';
 }
 
+/** The global mutation lock serializes host-changing work and waits up to nine minutes, which is what a
+ *  certificate issuance or an apt transaction needs. Execution, freeze/thaw, the fingerprint read and
+ *  the status-shaped operations must NOT take it: they are on the hot path of every command run in every
+ *  environment, and blocking them behind a certbot renewal would stall the whole instance. */
+const SITES_LOCK_FREE_OPERATIONS = Object.freeze([
+  'environments-status', 'status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket',
+]);
+const NSPAWN_LOCK_FREE_OPERATIONS = Object.freeze(['status', 'exec', 'freeze', 'thaw', 'tree-fingerprint']);
+
+export function helperRequestNeedsMutationLock(request) {
+  return request?.domain === 'nspawn'
+    ? !NSPAWN_LOCK_FREE_OPERATIONS.includes(request?.op)
+    : !SITES_LOCK_FREE_OPERATIONS.includes(request?.op);
+}
+
+export async function handleRequest(request, options = {}) {
+  const run = async () => (helperRequestNeedsDeployment(request)
+    ? await applyRequest(request, options.deployment ?? readDeployment(), options)
+    : await applyRequest(request, undefined, options));
+  if (!helperRequestNeedsMutationLock(request)) return await run();
+  const release = await acquireMutationLock(options.lockPath ?? LOCK_PATH);
+  try {
+    return await run();
+  } finally {
+    release();
+  }
+}
+
 async function main() {
   if (typeof process.getuid === 'function' && process.getuid() !== 0) fail('helper must run as root');
   // No command-line modes at all: HTTP-01 needs no auth hook, so the sudoers rule can pin the empty
   // argument vector and there is no argv surface left to reach.
   if (process.argv.length > 2) fail('helper accepts no command-line arguments');
-  const request = await readStdin();
-  if (request?.op === 'environments-status'
-    || request?.op === 'status'
-    || request?.op === 'prepare-runtime-socket'
-    || request?.op === 'seal-runtime-socket'
-    || request?.op === 'remove-runtime-socket') {
-    const response = helperRequestNeedsDeployment(request)
-      ? await applyRequest(request, readDeployment())
-      : await applyRequest(request);
-    process.stdout.write(`${JSON.stringify(response)}\n`);
-    return;
-  }
-  const release = await acquireMutationLock();
-  try {
-    const response = helperRequestNeedsDeployment(request)
-      ? await applyRequest(request, readDeployment())
-      : await applyRequest(request);
-    process.stdout.write(`${JSON.stringify(response)}\n`);
-  } finally {
-    release();
-  }
+  const response = await handleRequest(readFramedRequest(0));
+  process.stdout.write(`${JSON.stringify(response)}\n`);
 }
 
 const invoked = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;

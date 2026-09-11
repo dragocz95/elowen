@@ -13,6 +13,7 @@ import type {
 } from '../plugins/api.js';
 import { logger, type Logger } from '../shared/logger.js';
 import {
+  encodeHelperRequest,
   SITE_GATEWAY_HELPER_INSTALL_ARGS,
   SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_PATH,
@@ -197,7 +198,9 @@ function defaultInvoker(request: SiteGatewayHelperRequest): Promise<HelperRespon
       finish(new Error('the site gateway helper timed out'));
     }, siteGatewayHelperTimeoutMs(request));
     timer.unref();
-    child.stdin.end(JSON.stringify(request));
+    // The domain is added here rather than in each typed request, so the whole Sites surface keeps its
+    // existing shape while the helper always receives the discriminator explicitly.
+    child.stdin.end(encodeHelperRequest({ domain: 'sites', ...request }));
   });
 }
 
@@ -209,7 +212,9 @@ function environmentsUnavailable(detail: string): PublishedSitesEnvironmentStatu
   return { ready: false, items: [], detail };
 }
 
-function environmentItem(value: unknown): PublishedSitesEnvironmentItem | null {
+/** One readiness row as it crosses the helper boundary. Shared with the nspawn domain, which reports its
+ *  host artefacts through the same item contract rather than inventing a second one. */
+export function environmentItem(value: unknown): PublishedSitesEnvironmentItem | null {
   if (!value || typeof value !== 'object') return null;
   const item = value as Record<string, unknown>;
   if (typeof item.id !== 'string' || !item.id || item.id.length > 80) return null;
