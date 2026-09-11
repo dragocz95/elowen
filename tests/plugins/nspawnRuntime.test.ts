@@ -17,7 +17,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 /** A complete host-side envelope for one machine: the disk with its identity record, the two root-owned
  *  configuration files, and a `systemctl show` answer that matches all of them. Each test then breaks
  *  exactly one of those facts and asserts that the ownership proof refuses. */
-function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean } = {}) {
+function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean, outputLimitBytes?: number } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-test-'));
   roots.push(root);
   const configRoot = join(root, 'config');
@@ -84,7 +84,8 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
     }),
   };
   const images = { imageIdentity: vi.fn(async () => `sha256:${'d'.repeat(64)}`), ensureProjectImage: vi.fn(async () => image) };
-  const client = new NspawnClient({ executor, images, configRoot, namespace: spec.namespace });
+  const client = new NspawnClient({ executor, images, configRoot, namespace: spec.namespace,
+    ...(options.outputLimitBytes === undefined ? {} : { outputLimitBytes: options.outputLimitBytes }) });
   return { root, configRoot, paths, spec, disk: spec.disk, diskDirectory, identityPath, identity, writeIdentity,
     envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, executor, images, client, rootfs };
 }
@@ -265,6 +266,32 @@ describe('nspawn guest execution', () => {
     await expect(client.exec(spec, EXECUTION_ID, ['/bin/sh'], { input: 'x'.repeat(1024 * 1024 + 1) })).rejects.toThrow(/exceeds limit/);
   });
 
+  it('shortens guest output to the caller\u2019s bound and says so, as the container runtime does', async () => {
+    // Comfortably above the runtime's own control verdicts, which share this bound, and well below what
+    // the command below writes.
+    const state = fixture({ outputLimitBytes: 512 });
+    state.helperReply.exec = (request: any) => (request.argv[0] === '/bin/sh'
+      ? { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
+        stdout: Buffer.from(`head${'x'.repeat(4000)}tail`).toString('base64'), stderr: '' }
+      : maskedUnit);
+    const result = await state.client.exec(state.spec, EXECUTION_ID, ['/bin/sh', '-c', 'yes']);
+    // The bound is the caller's figure over the DECODED bytes, and what survives is the tail, which is
+    // the half of a long output anyone reads. A command that writes too much is shortened, not failed.
+    expect(Buffer.byteLength(result.stdout)).toBe(512);
+    expect(result.stdout.endsWith('tail')).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('keeps the truncation the privileged side already reported', async () => {
+    const state = fixture();
+    state.helperReply.exec = (request: any) => (request.argv[0] === '/bin/sh'
+      ? { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: true,
+        stdout: Buffer.from('short').toString('base64'), stderr: '' }
+      : maskedUnit);
+    const result = await state.client.exec(state.spec, EXECUTION_ID, ['/bin/sh', '-c', 'yes']);
+    expect(result).toMatchObject({ stdout: 'short', truncated: true });
+  });
+
   it('reports a guest timeout as a timeout and still settles the execution', async () => {
     const state = fixture();
     state.helperReply.exec = (request: any) => (request.argv[0] === '/bin/sleep'
@@ -424,16 +451,18 @@ describe('nspawn refusals', () => {
     const image = 'localhost/elowen-project-base:test';
     const legacy = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image }, paths);
     await expect(client.inspect(legacy)).rejects.toThrow(/only rootfs-backed environments/);
-    const podmanDisk = createEnvironmentDiskSpec({ resource, image }, paths, 'a'.repeat(32));
+    const podmanDisk = createEnvironmentDiskSpec({ resource, image, runtime: undefined }, paths, 'a'.repeat(32));
     const podmanSpec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk: podmanDisk }, paths);
     await expect(client.inspect(podmanSpec)).rejects.toThrow(/not an nspawn environment/);
   });
 
   it('refuses the legacy migration sources a disk-backed environment can never be', async () => {
     const { client, spec } = fixture();
-    await expect(client.preflightRootfsMigration(spec, '/tmp')).rejects.toThrow(/legacy image-backed/);
-    await expect(client.exportContainerRootfs(spec, '/tmp/x.tar')).rejects.toThrow(/legacy image-backed/);
-    await expect(client.snapshotImage(spec, 'snap')).rejects.toThrow(/snapshots its disk/);
+    // Called the way the interface names them: these refuse a disk-backed specification whatever they
+    // are handed, so the arguments are the real ones and the methods read none of them.
+    await expect((client as any).preflightRootfsMigration(spec, '/tmp')).rejects.toThrow(/legacy image-backed/);
+    await expect((client as any).exportContainerRootfs(spec, '/tmp/x.tar')).rejects.toThrow(/legacy image-backed/);
+    await expect((client as any).snapshotImage(spec, 'snap')).rejects.toThrow(/snapshots its disk/);
   });
 
   it('refuses a machine name outside the privileged runtime scope', async () => {

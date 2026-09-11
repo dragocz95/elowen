@@ -8,9 +8,9 @@ import { cleanPodmanEnv, GUEST_SYSTEM_BUS, OUTPUT_LIMIT, positive, SpawnExecutor
 /** The one privileged executable, shared with the published-sites gateway: two typed domains behind one
  *  root-owned binary and one pinned sudoers line, because two executables reachable by the same service
  *  account are not a privilege boundary. Every root-only operation arrives on its stdin as a bounded JSON
- *  request. This mirrors `NSPAWN_HELPER_PATH` in `src/shared/nspawnRuntime.ts`, which a bundled plugin
- *  cannot import at runtime; `tests/contract/nspawnHelper.test.ts` holds this constant, the argv below,
- *  the daemon-side control and the sudoers line against each other. */
+ *  request. This mirrors `SITE_GATEWAY_HELPER_PATH` in `src/shared/siteGateway.ts`, which a bundled
+ *  plugin cannot import at runtime; `tests/contract/nspawnHelper.test.ts` holds this constant, the argv
+ *  below, the shared constants and the sudoers line against each other. */
 export const HELPER_PATH = '/usr/local/libexec/elowen-site-gateway';
 const SUDO = '/usr/bin/sudo';
 const SYSTEMCTL = '/usr/bin/systemctl';
@@ -43,6 +43,11 @@ export const EXPECTED_SECCOMP_FILTERS = 5;
  *  a range picked per boot costs a second full ownership pass over the whole tree. */
 export const UID_RANGE_SIZE = 65536;
 const REQUEST_LIMIT = 256 * 1024;
+/** What the privileged answer itself may weigh. It is the transport's ceiling, not the guest's: the
+ *  helper wraps a command's streams in its verdict and encodes them, so the envelope is always larger
+ *  than the output it carries, and reading it against the caller's own output bound would cut the JSON
+ *  rather than the command's bytes. */
+const HELPER_RESPONSE_LIMIT = 16 * 1024 * 1024;
 const GUEST_COMMAND_TIMEOUT_MS = 30_000;
 const HELPER_OPERATIONS = new Set(['materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
   'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']);
@@ -177,11 +182,15 @@ export class NspawnClient {
     this.#namespace = options.namespace === undefined ? null : resourceToken(options.namespace);
   }
 
+  /** Every process this runtime spawns is a control tool or the privileged helper, so its stdout is
+   *  transport and is read against the transport's ceiling. No guest byte ever reaches this method: the
+   *  guest's own streams arrive encoded inside a verdict, and the caller's output bound is applied to
+   *  them once they are decoded, in `#execute`. */
   async #run(file, args, options = {}) {
     if (args.some((arg) => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('Invalid machine command argument');
     const result = await this.#executor.run(file, args, {
       env: { ...this.#env }, timeoutMs: positive(options.timeoutMs ?? this.#timeoutMs, 15 * 60_000, 'timeout'),
-      outputLimitBytes: this.#outputLimit, input: options.input, signal: options.signal,
+      outputLimitBytes: HELPER_RESPONSE_LIMIT, input: options.input, signal: options.signal,
     });
     if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw new Error('Invalid machine command result');
     const bounded = { code: result.code, stdout: result.stdout, stderr: result.stderr, truncated: result.truncated ?? false };
@@ -197,7 +206,12 @@ export class NspawnClient {
   #machinectl(args, options = {}) { return this.#run(MACHINECTL, args, { label: `machinectl ${args[0]}`, ...options }); }
 
   /** One privileged round trip. The helper answers every operation with a JSON verdict on its own
-   *  stdout and exits zero; a non-zero exit is the helper itself failing, never the guest. */
+   *  stdout and exits zero; a non-zero exit is the helper itself failing, never the guest.
+   *
+   *  The verdict is a TRANSPORT artefact, not guest output, so it is read against the transport's own
+   *  ceiling rather than the caller's output bound. Bounding the envelope by the caller's figure would
+   *  cut the JSON in half and turn a guest that wrote a megabyte into an unparseable answer; the guest's
+   *  own bound is applied to its decoded bytes in `#execute`, which is where it belongs. */
   async #send(request, options = {}) {
     const result = await this.#run(SUDO, this.#helperArgv(), { label: `privileged ${request.op}`,
       timeoutMs: options.timeoutMs, signal: options.signal, input: helperFrame(request, options.input) });
@@ -215,13 +229,26 @@ export class NspawnClient {
 
   /** A guest execution's verdict, in the shape every caller of this runtime already reads. The child's
    *  streams come back separately and base64-encoded, so a command's exact bytes survive the transport,
-   *  and its status is its own: an exit code of 42 is 42 and not a transport error. */
+   *  and its status is its own: an exit code of 42 is 42 and not a transport error.
+   *
+   *  The caller's output bound applies to the DECODED bytes and keeps their tail, which is what the
+   *  container runtime does with the same figure — a command that writes more than the caller asked for
+   *  comes back shortened with `truncated` set, not as a failure. The one case that still cannot be
+   *  answered that way is a guest whose output outgrows the transport itself: the bytes arrive wrapped in
+   *  the verdict, so a cut envelope is not a shortened answer but no answer, and `#send` reports it. */
   async #execute(request, options = {}) {
     const reply = await this.#send(request, options);
     if (reply.timedOut === true) throw new Error(`Guest command timed out after ${request.timeoutSeconds}s`);
-    const decode = (value) => Buffer.from(String(value ?? ''), 'base64').toString('utf8');
-    const result = { code: Number.isInteger(reply.exitCode) ? reply.exitCode : 1,
-      stdout: decode(reply.stdout), stderr: decode(reply.stderr), truncated: reply.truncated === true };
+    let truncated = reply.truncated === true;
+    const decode = (value) => {
+      const buffer = Buffer.from(String(value ?? ''), 'base64');
+      if (buffer.length <= this.#outputLimit) return buffer.toString('utf8');
+      truncated = true;
+      return buffer.subarray(buffer.length - this.#outputLimit).toString('utf8');
+    };
+    const stdout = decode(reply.stdout);
+    const stderr = decode(reply.stderr);
+    const result = { code: Number.isInteger(reply.exitCode) ? reply.exitCode : 1, stdout, stderr, truncated };
     if (result.code !== 0 && !options.allowFailure) throw new Error(`Guest command failed (${result.code}): ${result.stderr.trim()}`);
     return result;
   }
