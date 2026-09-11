@@ -708,6 +708,12 @@ export class ContainerStorage {
       }
     }
     const directory = dirname(spec.disk.rootfsPath);
+    // A disk directory that is already gone leaves nothing to remove and nothing to verify, and deletion
+    // has to reach the end regardless: a removal interrupted after the tree went away, or a disk record
+    // whose directory an earlier cleanup already took, would otherwise make the environment permanently
+    // undeletable. The same skip the storage removals beside it perform. A directory that IS there and
+    // cannot be removed still fails, on the driver call and again on the verification below.
+    try { checkedHostPath(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
     await this.#driver(spec).removeDiskPath(directory);
     try { lstatSync(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
     throw new Error('Environment disk removal was not verified');
