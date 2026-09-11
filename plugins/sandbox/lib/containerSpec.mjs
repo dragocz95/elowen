@@ -146,13 +146,22 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
   }));
   // A project is mounted under its own name; a Site and a historical project cleanup keep `/workspace`.
   const workdir = kind === 'project' && !legacyProjectWorkspace ? guestMountTarget(input.workspaceTarget) : '/workspace';
+  // A named volume is a HANDLE over a host directory. A legacy environment keeps its handles, because
+  // that is the identity its container was created with; a disk-backed one mounts the disk's own
+  // directories, so the disk record stays the single owner of those paths and no handle outlives the
+  // generation that created it. `volumes` remains the component list either way, which is what deletion
+  // walks to remove the handles a previous generation left behind.
+  const mountFor = (target) => {
+    const volume = volumes.find((entry) => entry.component === target);
+    return disk ? { type: 'bind', source: volume.path } : { type: 'volume', source: volume.name };
+  };
   const mounts = kind === 'project'
-    ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: workdir, home: '/root', data: '/data' }[volume.component], readOnly: false }))
+    ? volumes.map((volume) => ({ ...mountFor(volume.component), target: { workspace: workdir, home: '/root', data: '/data' }[volume.component], readOnly: false }))
     : [
       { type: 'bind', source: binding?.sourcePath ?? join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
       { type: 'bind', source: join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
       { type: 'bind', source: binding?.brokerDir ?? join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
-      { type: 'volume', source: volumes[0].name, target: '/data', readOnly: false },
+      { ...mountFor('data'), target: '/data', readOnly: false },
     ];
   if (input.previewBroker) mounts.push({ type: 'bind', source: join(storageRoot, 'broker'), target: '/run/elowen', readOnly: false });
   const settings = {

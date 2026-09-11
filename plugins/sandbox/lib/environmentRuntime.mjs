@@ -1141,7 +1141,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       mark('legacy-removed');
     }
-    if (!reached('complete')) mark('complete');
+    if (!reached('complete')) {
+      // Nothing can read the archive any more: the disk is active, the candidate answered and the legacy
+      // envelope is gone. A failed migration never reaches here and keeps its archive.
+      await storage.discardRootfsExport(oldSpec, state.migrationId);
+      mark('complete');
+    }
   }
 
   async function perform(row, op) {

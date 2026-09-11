@@ -105,8 +105,11 @@ export class ContainerStorage {
     assertContainerSpec(spec);
     checkedHostPath(spec.storageRoot, { create: true });
     if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
-    if (spec.disk) await this.#prepareDisk(spec);
-    else for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
+    if (spec.disk) return await this.#prepareDisk(spec);
+    for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
+    // A named volume is a HANDLE over a host directory, and a disk-backed environment mounts those
+    // directories directly. Creating handles for them would add a second owner of the same paths whose
+    // removal a later generation has to chase; the disk record is the one source of truth instead.
     for (const volume of spec.volumes) await this.#podman.ensureVolume(spec, volume.component);
   }
 
@@ -176,7 +179,18 @@ export class ContainerStorage {
     catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     mkdirSync(pending, { mode: ROOTFS_MODE });
     for (const component of spec.disk.components) checkedHostPath(component.path, { create: true });
-    const { sourceImageId, ...provenance } = fill ? await fill(pending) : { sourceImageId: await this.#podman.materializeRootfs(spec, pending) };
+    let filled;
+    try {
+      filled = fill ? await fill(pending) : { sourceImageId: await this.#podman.materializeRootfs(spec, pending) };
+    } catch (cause) {
+      // An incomplete tree is never activated — no manifest names it — so keeping it buys no recovery
+      // evidence and holds a whole root filesystem of space that the retry, and every other environment
+      // on the host, needs. The export archive is kept: that one IS the resumable receipt.
+      try { await this.#podman.removeDiskPath(pending); syncPath(directory); }
+      catch (cleanup) { throw new AggregateError([cause, cleanup], `${cause.message}; incomplete rootfs cleanup failed: ${cleanup.message}`); }
+      throw cause;
+    }
+    const { sourceImageId, ...provenance } = filled;
     await this.#podman.syncDiskTree(pending);
     writeDurable(pendingManifestPath, { resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
       sourceImageId, rootfsPath: spec.disk.rootfsPath, components: spec.disk.components, createdAt: new Date().toISOString(), ...provenance, materialized: true });
@@ -235,6 +249,22 @@ export class ContainerStorage {
       return { sourceImageId: await this.#podman.imageIdentity(spec.disk.sourceImage),
         migratedFrom: { containerId: capture.containerId, archivePath: archive, sizeBytes: measured.sizeBytes, sha256: measured.sha256 } };
     });
+  }
+
+  /** Release the export archive once the migration is complete. Up to that point the archive is what a
+   *  rollback or a diagnosis reads, which is why a FAILED migration keeps it; a migration whose disk is
+   *  activated, whose candidate answered and whose legacy envelope is gone has no reader left for a
+   *  second copy of a root filesystem it would hold for the life of the environment. The receipt stays,
+   *  so the completed capture is still on record. */
+  async discardRootfsExport(spec, migrationId) {
+    assertContainerSpec(spec);
+    resourceToken(migrationId);
+    const archive = join(spec.storageRoot, 'migrations', migrationId, 'rootfs.tar');
+    try { checkedHostPath(archive, { file: true }); }
+    catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
+    await this.#podman.removeDiskPath(archive);
+    syncPath(dirname(archive));
+    return true;
   }
 
   /** Bring a HOST project's directory into the project's own workspace volume, once. Core's
@@ -581,7 +611,6 @@ export class ContainerStorage {
       if (JSON.stringify(actual) !== JSON.stringify(wanted)) throw new Error('Restored disk manifest ownership mismatch');
     } else writeDurable(join(diskDirectory, 'disk.json'), diskRecord);
     syncPath(diskDirectory);
-    for (const volume of targetSpec.volumes) await this.#podman.ensureVolume(targetSpec, volume.component);
     writeDurable(join(directory, 'complete.json'), { ...expected, sourceImage: manifest.sourceImage });
     syncPath(directory); unlinkSync(journal); syncPath(directory);
     return manifest;

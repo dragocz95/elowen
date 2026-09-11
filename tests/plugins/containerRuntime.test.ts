@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cpSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -780,6 +780,30 @@ describe('project container storage and crash-consistent snapshots', () => {
     const materializeRootfs = vi.fn();
     await expect(new ContainerStorage({ materializeRootfs, ensureVolume: vi.fn() }).prepare(spec)).rejects.toMatchObject({ code: 'disk_missing' });
     expect(materializeRootfs).not.toHaveBeenCalled();
+  });
+
+  it('removes an incomplete rootfs when materialization fails and creates no volume handles', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, '5'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    const pending = join(disk.rootfsPath, '..', 'rootfs.pending');
+    const removeDiskPath = vi.fn(async (path: string) => { rmSync(path, { recursive: true, force: true }); });
+    const ensureVolume = vi.fn();
+    const client: any = { ensureVolume, removeDiskPath, syncDiskTree: vi.fn(),
+      materializeRootfs: vi.fn(async (_spec: any, target: string) => { writeFileSync(join(target, 'half'), 'x'); throw new Error('no space left on device'); }) };
+
+    await expect(new ContainerStorage(client).prepare(spec)).rejects.toThrow(/no space left/);
+
+    // A tree no manifest names is not recovery evidence, and holding a whole root filesystem of space
+    // makes the next attempt — and every other environment on the host — fail for the same reason.
+    expect(existsSync(pending)).toBe(false);
+    expect(removeDiskPath).toHaveBeenCalledWith(pending);
+    // A disk-backed environment mounts the disk's own directories; nothing creates a handle over them.
+    expect(ensureVolume).not.toHaveBeenCalled();
+    expect(spec.mounts.filter((mount) => mount.type === 'volume')).toEqual([]);
+    expect(spec.mounts.map((mount) => mount.source)).toEqual(disk.components.map((entry) => entry.path));
   });
 
   it('refuses an activated rootfs whose durable disk record is missing', async () => {

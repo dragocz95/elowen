@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { expect, it } from 'vitest';
 import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { createContainerSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
@@ -272,7 +272,13 @@ it.skipIf(!podmanAvailable)('migrates a legacy image-backed container onto a per
       'printf data >/data/marker',
     ].join('; ')]).code).toBe(0);
     // The preflight is the refusal that has to happen while the environment is still up.
+    // 32 MB of fresh writes inside the container have to show up in the requirement: the archive is the
+    // MERGED root filesystem, so an image-only estimate would ask for a fraction of what is needed.
+    expect(podman(['exec', legacy.name, '/usr/bin/dd', 'if=/dev/urandom', 'of=/var/elowen-p4-bulk', 'bs=1M', 'count=32']).code).toBe(0);
+    const sizes = JSON.parse(podman(['container', 'inspect', '--size', legacy.name]).stdout)[0];
     const preflight = await client.preflightRootfsMigration(legacy, join(legacy.storageRoot, 'disks'));
+    expect(preflight.writableBytes).toBeGreaterThan(32 * 1024 * 1024);
+    expect(preflight.requiredBytes).toBeGreaterThan(2 * (Number(sizes.SizeRootFs) + 32 * 1024 * 1024));
     expect(preflight.freeBytes).toBeGreaterThan(preflight.requiredBytes);
     await client.stop(legacy);
 
@@ -295,6 +301,10 @@ it.skipIf(!podmanAvailable)('migrates a legacy image-backed container onto a per
     expect(lstatSync(disk.rootfsPath).mode & 0o777).toBe(0o755);
 
     await storage.prepare(candidate);
+    // The candidate mounts the disk's own directories; no named handle is created over them.
+    for (const volume of candidate.volumes) {
+      expect(podman(['volume', 'exists', volume.name], { allowFailure: true }).code).toBe(1);
+    }
     await client.create(candidate);
     await client.start(candidate);
     await client.waitForSystemBus(candidate);
@@ -318,6 +328,10 @@ it.skipIf(!podmanAvailable)('migrates a legacy image-backed container onto a per
     await client.start(candidate);
     await client.waitForSystemBus(candidate);
     expect(podman(['exec', candidate.name, '/bin/cat', '/etc/elowen-p4-marker']).stdout).toBe('before');
+    // The export archive is released once the migration is complete; the receipt stays on record.
+    await storage.discardRootfsExport(legacy, `migration-p4-${token}`);
+    expect(existsSync(capture.archivePath)).toBe(false);
+    expect(existsSync(join(dirname(capture.archivePath), 'export.json'))).toBe(true);
   } finally {
     for (const spec of [candidate, legacy].filter(Boolean)) {
       try { const row = await client.inspect(spec); if (row?.state === 'running' || row?.state === 'paused') await client.stop(spec); } catch {}

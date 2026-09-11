@@ -333,7 +333,9 @@ export class PodmanClient {
   async #owned(spec) {
     const container = await this.inspect(spec);
     if (!container) throw new Error('Container is missing');
-    await this.#inspectVolumes(spec, spec.volumes.map((volume) => volume.component));
+    // A disk-backed envelope owns no volume handles: its components are bind mounts of the disk's own
+    // directories, and `inspect` above has already held every mount source against the specification.
+    if (!spec.disk) await this.#inspectVolumes(spec, spec.volumes.map((volume) => volume.component));
     return container;
   }
 
@@ -342,7 +344,7 @@ export class PodmanClient {
     if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
     await this.#assertRootless();
     if (await this.#exists('container', spec.name)) throw new Error('Container already exists; lifecycle adoption must validate it');
-    for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
+    if (!spec.disk) for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
     for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' });
     if (spec.envFile) checkedHostPath(spec.envFile, { file: true });
     const args = ['create', ...(spec.disk ? ['--rootfs'] : []), '--name', spec.name];
@@ -696,21 +698,29 @@ PY
   }
 
   /** Refuse a migration before anything is stopped when the host cannot hold the export archive and the
-   *  extracted tree at the same time. The figure is the source image's own size, which is a LOWER bound
-   *  because the container's writable layer adds to it — hence twice the image plus a tenth, and hence a
-   *  preflight that runs while the environment is still up rather than after it has been quiesced. */
+   *  extracted tree at the same time.
+   *
+   *  What `podman export` writes is the MERGED root filesystem, so the figure has to be the container's
+   *  own reported size — its image layers plus everything its writable layer has accumulated — and never
+   *  the image alone: an environment that has installed packages for a year carries most of its bytes in
+   *  that layer, and an image-only estimate underestimates the requirement by whatever it has written.
+   *  The archive and the extracted tree both exist at once, hence twice that size plus a tenth, and hence
+   *  a preflight that runs while the environment is still up rather than after it has been quiesced. */
   async preflightRootfsMigration(spec, destinationPath) {
     this.#assertScope(spec);
     if (spec.disk) throw new Error('Only a legacy image-backed environment is migrated');
     const destination = checkedHostPath(destinationPath, { create: true });
-    const row = oneJson(await this.#run(['image', 'inspect', spec.image]));
-    const sizeBytes = Number(row.Size);
-    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1) throw new Error('Invalid source image size');
+    const container = await this.#owned(spec);
+    const row = oneJson(await this.#run(['container', 'inspect', '--size', container.id]));
+    const rootFsBytes = Number(row.SizeRootFs);
+    const writableBytes = Number(row.SizeRw ?? 0);
+    if (!Number.isSafeInteger(rootFsBytes) || rootFsBytes < 1 || !Number.isSafeInteger(writableBytes) || writableBytes < 0) throw new Error('Invalid container size report');
+    const sizeBytes = rootFsBytes + writableBytes;
     const requiredBytes = sizeBytes * 2 + Math.ceil(sizeBytes / 10);
     const filesystem = statfsSync(destination);
     const freeBytes = filesystem.bavail * filesystem.bsize;
     if (freeBytes < requiredBytes) throw new Error(`Insufficient free space to migrate the root filesystem: need ${requiredBytes} bytes, have ${freeBytes}`);
-    return { requiredBytes, freeBytes };
+    return { requiredBytes, freeBytes, sizeBytes, writableBytes };
   }
 
   /** Export the merged root filesystem of a STOPPED legacy container into a host-owned archive. The

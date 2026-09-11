@@ -96,9 +96,13 @@ function setup(config: Record<string, unknown> = {}) {
   // place those bytes become a host archive, and the materialization is the one place they become the
   // disk — so a marker written here has to come out of `diskFiles` on the other side.
   const legacyRootfs = new Map<string, string>();
+  // Which migration export archives are still on the host. `complete` is the point they stop having a reader.
+  const archives = new Set<string>();
   const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn(),
     removeDisk: vi.fn(async (spec: any) => { diskFiles.delete(spec.disk.id); }),
-    captureRootfsExport: vi.fn(async (spec: any, migrationId: string) => ({ migrationId, resource: spec.resource, generation: spec.generation,
+    discardRootfsExport: vi.fn(async (_spec: any, migrationId: string) => archives.delete(migrationId)),
+    captureRootfsExport: vi.fn(async (spec: any, migrationId: string) => (archives.add(migrationId), {
+      migrationId, resource: spec.resource, generation: spec.generation,
       specHash: spec.specHash, archivePath: join(root, 'migrations', migrationId, 'rootfs.tar'),
       containerId: containers.get(spec.name).id, sizeBytes: 4096, sha256: 'e'.repeat(64) })),
     materializeMigratedDisk: vi.fn(async (spec: any) => { diskFiles.set(spec.disk.id, new Map(legacyRootfs)); }) };
@@ -106,7 +110,7 @@ function setup(config: Record<string, unknown> = {}) {
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, diskFiles, legacyRootfs, warn, forwarders, publicationSocket, staleSocket, endForwarders };
+  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, diskFiles, legacyRootfs, archives, warn, forwarders, publicationSocket, staleSocket, endForwarders };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
@@ -1271,7 +1275,7 @@ describe('legacy environment disk migration', () => {
   const specOf = (sql: any, kind: string, id: string) => JSON.parse((sql.prepare('SELECT spec_json FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').get(kind, id) as any).spec_json);
 
   it('migrates a running legacy project through every checkpoint and keeps its rootfs in the disk', async () => {
-    const { runtime, sql, podman, storage, containers, diskFiles } = await legacyProject();
+    const { runtime, sql, podman, storage, containers, diskFiles, archives } = await legacyProject();
     const legacyName = 'elowen-project-7-g1';
     expect(containers.get(legacyName)?.state).toBe('running');
 
@@ -1298,6 +1302,10 @@ describe('legacy environment disk migration', () => {
     expect(containers.has(legacyName)).toBe(false);
     expect(containers.get(candidate.name)?.state).toBe('running');
     expect((await runtime.environmentFor({ project: input.project, accountUserId: 1 })).generation).toBe(2);
+    // A disk-backed envelope mounts the disk's own directories, so no named handle is created over them.
+    expect(candidate.mounts.filter((mount: any) => mount.type === 'volume')).toEqual([]);
+    // The export archive has no reader left once the migration is complete.
+    expect(archives.size).toBe(0);
   });
 
   it('migrates a stopped legacy project without booting the candidate', async () => {
@@ -1345,7 +1353,7 @@ describe('legacy environment disk migration', () => {
   });
 
   it('rolls back to the legacy container when the candidate will not boot, then completes on retry', async () => {
-    const { runtime, sql, podman, storage, containers, diskFiles } = await legacyProject();
+    const { runtime, sql, podman, storage, containers, diskFiles, archives } = await legacyProject();
     podman.start.mockImplementationOnce(async () => { throw new Error('candidate init refused to start'); });
 
     const queued = await runtime.requestEnvironment({ ...admin, requestId: 'migrate-rollback', action: { kind: 'migrate-disk' } });
@@ -1360,6 +1368,8 @@ describe('legacy environment disk migration', () => {
     expect(containers.has('elowen-project-7-g2')).toBe(false);
     expect(diskFiles.has(rolledBack.diskId)).toBe(true);
     expect(rolledBack.export.archivePath).toContain('rootfs.tar');
+    expect(archives.has(rolledBack.migrationId)).toBe(true);
+    expect(storage.discardRootfsExport).not.toHaveBeenCalled();
     // The row is still the legacy container's, and it is running again.
     expect(specOf(sql, 'project', '7').input.disk).toBeUndefined();
     expect(specOf(sql, 'project', '7').containerId).toBe('a'.repeat(64));
