@@ -811,6 +811,29 @@ describe('site environment tombstones', () => {
     return { ...state, registration, changeBinding: () => { current = { ...registration, sourcePath: join(state.root, 'moved-sources') }; } };
   }
 
+  it('upgrades a legacy Site registration with a matching Project-relative source reference', async () => {
+    const { runtime, db, registration } = mismatchedSite();
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    const generation = (await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).generation;
+    const upgraded = { ...registration, sourceRel: 'sites/shop' };
+    runtime.connectSitesRuntime({ resolve: async () => upgraded, beforeStart: async () => {}, afterStop: async () => {} });
+
+    await expect(runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 }))
+      .resolves.toMatchObject({ generation });
+    const stored = JSON.parse((db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get() as any).spec_json);
+    expect(stored.registration).toMatchObject({ sourcePath: registration.sourcePath, sourceRel: 'sites/shop' });
+  });
+
+  it('rejects a legacy Site registration upgrade when its absolute source changed', async () => {
+    const { runtime, registration, root } = mismatchedSite();
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    const changed = { ...registration, sourcePath: join(root, 'moved-sources'), sourceRel: 'sites/shop' };
+    runtime.connectSitesRuntime({ resolve: async () => changed, beforeStart: async () => {}, afterStop: async () => {} });
+
+    await expect(runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 }))
+      .rejects.toMatchObject({ code: 'site_binding_changed' });
+  });
+
   it('completes a Site delete handover after its trusted binding changed', async () => {
     const { runtime, db, changeBinding } = mismatchedSite();
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });

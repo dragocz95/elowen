@@ -226,14 +226,20 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = same(input.limits, record.input.limits) ? base : withContainerLimits(base, record.input.limits);
     return record.containerId ? bindContainerIdentity(spec, record.containerId) : spec;
   }
+  const siteBinding = (value, relative = true) => Object.fromEntries(Object.entries(value).filter(([key]) => !['limits', 'initialIntent', 'snapshotRetention', 'staging'].includes(key)
+    && !(relative && key === 'sourcePath' && typeof value.sourceRel === 'string')).sort(([a], [b]) => a.localeCompare(b)));
+  const upgradesLegacySiteBinding = (stored, authority) => {
+    if (typeof stored?.sourceRel === 'string' || typeof authority?.sourceRel !== 'string') return false;
+    const candidate = { ...authority };
+    delete candidate.sourceRel;
+    return same(siteBinding(stored, false), siteBinding(candidate, false));
+  };
   async function rowFor(kind, id, userId, manage = false, internal = false, allowBindingHandover = false) {
     const authority = await authorize(kind, id, userId, manage, internal);
     let row = store.get(kind, id);
     if (kind === 'site') {
       if (!row) throw error('site_not_registered', 'Register the trusted Site binding before requesting lifecycle work');
-      const binding = (value) => Object.fromEntries(Object.entries(value).filter(([key]) => !['limits', 'initialIntent', 'snapshotRetention', 'staging'].includes(key)
-        && !(key === 'sourcePath' && typeof value.sourceRel === 'string')).sort(([a], [b]) => a.localeCompare(b)));
-      if (!allowBindingHandover && !same(binding(authority), binding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
+      if (!allowBindingHandover && !same(siteBinding(authority), siteBinding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
     }
     if (row && kind === 'project' && !row.spec.input.workspaceTarget) {
       // A row created before project mounts carried a name was built against `/workspace`. Fill in the
@@ -1512,7 +1518,23 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       positive(registration.projectId, 'source project');
       const effective = limits(registration.limits);
       const existing = store.get('site', input.siteId);
-      if (existing && existing.state !== 'deleted') return view(await rowFor('site', input.siteId, input.accountUserId, true));
+      if (existing && existing.state !== 'deleted') {
+        if (upgradesLegacySiteBinding(existing.spec.registration, registration)) {
+          return store.transaction(() => {
+            const current = store.get('site', input.siteId);
+            if (!current || current.state === 'deleted') throw error('environment_missing', 'Environment metadata changed');
+            if (!upgradesLegacySiteBinding(current.spec.registration, registration)) {
+              if (same(siteBinding(registration), siteBinding(current.spec.registration))) return view(current);
+              throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
+            }
+            current.spec.registration = registration;
+            current.spec.binding.sourcePath = registration.sourcePath;
+            store.save(current);
+            return view(current);
+          });
+        }
+        return view(await rowFor('site', input.siteId, input.accountUserId, true));
+      }
       if (stores().projects.get(registration.projectId)?.lifecycle === 'deleting') throw error('project_deleting', 'A deleting Project cannot acquire a new published Site');
       if (store.active('site', input.siteId)) throw error('site_busy', 'The previous Site lifecycle operation has not completed');
       const record = siteRecord(registration, existing ? existing.generation + 1 : 1);
