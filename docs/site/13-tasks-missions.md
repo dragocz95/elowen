@@ -36,7 +36,7 @@ Namespaced `/plugins/<name>/api/...` routes return **404** when no live handler 
 
 Use delegation when a task is self-contained and you want its conclusion rather than its entire exploration trail. For independent subtasks, issue multiple `Delegate` calls in the same turn so they can run concurrently.
 
-By default, `Delegate` waits for the child result. Set `background: true` for asynchronous work: the tool returns a job id immediately, and Elowen delivers the completed result in a later turn. Do not poll a background child in a loop.
+By default, `Delegate` is asynchronous: the tool returns a job id immediately and Elowen delivers the completed result in a later turn, so there is no reason to poll a running child in a loop. Set `background: false` when the rest of the turn depends on the answer; the call then waits and returns the child's result directly.
 
 A child inherits the caller's model, reasoning level, working directory, Project context, and effective authority by default. You can narrow the delegation with:
 
@@ -45,7 +45,7 @@ A child inherits the caller's model, reasoning level, working directory, Project
 - `subagent_type` for a named role such as the built-in read-only `explore` or `plan` type;
 - `model` for another configured model. Use `DelegateModels` to see the valid `provider/model` values.
 
-To continue a child that already ran, use `DelegateContinue`. It keeps that child's transcript and original boundary instead of making a new child rediscover the work.
+To continue a child that already ran, use `DelegateContinue`. It keeps that child's transcript and original boundary instead of making a new child rediscover the work. An idle child's follow-up turn is delivered like a delegation, in a later turn, unless the call passes `background: false`; a child that is still working is steered instead, and its updated conclusion arrives through the original delegation.
 
 ## Monitor and steer sub-agents
 
@@ -97,7 +97,7 @@ Each node needs a unique `id` and a complete `task`. It may also specify `deps`,
 
 Use a workflow when steps have an order or pass results between stages, such as `gather → analyze → write`. Every node is a fresh sub-agent that cannot see the parent conversation. A dependent receives only the direct dependency's `## Handover` block, capped at 4,000 characters. Without that heading it receives only the bounded end of the dependency result, so write concise handovers for downstream nodes. For unrelated work, separate parallel `Delegate` calls are simpler.
 
-By default, `WorkflowStart` waits for the whole DAG and returns the node results. Set `background: true`, or press **`Ctrl+B`** while a foreground workflow is running, to detach it. Elowen then delivers the workflow summary when it finishes. A background workflow continues even if the conversation that started it is aborted.
+By default, `WorkflowStart` returns a handle and Elowen delivers the workflow summary when the DAG finishes. Set `background: false`, as an argument or in the file, to wait for the whole DAG and receive the node results as the tool result; an explicit argument overrides the file. A blocking run can still be detached with **`Ctrl+B`** without cancelling it. Delivery is the only thing this choice changes: nodes keep running in dependency order either way, and a background workflow continues even if the conversation that started it is aborted.
 
 ## Control a running workflow
 

@@ -146,6 +146,9 @@ async function scenarioDelegate() {
     toolName: 'Delegate',
     toolArgs: JSON.stringify({
       task: `Compute the widget size and report only the number. Task marker: ${DELEGATE_TASK_MARKER}.`,
+      // This scenario reads the child's answer as the tool result of the Delegate call itself, so it asks
+      // for the blocking mode rather than the asynchronous default.
+      background: false,
     }),
     parentFirstText: 'Handing this to a sub-agent. ',
     parentFinalText: `The sub-agent reported back: ${CHILD_ANSWER_MARKER}. Done.`,
@@ -240,7 +243,8 @@ async function scenarioWorkflow() {
 
   const model = await startScriptedModelServer({
     toolName: 'WorkflowStart',
-    toolArgs: JSON.stringify({ nodesFile }),
+    // Blocking, because the scenario reads every node's result out of this call's own tool result.
+    toolArgs: JSON.stringify({ nodesFile, background: false }),
     parentFirstText: 'Running the workflow. ',
     parentFinalText: `Workflow done: ${NODE_A_ANSWER} then ${NODE_B_ANSWER}.`,
     children: [

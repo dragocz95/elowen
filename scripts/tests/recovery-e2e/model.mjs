@@ -144,7 +144,7 @@ export async function startRecoveryModel({ task, result, background = false, uns
         return;
       }
       if (awaitingTool) { say(`Child got a tool answer it did not expect. ${MARKERS.nestedChildResult}`); return; }
-      callTool('Delegate', { task: MARKERS.grandTask });
+      callTool('Delegate', { task: MARKERS.grandTask, background: false });
       return;
     }
 
@@ -251,7 +251,7 @@ export async function startRecoveryModel({ task, result, background = false, uns
       if (lastTool.includes(LISTING_HEADER)) {
         const child = /brain-ch-subagent-\S+/.exec(lastTool)?.[0] ?? '';
         if (!child) { say('Could not find the interrupted child.'); return; }
-        callTool('DelegateContinue', { id: child, message: MARKERS.unsafeChildContinue });
+        callTool('DelegateContinue', { id: child, message: MARKERS.unsafeChildContinue, background: false });
         return;
       }
       say(`Parent received the continued child result. ${MARKERS.unsafeContinued}`);
@@ -263,7 +263,7 @@ export async function startRecoveryModel({ task, result, background = false, uns
         say('Parent acknowledged the delegation start.');
         return;
       }
-      callTool('Delegate', { task, ...(background ? { background: true } : {}) });
+      callTool('Delegate', { task, background: background === true });
       return;
     }
 

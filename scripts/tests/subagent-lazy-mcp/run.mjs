@@ -117,7 +117,7 @@ function startModel(onChildStep) {
       else {
         seq += 1;
         delta({ role: 'assistant', content: 'Delegating. ' });
-        delta({ tool_calls: [{ index: 0, id: `call_${seq}`, type: 'function', function: { name: 'Delegate', arguments: JSON.stringify({ task: `${TASK_MARKER} — call the bridged tool` }) } }] });
+        delta({ tool_calls: [{ index: 0, id: `call_${seq}`, type: 'function', function: { name: 'Delegate', arguments: JSON.stringify({ task: `${TASK_MARKER} — call the bridged tool`, background: false }) } }] });
         delta({}, 'tool_calls');
         usage();
       }

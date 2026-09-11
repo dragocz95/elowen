@@ -143,6 +143,9 @@ const PARENT_MODES = {
     ? say(`The diamond workflow finished. ${MARKERS.diamondDone}`)
     : callTool('WorkflowStart', {
       title: 'Diamond order',
+      // Delivery is asynchronous unless a caller asks to wait, and this scenario reads the summary as the
+      // tool result of this very call.
+      background: false,
       nodesFile: nodesFile([
         { id: 'a', task: `Produce the seed value. Task marker: ${nodeTask('a')}.` },
         { id: 'b', task: `Analyse the left branch. Task marker: ${nodeTask('b')}.`, deps: ['a'] },
@@ -155,6 +158,7 @@ const PARENT_MODES = {
     ? say(`The probe workflow stopped. ${MARKERS.failingDone}`)
     : callTool('WorkflowStart', {
       title: 'Probe retry',
+      background: false,
       nodesFile: nodesFile([
         { id: 'seed', task: `Collect the fixture. Task marker: ${nodeTask('seed')}.` },
         { id: 'probe', task: `Probe the fixture. Task marker: ${nodeTask('probe')}.`, deps: ['seed'] },

@@ -120,7 +120,7 @@ const nextTick = (): Promise<void> => new Promise((resolveTick) => { setImmediat
 describe('workflow expansion contract through the real loader/registry/dispatch wiring', () => {
   it('a node predicted REMOTE is invited only when the real dispatcher advertises the reverse RPC', async () => {
     expect(dispatch.mode()).toBe('runner');
-    const res = await asOwner(() => tool('WorkflowStart').execute('t-remote', { nodesFile: workflowFile([{ id: 'n', task: 'remote-node' }]) }));
+    const res = await asOwner(() => tool('WorkflowStart').execute('t-remote', { background: false, nodesFile: workflowFile([{ id: 'n', task: 'remote-node' }]) }));
     expect(res.content[0]?.text).toMatch(/status: done/);
     const access = captured.sources[0]?.access;
     expect((access?.context ?? []).join('\n')).toContain('WorkflowAddNodes');
@@ -131,6 +131,7 @@ describe('workflow expansion contract through the real loader/registry/dispatch 
     state.rpcAvailable = false;
     expect(dispatch.mode()).toBe('runner');
     await asOwner(() => tool('WorkflowStart').execute('t-no-rpc', {
+      background: false,
       nodesFile: workflowFile([{ id: 'n', task: 'unsupported-node', tools: ['WorkflowAddNodes'] }]),
     }));
     const access = captured.sources[0]?.access;
@@ -144,7 +145,7 @@ describe('workflow expansion contract through the real loader/registry/dispatch 
     expect(dispatch.mode()).toBe('in-process');
     let release!: () => void;
     gate = { task: 'root', release: new Promise<void>((r) => { release = r; }) };
-    const startP = asOwner(() => tool('WorkflowStart').execute('t-local', { nodesFile: workflowFile([{ id: 'root', task: 'root' }]) }));
+    const startP = asOwner(() => tool('WorkflowStart').execute('t-local', { background: false, nodesFile: workflowFile([{ id: 'root', task: 'root' }]) }));
     await new Promise((r) => setTimeout(r, 10)); // let root launch and park on the gate
     const access = captured.sources[0]?.access;
     expect(access?.toolPolicy?.deny ?? []).not.toContain('WorkflowAddNodes');
@@ -170,6 +171,7 @@ describe('workflow expansion contract through the real loader/registry/dispatch 
     gate = { task: 'root', release: new Promise<void>((resolveGate) => { release = resolveGate; }) };
     const snapshots: { toolCallId: string }[] = [];
     const start = runWithPolicy(adminPolicy, () => tool('WorkflowStart').execute('t-auth', {
+      background: false,
       nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
     }), { identity: owner, sessionId: 'brain-1', emitWorkflow: (snapshot) => { snapshots.push(snapshot); } });
     await new Promise((resolveWait) => setTimeout(resolveWait, 10));
@@ -256,7 +258,7 @@ describe('workflow expansion contract through the real loader/registry/dispatch 
     state.runnerEnabled = true;
     state.poolUsable = false;
     expect(dispatch.mode()).toBe('in-process');
-    await asOwner(() => tool('WorkflowStart').execute('t-degraded', { nodesFile: workflowFile([{ id: 'n', task: 'degraded-node' }]) }));
+    await asOwner(() => tool('WorkflowStart').execute('t-degraded', { background: false, nodesFile: workflowFile([{ id: 'n', task: 'degraded-node' }]) }));
     const access = captured.sources[0]?.access;
     expect((access?.context ?? []).join('\n')).toContain('WorkflowAddNodes');
     expect(access?.toolPolicy?.deny ?? []).not.toContain('WorkflowAddNodes');

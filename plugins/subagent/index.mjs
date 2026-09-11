@@ -429,7 +429,7 @@ export function register(ctx) {
     description: [
       'Hand a self-contained task to a fresh sub-agent with its own clean context. It has the same tools and access as you, but it CANNOT see this conversation — the task text is the only instruction it gets, so it must be complete and standalone.',
       'Delegate when the subtask is self-contained and only the conclusion matters, not the exploration trail; when answering would mean reading across many files and you want the summary rather than the file dumps; or when you have independent work to run in parallel. Do NOT delegate a single-fact lookup where you already know the file or symbol, work that needs nuanced judgment about the user\'s intent, or anything so small that spawning an agent costs more than doing it.',
-      'By default the call BLOCKS and returns the sub-agent\'s final result. Set background=true for an independent side-quest: it returns a job id immediately and the result is delivered to you in a NEW turn — do other work meanwhile, then end your turn. You are woken when it lands, so never poll DelegateStatus in a loop.',
+      'By default the call is ASYNCHRONOUS: it returns a job id immediately and the sub-agent\'s result is delivered to you in a NEW turn when it finishes — do other work meanwhile, then end your turn. You are woken when it lands, so never poll DelegateStatus in a loop. Pass background=false only when you cannot take another step without the answer: the call then BLOCKS and returns the sub-agent\'s final result inline.',
       'To launch several independent sub-agents, put multiple delegate calls in ONE response so they run concurrently; do not serialize them. Once you have delegated a search, do not also run it yourself.',
       'Pass `fork: true` to fork yourself instead of spawning a clean sub-agent — a fork inherits your full conversation context. Fork when the intermediate tool output isn\'t worth keeping in your context; the criterion is qualitative — "will I need this output again" — not task size. A fork pays off only when the child runs on the SAME provider and model as the parent, because what a fork buys is the provider\'s cached prefix: with a different `model` the child inherits the context but shares no cache, so a fresh sub-agent with a focused task is the right default there.',
       'Use read_only=true when the sub-agent only needs to look (explore, search, report) — it then gets read-only TOOLS (no Write/Edit) plus a shell clamped to non-destructive commands, and cannot delegate further. The shell clamp is a guardrail, not a sandbox: redirection and `sed -i` are permitted, so the child can still write files the daemon user can reach; what it cannot run is rm/mv/chmod, git commit/push/reset, npm, systemctl, kill, curl/wget/ssh or sudo. Use `tools` to hand it an exact toolset. Either way you can only ever narrow what you already hold.',
@@ -470,7 +470,11 @@ export function register(ctx) {
       })),
       thinkingLevel: Type.Optional(Type.String({ minLength: 1, description: THINKING_LEVEL_HINT })),
       background: Type.Optional(Type.Boolean({
-        description: 'Start asynchronously and return a stable job id immediately. Omit or false to wait for the result.',
+        description: 'How this call delivers its result. Omitted (the default) and true both start the '
+          + 'sub-agent asynchronously: the call returns a stable job id at once and the result is delivered '
+          + 'to you in a new turn, with no polling. Pass false to BLOCK until the sub-agent finishes and get '
+          + 'its final text as this call\'s result — do that only when the rest of your turn depends on the '
+          + 'answer.',
       })),
       read_only: Type.Optional(Type.Boolean({
         description: 'Give the sub-agent read-only tools (no Write/Edit) plus a shell clamped to non-destructive commands — inspection (ls/cat/grep/find/git status) and data transforms, but not rm/mv/chmod, git commit/push, npm, systemctl, curl/wget or sudo. It cannot delegate further. Note the clamp still allows writing a file through redirection, so it is not a sandbox. Use it for any task that just explores and reports — and if its findings turn out to be worth acting on, DelegateContinue({"write_access":true}) hands that same sub-agent your full access instead of making a fresh one rediscover everything.',
@@ -604,6 +608,18 @@ export function register(ctx) {
       const emitCompletion = ctx.subagentCompletionEmitter();
       const originSessionId = ctx.currentSessionId();
       const originPrincipal = principalOf(ctx.currentIdentity());
+      // Delegation is ASYNCHRONOUS by default: an omitted `background` starts the child and returns a
+      // handle, and the result is delivered in a new turn. Waiting inside the call is the explicit
+      // choice (`background: false`).
+      //
+      // Automatic delivery needs an authenticated conversation AND the turn-captured durable sink. A
+      // surface that has neither (worker/cron wiring, a unit harness) cannot wake anyone with the result,
+      // so an OMITTED background blocks there instead of handing back a handle nothing will ever collect.
+      // An EXPLICIT background:true keeps its own existing answers on those surfaces — the refusal below
+      // and the "use DelegateResult" note — because that caller asked for a handle by name.
+      const background = typeof p.background === 'boolean'
+        ? p.background
+        : Boolean(originSessionId && originPrincipal && emitCompletion);
       const jobId = `dlg-${randomUUID()}`;
       const channelId = `sub-${jobId}`;
       const startedAt = Date.now();
@@ -642,8 +658,8 @@ export function register(ctx) {
         originPrincipal,
         originSessionId,
         emit,
-        background: p.background === true,
-        autoDeliver: p.background === true && !!emitCompletion,
+        background,
+        autoDeliver: background && !!emitCompletion,
         emitCompletion,
         resolveDetached: undefined,
         startedAt,
@@ -768,7 +784,7 @@ export function register(ctx) {
         return state.status === 'done' ? state.result : `Error: ${state.error}`;
       };
 
-      if (!p.background) {
+      if (!background) {
         // Unauthenticated/platform-less foreground calls retain their old blocking behavior; there is no
         // safe conversation identity an out-of-band Ctrl+B request could target.
         if (!originSessionId || !originPrincipal) return ok(await runChild());
@@ -844,8 +860,8 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'DelegateStatus', label: 'Check sub-agent status',
-    description: 'Report the live state and latest progress of ONE background delegation started with '
-      + 'Delegate(background=true) — whether it is still running, how many tools it has used, roughly how '
+    description: 'Report the live state and latest progress of ONE delegation Delegate started '
+      + 'asynchronously — whether it is still running, how many tools it has used, roughly how '
       + 'many tokens it has spent and what it is doing right now. This is a one-off snapshot for when the '
       + 'user asks how a job is going; it is NOT how you collect a result. A background result is '
       + 'delivered to you automatically in a NEW turn, so never call this in a polling loop to wait for '
@@ -855,7 +871,7 @@ export function register(ctx) {
       + 'DelegateContinue, which still work; an id that never existed or has expired comes back as an '
       + 'error. It only ever reports this conversation\'s own delegations, and it neither waits, nor '
       + 'stops, nor changes anything.',
-    parameters: Type.Object({ id: Type.String({ description: 'Job id returned by Delegate(background=true) ("dlg-…"), or the child session id DelegateList shows' }) }),
+    parameters: Type.Object({ id: Type.String({ description: 'Job id Delegate returned ("dlg-…"), or the child session id DelegateList shows' }) }),
     execute: async (_id, p) => {
       const job = getJob(p.id);
       if (job) return ok(describeJob(job), jobDetails(job));
@@ -878,7 +894,7 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'DelegateResult', label: 'Read sub-agent result',
-    description: 'Return the final text of a background delegation started with Delegate(background=true), '
+    description: 'Return the final text of a delegation Delegate started asynchronously, '
       + 'or its error when the sub-agent failed. On most surfaces you do not need it at all: a background '
       + 'result is delivered to you automatically in a NEW turn, so reach for this only when the delivery '
       + 'was reported as unavailable, when you deliberately skipped past a result earlier, or after a '
@@ -888,7 +904,7 @@ export function register(ctx) {
       + 'result is long enough to need paging through with offset/limit. The id is scoped to this '
       + 'conversation — another conversation\'s sub-agent is not readable — and an expired or unknown id '
       + 'comes back as an error.',
-    parameters: Type.Object({ id: Type.String({ description: 'Job id returned by Delegate(background=true) ("dlg-…"), or the child session id DelegateList shows' }) }),
+    parameters: Type.Object({ id: Type.String({ description: 'Job id Delegate returned ("dlg-…"), or the child session id DelegateList shows' }) }),
     execute: async (_id, p) => {
       const job = getJob(p.id);
       if (job) {
@@ -1009,7 +1025,10 @@ export function register(ctx) {
       + 'add or check — not a fresh briefing: it still remembers the task, the files it read and what it '
       + 'concluded. Prefer this over a new Delegate whenever the work builds on what that sub-agent '
       + 'already did; a fresh sub-agent would have to rediscover all of it. '
-      + 'An IDLE sub-agent runs your message as its own turn — the call BLOCKS and returns its reply. A '
+      + 'An IDLE sub-agent runs your message as its own turn, and like Delegate that turn is ASYNCHRONOUS by '
+      + 'default: the call returns as soon as the sub-agent has started and its reply is delivered to you in '
+      + 'a NEW turn, so do other work and then end your turn instead of polling. Pass background=false to '
+      + 'block until the reply and get it as this call\'s result. A '
       + 'sub-agent whose turn is still RUNNING is not interrupted and not refused: your message is steered '
       + 'into the running turn (exactly like a user steering you mid-turn) and the call returns once it '
       + 'has entered the sub-agent\'s context — expect no separate reply; the updated conclusion arrives '
@@ -1024,6 +1043,13 @@ export function register(ctx) {
         description: 'The follow-up. It is read by an agent that already has the task and its findings in '
           + 'context, so say what to do next — do not restate the original briefing.',
       }),
+      background: Type.Optional(Type.Boolean({
+        description: 'How an IDLE sub-agent\'s follow-up turn delivers its reply. Omitted (the default) and '
+          + 'true both return as soon as that turn has started and deliver the reply to you in a new turn, '
+          + 'with no polling. Pass false to BLOCK until the sub-agent answers and get its reply as this '
+          + 'call\'s result. It does not apply to a sub-agent that is mid-turn: a steered message never has '
+          + 'a reply of its own, so that call answers immediately either way.',
+      })),
       model: Type.Optional(Type.String({
         description: 'Run the continuation on a DIFFERENT model (value from DelegateModels, e.g. '
           + '"anthropic/claude-sonnet-5"). Omit it to resume on the model the sub-agent already ran on — '
@@ -1095,9 +1121,31 @@ export function register(ctx) {
         autoDeliver: false,
         resolveDetached: undefined,
       };
+      // Asynchronous delivery, exactly like Delegate's default, but only where the reply has somewhere to
+      // land: it needs this conversation's identity AND the turn-captured durable sink. Without one the
+      // call blocks rather than dropping the sub-agent's answer, which is also what a background workflow
+      // does on a sink-less surface (see driveResult in lib/workflow.mjs).
+      const wantsBackground = p.background !== false && trackable && Boolean(emitCompletion);
+      // Resolves once the child has actually STARTED an idle turn for this follow-up — see the `session`
+      // event below. It is the discriminator this tool needs: a steered message never reaches a turn of its
+      // own and so has no later result to deliver.
+      let markTurnStarted;
+      const turnStarted = new Promise((resolve) => { markTurnStarted = resolve; });
       const push = (status) => pushJob(state, status);
       const onEvent = (e) => {
-        if (e.type === 'tool' && e.name) {
+        // The host emits this at the start of every turn it runs, so it arrives only on the IDLE path and
+        // always before the reply. Flip the call to background delivery HERE, synchronously, so the mode is
+        // settled before `runContinuation` can reach its terminal `deliverCompletion` — deciding it after
+        // the await would let a fast turn finish as a foreground call whose result nobody returns.
+        if (e.type === 'session') {
+          if (wantsBackground && !state.background) {
+            state.background = true;
+            state.autoDeliver = true;
+            push('running');
+          }
+          markTurnStarted();
+        }
+        else if (e.type === 'tool' && e.name) {
           state.tools += 1;
           ({ reason: state.reason, detail: state.detail } = foldToolDetail(e, state.reason));
           push('running');
@@ -1151,6 +1199,27 @@ export function register(ctx) {
       // Outside an authenticated conversation there is no safe Ctrl+B target; preserve blocking behavior.
       if (!trackable) return runContinuation();
       jobs.set(state.id, state);
+      if (wantsBackground) {
+        const running = runContinuation();
+        // Whichever comes first decides what this call answers. The child's turn starting means there IS a
+        // reply coming later — hand back the handle and let the durable sink deliver it. The continuation
+        // settling first means no turn was ever started for this message: a steer, or a refusal. Those keep
+        // their existing answer, returned inline, and `state.background` is still false so nothing is
+        // delivered twice.
+        const started = await Promise.race([turnStarted.then(() => true), running.then(() => false)]);
+        if (!started) { jobs.delete(state.id); return running; }
+        // Nobody awaits it from here on. `runContinuation` answers its own failures, so this is only
+        // defense-in-depth against a future change turning a detached rejection into a daemon-level one.
+        void running.catch((e) => ctx.logger.warn(`subagent continuation settled unexpectedly: ${errorText(e)}`));
+        return ok(
+          `Started the sub-agent's follow-up turn in ${childSessionId}.\n`
+            + 'Its reply is delivered to you automatically in a NEW turn when it finishes — you do not have to '
+            + 'fetch it. Do any other useful work now, then end your turn. If there is nothing else to do, say '
+            + 'so briefly and end the turn: waiting inside this turn only delays the reply, and polling '
+            + 'DelegateStatus in a loop is never the answer.',
+          { sessionId: childSessionId, status: 'running' },
+        );
+      }
       const outcome = await raceDetach((resolve) => { state.resolveDetached = resolve; }, () => runContinuation());
       if (!outcome.detached) {
         jobs.delete(state.id);

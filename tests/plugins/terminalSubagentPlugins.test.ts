@@ -364,7 +364,7 @@ describe('subagent plugin', () => {
     });
     const completed: unknown[] = [];
     const foreground = runWithPolicy(ADMIN, () =>
-      delegate.execute('call-fg', { task: 'inspect slowly' }, undefined as never, undefined as never), {
+      delegate.execute('call-fg', { task: 'inspect slowly', background: false }, undefined as never, undefined as never), {
       sessionId: 'brain-parent-detach', identity: OWNER,
       emitSubagentCompletion: (result) => completed.push(result),
     });
@@ -406,7 +406,7 @@ describe('subagent plugin', () => {
       return child;
     });
     const foreground = runWithPolicy(ADMIN, () =>
-      delegate.execute('call-detach-failed', { task: 'inspect slowly' }, undefined as never, undefined as never), {
+      delegate.execute('call-detach-failed', { task: 'inspect slowly', background: false }, undefined as never, undefined as never), {
       sessionId: 'brain-parent-detach-failed', identity: OWNER,
       emitSubagent: () => { throw new Error('database is locked'); },
     });
@@ -442,7 +442,7 @@ describe('subagent plugin', () => {
     };
     const completed: unknown[] = [];
     const foreground = runWithPolicy(ADMIN, () => continueTool.execute('call-continue', {
-      id: 'brain-ch-subagent-sub-dlg-existing', message: 'check one more edge',
+      id: 'brain-ch-subagent-sub-dlg-existing', message: 'check one more edge', background: false,
     }, undefined as never, undefined as never), {
       sessionId: 'brain-parent-continue', identity: OWNER,
       emitSubagentCompletion: (result) => completed.push(result),
