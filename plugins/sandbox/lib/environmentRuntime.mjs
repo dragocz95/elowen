@@ -167,6 +167,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  environment that has not been migrated keeps running on Podman and a migration can hold both
    *  envelopes of the same environment at once without either client learning about the other. */
   const runtimeFor = (spec) => selectRuntimeClient(spec, { podman, nspawn });
+  /** Remove the named volume handles of a specification, whichever runtime holds its envelope today.
+   *
+   *  A named volume is a Podman HANDLE over a host directory, and only Podman has a volume store: nspawn
+   *  mounts the disk's own directories and refuses the volume methods outright. Cleanup still has to walk
+   *  the component list of every recipe, because a generation that ran on Podman may have left a handle
+   *  behind, so the removal goes to the runtime that can actually hold one rather than to the runtime that
+   *  runs the envelope. Podman's own removal is a no-op for a name it does not know, which is what a
+   *  disk-backed specification always is. */
+  const removeNamedVolumes = async (owned) => {
+    for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
+  };
   /** What the host still owes the machine runtime, held briefly because two very different callers ask:
    *  the overview a browser polls, and the one-time decision below. The answer is a privileged round trip
    *  and it changes only when an operator changes the host, so a few seconds of staleness costs nothing —
@@ -985,7 +996,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (!registration.staging) throw error('site_not_staging', 'Only an unpublished conversion binding may be cleaned up as staging');
       await stopRow(row);
       if (await runtimeFor(spec).inspect(spec)) await runtimeFor(spec).remove(spec);
-      for (const volume of spec.volumes) await runtimeFor(spec).removeVolume(spec, volume.component);
+      await removeNamedVolumes(spec);
       await runtimeFor(spec).removeGenerationStorage(spec);
       row.state = 'deleted'; row.desired_state = 'deleted'; store.save(row); return;
     }
@@ -1585,10 +1596,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         else if (manifest.version !== 2) await runtimeFor(owned).removeSnapshotImage(owned, manifest.snapshotId);
       }
       step(op, 'volumes');
-      for (const recipe of recipes.values()) {
-        const owned = specFor(recipe, true);
-        for (const volume of owned.volumes) await runtimeFor(owned).removeVolume(owned, volume.component);
-      }
+      for (const recipe of recipes.values()) await removeNamedVolumes(specFor(recipe, true));
       step(op, 'storage');
       for (const saved of snapshots) {
         const owned = specFor(JSON.parse(saved.spec_json), true);
@@ -1967,10 +1975,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         const owned = specFor(JSON.parse(saved.spec_json), true);
         await runtimeFor(owned).removeSnapshotImage(owned, JSON.parse(saved.manifest_json).snapshotId);
       }
-      for (const recipe of recipes.values()) {
-        const owned = specFor(recipe, true);
-        for (const volume of owned.volumes) await runtimeFor(owned).removeVolume(owned, volume.component);
-      }
+      for (const recipe of recipes.values()) await removeNamedVolumes(specFor(recipe, true));
       await runtimeFor(spec).removeStorage(spec);
       store.transaction(() => {
         db.prepare('DELETE FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?').run('project', String(id));

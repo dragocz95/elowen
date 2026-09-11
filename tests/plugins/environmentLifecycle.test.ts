@@ -173,6 +173,10 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
     removeByName: vi.fn(async (spec: any) => { machines.delete(spec.name); }),
     removeStorage: vi.fn(), removeSnapshotStorage: vi.fn(),
+    // Exactly what the real client answers: nspawn keeps no named volume handles and refuses the method
+    // rather than emulating one. A fake that silently accepted the call would hide every caller that
+    // still routes a handle removal to the runtime holding the envelope.
+    removeVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
     prepareExecution: vi.fn(async (_spec: any, _executionId: string, _argv: string[], options: any = {}) => ({
       launch: { type: 'argv', file: '/usr/bin/sudo', args: ['-n', '/usr/local/libexec/elowen-site-gateway', ''], env: { HOME: '/host-service' } }, stdin: options.input })),
     // The rows the helper reports, in the helper's own shape. `unready` carries the details a real host
@@ -1627,6 +1631,30 @@ describe('environment runtime migration', () => {
     expect(containers.has('elowen-project-7-g1')).toBe(false);
     expect(machines.get('elowen-project-7-g2')?.state).toBe('running');
     expect((await runtime.environmentFor({ project: input.project, accountUserId: 1 })).generation).toBe(2);
+  });
+
+  it('deletes a machine-runtime project and still removes the handles its Podman generations left', async () => {
+    const { runtime, sql, podman, nspawn, storage, machines, diskFiles, project, stores } = await diskBackedProject();
+    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-migrate-delete', action: { kind: 'migrate-runtime' } });
+    await runtime.reconcile();
+    const diskId = specOf(sql).input.disk.id;
+    podman.removeVolume.mockClear();
+
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'nspawn-delete', action: { kind: 'delete' } });
+    await runtime.reconcile();
+
+    expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
+    // A named volume is a Podman handle, so the removal goes to the runtime that can hold one — for the
+    // machine generation too, whose components a Podman generation of the same project may still own.
+    expect(nspawn.removeVolume).not.toHaveBeenCalled();
+    expect(podman.removeVolume.mock.calls.map((call: any[]) => call[1])).toEqual(
+      ['workspace', 'home', 'data', 'workspace', 'home', 'data']);
+    expect(podman.removeVolume.mock.calls.some((call: any[]) => call[0].disk?.runtime === 'nspawn')).toBe(true);
+    expect(machines.size).toBe(0);
+    expect(storage.removeDisk).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ id: diskId }) }), expect.any(Array));
+    expect(diskFiles.has(diskId)).toBe(false);
+    expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
+    expect(project.lifecycle).toBe('deleted');
   });
 
   it('refuses a runtime change from a non-administrator and refuses to repeat a completed one', async () => {
