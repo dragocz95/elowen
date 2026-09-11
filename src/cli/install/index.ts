@@ -196,13 +196,23 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
 
 /** Install the root-owned helper and its immutable deployment facts. The service user can later invoke
  * the helper, but cannot modify either file; the helper accepts no arguments and validates the bounded
- * JSON request arriving on stdin. Domain-independent paths and upstreams remain inside the helper. */
-async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment): Promise<boolean> {
-  if (deploy.mode !== 'domain' || !deploy.domain) return false;
+ * JSON request arriving on stdin. Domain-independent paths and upstreams remain inside the helper.
+ *
+ * The install is deliberately NOT gated on a published-sites domain deployment: the same executable also
+ * serves the machine runtime, whose readiness cannot depend on a Sites deployment mode. The domain half
+ * of the record is written only when there is a domain, and stays required only by the operations that
+ * read it. The storage roots are written always, because every environment operation derives its host
+ * paths from them and from nothing the request carries. */
+export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment, home: string): Promise<boolean> {
   const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
   const deploymentTmp = '/tmp/elowen-site-gateway.json';
+  const pluginData = join(home, '.config', 'elowen', 'plugins-data');
   await r.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
-  await r.writeFile(deploymentTmp, `${JSON.stringify({ appHost: deploy.domain.toLowerCase(), daemonPort: DAEMON_PORT }, null, 2)}\n`);
+  await r.writeFile(deploymentTmp, `${JSON.stringify({
+    ...(deploy.mode === 'domain' && deploy.domain ? { appHost: deploy.domain.toLowerCase() } : {}),
+    daemonPort: DAEMON_PORT,
+    storage: { sandboxDataDir: join(pluginData, 'sandbox'), sitesDataDir: join(pluginData, 'sites') },
+  }, null, 2)}\n`);
   await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH), dirname(SITE_GATEWAY_DEPLOYMENT_PATH)]);
   await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
   await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', deploymentTmp, SITE_GATEWAY_DEPLOYMENT_PATH]);
@@ -277,9 +287,9 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
   } else {
     units = await step('Configuring systemd services', () => provisionSystemd(r, plan.user.username, home, plan.deploy));
 
-    await step('Installing published-sites gateway helper', () => provisionSiteGatewayHelper(r, plan.deploy))
+    await step('Installing privileged host helper', () => provisionSiteGatewayHelper(r, plan.deploy, home))
       .then((created) => { siteGatewayHelperCreated = created; })
-      .catch((e) => p.log.warn(`Published-sites gateway helper unavailable: ${(e as Error).message}`));
+      .catch((e) => p.log.warn(`Privileged host helper unavailable: ${(e as Error).message}`));
 
     // Non-fatal: without the sudoers drop-in the services still run — self-updates cannot restart units,
     // and a sites plugin cannot ask the root-owned gateway helper to apply its wildcard vhost.

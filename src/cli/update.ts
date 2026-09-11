@@ -138,9 +138,11 @@ export function acquireUpdateLock(env: NodeJS.ProcessEnv, deps: UpdateLockDeps):
 
 export interface UpdateResult { updated: boolean; from: string; to: string }
 
+/** Keep the installed root helper in step with the release. Not gated on the deployment mode: the same
+ *  executable also serves the machine runtime, which does not depend on a published-sites domain, and a
+ *  stale helper is reported as a readiness failure rather than quietly kept. */
 async function refreshSiteGatewayHelper(): Promise<boolean> {
-  const installInfo = readInstallInfo();
-  if (process.platform !== 'linux' || installInfo?.mode !== 'domain') return false;
+  if (process.platform !== 'linux' || readInstallInfo() === null) return false;
   return await installSiteGatewayHelper();
 }
 

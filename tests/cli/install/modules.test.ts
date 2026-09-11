@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { AGENT_CLIS, detectAgentClis, installCommand } from '../../../src/cli/install/agentClis.js';
 import { preflight, preflightBlockers } from '../../../src/cli/install/preflight.js';
 import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
-import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs } from '../../../src/cli/install/index.js';
+import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs, provisionSiteGatewayHelper } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
@@ -344,5 +344,43 @@ describe('install/serviceUser', () => {
     const res = await ensureServiceUser(r, { mode: 'create', username: 'elowen' });
     expect(res).toEqual({ username: 'elowen', home: '/var/lib/elowen', created: false });
     expect(calls).not.toContain('useradd');
+  });
+});
+
+describe('install/provisionSiteGatewayHelper', () => {
+  function recordingRunner() {
+    const writes: { path: string; content: string }[] = [];
+    const calls: { cmd: string; args: string[] }[] = [];
+    return {
+      writes,
+      calls,
+      r: runner({
+        writeFile: async (path: string, content: string) => { writes.push({ path, content }); },
+        exec: async (cmd: string, args: string[]) => { calls.push({ cmd, args }); return { code: 0, stdout: '', stderr: '' }; },
+      }),
+    };
+  }
+
+  // One executable serves both the published-sites gateway and the machine runtime, and machine
+  // readiness cannot depend on whether this instance publishes sites. The install is therefore
+  // unconditional; only the domain half of the record is conditional.
+  it('installs the helper even without a published-sites domain deployment', async () => {
+    const { r, writes, calls } = recordingRunner();
+    expect(await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' }, '/var/lib/elowen')).toBe(true);
+    expect(calls.some(({ cmd, args }) => cmd === 'install' && args.includes('/usr/local/libexec/elowen-site-gateway'))).toBe(true);
+    const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
+    expect(record.appHost).toBeUndefined();
+    expect(record.storage).toEqual({
+      sandboxDataDir: '/var/lib/elowen/.config/elowen/plugins-data/sandbox',
+      sitesDataDir: '/var/lib/elowen/.config/elowen/plugins-data/sites',
+    });
+  });
+
+  it('adds the domain record only when the deployment has one, and always the storage roots', async () => {
+    const { r, writes } = recordingRunner();
+    await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' }, '/var/lib/elowen');
+    const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
+    expect(record).toMatchObject({ appHost: 'agent.example.com', daemonPort: 4400 });
+    expect(record.storage.sandboxDataDir).toBe('/var/lib/elowen/.config/elowen/plugins-data/sandbox');
   });
 });
