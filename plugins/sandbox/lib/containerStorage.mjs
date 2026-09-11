@@ -42,6 +42,16 @@ function bytesIn(root) {
   return total;
 }
 
+/** The mode of a guest root filesystem's own root directory. Privacy of an environment's storage comes
+ *  from the disk and snapshot directories ABOVE this one, which the daemon owns at 0700; the root of the
+ *  tree a container boots has to stay traversable, because every guest service that drops privileges —
+ *  `dbus-daemon` becoming `messagebus` first among them — cannot reach a single file through a `/` the
+ *  daemon kept to itself, and systemd then waits for a bus that never answers. Both base images carry
+ *  0755 here, and neither a tar extraction nor `cp -a` of a tree's CONTENTS changes the mode of the
+ *  directory it is extracted into. */
+const ROOTFS_MODE = 0o755;
+const COMPONENT_MODE = 0o700;
+
 function syncPath(path) {
   const fd = openSync(path, 'r');
   try { fsyncSync(fd); } finally { closeSync(fd); }
@@ -100,7 +110,12 @@ export class ContainerStorage {
     for (const volume of spec.volumes) await this.#podman.ensureVolume(spec, volume.component);
   }
 
-  async #prepareDisk(spec) {
+  /** `fill` is how the pending root filesystem gets its contents, and the only thing that differs between
+   *  a NEW disk and one migrated from a legacy container: the default materializes the fixed image, and
+   *  the migration path extracts its own verified export archive. Everything after it — the inventory
+   *  proof, the fsync, the atomic activation and the durable manifest — is one protocol for both, because
+   *  a second copy of it is how the two would come to disagree about when a disk is complete. */
+  async #prepareDisk(spec, fill = null) {
     const directory = checkedHostPath(dirname(spec.disk.rootfsPath), { create: true });
     const manifestPath = join(directory, 'disk.json');
     const pendingManifestPath = join(directory, 'disk.pending');
@@ -159,17 +174,67 @@ export class ContainerStorage {
     } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    mkdirSync(pending, { mode: 0o700 });
+    mkdirSync(pending, { mode: ROOTFS_MODE });
     for (const component of spec.disk.components) checkedHostPath(component.path, { create: true });
-    const imageId = await this.#podman.materializeRootfs(spec, pending);
+    const { sourceImageId, ...provenance } = fill ? await fill(pending) : { sourceImageId: await this.#podman.materializeRootfs(spec, pending) };
     await this.#podman.syncDiskTree(pending);
     writeDurable(pendingManifestPath, { resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
-      sourceImageId: imageId, rootfsPath: spec.disk.rootfsPath, components: spec.disk.components, createdAt: new Date().toISOString(), materialized: true });
+      sourceImageId, rootfsPath: spec.disk.rootfsPath, components: spec.disk.components, createdAt: new Date().toISOString(), ...provenance, materialized: true });
     syncPath(directory);
     renameSync(pending, spec.disk.rootfsPath);
     syncPath(directory);
     renameSync(pendingManifestPath, manifestPath);
     syncPath(directory);
+  }
+
+  /** Capture the merged root filesystem of a legacy envelope into a host-owned archive, fingerprinted and
+   *  fsynced, and record a durable receipt for it. The receipt is what makes the capture resumable: an
+   *  archive present WITHOUT one is the remains of an export that was interrupted, so it is discarded and
+   *  taken again rather than trusted for its size. A receipt that exists is verified against the file on
+   *  disk and returned, so a retry never exports a second time. */
+  async captureRootfsExport(spec, migrationId) {
+    assertContainerSpec(spec);
+    resourceToken(migrationId);
+    if (spec.disk) throw new Error('Only a legacy image-backed environment is migrated');
+    const directory = checkedHostPath(join(spec.storageRoot, 'migrations', migrationId), { create: true });
+    const archive = join(directory, 'rootfs.tar');
+    const receiptPath = join(directory, 'export.json');
+    const identity = { migrationId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash };
+    let receipt;
+    try { receipt = JSON.parse(readFileSync(checkedHostPath(receiptPath, { file: true }), 'utf8')); }
+    catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    if (receipt) {
+      if (JSON.stringify({ migrationId: receipt.migrationId, resource: receipt.resource, generation: receipt.generation, specHash: receipt.specHash }) !== JSON.stringify(identity)
+        || receipt.archivePath !== archive) throw new Error('Migration export receipt ownership mismatch');
+      const measured = await fingerprint(archive, this.#maxArchiveBytes);
+      if (measured.sizeBytes !== receipt.sizeBytes || measured.sha256 !== receipt.sha256) throw new Error('The migration export archive changed after it was captured');
+      return receipt;
+    }
+    try { checkedHostPath(archive, { file: true }); await this.#podman.removeDiskPath(archive); }
+    catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    const containerId = await this.#podman.exportContainerRootfs(spec, archive);
+    const digest = await fingerprint(archive, this.#maxArchiveBytes);
+    syncPath(archive);
+    const complete = { ...identity, archivePath: archive, containerId, ...digest };
+    writeDurable(receiptPath, complete);
+    syncPath(directory);
+    return complete;
+  }
+
+  /** Materialize a captured export into the candidate disk. The archive is re-fingerprinted against the
+   *  receipt first, so an activation can only ever publish the bytes the export proved. */
+  async materializeMigratedDisk(spec, capture) {
+    assertContainerSpec(spec);
+    if (!spec.disk) throw new Error('A rootfs-backed candidate specification is required');
+    const archive = checkedHostPath(capture.archivePath, { file: true });
+    const measured = await fingerprint(archive, this.#maxArchiveBytes);
+    if (measured.sizeBytes !== capture.sizeBytes || measured.sha256 !== capture.sha256) throw new Error('The migration export archive changed after it was captured');
+    await this.#prepareDisk(spec, async (pending) => {
+      await this.#podman.extractRootfsArchive(archive, pending);
+      await this.#podman.verifyExtractedRootfs(archive, pending);
+      return { sourceImageId: await this.#podman.imageIdentity(spec.disk.sourceImage),
+        migratedFrom: { containerId: capture.containerId, archivePath: archive, sizeBytes: measured.sizeBytes, sha256: measured.sha256 } };
+    });
   }
 
   /** Bring a HOST project's directory into the project's own workspace volume, once. Core's
@@ -390,7 +455,7 @@ export class ContainerStorage {
       if (row.state === 'running') { await this.#podman.pause(spec); paused = true; }
       for (const source of sources) {
         const target = join(directory, source.component);
-        mkdirSync(target, { mode: 0o700 });
+        mkdirSync(target, { mode: source.component === 'rootfs' ? ROOTFS_MODE : COMPONENT_MODE });
         await this.#podman.copyDiskTree(source.path, target);
         await this.#podman.syncDiskTree(target);
         manifest.trees.push({ component: source.component, path: target, ...await this.#podman.fingerprintDiskTree(target) });
@@ -499,7 +564,7 @@ export class ContainerStorage {
       const pending = `${target}.pending`;
       try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-      mkdirSync(pending, { mode: 0o700 });
+      mkdirSync(pending, { mode: tree.component === 'rootfs' ? ROOTFS_MODE : COMPONENT_MODE });
       await this.#podman.copyDiskTree(tree.path, pending);
       const copied = await this.#podman.fingerprintDiskTree(pending);
       if (copied.digest !== tree.digest || copied.logicalBytes !== tree.logicalBytes) throw new Error('Restored snapshot tree differs from its manifest');
