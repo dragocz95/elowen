@@ -2103,7 +2103,7 @@ function nspawnStatus(request, options = {}) {
   const readMode = options.readMode ?? defaultReadMode;
   const env = options.env ?? process.env;
   if (request.veth !== undefined && typeof request.veth !== 'boolean') fail('the machine network request is invalid');
-  const user = serviceUser(runner, env);
+  const user = machineServiceUser(runner, env, request);
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
   const installed = packageInstalled(runner, NSPAWN_PACKAGE);
   const items = [
@@ -2133,7 +2133,7 @@ function nspawnProvision(request, options = {}) {
   const env = options.env ?? process.env;
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
   if (!os.ok) fail(os.detail);
-  const user = serviceUser(runner, env);
+  const user = machineServiceUser(runner, env, request);
   if (!packageInstalled(runner, NSPAWN_PACKAGE)) {
     runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
     runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');

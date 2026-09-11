@@ -42,7 +42,7 @@ export type SiteGatewayHelperRequest =
   | { op: 'status' }
   | { op: 'environments-status' }
   | { op: 'environments-provision' }
-  | { domain: 'nspawn'; op: 'provision' }
+  | { domain: 'nspawn'; op: 'provision'; user?: string }
   | { op: 'prepare-runtime-socket'; siteId: string }
   | { op: 'seal-runtime-socket'; siteId: string }
   | { op: 'remove-runtime-socket'; siteId: string };
@@ -128,9 +128,14 @@ export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = 
  *  create an environment while any of the three is missing and there is deliberately no fallback, so a
  *  host that never runs this can create nothing and the only repair would be writing root-owned files by
  *  hand. Both paths reach it: a fresh install as one of its steps, and an existing instance through the
- *  same refresh that brings the helper itself forward. */
-export async function provisionMachineRuntime(invoke: SiteGatewayHelperInvoker = defaultInvoker): Promise<boolean> {
-  const response = await invoke({ domain: 'nspawn', op: 'provision' });
+ *  same refresh that brings the helper itself forward.
+ *
+ *  Both of those paths run as root, where the inner sudo reports `root` as the invoking account and the
+ *  helper cannot derive the service user from it. The account the environments belong to is therefore
+ *  named: the installer knows it from the plan, an update reads it from the root-owned install record, and
+ *  the helper resolves it through passwd and accepts it only from a root caller. */
+export async function provisionMachineRuntime(serviceUser: string | null, invoke: SiteGatewayHelperInvoker = defaultInvoker): Promise<boolean> {
+  const response = await invoke({ domain: 'nspawn', op: 'provision', ...(serviceUser ? { user: serviceUser } : {}) });
   if (response.ready === false) {
     const blocking = (response.items ?? []).filter((item): item is { ok: boolean; label?: string; detail?: string } =>
       typeof item === 'object' && item !== null && (item as { ok?: unknown }).ok === false);

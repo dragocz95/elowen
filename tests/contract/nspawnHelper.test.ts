@@ -646,6 +646,31 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(fixture.calls.slice(before.calls).some((call) => call.file === '/usr/bin/apt-get')).toBe(false);
   });
 
+  it('provisions from an operator root shell for the account it is told, and from nowhere else', async () => {
+    // `sudo elowen update` is the documented operator path. It reaches this executable from a root shell,
+    // where the inner sudo reports root as the invoking account: the service user could not be derived at
+    // all, so the command printed that it could not be determined and provisioned nothing.
+    const rootShell = { SUDO_USER: 'root', SUDO_UID: '0', SUDO_GID: '0' };
+    const fixture = runnerFixture({ installed: false });
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision', user: 'azureuser' }, undefined,
+      { ...fixture.options, env: rootShell }) as Readiness;
+
+    expect(provisioned.ready).toBe(true);
+    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH, POLKIT_RULE_PATH]);
+    expect(rowFor(provisioned, 'polkit:machines').detail).toBe('scoped to elowen-machine units for azureuser');
+
+    // Root still has to say which account it means; nothing is guessed from the host.
+    await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, { ...fixture.options, env: rootShell }))
+      .rejects.toThrow(/requires naming the service account/);
+    // The service account may not name one: sudo already says who it is, and the rule this writes is a
+    // grant over machine units that it must not be able to hand to another account.
+    await expect(applyRequest({ domain: 'nspawn', op: 'status', user: 'somebody-else' }, undefined, fixture.options))
+      .rejects.toThrow(/does not match the invoking account/);
+    // And the storage roots keep coming from the account sudo reports, from nothing a request carries.
+    expect(helperRequestNeedsDeployment({ domain: 'nspawn', op: 'provision', user: 'azureuser' })).toBe(false);
+    expect(storageRootsFor('/home/azureuser')).toEqual(siteGatewayStorageRoots('/home/azureuser'));
+  });
+
   it('restores the one artefact that drifted, and reloads only when the reload is what makes it take effect', async () => {
     const fixture = runnerFixture();
     await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
