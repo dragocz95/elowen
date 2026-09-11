@@ -210,6 +210,10 @@ it.skipIf(!podmanAvailable)('runs the production disk, envelope, snapshot and re
     await client.create(source);
     await client.start(source);
     await client.waitForSystemBus(source);
+    // The root of a materialized disk has to stay traversable: a `/` the daemon keeps to itself leaves
+    // every guest service that drops privileges unable to read a file, and systemd never finishes.
+    expect(lstatSync(disk.rootfsPath).mode & 0o777).toBe(0o755);
+    expect(['running', 'degraded']).toContain(await client.systemRunning(source));
     expect(podman(['exec', source.name, '/bin/bash', '-lc', 'printf before >/etc/elowen-p2-marker']).code).toBe(0);
     await client.stop(source); await client.remove(source);
     await client.create(source); await client.start(source); await client.waitForSystemBus(source);
@@ -223,6 +227,99 @@ it.skipIf(!podmanAvailable)('runs the production disk, envelope, snapshot and re
     expect(podman(['exec', target.name, '/bin/cat', '/etc/elowen-p2-marker']).stdout).toBe('before');
   } finally {
     for (const spec of [target, source].filter(Boolean)) {
+      try { const row = await client.inspect(spec); if (row?.state === 'running' || row?.state === 'paused') await client.stop(spec); } catch {}
+      try { if (await client.inspect(spec)) await client.remove(spec); } catch {}
+      for (const volume of spec.volumes) try { await client.removeVolume(spec, volume.component); } catch {}
+    }
+    podman(['unshare', '/usr/bin/rm', '-rf', '--', root], { allowFailure: true, timeoutMs: 180_000 });
+    expect(existsSync(root)).toBe(false);
+  }
+}, 15 * 60_000);
+
+/**
+ * Phase 4 proof on the production rootless engine: a legacy image-backed Project container is migrated
+ * onto a persistent disk, and the state that only existed in its writable container layer — a file under
+ * `/etc` and an installed executable under `/usr/local` — comes out of the disk on the other side. The
+ * workspace, HOME and data directories are NOT moved: the migrated disk records the paths the legacy
+ * generation already used, and the files written through those mounts are still there afterwards.
+ */
+it.skipIf(!podmanAvailable)('migrates a legacy image-backed container onto a persistent disk', async () => {
+  const token = randomBytes(6).toString('hex');
+  const root = mkdtempSync(join(tmpdir(), `elowen-p4-${token}-`));
+  const namespace = `elowen-p4-${token}`;
+  const projectId = Number.parseInt(token.slice(0, 6), 16) + 1;
+  const paths = { sandboxDataDir: root, namespace };
+  const resource = { kind: 'project', id: projectId } as const;
+  const client = new PodmanClient({ timeoutMs: 15 * 60_000 });
+  const storage = new ContainerStorage(client);
+  let legacy: any;
+  let candidate: any;
+  try {
+    const image = await client.ensureProjectImage(root);
+    legacy = createContainerSpec({ resource, workspaceTarget: '/proof', generation: 1, image, network: 'isolated' }, paths);
+    expect(legacy.disk).toBeUndefined();
+    await storage.prepare(legacy);
+    await client.create(legacy);
+    await client.start(legacy);
+    await client.waitForSystemBus(legacy);
+    expect(podman(['exec', legacy.name, '/bin/bash', '-lc', [
+      'set -eu',
+      'printf before >/etc/elowen-p4-marker',
+      'printf "#!/bin/sh\\necho installed\\n" >/usr/local/bin/elowen-p4-installed',
+      'chmod 755 /usr/local/bin/elowen-p4-installed',
+      'printf workspace >/proof/marker',
+      'printf home >/root/marker',
+      'printf data >/data/marker',
+    ].join('; ')]).code).toBe(0);
+    // The preflight is the refusal that has to happen while the environment is still up.
+    const preflight = await client.preflightRootfsMigration(legacy, join(legacy.storageRoot, 'disks'));
+    expect(preflight.freeBytes).toBeGreaterThan(preflight.requiredBytes);
+    await client.stop(legacy);
+
+    const capture = await storage.captureRootfsExport(legacy, `migration-p4-${token}`);
+    expect(capture.containerId).toBe((await client.inspect(legacy))!.id);
+    expect(capture.sizeBytes).toBeGreaterThan(0);
+    // Taking the capture again returns the same receipt instead of exporting a second archive.
+    expect(await storage.captureRootfsExport(legacy, `migration-p4-${token}`)).toEqual(capture);
+
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, `${token}${'c'.repeat(20)}`, 1);
+    expect(disk.components.map((entry: { path: string }) => entry.path)).toEqual(legacy.volumes.map((volume: { path: string }) => volume.path));
+    candidate = createContainerSpec({ resource, workspaceTarget: '/proof', generation: 2, image, disk, network: 'isolated' }, paths);
+    await storage.materializeMigratedDisk(candidate, capture);
+    // The durable disk record is what makes the disk complete, and the rootfs carries the marker the
+    // legacy container's writable layer held.
+    const manifest = JSON.parse(readFileSync(join(root, 'projects', String(projectId), 'disks', disk.id, 'disk.json'), 'utf8'));
+    expect(manifest).toMatchObject({ diskId: disk.id, format: 2, materialized: true, sourceImage: image });
+    expect(manifest.migratedFrom).toMatchObject({ containerId: capture.containerId, sha256: capture.sha256 });
+    expect(podman(['unshare', '/bin/cat', join(disk.rootfsPath, 'etc/elowen-p4-marker')]).stdout).toBe('before');
+    expect(lstatSync(disk.rootfsPath).mode & 0o777).toBe(0o755);
+
+    await storage.prepare(candidate);
+    await client.create(candidate);
+    await client.start(candidate);
+    await client.waitForSystemBus(candidate);
+    expect(['running', 'degraded']).toContain(await client.systemRunning(candidate));
+    const inspected = inspect(candidate.name);
+    expect(inspected.Rootfs).toBe(realpathSync(disk.rootfsPath));
+    expect(inspected.Image).toBe('');
+    expect(podman(['exec', candidate.name, '/bin/bash', '-lc', [
+      'set -eu',
+      'test "$(cat /etc/elowen-p4-marker)" = before',
+      'test "$(/usr/local/bin/elowen-p4-installed)" = installed',
+      'test "$(cat /proof/marker)" = workspace',
+      'test "$(cat /root/marker)" = home',
+      'test "$(cat /data/marker)" = data',
+    ].join('; ')]).code).toBe(0);
+
+    // Only the envelope is replaceable now: removing and recreating it keeps the migrated rootfs.
+    await client.stop(candidate);
+    await client.remove(candidate);
+    await client.create(candidate);
+    await client.start(candidate);
+    await client.waitForSystemBus(candidate);
+    expect(podman(['exec', candidate.name, '/bin/cat', '/etc/elowen-p4-marker']).stdout).toBe('before');
+  } finally {
+    for (const spec of [candidate, legacy].filter(Boolean)) {
       try { const row = await client.inspect(spec); if (row?.state === 'running' || row?.state === 'paused') await client.stop(spec); } catch {}
       try { if (await client.inspect(spec)) await client.remove(spec); } catch {}
       for (const volume of spec.volumes) try { await client.removeVolume(spec, volume.component); } catch {}

@@ -84,18 +84,29 @@ function setup(config: Record<string, unknown> = {}) {
     }),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
     waitForSystemBus: vi.fn(async () => {}),
+    systemRunning: vi.fn(async () => 'running'),
+    preflightRootfsMigration: vi.fn(async () => ({ requiredBytes: 1024, freeBytes: 1024 * 1024 })),
+    unpause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
     prepareExecution: vi.fn(async () => ({ launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } } })),
     removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(), importSnapshotVolume: vi.fn(), siteDataArchive: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
+  // What a legacy container's root filesystem holds before it is migrated. The capture below is the one
+  // place those bytes become a host archive, and the materialization is the one place they become the
+  // disk — so a marker written here has to come out of `diskFiles` on the other side.
+  const legacyRootfs = new Map<string, string>();
   const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn(),
-    removeDisk: vi.fn(async (spec: any) => { diskFiles.delete(spec.disk.id); }) };
+    removeDisk: vi.fn(async (spec: any) => { diskFiles.delete(spec.disk.id); }),
+    captureRootfsExport: vi.fn(async (spec: any, migrationId: string) => ({ migrationId, resource: spec.resource, generation: spec.generation,
+      specHash: spec.specHash, archivePath: join(root, 'migrations', migrationId, 'rootfs.tar'),
+      containerId: containers.get(spec.name).id, sizeBytes: 4096, sha256: 'e'.repeat(64) })),
+    materializeMigratedDisk: vi.fn(async (spec: any) => { diskFiles.set(spec.disk.id, new Map(legacyRootfs)); }) };
   const dependencies = { ctx, db, dataDir: root, podman: podman as unknown as PodmanClient, storage: storage as unknown as ContainerStorage };
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, diskFiles, warn, forwarders, publicationSocket, staleSocket, endForwarders };
+  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, diskFiles, legacyRootfs, warn, forwarders, publicationSocket, staleSocket, endForwarders };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
@@ -1232,5 +1243,221 @@ describe('durable project publications', () => {
     await runtime.reconcile();
     expect(records(sql)).toEqual([]);
     expect(containers.size).toBe(0);
+  });
+});
+
+/** The nine durable receipts of a disk migration, in the order the operation writes them. */
+const MIGRATION_CHECKPOINTS = ['claimed', 'quiesced', 'exported', 'materialized', 'candidate-created',
+  'candidate-booted', 'switched', 'legacy-removed', 'complete'];
+const admin = { project: { kind: 'managed', projectId: 7 } as const, accountUserId: 3 };
+
+describe('legacy environment disk migration', () => {
+  /** Bring a project up and then take its disk off the stored specification, which is exactly the shape
+   *  of an environment created before persistent disks existed: an image-backed container this runtime
+   *  still owns, with its workspace, HOME and data in the generation's storage directories. */
+  async function legacyProject(config: Record<string, unknown> = {}) {
+    const context = setup(config);
+    await context.runtime.requestEnvironment({ ...input, requestId: 'legacy-boot', action: { kind: 'start' } });
+    await context.runtime.reconcile();
+    const stored = JSON.parse((context.sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
+    delete stored.input.disk;
+    context.sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(stored));
+    context.legacyRootfs.set('/etc/elowen-legacy-marker', 'before');
+    context.podman.create.mockClear();
+    context.diskFiles.clear();
+    return context;
+  }
+  const migrationOf = (sql: any) => JSON.parse((sql.prepare("SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE json_extract(action_json,'$.kind')='migrate-disk'").get() as any).checkpoint_json).migration;
+  const specOf = (sql: any, kind: string, id: string) => JSON.parse((sql.prepare('SELECT spec_json FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').get(kind, id) as any).spec_json);
+
+  it('migrates a running legacy project through every checkpoint and keeps its rootfs in the disk', async () => {
+    const { runtime, sql, podman, storage, containers, diskFiles } = await legacyProject();
+    const legacyName = 'elowen-project-7-g1';
+    expect(containers.get(legacyName)?.state).toBe('running');
+
+    await runtime.requestEnvironment({ ...admin, requestId: 'migrate', action: { kind: 'migrate-disk' } });
+    await runtime.reconcile();
+
+    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
+    // The free-space refusal has to happen while the environment is still up, not after it is quiesced.
+    expect(podman.preflightRootfsMigration.mock.invocationCallOrder[0]).toBeLessThan(podman.stop.mock.invocationCallOrder.at(-1)!);
+    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
+    expect(storage.materializeMigratedDisk).toHaveBeenCalledOnce();
+
+    const candidate = podman.create.mock.calls.at(-1)![0];
+    expect(candidate.name).toBe('elowen-project-7-g2');
+    expect(candidate.disk).toMatchObject({ format: 2, componentGeneration: 1 });
+    // The workspace, HOME and data directories are not moved: the disk records where they already are.
+    expect(candidate.disk.components.map((entry: any) => entry.path)).toEqual(candidate.volumes.map((volume: any) => volume.path));
+    for (const component of candidate.disk.components) expect(component.path).toContain('/storage/1/');
+    expect(diskFiles.get(candidate.disk.id)?.get('/etc/elowen-legacy-marker')).toBe('before');
+
+    const row = specOf(sql, 'project', '7');
+    expect(row.input.disk.id).toBe(candidate.disk.id);
+    expect(row.input.generation).toBe(2);
+    expect(containers.has(legacyName)).toBe(false);
+    expect(containers.get(candidate.name)?.state).toBe('running');
+    expect((await runtime.environmentFor({ project: input.project, accountUserId: 1 })).generation).toBe(2);
+  });
+
+  it('migrates a stopped legacy project without booting the candidate', async () => {
+    const { runtime, sql, podman, containers } = await legacyProject();
+    await runtime.requestEnvironment({ ...input, requestId: 'legacy-stop', action: { kind: 'stop' } });
+    await runtime.reconcile();
+    podman.start.mockClear();
+
+    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-stopped', action: { kind: 'migrate-disk' } });
+    await runtime.reconcile();
+
+    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
+    expect(podman.start).not.toHaveBeenCalled();
+    expect(podman.systemRunning).not.toHaveBeenCalled();
+    const candidate = podman.create.mock.calls.at(-1)![0];
+    expect(containers.get(candidate.name)?.state).toBe('created');
+    expect(specOf(sql, 'project', '7').input.disk.id).toBe(candidate.disk.id);
+  });
+
+  it('refuses migration for a non-administrator and leaves an already migrated row untouched', async () => {
+    const { runtime, sql, storage } = await legacyProject();
+    await expect(runtime.requestEnvironment({ ...input, requestId: 'migrate-denied', action: { kind: 'migrate-disk' } }))
+      .rejects.toMatchObject({ code: 'admin_required' });
+    expect(specOf(sql, 'project', '7').input.disk).toBeUndefined();
+
+    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-once', action: { kind: 'migrate-disk' } });
+    await runtime.reconcile();
+    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
+
+    await expect(runtime.requestEnvironment({ ...admin, requestId: 'migrate-again', action: { kind: 'migrate-disk' } }))
+      .rejects.toMatchObject({ code: 'already_rootfs_backed' });
+    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a legacy row entirely alone when nothing migrates it', async () => {
+    const { runtime, sql, podman, storage, diskFiles } = await legacyProject();
+    await runtime.requestEnvironment({ ...input, requestId: 'legacy-restart', action: { kind: 'restart' } });
+    await runtime.reconcile();
+    expect(podman.stop.mock.calls.at(-1)![0].disk).toBeUndefined();
+    expect(podman.start.mock.calls.at(-1)![0].disk).toBeUndefined();
+    expect(specOf(sql, 'project', '7').input.disk).toBeUndefined();
+    expect(specOf(sql, 'project', '7').input.generation).toBe(1);
+    expect(storage.captureRootfsExport).not.toHaveBeenCalled();
+    expect(diskFiles.size).toBe(0);
+  });
+
+  it('rolls back to the legacy container when the candidate will not boot, then completes on retry', async () => {
+    const { runtime, sql, podman, storage, containers, diskFiles } = await legacyProject();
+    podman.start.mockImplementationOnce(async () => { throw new Error('candidate init refused to start'); });
+
+    const queued = await runtime.requestEnvironment({ ...admin, requestId: 'migrate-rollback', action: { kind: 'migrate-disk' } });
+    await runtime.reconcile();
+
+    const failed = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
+    expect(failed!.status).toBe('failed');
+    expect(failed!.error).toContain('candidate init refused to start');
+    const rolledBack = migrationOf(sql);
+    // The candidate is gone; the disk and the export archive stay for diagnosis.
+    expect(rolledBack.done).toEqual(['claimed', 'quiesced', 'exported', 'materialized']);
+    expect(containers.has('elowen-project-7-g2')).toBe(false);
+    expect(diskFiles.has(rolledBack.diskId)).toBe(true);
+    expect(rolledBack.export.archivePath).toContain('rootfs.tar');
+    // The row is still the legacy container's, and it is running again.
+    expect(specOf(sql, 'project', '7').input.disk).toBeUndefined();
+    expect(specOf(sql, 'project', '7').containerId).toBe('a'.repeat(64));
+    expect(containers.get('elowen-project-7-g1')?.state).toBe('running');
+
+    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-rollback', action: { kind: 'migrate-disk' } });
+    await runtime.reconcile();
+    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
+    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
+    expect(storage.materializeMigratedDisk).toHaveBeenCalledOnce();
+    expect(specOf(sql, 'project', '7').input.disk.id).toBe(rolledBack.diskId);
+    expect(containers.has('elowen-project-7-g1')).toBe(false);
+  });
+
+  // Every step of the migration is interrupted in turn — which is what a daemon restart or a host failure
+  // looks like from the durable row — and the same intent is re-queued each time. The whole point of the
+  // receipts is that the destructive work happens once however often the operation is resumed.
+  it('resumes from the first incomplete checkpoint after a failure at every step', async () => {
+    const { runtime, sql, podman, storage, containers } = await legacyProject();
+    const refuse = (message: string) => async () => { throw new Error(message); };
+    const interruptions: (() => void)[] = [
+      () => podman.preflightRootfsMigration.mockImplementationOnce(refuse('preflight interrupted')),
+      () => podman.stop.mockImplementationOnce(refuse('stop interrupted')),
+      () => storage.captureRootfsExport.mockImplementationOnce(refuse('export interrupted')),
+      () => storage.materializeMigratedDisk.mockImplementationOnce(refuse('materialization interrupted')),
+      () => storage.prepare.mockImplementationOnce(refuse('disk preparation interrupted')),
+      () => podman.create.mockImplementationOnce(refuse('candidate creation interrupted')),
+      () => podman.start.mockImplementationOnce(refuse('candidate boot interrupted')),
+      () => podman.systemRunning.mockImplementationOnce(refuse('candidate systemd interrupted')),
+      () => podman.remove.mockImplementationOnce(refuse('legacy removal interrupted')),
+    ];
+    const reached: string[][] = [];
+    const receipts = new Set<string>();
+    for (const interrupt of interruptions) {
+      interrupt();
+      const queued = await runtime.requestEnvironment({ ...admin, requestId: 'migrate-resume', action: { kind: 'migrate-disk' } });
+      await runtime.reconcile();
+      const operation = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
+      expect(operation!.status, JSON.stringify(operation)).toBe('failed');
+      const migration = migrationOf(sql);
+      reached.push(migration.done ?? []);
+      if (migration.export) receipts.add(JSON.stringify(migration.export));
+    }
+    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-resume', action: { kind: 'migrate-disk' } });
+    await runtime.reconcile();
+
+    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
+    // One export archive and one materialized disk across all ten attempts: every interrupted attempt
+    // was retried, and not one of them repeated a step whose receipt was already durable. Both capture
+    // primitives were entered exactly twice — the attempt that was interrupted, and the one that
+    // produced the receipt — where an operation without checkpoints would have run them nine times.
+    expect([...receipts]).toHaveLength(1);
+    expect(storage.captureRootfsExport).toHaveBeenCalledTimes(2);
+    expect(storage.materializeMigratedDisk).toHaveBeenCalledTimes(2);
+    expect(reached.map((done) => done.length)).toEqual([1, 1, 2, 3, 4, 4, 4, 4, 7]);
+    expect(specOf(sql, 'project', '7').input.generation).toBe(2);
+    expect(containers.has('elowen-project-7-g1')).toBe(false);
+  });
+
+  it('migrates a legacy Site without replaying its bootstrap seed and verifies ingress readiness', async () => {
+    const { runtime, sql, root, podman, storage, containers, diskFiles, legacyRootfs, staleSocket } = setup();
+    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
+      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers', 'shop'),
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
+    mkdirSync(registration.sourcePath, { recursive: true });
+    mkdirSync(registration.brokerDir, { recursive: true });
+    const verifyReady = vi.fn(async () => {});
+    const containerSeed = vi.fn(async () => ({ kind: 'data' as const, archivePath: join(root, 'seed.tar') }));
+    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {},
+      beforeCreate: async () => {}, containerSeed, verifyReady });
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-boot', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const legacy = podman.create.mock.calls.at(-1)![0];
+    expect(legacy.disk).toBeUndefined();
+    expect(containerSeed).toHaveBeenCalledOnce();
+    legacyRootfs.set('/etc/elowen-site-marker', 'installed');
+    staleSocket(join(registration.brokerDir, 'app.sock'));
+    containerSeed.mockClear();
+    podman.siteDataArchive.mockClear();
+    podman.create.mockClear();
+
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 3, requestId: 'site-migrate', action: { kind: 'migrate-disk' } });
+    await runtime.reconcile();
+
+    const migration = JSON.parse((sql.prepare("SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE kind='site'").all() as any[])
+      .map((entry: any) => entry.checkpoint_json).find((value: string) => value.includes('migration'))!).migration;
+    expect(migration.done).toEqual(MIGRATION_CHECKPOINTS);
+    const candidate = podman.create.mock.calls.at(-1)![0];
+    expect(candidate.disk).toMatchObject({ format: 2, componentGeneration: 1, sourceImage: registration.image });
+    expect(candidate.disk.components).toEqual([{ component: 'data', path: join(registration.sitesDataDir, 'shop', 'environment', 'storage', '1', 'data') }]);
+    // The exported rootfs and the existing data directory already carry the bootstrap.
+    expect(containerSeed).not.toHaveBeenCalled();
+    expect(podman.siteDataArchive).not.toHaveBeenCalled();
+    expect(verifyReady).toHaveBeenCalledWith('shop');
+    expect(diskFiles.get(candidate.disk.id)?.get('/etc/elowen-site-marker')).toBe('installed');
+    expect(containers.has(legacy.name)).toBe(false);
+    expect(specOf(sql, 'site', 'shop').input.disk.id).toBe(candidate.disk.id);
+    expect(storage.materializeMigratedDisk).toHaveBeenCalledOnce();
   });
 });
