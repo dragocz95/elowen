@@ -55,8 +55,9 @@ export function createContainerSpec(input, paths) {
  * directories are already durable, already hold the environment's files and are named after the
  * generation that created them, so a migrated disk records those paths instead of copying the trees into
  * the disk directory. Only the root filesystem moves. */
-export function createEnvironmentDiskSpec({ resource, image }, paths, diskId, componentGeneration) {
+export function createEnvironmentDiskSpec({ resource, image, runtime }, paths, diskId, componentGeneration) {
   closed(resource, ['kind', 'id']);
+  if (runtime !== undefined && runtime !== 'nspawn') throw new Error('Invalid environment disk runtime');
   const { kind, id } = resource;
   if (kind !== 'project' && kind !== 'site') throw new Error('Invalid container resource kind');
   if (kind === 'project' && (!Number.isSafeInteger(id) || id < 1)) throw new Error('Invalid project ID');
@@ -71,8 +72,11 @@ export function createEnvironmentDiskSpec({ resource, image }, paths, diskId, co
   const root = componentGeneration === undefined ? directory : join(storageRoot, 'storage', String(componentGeneration));
   const components = (kind === 'project' ? ['workspace', 'home', 'data'] : ['data'])
     .map((component) => ({ component, path: join(root, component) }));
+  // `runtime` is data on the disk record and the only driver discriminator between the two runtime
+  // clients. It is appended LAST and omitted when absent, so the serialization of every disk already
+  // created stays byte-identical and their specification hashes do not move.
   return freeze({ id: diskId, format: 2, rootfsPath: join(directory, 'rootfs'), components, sourceImage: image,
-    ...(componentGeneration === undefined ? {} : { componentGeneration }) });
+    ...(componentGeneration === undefined ? {} : { componentGeneration }), ...(runtime === undefined ? {} : { runtime }) });
 }
 
 /** Reconstruct the trusted identity persisted by project records from before named guest mounts. This is
@@ -134,10 +138,10 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
   const components = kind === 'project' ? ['workspace', 'home', 'data'] : ['data'];
   let disk;
   if (input.disk !== undefined) {
-    closed(input.disk, ['id', 'format', 'rootfsPath', 'components', 'sourceImage', 'componentGeneration']);
+    closed(input.disk, ['id', 'format', 'rootfsPath', 'components', 'sourceImage', 'componentGeneration', 'runtime']);
     resourceToken(input.disk.id);
     if (input.disk.format !== 2 || !Array.isArray(input.disk.components)) throw new Error('Invalid environment disk specification');
-    const expected = createEnvironmentDiskSpec({ resource, image: input.disk.sourceImage }, paths, input.disk.id, input.disk.componentGeneration);
+    const expected = createEnvironmentDiskSpec({ resource, image: input.disk.sourceImage, runtime: input.disk.runtime }, paths, input.disk.id, input.disk.componentGeneration);
     if (input.disk.rootfsPath !== expected.rootfsPath || JSON.stringify(input.disk.components) !== JSON.stringify(expected.components)) throw new Error('Environment disk paths differ from their trusted resource root');
     disk = expected;
   }

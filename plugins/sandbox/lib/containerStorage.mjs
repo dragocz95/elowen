@@ -4,6 +4,7 @@ import { closeSync, copyFileSync, constants, cpSync, fsyncSync, lstatSync, mkdir
 import { dirname, join } from 'node:path';
 import { assertContainerSpec, hostPath, resourceToken, snapshotReference } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
+import { selectRuntimeClient } from './runtimeClient.mjs';
 
 /** Every entry below one root, including file content rather than only its size. This is the proof that
  *  a cross-filesystem copy may replace the source tree. */
@@ -93,13 +94,21 @@ async function fingerprint(path, maxBytes) {
  * execution leases throughout snapshot/restore. Incomplete directories are durable recovery evidence,
  * not garbage to delete on retry. No guest archive is ever extracted by a host shell or host tar. */
 export class ContainerStorage {
-  #podman;
+  #clients;
   #maxArchiveBytes;
-  constructor(podman, { maxArchiveBytes = 16 * 1024 ** 3 } = {}) {
+  constructor(podman, { nspawn = null, maxArchiveBytes = 16 * 1024 ** 3 } = {}) {
     if (!Number.isSafeInteger(maxArchiveBytes) || maxArchiveBytes < 1) throw new Error('Invalid snapshot archive bound');
-    this.#podman = podman;
+    this.#clients = { podman, nspawn };
     this.#maxArchiveBytes = maxArchiveBytes;
   }
+
+  /** Which runtime owns the trees of this specification. Every primitive below names the specification it
+   *  is acting for, so the disk record decides the driver rather than a field on this object. */
+  #driver(spec) { return selectRuntimeClient(spec, this.#clients); }
+
+  /** Whether that runtime keeps named volume HANDLES over the component directories at all. Podman does
+   *  for a legacy environment; nspawn has no volume store and refuses the methods outright. */
+  #hasNamedVolumes(spec) { return this.#driver(spec) === this.#clients.podman; }
 
   async prepare(spec) {
     assertContainerSpec(spec);
@@ -110,7 +119,7 @@ export class ContainerStorage {
     // A named volume is a HANDLE over a host directory, and a disk-backed environment mounts those
     // directories directly. Creating handles for them would add a second owner of the same paths whose
     // removal a later generation has to chase; the disk record is the one source of truth instead.
-    for (const volume of spec.volumes) await this.#podman.ensureVolume(spec, volume.component);
+    for (const volume of spec.volumes) await this.#driver(spec).ensureVolume(spec, volume.component);
   }
 
   /** `fill` is how the pending root filesystem gets its contents, and the only thing that differs between
@@ -166,7 +175,7 @@ export class ContainerStorage {
       }
       unlinkSync(pendingManifestPath);
       syncPath(directory);
-      try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
+      try { checkedHostPath(pending); await this.#driver(spec).removeDiskPath(pending); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     }
     try {
@@ -175,23 +184,23 @@ export class ContainerStorage {
       missing.code = 'disk_record_missing';
       throw missing;
     } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
+    try { checkedHostPath(pending); await this.#driver(spec).removeDiskPath(pending); }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     mkdirSync(pending, { mode: ROOTFS_MODE });
     for (const component of spec.disk.components) checkedHostPath(component.path, { create: true });
     let filled;
     try {
-      filled = fill ? await fill(pending) : { sourceImageId: await this.#podman.materializeRootfs(spec, pending) };
+      filled = fill ? await fill(pending) : { sourceImageId: await this.#driver(spec).materializeRootfs(spec, pending) };
     } catch (cause) {
       // An incomplete tree is never activated — no manifest names it — so keeping it buys no recovery
       // evidence and holds a whole root filesystem of space that the retry, and every other environment
       // on the host, needs. The export archive is kept: that one IS the resumable receipt.
-      try { await this.#podman.removeDiskPath(pending); syncPath(directory); }
+      try { await this.#driver(spec).removeDiskPath(pending); syncPath(directory); }
       catch (cleanup) { throw new AggregateError([cause, cleanup], `${cause.message}; incomplete rootfs cleanup failed: ${cleanup.message}`); }
       throw cause;
     }
     const { sourceImageId, ...provenance } = filled;
-    await this.#podman.syncDiskTree(pending);
+    await this.#driver(spec).syncDiskTree(pending);
     writeDurable(pendingManifestPath, { resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
       sourceImageId, rootfsPath: spec.disk.rootfsPath, components: spec.disk.components, createdAt: new Date().toISOString(), ...provenance, materialized: true });
     syncPath(directory);
@@ -224,9 +233,9 @@ export class ContainerStorage {
       if (measured.sizeBytes !== receipt.sizeBytes || measured.sha256 !== receipt.sha256) throw new Error('The migration export archive changed after it was captured');
       return receipt;
     }
-    try { checkedHostPath(archive, { file: true }); await this.#podman.removeDiskPath(archive); }
+    try { checkedHostPath(archive, { file: true }); await this.#driver(spec).removeDiskPath(archive); }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    const containerId = await this.#podman.exportContainerRootfs(spec, archive);
+    const containerId = await this.#driver(spec).exportContainerRootfs(spec, archive);
     const digest = await fingerprint(archive, this.#maxArchiveBytes);
     syncPath(archive);
     const complete = { ...identity, archivePath: archive, containerId, ...digest };
@@ -244,9 +253,9 @@ export class ContainerStorage {
     const measured = await fingerprint(archive, this.#maxArchiveBytes);
     if (measured.sizeBytes !== capture.sizeBytes || measured.sha256 !== capture.sha256) throw new Error('The migration export archive changed after it was captured');
     await this.#prepareDisk(spec, async (pending) => {
-      await this.#podman.extractRootfsArchive(archive, pending);
-      await this.#podman.verifyExtractedRootfs(archive, pending);
-      return { sourceImageId: await this.#podman.imageIdentity(spec.disk.sourceImage),
+      await this.#driver(spec).extractRootfsArchive(spec, archive, pending);
+      await this.#driver(spec).verifyExtractedRootfs(archive, pending);
+      return { sourceImageId: await this.#driver(spec).imageIdentity(spec.disk.sourceImage),
         migratedFrom: { containerId: capture.containerId, archivePath: archive, sizeBytes: measured.sizeBytes, sha256: measured.sha256 } };
     });
   }
@@ -262,7 +271,7 @@ export class ContainerStorage {
     const archive = join(spec.storageRoot, 'migrations', migrationId, 'rootfs.tar');
     try { checkedHostPath(archive, { file: true }); }
     catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
-    await this.#podman.removeDiskPath(archive);
+    await this.#driver(spec).removeDiskPath(archive);
     syncPath(dirname(archive));
     return true;
   }
@@ -402,11 +411,11 @@ export class ContainerStorage {
       checkedHostPath(directory);
       const pending = checkedHostPath(join(directory, 'pending.json'), { file: true });
       const previous = JSON.parse(readFileSync(pending, 'utf8'));
-      if (previous.resumeRunning && (await this.#podman.inspect(spec))?.state === 'paused') await this.#podman.unpause(spec);
-      await this.#podman.discardIncompleteSnapshot(spec, snapshotId);
+      if (previous.resumeRunning && (await this.#driver(spec).inspect(spec))?.state === 'paused') await this.#driver(spec).unpause(spec);
+      await this.#driver(spec).discardIncompleteSnapshot(spec, snapshotId);
     } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     absent(directory);
-    const row = await this.#podman.inspect(spec);
+    const row = await this.#driver(spec).inspect(spec);
     if (!row || !['running', 'stopped', 'exited', 'created'].includes(row.state)) throw new Error('Container cannot be quiesced for snapshot');
     checkedHostPath(directory, { create: true });
     writeDurable(join(directory, 'pending.json'), { snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash, resumeRunning: row.state === 'running' });
@@ -420,12 +429,12 @@ export class ContainerStorage {
     let paused = false;
     const failures = [];
     try {
-      if (row.state === 'running') { await this.#podman.pause(spec); paused = true; }
-      manifest.image.id = await this.#podman.snapshotImage(spec, snapshotId);
+      if (row.state === 'running') { await this.#driver(spec).pause(spec); paused = true; }
+      manifest.image.id = await this.#driver(spec).snapshotImage(spec, snapshotId);
       for (const volume of spec.volumes) {
         if (volume.component === 'data' && !includeData) continue;
         const archive = join(directory, `${volume.component}.tar`);
-        await this.#podman.exportVolume(spec, volume.component, snapshotId);
+        await this.#driver(spec).exportVolume(spec, volume.component, snapshotId);
         const digest = await fingerprint(archive, this.#maxArchiveBytes);
         syncPath(archive);
         manifest.components.push({ component: volume.component, ...digest });
@@ -437,7 +446,7 @@ export class ContainerStorage {
         try {
           // A client timeout can hide a successful pause. Reconcile that observed state rather than
           // leaving the project frozen just because the launcher did not acknowledge the operation.
-          if (paused || (await this.#podman.inspect(spec))?.state === 'paused') await this.#podman.unpause(spec);
+          if (paused || (await this.#driver(spec).inspect(spec))?.state === 'paused') await this.#driver(spec).unpause(spec);
         } catch (error) { failures.push(error); }
       }
     }
@@ -463,18 +472,18 @@ export class ContainerStorage {
     try {
       checkedHostPath(directory);
       const pending = JSON.parse(readFileSync(checkedHostPath(join(directory, 'pending.json'), { file: true }), 'utf8'));
-      if (pending.resumeRunning && (await this.#podman.inspect(spec))?.state === 'paused') await this.#podman.unpause(spec);
-      await this.#podman.removeDiskPath(directory);
+      if (pending.resumeRunning && (await this.#driver(spec).inspect(spec))?.state === 'paused') await this.#driver(spec).unpause(spec);
+      await this.#driver(spec).removeDiskPath(directory);
     } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     absent(directory);
-    const row = await this.#podman.inspect(spec);
+    const row = await this.#driver(spec).inspect(spec);
     if (!row || !['running', 'stopped', 'exited', 'created'].includes(row.state)) throw new Error('Container cannot be quiesced for snapshot');
     checkedHostPath(directory, { create: true });
     writeDurable(join(directory, 'pending.json'), { snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash, resumeRunning: row.state === 'running' });
     syncPath(directory); syncPath(parent);
     const diskManifest = JSON.parse(readFileSync(checkedHostPath(join(dirname(spec.disk.rootfsPath), 'disk.json'), { file: true }), 'utf8'));
     const sources = [{ component: 'rootfs', path: spec.disk.rootfsPath }, ...spec.disk.components.filter((entry) => includeData || entry.component !== 'data')];
-    await this.#podman.preflightDiskCopy(sources.map((entry) => entry.path), parent);
+    await this.#driver(spec).preflightDiskCopy(sources.map((entry) => entry.path), parent);
     const manifest = { version: 2, snapshotId, resource: spec.resource, generation: spec.generation, diskId: spec.disk.id,
       specHash: spec.specHash, consistency: 'crash-consistent', completeProject: spec.resource.kind === 'project',
       treeFormat: 'inventory-v1:path,type,size,uid,gid,mode,mtimeNs,hardlink,xattrs,linkTarget',
@@ -482,19 +491,19 @@ export class ContainerStorage {
     const failures = [];
     let paused = false;
     try {
-      if (row.state === 'running') { await this.#podman.pause(spec); paused = true; }
+      if (row.state === 'running') { await this.#driver(spec).pause(spec); paused = true; }
       for (const source of sources) {
         const target = join(directory, source.component);
         mkdirSync(target, { mode: source.component === 'rootfs' ? ROOTFS_MODE : COMPONENT_MODE });
-        await this.#podman.copyDiskTree(source.path, target);
-        await this.#podman.syncDiskTree(target);
-        manifest.trees.push({ component: source.component, path: target, ...await this.#podman.fingerprintDiskTree(target) });
+        await this.#driver(spec).copyDiskTree(source.path, target);
+        await this.#driver(spec).syncDiskTree(target);
+        manifest.trees.push({ component: source.component, path: target, ...await this.#driver(spec).fingerprintDiskTree(target) });
       }
       syncPath(directory);
     } catch (error) { failures.push(error); }
     finally {
       if (row.state === 'running') {
-        try { if (paused || (await this.#podman.inspect(spec))?.state === 'paused') await this.#podman.unpause(spec); }
+        try { if (paused || (await this.#driver(spec).inspect(spec))?.state === 'paused') await this.#driver(spec).unpause(spec); }
         catch (error) { failures.push(error); }
       }
     }
@@ -521,7 +530,7 @@ export class ContainerStorage {
     const complete = read(join(directory, 'complete.json'));
     if (complete) {
       if (JSON.stringify(complete) !== JSON.stringify({ ...expected, image: manifest.image })) throw new Error('Restore completion ownership mismatch');
-      for (const volume of targetSpec.volumes) await this.#podman.inspectVolume(targetSpec, volume.component);
+      for (const volume of targetSpec.volumes) await this.#driver(targetSpec).inspectVolume(targetSpec, volume.component);
       return manifest;
     }
     const previous = read(pending);
@@ -535,11 +544,11 @@ export class ContainerStorage {
       const receipt = read(receiptPath);
       if (receipt) {
         if (JSON.stringify(receipt) !== JSON.stringify(entry)) throw new Error('Restore component checkpoint mismatch');
-        await this.#podman.inspectVolume(targetSpec, entry.component);
+        await this.#driver(targetSpec).inspectVolume(targetSpec, entry.component);
         continue;
       }
       // A failed import is replaced only in this checkpoint-owned, never activated generation.
-      await this.#podman.importSnapshotVolume(sourceSpec, snapshotId, targetSpec, entry.component, { resume: previous !== null });
+      await this.#driver(targetSpec).importSnapshotVolume(sourceSpec, snapshotId, targetSpec, entry.component, { resume: previous !== null });
       writeDurable(receiptPath, entry); syncPath(directory);
     }
     writeDurable(join(directory, 'complete.json'), { ...expected, image: manifest.image });
@@ -571,10 +580,10 @@ export class ContainerStorage {
       if (sourceSpec.resource.kind !== 'site' || missing.length !== 1 || missing[0] !== 'data') throw new Error('Restore requires every disk tree');
       const currentData = sourceSpec.disk.components.find((entry) => entry.component === 'data');
       if (!currentData) throw new Error('Current Site data is missing from the source disk');
-      trees.push({ component: 'data', path: currentData.path, current: true, ...await this.#podman.fingerprintDiskTree(currentData.path) });
+      trees.push({ component: 'data', path: currentData.path, current: true, ...await this.#driver(targetSpec).fingerprintDiskTree(currentData.path) });
     }
     if (trees.length !== targets.size || trees.some((tree) => !targets.has(tree.component))) throw new Error('Snapshot tree does not belong to the restore target');
-    await this.#podman.preflightDiskCopy(trees.map((tree) => tree.path), diskDirectory);
+    await this.#driver(targetSpec).preflightDiskCopy(trees.map((tree) => tree.path), diskDirectory);
     for (const tree of trees) {
       const target = targets.get(tree.component);
       const receiptPath = join(directory, `${tree.component}.json`);
@@ -586,19 +595,19 @@ export class ContainerStorage {
       }
       try {
         checkedHostPath(target);
-        const copied = await this.#podman.fingerprintDiskTree(target);
+        const copied = await this.#driver(targetSpec).fingerprintDiskTree(target);
         if (copied.digest !== tree.digest || copied.logicalBytes !== tree.logicalBytes) throw new Error('Restored snapshot tree differs from its manifest');
         writeDurable(receiptPath, tree); syncPath(directory);
         continue;
       } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
       const pending = `${target}.pending`;
-      try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
+      try { checkedHostPath(pending); await this.#driver(targetSpec).removeDiskPath(pending); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
       mkdirSync(pending, { mode: tree.component === 'rootfs' ? ROOTFS_MODE : COMPONENT_MODE });
-      await this.#podman.copyDiskTree(tree.path, pending);
-      const copied = await this.#podman.fingerprintDiskTree(pending);
+      await this.#driver(targetSpec).copyDiskTree(tree.path, pending);
+      const copied = await this.#driver(targetSpec).fingerprintDiskTree(pending);
       if (copied.digest !== tree.digest || copied.logicalBytes !== tree.logicalBytes) throw new Error('Restored snapshot tree differs from its manifest');
-      await this.#podman.syncDiskTree(pending); renameSync(pending, target); syncPath(diskDirectory);
+      await this.#driver(targetSpec).syncDiskTree(pending); renameSync(pending, target); syncPath(diskDirectory);
       writeDurable(receiptPath, tree); syncPath(directory);
     }
     const diskRecord = { resource: targetSpec.resource, diskId: targetSpec.disk.id, format: 2,
@@ -619,7 +628,7 @@ export class ContainerStorage {
   async importRetainedSiteSnapshot(spec, snapshotId, artifact) {
     assertContainerSpec(spec); resourceToken(snapshotId);
     if (spec.resource.kind !== 'site') throw new Error('Only Sites may import retained release snapshots');
-    const imageId = await this.#podman.inspectRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
+    const imageId = await this.#driver(spec).inspectRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
     const directory = checkedHostPath(join(spec.storageRoot, 'snapshots', snapshotId), { create: true });
     const manifest = { version: 1, snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash,
       consistency: 'crash-consistent', completeProject: false, retained: true,
@@ -672,8 +681,8 @@ export class ContainerStorage {
     if (new Set(components).size !== components.length || components.some((component) => !expected.includes(component))
       || (manifest.completeProject && JSON.stringify(components) !== JSON.stringify(expected))) throw new Error('Snapshot storage components mismatch');
     const imageId = manifest.retained
-      ? await this.#podman.inspectRetainedSiteImage(spec, manifest.image.reference, manifest.image.id)
-      : await this.#podman.inspectSnapshotImage(spec, snapshotId);
+      ? await this.#driver(spec).inspectRetainedSiteImage(spec, manifest.image.reference, manifest.image.id)
+      : await this.#driver(spec).inspectSnapshotImage(spec, snapshotId);
     if (imageId !== manifest.image.id) throw new Error('Snapshot image changed');
     for (const entry of manifest.components) {
       const digest = await fingerprint(join(directory, `${entry.component}.tar`), this.#maxArchiveBytes);
@@ -688,14 +697,18 @@ export class ContainerStorage {
     for (const owner of owningSpecs) {
       assertContainerSpec(owner);
       if (owner.disk?.id !== spec.disk.id) continue;
-      if (await this.#podman.inspect(owner)) throw new Error('An envelope still owns environment disk');
+      if (await this.#driver(owner).inspect(owner)) throw new Error('An envelope still owns environment disk');
+      // A named volume is a Podman HANDLE over a host directory, and only a runtime that keeps such
+      // handles can have left one behind. Asking a runtime with no volume store would be asking it to
+      // answer for a concept it refuses to model, so this runs only where a handle can exist at all.
+      if (!this.#hasNamedVolumes(owner)) continue;
       for (const volume of owner.volumes) {
-        try { await this.#podman.inspectVolume(owner, volume.component); throw new Error('A volume still owns environment disk'); }
+        try { await this.#driver(owner).inspectVolume(owner, volume.component); throw new Error('A volume still owns environment disk'); }
         catch (cause) { if (!/missing/i.test(cause.message)) throw cause; }
       }
     }
     const directory = dirname(spec.disk.rootfsPath);
-    await this.#podman.removeDiskPath(directory);
+    await this.#driver(spec).removeDiskPath(directory);
     try { lstatSync(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
     throw new Error('Environment disk removal was not verified');
   }
