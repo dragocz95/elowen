@@ -7,6 +7,13 @@ import { SITE_GATEWAY_HELPER_PATH } from './siteGateway.js';
 export const NSPAWN_HELPER_PATH = SITE_GATEWAY_HELPER_PATH;
 export const NSPAWN_DOMAIN = 'nspawn';
 
+/** Exactly the argv the sudoers drop-in pins as `<helper> ""`, in the form sudo is handed it. The empty
+ *  final argument is part of the pin: the helper is left no argv of its own to be steered by and the
+ *  operation arrives on stdin instead. The bundled runtime hardcodes the same argv, because a bundled
+ *  plugin cannot import this module at runtime; `tests/contract/nspawnHelper.test.ts` holds all three —
+ *  this constant, the sudoers line and the plugin — against each other. */
+export const NSPAWN_HELPER_ARGV = ['-n', NSPAWN_HELPER_PATH, ''] as const;
+
 /** `<namespace>-<kind>-<id>-g<generation>`, which is already the runtime's own container name and
  *  already a valid machine name. Never used to derive a disk path. */
 export const NSPAWN_MACHINE_PATTERN = /^elowen-(project|site)-[a-z0-9-]{1,64}-g[0-9]{1,9}$/;
