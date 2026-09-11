@@ -689,6 +689,29 @@ describe('project base image binding', () => {
 });
 
 describe('adopted workspace rollback', () => {
+  it('resolves the current host workspace across adoption, recreate and rollback', async () => {
+    const { runtime, project, root } = setup();
+    const host = join(root, 'host-project');
+    mkdirSync(host, { recursive: true });
+    project.executionKind = 'host'; project.path = host;
+    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(host);
+
+    project.executionKind = 'managed'; project.path = ''; project.adoptedPath = host;
+    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(host);
+    await runtime.requestEnvironment({ ...input, requestId: 'adopted-path-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const adopted = await runtime.projectWorkspaceHostPath({ projectId: 7 });
+    expect(adopted).toMatch(/projects\/7\/storage\/1\/workspace$/);
+
+    await runtime.requestEnvironment({ ...input, requestId: 'adopted-path-recreate', action: { kind: 'recreate' } });
+    await runtime.reconcile();
+    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(adopted);
+
+    await runtime.releaseAdoptedWorkspace(input);
+    project.executionKind = 'host'; project.path = host; project.adoptedPath = null;
+    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(host);
+  });
+
   it('removes the provisioned environment and moves its workspace back through storage', async () => {
     const { runtime, podman, storage, project, sql, root } = setup();
     project.adoptedPath = join(root, 'host-project');
@@ -708,9 +731,9 @@ describe('adopted workspace rollback', () => {
 
 describe('site environment tombstones', () => {
   it('re-registers a deleted Site at a new generation and rejects lifecycle actions on its tombstone', async () => {
-    const { runtime, root, db } = setup();
-    const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared',
-      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
+    const { runtime, root, db, podman } = setup();
+    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
+      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'host-project', 'sites', 'shop'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
     mkdirSync(registration.sourcePath, { recursive: true });
     runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
@@ -735,12 +758,15 @@ describe('site environment tombstones', () => {
     await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 3, requestId: 'tombstone-limits',
       action: { kind: 'limits', limits: registration.limits } })).rejects.toThrow(/environment has been deleted/i);
 
+    registration.sourcePath = join(root, 'projects', '7', 'storage', '1', 'workspace', 'sites', 'shop');
+    mkdirSync(registration.sourcePath, { recursive: true });
     const recreated = await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
     expect(recreated).toMatchObject({ state: 'unprovisioned', generation: 2 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get()).toEqual({ n: 1 });
     await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-recreated-start',
       expectedGeneration: 2, action: { kind: 'start' } });
     await runtime.reconcile();
+    expect(podman.create.mock.calls.at(-1)![0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(registration.sourcePath);
     expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 2 });
   });
 

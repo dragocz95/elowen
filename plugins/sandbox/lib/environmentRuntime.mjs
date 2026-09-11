@@ -9,7 +9,7 @@ import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from 
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
+import { createContainerSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
@@ -227,7 +227,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     let row = store.get(kind, id);
     if (kind === 'site') {
       if (!row) throw error('site_not_registered', 'Register the trusted Site binding before requesting lifecycle work');
-      const binding = (value) => Object.fromEntries(Object.entries(value).filter(([key]) => !['limits', 'initialIntent', 'snapshotRetention', 'staging'].includes(key)).sort(([a], [b]) => a.localeCompare(b)));
+      const binding = (value) => Object.fromEntries(Object.entries(value).filter(([key]) => !['limits', 'initialIntent', 'snapshotRetention', 'staging'].includes(key)
+        && !(key === 'sourcePath' && typeof value.sourceRel === 'string')).sort(([a], [b]) => a.localeCompare(b)));
       if (!allowBindingHandover && !same(binding(authority), binding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
     }
     if (row && kind === 'project' && !row.spec.input.workspaceTarget) {
@@ -640,6 +641,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     delete row.spec.containerId;
     store.save(row);
   }
+  async function refreshSiteSourceBinding(row, userId) {
+    if (row.kind !== 'site' || typeof row.spec.registration?.sourceRel !== 'string') return;
+    const registration = await authorize('site', row.resource_id, userId, true);
+    if (registration.sourceRel !== row.spec.registration.sourceRel) throw error('site_binding_changed', 'The trusted Site source reference changed', 409);
+    row.spec.registration = registration;
+    row.spec.binding.sourcePath = registration.sourcePath;
+  }
   async function ensureInitialContainer(row, op) {
     let spec = specFor(row.spec);
     // A container created before the project mount carried the project's name was built from a different
@@ -664,6 +672,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // The missing container ended the old creation identity. A replacement is created with the limits
       // currently effective for the environment, then future live updates preserve those as its baseline.
       row.spec.creationLimits = { ...row.spec.input.limits };
+      store.save(row);
+      spec = specFor(row.spec);
+      current = await podman.inspect(spec);
+    }
+    if (!current && row.kind === 'site') {
+      await refreshSiteSourceBinding(row, op.user_id);
       store.save(row);
       spec = specFor(row.spec);
       current = await podman.inspect(spec);
@@ -930,6 +944,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         next.input.image = manifest.image.reference; next.creationLimits = next.input.limits;
         delete next.containerId;
         checkpoint(op, { newSpec: next });
+      }
+      if (row.kind === 'site' && typeof op.checkpoint.newSpec.registration?.sourceRel === 'string') {
+        const targetRow = { ...row, spec: op.checkpoint.newSpec };
+        await refreshSiteSourceBinding(targetRow, op.user_id);
+        op.checkpoint.newSpec = targetRow.spec;
+        checkpoint(op, { newSpec: op.checkpoint.newSpec });
       }
       let target = specFor(op.checkpoint.newSpec);
       step(op, 'import');
@@ -1434,6 +1454,27 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
 
   const control = {
+    async projectWorkspaceHostPath(input) {
+      assertLive();
+      const id = positive(input?.projectId, 'project');
+      const project = stores().projects.get(id);
+      if (!project || project.lifecycle !== 'active') throw error('project_missing', 'The source Project is unavailable', 404);
+      if (project.executionKind === 'host') return hostPath(project.path);
+      if (project.executionKind !== 'managed') throw error('project_unavailable', 'The source Project has no workspace', 409);
+      const row = store.get('project', id);
+      if (project.adoptedPath && !row?.spec.containerId) {
+        try { lstatSync(project.adoptedPath); return hostPath(project.adoptedPath); }
+        catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+      }
+      const record = row?.spec ?? {
+        input: { resource: { kind: 'project', id }, generation: 1, image: PROJECT_BASE_IMAGE_TAG,
+          previewBroker: true, workspaceTarget: managedGuestRoot(project.slug, id), limits: configuredDefaults(ctx.config) },
+        paths: { sandboxDataDir: dataDir, namespace },
+      };
+      const workspace = specFor(record).volumes.find((volume) => volume.component === 'workspace');
+      if (!workspace) throw error('workspace_missing', 'The source Project workspace is unavailable', 409);
+      return workspace.path;
+    },
     discoverSiteSnapshotImage(input) { assertLive(); return siteImages.discoverSnapshot(input); },
     siteImageStatus(input) { assertLive(); return siteImages.status(input); },
     provisionSiteImage(input) { assertLive(); return siteImages.request(input); },

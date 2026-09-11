@@ -128,6 +128,8 @@ export interface SiteEnvironmentRegistration {
   projectId: number;
   image: string;
   sourcePath: string;
+  /** Durable identity of a Project-owned source; sourcePath is its current host resolution. */
+  sourceRel?: string;
   sitesDataDir: string;
   brokerDir: string;
   workspaceReadOnly: boolean;
@@ -189,11 +191,13 @@ export interface SiteRuntimeAuthority {
 export interface SiteEnvironment extends Omit<ProjectEnvironment, 'projectId'> { siteId: string }
 export interface SiteEnvironmentOperation extends Omit<EnvironmentOperation, 'projectId' | 'action' | 'accountUserId'> { siteId: string; action: SiteEnvironmentAction; accountUserId: number | null }
 export const SITE_ENVIRONMENT_CONTROL_METHODS = [
-  'discoverSiteSnapshotImage', 'siteImageStatus', 'provisionSiteImage', 'requestSiteCleanup',
+  'projectWorkspaceHostPath', 'discoverSiteSnapshotImage', 'siteImageStatus', 'provisionSiteImage', 'requestSiteCleanup',
   'connectSitesRuntime', 'registerSiteEnvironment', 'siteEnvironmentFor', 'requestSiteEnvironment',
   'siteEnvironmentOperation', 'siteEnvironmentExec', 'siteEnvironmentLogs', 'siteEnvironmentSnapshots',
 ] as const;
 export interface SiteEnvironmentControl {
+  /** Sites-only host path resolution for a trusted Project-relative source reference. */
+  projectWorkspaceHostPath(input: { projectId: number }): Promise<string>;
   discoverSiteSnapshotImage(input: { siteId: string; accountUserId: number; imageReference: string }): Promise<{ imageReference: string; imageId: string }>;
   siteImageStatus(input: { imageKind: SiteImageKind }): Promise<SiteImageStatus>;
   provisionSiteImage(input: { imageKind: SiteImageKind; accountUserId: number; requestId?: string }): Promise<SiteImageOperation>;
