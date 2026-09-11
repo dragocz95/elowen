@@ -524,6 +524,12 @@ function defaultReadOwner(path) {
   return lstatSync(path).uid;
 }
 
+/** Give an already-opened directory away, through the descriptor it was opened on. Injected beside
+ *  `readOwner` for the same reason: only root can hand a file to another account, so a test cannot. */
+function defaultSetOwner(fd, uid, gid) {
+  fchownSync(fd, uid, gid);
+}
+
 /** The permission bits of a managed artefact, or -1 when it is not there at all. Content alone does not
  *  settle whether a root-owned artefact is intact: a polkit rule left group-writable is a rule anyone in
  *  that group can rewrite, so provisioning treats the mode as part of the artefact. */
@@ -1491,8 +1497,18 @@ function nspawnMaterialize(request, storage, options) {
   // Through a descriptor, and one that can only ever be this directory: the tree was just unpacked into a
   // place the service user owns, so a chmod by name could be pointed at something else between the check
   // and the call.
+  //
+  // The same directory also has to present as the GUEST's root before the ownership pass below, and for
+  // the same reason it does not already: the daemon created it, so it carries the service account's ids,
+  // and `tar` chowns what it unpacks rather than the directory it unpacks into. The pass runs in `offset`
+  // mode, where guest id g becomes base+g, so the service account's uid 33 lands on base+33 while `/etc`
+  // and everything else lands on base+0. The machine's own root would then own every file in its root
+  // filesystem except the root directory itself, which is exactly what `write-envelope` refuses.
   const rootfsFd = openDirectory(target);
-  try { fchmodSync(rootfsFd, 0o755); } finally { closeSync(rootfsFd); }
+  try {
+    fchmodSync(rootfsFd, 0o755);
+    (options.setOwner ?? defaultSetOwner)(rootfsFd, 0, 0);
+  } finally { closeSync(rootfsFd); }
   // A machine id copied from the template would make every machine built from it the same host to
   // systemd, journald and D-Bus. Truncated, systemd generates one on first boot.
   const etc = join(target, 'etc');
