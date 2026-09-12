@@ -18,7 +18,7 @@ Opening a site in the screen shows its detail: the address, the runtime state, r
 
 ## The site lifecycle
 
-**Create.** `SiteCreate` makes the site and its source folder inside the Project. Static, command and PHP sites remain drafts until something is published. A persistent environment site is durable immediately, and the daemon schedules its container to start. Every site is identified by a slug shown in its address, and the tools accept the slug or the numeric id.
+**Create.** `SiteCreate` makes the site and its source folder inside the Project. Static, command and PHP sites remain drafts until something is published. A persistent environment site is durable immediately, and the daemon schedules its machine to start. Every site is identified by a slug shown in its address, and the tools accept the slug or the numeric id.
 
 **Preview.** `SitePreview` opens a running managed Project application on an isolated preview origin. Only current Project members and administrators can open it, and a preview is not a published release.
 
@@ -35,13 +35,13 @@ Opening a site in the screen shows its detail: the address, the runtime state, r
 | Static | Files are served from the published release. A static site has no runtime process and no runtime log. |
 | Command | A start command runs Node, Bun, Python or TypeScript inside the published release. It listens on a private unix socket exposed as `SOCKET_PATH`, or on a loopback `HOST` and `PORT` when an administrator enables ports. |
 | PHP | The site is served through PHP-CGI and takes no start command. |
-| Environment | A persistent environment with systemd, a private root filesystem, `/workspace` and `/data` volumes, and a single host-owned ingress socket. A new one is a systemd-nspawn machine; one created before that runtime keeps running under rootless Podman. It survives publishes and is started, stopped and restarted deliberately. |
+| Environment | A persistent environment with systemd, a private root filesystem, `/workspace` and `/data` volumes, and a single host-owned ingress socket. It is a systemd-nspawn machine whose root filesystem comes from a prepared, published file the host verifies before use. It survives publishes and is started, stopped and restarted deliberately. |
 
 Command, PHP and environment runtimes share one transport: requests and responses are buffered whole, request bodies are capped at 1 MB, and streaming, server-sent events and WebSockets are not supported.
 
 The site detail shows the runtime state, and for a command site also the start command, the connection mode and its recent output.
 
-Persistent environments need host dependencies and a wildcard domain that leads to this Elowen instance. The **Environment setup** panel in the plugin detail checks both, reports the observed DNS target, and can install what is missing. The check shows the record type, name and value needed to point the domain correctly. Installation adds the required packages such as Podman and its supporting tools, configures subordinate IDs, user linger and cgroup delegation, and builds the deterministic base image. It does not restart Elowen or the host web stack. The machine runtime an environment actually boots on is installed and provisioned by `elowen install` and `elowen update`, not by this panel.
+Persistent environments need host dependencies and a wildcard domain that leads to this Elowen instance. The **Environment setup** panel in the plugin detail checks both, reports the observed DNS target, and can install what is missing. The check shows the record type, name and value needed to point the domain correctly. Installation adds the required host packages and their supporting tools, configures subordinate IDs, user linger and cgroup delegation, and prepares the base root filesystem. It does not restart Elowen or the host web stack. The machine runtime an environment actually boots on is installed and provisioned by `elowen install` and `elowen update`, not by this panel.
 
 ## Sharing and visibility
 
@@ -112,8 +112,8 @@ Configuration is instance-wide and edited in the plugin's detail view under **Se
 | Allow command and PHP runtimes | `allowCommandRuntime` | boolean | off | Lets a published release run Node, Bun, Python or TypeScript behind a private unix socket or an explicitly enabled loopback port, or execute PHP through PHP-CGI. |
 | Allow persistent environments | `allowEnvironments` | boolean | off | Allows persistent machine environments with systemd, a private root filesystem and a single host-owned ingress socket. |
 | Environment network | `environmentNetwork` | enum | shared | Outbound internet uses rootless slirp4netns with host loopback disabled. No network gives the environment no interface beyond its own loopback. Options: shared, isolated. |
-| Environment CPUs | `environmentCpus` | number | 1 | CPU limit applied when an environment container is created. Range 0.25 to 8. |
-| Environment memory | `environmentMemoryMb` | number | 1024 | Memory and memory-plus-swap limit in MB applied when an environment container is created. Range 128 to 32,768. |
+| Environment CPUs | `environmentCpus` | number | 1 | CPU limit applied when an environment is created. Range 0.25 to 8. |
+| Environment memory | `environmentMemoryMb` | number | 1024 | Memory and memory-plus-swap limit in MB applied when an environment is created. Range 128 to 32,768. |
 | Environment process limit | `environmentPidsLimit` | number | 512 | Maximum number of processes and threads in one environment. Range 16 to 4,096. |
 | Environments per account | `maxEnvironmentsPerAccount` | number | 3 | How many persistent environments one account may keep, counted separately from ordinary sites. Range 1 to 20. |
 | Command and PHP network | `runtimeNetwork` | enum | isolated | Shared gives site processes ordinary outbound internet and access to network services visible from the host. Site processes receive no Elowen bearer token or daemon secrets. Options: isolated, shared. |
