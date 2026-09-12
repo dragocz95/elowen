@@ -1674,6 +1674,8 @@ export const sk = {
     freshConversation: 'Predchádzajúca konverzácia bola neaktívna — pokračujeme v novej',
     readOnly: 'História len na čítanie (Discord kanál alebo task relácia)',
     readOnlyExit: 'Späť do chatu',
+    childFocusHint: 'Správy smerujú tohto delegovaného sub-agenta — počas jeho ťahu ho usmernia, po dokončení spustia nový ťah',
+    childFocusExit: 'Späť na konverzáciu',
     untitled: 'Bez názvu',
     empty: 'Pýtajte sa na čokoľvek — úlohy, misie alebo vaše repozitáre.',
     placeholder: 'Napíšte správu, / pre príkazy',

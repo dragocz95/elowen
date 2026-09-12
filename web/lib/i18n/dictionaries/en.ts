@@ -1723,6 +1723,8 @@ export const en = {
     freshConversation: 'The previous conversation was idle — continuing in a new one',
     readOnly: 'Read-only history (Discord channel or task session)',
     readOnlyExit: 'Back to chat',
+    childFocusHint: 'Messages go to this delegated sub-agent (steered while it runs, continued when idle)',
+    childFocusExit: 'Back to conversation',
     untitled: 'Untitled',
     empty: 'Ask anything — tasks, missions or your repositories.',
     placeholder: 'Write a message, or / for commands',
