@@ -1,9 +1,9 @@
 import type { ManagedProjectRef } from '../shared/projectExecution.js';
-import type { EnvironmentAction, EnvironmentLimits, EnvironmentOperation } from '../shared/wireContract.js';
+import type { EnvironmentAction, EnvironmentLimits, EnvironmentNetwork, EnvironmentOperation } from '../shared/wireContract.js';
 
 // Declared in the wire contract because the web reads them off the wire, and re-exported here so the
 // daemon keeps importing them from the module that owns this domain.
-export type { EnvironmentAction, EnvironmentLimits, EnvironmentOperation };
+export type { EnvironmentAction, EnvironmentLimits, EnvironmentNetwork, EnvironmentOperation };
 
 export interface ProjectEnvironment {
   projectId: number;
@@ -12,6 +12,7 @@ export interface ProjectEnvironment {
   desiredState: 'running' | 'stopped' | 'deleted';
   lastError: string | null;
   limits: EnvironmentLimits;
+  network: EnvironmentNetwork;
 }
 export interface EnvironmentSnapshot {
   id: string;
@@ -155,9 +156,6 @@ export interface SiteImageRecipe {
 }
 export type SiteImageKind = 'base' | 'static' | 'node';
 export type SiteEnvironmentAction = EnvironmentAction
-  /** Which fixed recipe a Site runs on is this plugin's to know, so a Site's identity migration names the
-   *  kind and the runtime resolves it against the root filesystem catalogue. */
-  | { kind: 'migrate-identity'; imageKind: SiteImageKind }
   | { kind: 'provision-image'; imageKind: SiteImageKind }
   | { kind: 'prepare' | 'cleanup-stage' }
   | { kind: 'import-data' | 'export-data' | 'import-snapshot' | 'remove-artifact' | 'export-project'; artifactId: string };

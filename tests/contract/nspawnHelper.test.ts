@@ -118,6 +118,7 @@ function runnerFixture(options: {
     if (path === MACHINE_UNIT_PATH) return state.unit;
     if (path === MACHINE_FIREWALL_UNIT_PATH) return state.firewallUnit;
     if (path === '/proc/sys/net/ipv4/ip_forward') return state.forwarding ? '1\n' : '0\n';
+    if (path === '/run/systemd/resolve/resolv.conf') return 'nameserver 192.0.2.53\n';
     if (path === MACHINE_SYSCTL_PATH) return state.sysctl;
     return '';
   };
@@ -138,12 +139,27 @@ function runnerFixture(options: {
     // below models. A provisioning run that wrote the file and never applied it must still read as unmet.
     if (path === MACHINE_SYSCTL_PATH) state.sysctl = value;
   };
+  const removeFile = (path: string) => {
+    if (path !== POLKIT_RULE_PATH) throw new Error(`unexpected removal: ${path}`);
+    state.polkit = '';
+    state.polkitMode = -1;
+  };
   const runner = (file: string, args: string[]) => {
     calls.push({ file, args: [...args] });
     if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
     if (file === '/usr/bin/dpkg-query') return state.installed ? { ok: true, stdout: 'install ok installed\n' } : { ok: false, stderr: 'not installed' };
     if (file === '/usr/sbin/iptables' || file === '/usr/sbin/ip6tables') {
-      return state.firewall ? { ok: true, stdout: '' } : { ok: false, stderr: 'No chain/target/match by that name' };
+      if (!state.firewall) return { ok: false, stderr: 'No chain/target/match by that name' };
+      if (args[0] === '-S') {
+        const chain = args[1];
+        const stdout = NSPAWN_FIREWALL_RULES
+          .filter((rule) => rule.binary === file && rule.chain === chain)
+          .sort((left, right) => left.insertAt - right.insertAt)
+          .map((rule) => `-A ${rule.chain} ${rule.spec.join(' ')}`)
+          .join('\n');
+        return { ok: true, stdout: `${stdout}\n` };
+      }
+      return { ok: true, stdout: '' };
     }
     if (file === '/usr/bin/apt-get') { state.installed = true; return { ok: true, stdout: '' }; }
     // Applies exactly the file it is pointed at. `--system` would reload the whole search path and revert
@@ -182,7 +198,7 @@ function runnerFixture(options: {
     }
     return { ok: false, stderr: `unexpected command: ${file} ${args.join(' ')}` };
   };
-  return { calls, writes, state, runner, readText, readMode, writeAtomic, options: { runner, readText, readMode, writeAtomic, env: environment } };
+  return { calls, writes, state, runner, readText, readMode, writeAtomic, removeFile, options: { runner, readText, readMode, writeAtomic, removeFile, env: environment } };
 }
 
 function reloads(calls: Call[]) {
@@ -204,7 +220,7 @@ describe('privileged helper: two typed domains, one executable', () => {
   });
 
   it('never asks for the Sites domain record on behalf of a machine operation', () => {
-    for (const op of ['status', 'provision', 'exec', 'freeze', 'thaw', 'materialize', 'tree-copy', 'destroy']) {
+    for (const op of ['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'materialize', 'tree-copy', 'destroy', 'release-uid-range']) {
       expect(helperRequestNeedsDeployment({ domain: 'nspawn', op })).toBe(false);
     }
   });
@@ -227,6 +243,22 @@ describe('privileged helper: machine identity', () => {
       expect(PLUGIN_MACHINE_PATTERN.test(bad), bad).toBe(false);
     }
     expect(PLUGIN_MACHINE_PATTERN.test(MACHINE)).toBe(true);
+  });
+
+  it('builds machine lifecycle mutations from typed fields only', async () => {
+    const calls: Call[] = [];
+    const runner = (file: string, args: string[]) => { calls.push({ file, args }); return { ok: true, stdout: '' }; };
+    await applyNspawnRequest({ domain: 'nspawn', op: 'start', machine: MACHINE }, { runner });
+    await applyNspawnRequest({ domain: 'nspawn', op: 'stop', machine: MACHINE }, { runner });
+    await applyNspawnRequest({ domain: 'nspawn', op: 'set-limits', machine: MACHINE,
+      limits: { cpus: 0.75, memoryMb: 384, pidsLimit: 300 } }, { runner });
+    expect(calls).toEqual([
+      { file: '/usr/bin/systemctl', args: ['start', `elowen-machine@${MACHINE}.service`] },
+      { file: '/usr/bin/systemctl', args: ['stop', `elowen-machine@${MACHINE}.service`] },
+      { file: '/usr/bin/systemctl', args: ['set-property', `elowen-machine@${MACHINE}.service`, 'CPUQuota=75%', 'MemoryMax=384M', 'TasksMax=300'] },
+    ]);
+    expect(() => applyNspawnRequest({ domain: 'nspawn', op: 'set-limits', machine: MACHINE,
+      limits: { cpus: 0, memoryMb: 384, pidsLimit: 300 } }, { runner })).toThrow(/limits are invalid/);
   });
 });
 
@@ -492,7 +524,7 @@ describe('privileged helper: the four merge constraints', () => {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(false);
     }
     for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'site-data-archive',
-      'tree-copy', 'tree-sync', 'tree-remove', 'destroy']) {
+      'tree-copy', 'tree-sync', 'tree-remove', 'destroy', 'release-uid-range']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
     }
     // The Sites classification is unchanged for the operations that remain: a read never takes the lock.
@@ -598,18 +630,10 @@ process.stdout.write(JSON.stringify(readFramedRequest(0)));`;
 });
 
 describe('privileged helper: host artefacts and readiness', () => {
-  it('owns the polkit rule and the unit template as repository content', () => {
-    const rule = renderPolkitRule('azureuser');
-    expect(rule).toContain('subject.user !== "azureuser"');
-    expect(rule).toContain('action.id !== "org.freedesktop.systemd1.manage-units"');
-    expect(rule).toContain('unit.indexOf("elowen-machine@elowen-") !== 0');
-    // Exactly the three verbs the runtime issues. A restart is a stop and a start, and nothing asks for
-    // one, so granting it would widen the rule past its own privilege model.
-    for (const verb of ['start', 'stop', 'set-property']) expect(rule).toContain(`verb === "${verb}"`);
-    expect(rule).not.toContain('"restart"');
-    // Everything else falls through to the system default, so an unrelated unit stays refused.
-    expect(rule).toContain('return polkit.Result.NOT_HANDLED;');
-    expect(rule).not.toMatch(/daemon-reload|nginx|cron/);
+  it('recognizes the retired polkit grant and owns the machine unit template as repository content', () => {
+    const retired = renderPolkitRule('azureuser');
+    expect(retired).toContain('subject.user !== "azureuser"');
+    expect(retired).toContain('verb === "start"');
     expect(() => renderPolkitRule('root')).toThrow();
     expect(() => renderPolkitRule('bad name')).toThrow();
 
@@ -617,7 +641,7 @@ describe('privileged helper: host artefacts and readiness', () => {
     // not use, so the envelope is our own template with the directory taken from the per-machine drop-in.
     expect(MACHINE_UNIT_TEMPLATE).toContain('--directory=${ELOWEN_MACHINE_DIRECTORY}');
     expect(MACHINE_UNIT_TEMPLATE).toContain('--link-journal=no');
-    expect(MACHINE_UNIT_TEMPLATE).toContain('--settings=override');
+    expect(MACHINE_UNIT_TEMPLATE).toContain('--settings=trusted');
     expect(MACHINE_UNIT_TEMPLATE).toContain('Slice=machine.slice');
     expect(MACHINE_UNIT_TEMPLATE).toContain('DevicePolicy=closed');
     expect(MACHINE_UNIT_TEMPLATE).not.toContain('/var/lib/machines');
@@ -633,6 +657,9 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(settings).toContain('Environment="ELOWEN_SITE_SLUG=demo"');
     expect(settings).toContain('Environment="ELOWEN_SITE_URL=https://demo.example/path?a=1&b=2"');
     expect(settings).toContain('PrivateUsersOwnership=off');
+    expect(settings).toContain('ResolvConf=off');
+    expect(renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false, resolverPath: '/run/systemd/resolve/resolv.conf' }))
+      .toContain('BindReadOnly=/run/systemd/resolve/resolv.conf:/etc/resolv.conf');
     expect(settings).toContain('NoNewPrivileges=yes');
     expect(settings).toContain('CAP_SYS_PTRACE');
     expect(settings).toContain('Bind=/srv/sandbox/projects/54/disks/x/workspace:/demo:rootidmap');
@@ -642,6 +669,15 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(settings).toContain('[Network]\nPrivate=yes\nVirtualEthernet=no');
     expect(renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false }))
       .toContain('[Network]\nPrivate=yes\nVirtualEthernet=yes');
+    const published = renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false, ports: [
+      { protocol: 'udp', hostPort: 5353, guestPort: 53 },
+      { protocol: 'tcp', hostPort: 8080, guestPort: 3000 },
+    ] });
+    expect(published).toContain('Port=tcp:8080:3000\nPort=udp:5353:53');
+    expect(() => renderMachineSettings([], { uidBase: 1_073_741_824, ports: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] }))
+      .toThrow(/loopback-only machine cannot publish/);
+    expect(() => renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false, ports: [{ protocol: 'tcp', hostPort: 80, guestPort: 80 }] }))
+      .toThrow(/inbound port is invalid/);
     expect(() => renderMachineSettings([], { uidBase: 1000 })).toThrow(/uid range is invalid/);
 
     const dropIn = renderMachineDropIn('/srv/sandbox/projects/54/disks/x/rootfs', { cpus: 0.75, memoryMb: 384, pidsLimit: 300 }, 1_073_741_824);
@@ -657,14 +693,14 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(missing.ready).toBe(false);
     expect(missing.items.map((item) => item.id))
       .toEqual(['os:supported', 'package:systemd-container', 'apparmor:machine-profile',
-        'unit:elowen-machine', 'unit:elowen-machine-firewall', 'polkit:machines']);
+        'polkit:machines', 'unit:elowen-machine', 'unit:elowen-machine-firewall']);
     expect(rowFor(missing, 'unit:elowen-machine').detail).toBe('missing — run environment provisioning to restore it');
     // Status only ever reads.
     expect(fixture.writes).toEqual([]);
 
     const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
     expect(provisioned.ready).toBe(true);
-    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH, POLKIT_RULE_PATH]);
+    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH]);
     expect(fixture.writes.every((write) => write.mode === 0o644)).toBe(true);
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/apt-get', args: ['update'] });
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/apt-get', args: ['install', '--yes', '--no-install-recommends', 'systemd-container'] });
@@ -672,7 +708,7 @@ describe('privileged helper: host artefacts and readiness', () => {
     // before a file existed cannot have read it.
     expect(reloads(fixture.calls)).toBe(2);
     expect(rowFor(provisioned, 'unit:elowen-machine').detail).toBe('installed and loaded');
-    expect(rowFor(provisioned, 'polkit:machines').detail).toBe('scoped to elowen-machine units for azureuser');
+    expect(rowFor(provisioned, 'polkit:machines').detail).toContain('lifecycle mutations use the privileged helper');
 
     // Converging means the second run is not a cheaper version of the first, it is nothing at all: no
     // write, no package install, no reload.
@@ -706,8 +742,8 @@ describe('privileged helper: host artefacts and readiness', () => {
   });
 
   it('refuses a sudo identity or a passwd record that does not hold together', async () => {
-    // Every storage root and the polkit grant are derived from this account, so a request whose sudo
-    // variables disagree with passwd is refused rather than resolved to whatever passwd happens to say.
+    // Provisioning and trusted storage roots are bound to this account, so a request whose sudo variables
+    // disagree with passwd is refused rather than resolved to whatever passwd happens to say.
     const fixture = runnerFixture();
     for (const [field, message] of [['SUDO_UID', /user id is invalid/], ['SUDO_GID', /group id is invalid/]] as const) {
       for (const bad of ['1000oops', '-1', '01000', '4294967296', '']) {
@@ -743,14 +779,13 @@ describe('privileged helper: host artefacts and readiness', () => {
       { ...fixture.options, env: rootShell }) as Readiness;
 
     expect(provisioned.ready).toBe(true);
-    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH, POLKIT_RULE_PATH]);
-    expect(rowFor(provisioned, 'polkit:machines').detail).toBe('scoped to elowen-machine units for azureuser');
+    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH]);
+    expect(rowFor(provisioned, 'polkit:machines').detail).toContain('lifecycle mutations use the privileged helper');
 
     // Root still has to say which account it means; nothing is guessed from the host.
     await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, { ...fixture.options, env: rootShell }))
       .rejects.toThrow(/requires naming the service account/);
-    // The service account may not name one: sudo already says who it is, and the rule this writes is a
-    // grant over machine units that it must not be able to hand to another account.
+    // The service account may not name another account: sudo already states the provisioning owner.
     await expect(applyRequest({ domain: 'nspawn', op: 'status', user: 'somebody-else' }, undefined, fixture.options))
       .rejects.toThrow(/does not match the invoking account/);
     // And the storage roots keep coming from the account sudo reports, from nothing a request carries.
@@ -758,49 +793,47 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(storageRootsFor('/home/azureuser')).toEqual(siteGatewayStorageRoots('/home/azureuser'));
   });
 
-  it('restores the one artefact that drifted, and reloads only when the reload is what makes it take effect', async () => {
-    const fixture = runnerFixture();
-    await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
+  it('removes only the exact retired polkit grant and still repairs a drifted unit', async () => {
+    const fixture = runnerFixture({ polkit: renderPolkitRule('azureuser') });
+    const retired = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
+    expect(rowFor(retired, 'polkit:machines').detail).toContain('retired broad lifecycle rule');
+
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    expect(provisioned.ready).toBe(true);
+    expect(fixture.state.polkit).toBe('');
     const baseline = reloads(fixture.calls);
 
-    // Someone edits the polkit rule by hand. polkitd watches its own rules directory, so restoring the
-    // file is the whole repair; asking systemd to reload would be theatre.
-    fixture.state.polkit = `${fixture.state.polkit}// widened by hand\n`;
-    const edited = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
-    expect(rowFor(edited, 'polkit:machines')).toMatchObject({ ok: false, detail: 'differs from the managed content — run environment provisioning to restore it' });
-    expect(rowFor(edited, 'unit:elowen-machine').ok).toBe(true);
+    const unmanaged = runnerFixture({ polkit: `${renderPolkitRule('azureuser')}// widened by hand\n` });
+    const reported = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, unmanaged.options) as Readiness;
+    expect(rowFor(reported, 'polkit:machines').detail).toContain('unmanaged file');
+    await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, unmanaged.options))
+      .rejects.toThrow(/unmanaged content/);
+    expect(unmanaged.state.polkit).toContain('widened by hand');
 
-    let repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
-    expect(repaired.ready).toBe(true);
-    expect(fixture.state.polkit).toBe(renderPolkitRule('azureuser'));
-    expect(reloads(fixture.calls)).toBe(baseline);
-
-    // An upgrade over an older unit template is the same path, and this one does need the manager told.
     fixture.state.unit = '[Unit]\nDescription=Elowen machine %i\n[Service]\nExecStart=systemd-nspawn --boot\n';
-    repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    const repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
     expect(repaired.ready).toBe(true);
     expect(fixture.state.unit).toBe(MACHINE_UNIT_TEMPLATE);
     expect(reloads(fixture.calls)).toBe(baseline + 1);
   });
 
-  it('treats the permission bits as part of the artefact, not as decoration', async () => {
+  it('treats the permission bits as part of a managed artefact', async () => {
     const fixture = runnerFixture();
     await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
-    // A group-writable polkit rule is a rule that whole group can rewrite, and its content still matches.
-    fixture.state.polkitMode = 0o664;
+    fixture.state.unitMode = 0o664;
     const loose = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
-    expect(rowFor(loose, 'polkit:machines')).toMatchObject({ ok: false, detail: 'mode is 0664 where 0644 is required — run environment provisioning to restore it' });
+    expect(rowFor(loose, 'unit:elowen-machine')).toMatchObject({ ok: false, detail: 'mode is 0664 where 0644 is required — run environment provisioning to restore it' });
 
     const repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
     expect(repaired.ready).toBe(true);
-    expect(fixture.state.polkitMode).toBe(0o644);
+    expect(fixture.state.unitMode).toBe(0o644);
   });
 
   it('reloads a unit template the manager has never read, even when the file on disk is already right', async () => {
     // The state a provisioning run interrupted between the write and the reload leaves behind, and the
     // state a restored backup leaves behind. The file compares equal, and the machine still cannot start.
     const fixture = runnerFixture({
-      unit: MACHINE_UNIT_TEMPLATE, unitLoaded: false, polkit: renderPolkitRule('azureuser'),
+      unit: MACHINE_UNIT_TEMPLATE, unitLoaded: false,
       firewallUnit: MACHINE_FIREWALL_UNIT, firewallEnabled: true, firewall: true,
     });
     const stale = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
@@ -821,25 +854,21 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(reported.ready).toBe(false);
     expect(reported.items.map((item) => item.id)).toEqual([
       'os:supported', 'package:systemd-container', 'apparmor:machine-profile',
-      'unit:elowen-machine', 'unit:elowen-machine-firewall', 'polkit:machines',
-      'net:ip-forward', 'service:systemd-networkd', ...NSPAWN_FIREWALL_RULES.map((rule: { id: string }) => rule.id),
+      'polkit:machines', 'unit:elowen-machine', 'unit:elowen-machine-firewall',
+      'net:ip-forward', 'service:systemd-networkd', 'resolver:uplink', ...NSPAWN_FIREWALL_RULES.map((rule: { id: string }) => rule.id),
     ]);
 
     // Every detail has to carry the command, because nobody reading a false row has the rule memorized.
     expect(rowFor(reported, 'net:ip-forward').detail).toContain('sysctl -w net.ipv4.ip_forward=1');
     expect(rowFor(reported, 'service:systemd-networkd').detail).toContain('systemctl enable --now systemd-networkd');
-    expect(rowFor(reported, 'firewall:forward-out').detail).toContain('/usr/sbin/iptables -I DOCKER-USER 1 -i ve-+ -j ACCEPT');
-    expect(rowFor(reported, 'firewall:forward-back').detail)
-      .toContain('/usr/sbin/iptables -I DOCKER-USER 1 -o ve-+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT');
-    expect(rowFor(reported, 'firewall:machine-dhcp').detail).toContain('/usr/sbin/iptables -I INPUT 1 -i ve-+ -p udp --dport 67 -j ACCEPT');
-    expect(rowFor(reported, 'firewall:host-guard').detail).toContain('/usr/sbin/iptables -A INPUT -i ve-+ -j DROP');
-    expect(rowFor(reported, 'firewall:host-guard6').detail).toContain('/usr/sbin/ip6tables -A INPUT -i ve-+ -j DROP');
+    for (const rule of NSPAWN_FIREWALL_RULES) {
+      expect(rowFor(reported, rule.id).detail).toContain(firewallRuleCommand(rule));
+    }
 
-    // Serving a request never mutates the packet filter: every call into either table is an existence
-    // check, whatever the answer turns out to be.
+    // Serving a request never mutates the packet filter: it reads the ordered chain rules only.
     const served = fixture.calls.filter((call) => call.file.endsWith('tables'));
     expect(served.length).toBeGreaterThan(0);
-    expect(served.every((call) => call.args[0] === '-C')).toBe(true);
+    expect(served.every((call) => call.args[0] === '-S')).toBe(true);
 
     // Provisioning is the operator-invoked path, and it does act: the unit is installed, enabled so the
     // rules come back after a reboot, and started so they are in place now. It still touches the tables
@@ -847,7 +876,7 @@ describe('privileged helper: host artefacts and readiness', () => {
     const applied = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
     expect(fixture.state.firewallUnit).toBe(MACHINE_FIREWALL_UNIT);
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/systemctl', args: ['enable', '--now', MACHINE_FIREWALL_UNIT_NAME] });
-    expect(fixture.calls.filter((call) => call.file.endsWith('tables')).every((call) => call.args[0] === '-C')).toBe(true);
+    expect(fixture.calls.filter((call) => call.file.endsWith('tables')).every((call) => call.args[0] === '-S')).toBe(true);
     for (const rule of NSPAWN_FIREWALL_RULES) expect(rowFor(applied, rule.id).ok, rule.id).toBe(true);
     expect(rowFor(applied, 'unit:elowen-machine-firewall')).toMatchObject({ ok: true, detail: 'installed, enabled and applied' });
 
@@ -881,10 +910,8 @@ describe('privileged helper: host artefacts and readiness', () => {
     // dies on the FORWARD DROP policy Docker installs.
     const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'DOCKER-USER');
     expect(forwarding.map((rule: { id: string }) => rule.id)).toEqual(['firewall:forward-out', 'firewall:forward-back']);
-    expect(forwarding.map((rule) => firewallRuleCommand(rule))).toEqual([
-      '/usr/sbin/iptables -I DOCKER-USER 1 -i ve-+ -j ACCEPT',
-      '/usr/sbin/iptables -I DOCKER-USER 1 -o ve-+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT',
-    ]);
+    expect(forwarding.map((rule) => rule.insertAt)).toEqual([1, 2]);
+    expect(forwarding.map((rule) => firewallRuleCommand(rule)).every((command) => command.includes('--comment elowen-machine-'))).toBe(true);
     // The return path is conntrack-scoped, so it opens nothing a machine did not ask for first.
     expect(forwarding[1]!.spec).toContain('RELATED,ESTABLISHED');
   });
@@ -896,14 +923,15 @@ describe('privileged helper: host artefacts and readiness', () => {
     // IPv6 gets the guard and nothing else, and that is a fact about this host rather than about IPv6:
     // measured, it carries no global IPv6 address and the ip6tables FORWARD policy is ACCEPT, so there is
     // no v6 path off the box to hold open. It needs measuring again if the host ever gains v6 reach.
-    const guards = NSPAWN_FIREWALL_RULES.filter((rule: { spec: string[] }) => rule.spec.includes('DROP'));
+    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.spec.includes('DROP'));
     expect(guards).toHaveLength(2);
-    expect(guards.every((rule: { chain: string }) => rule.chain === 'INPUT')).toBe(true);
-    expect(guards.map((rule: { binary: string }) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
-    // The lease exception is inserted at the head, the guard is appended, so the guard cannot shadow it.
-    const lease = NSPAWN_FIREWALL_RULES.find((rule: { id: string }) => rule.id === 'firewall:machine-dhcp')!;
-    expect(firewallRuleCommand(lease)).toContain('-I INPUT 1');
-    expect(guards.every((rule) => firewallRuleCommand(rule).includes('-A INPUT'))).toBe(true);
+    expect(guards.every((rule) => rule.chain === 'INPUT')).toBe(true);
+    expect(guards.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
+    // IPv4 DHCP is first and its guard second; IPv6 has no lease exception and its guard is first.
+    const lease = NSPAWN_FIREWALL_RULES.find((rule) => rule.id === 'firewall:machine-dhcp')!;
+    expect(lease.insertAt).toBe(1);
+    expect(guards.map((rule) => rule.insertAt)).toEqual([2, 1]);
+    expect(guards.every((rule) => firewallRuleCommand(rule).includes('-I INPUT'))).toBe(true);
   });
 
   it('prepares a fresh host end to end, and the second run changes nothing', async () => {
@@ -1042,6 +1070,13 @@ describe('privileged helper: the disk identity record', () => {
           calls.push({ file, args });
           if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
           if (file === '/usr/bin/python3') return { ok: true, stdout: JSON.stringify({ entries: 4242 }) };
+          if ((file === '/usr/sbin/iptables' || file === '/usr/sbin/ip6tables') && args[0] === '-S') {
+            const rules = NSPAWN_FIREWALL_RULES
+              .filter((rule) => rule.binary === file && rule.chain === args[1])
+              .sort((left, right) => left.insertAt - right.insertAt)
+              .map((rule) => `-A ${rule.chain} ${rule.spec.join(' ')}`);
+            return { ok: true, stdout: `${rules.join('\n')}\n` };
+          }
           return { ok: true, stdout: '' };
         },
       },
@@ -1195,6 +1230,7 @@ describe('privileged helper: the disk identity record', () => {
     ready.options.readText = (path: string) => {
       if (path === '/proc/sys/net/ipv4/ip_forward') return '1\n';
       if (path === MACHINE_SYSCTL_PATH) return MACHINE_SYSCTL_CONTENT;
+      if (path === '/run/systemd/resolve/resolv.conf') return 'nameserver 192.0.2.53\n';
       return path === '/etc/subuid' ? 'azureuser:100000:65536\n' : '';
     };
     await applyRequest(request, undefined, ready.options);
@@ -1295,6 +1331,7 @@ describe('privileged helper: the disk identity record', () => {
       '{"project:54":',
       '[]',
       JSON.stringify({ 'project:54': UID_RANGE_BASE, 'project:55': UID_RANGE_BASE }),
+      JSON.stringify({ 'project:54': UID_RANGE_BASE, [`project:54:${'a'.repeat(32)}`]: UID_RANGE_BASE + 65_536 }),
       JSON.stringify({ 'project:54': UID_RANGE_BASE + 1 }),
     ];
     for (const content of broken) {
@@ -1314,6 +1351,39 @@ describe('privileged helper: the disk identity record', () => {
     rmSync(registryPath, { force: true });
     symlinkSync(target, registryPath);
     expect(() => readUidRangeRegistry(registryPath)).toThrow(/cannot be opened/);
+  });
+
+  it('releases only a fully deleted environment range and all of its old disk aliases', async () => {
+    const rangesPath = '/var/lib/elowen/nspawn-uid-ranges.json';
+    const registry: Record<string, number> = {
+      'project:61': UID_RANGE_BASE,
+      [`project:61:${'a'.repeat(32)}`]: UID_RANGE_BASE,
+      'project:62': UID_RANGE_BASE + 65_536,
+    };
+    const writeAtomic = (path: string, content: Buffer) => {
+      expect(path).toBe(rangesPath);
+      for (const key of Object.keys(registry)) delete registry[key];
+      Object.assign(registry, JSON.parse(content.toString('utf8')));
+    };
+    const request = { domain: 'nspawn', op: 'release-uid-range', namespace: 'elowen', kind: 'project', resource: '61' };
+    const options = { storage, readUidRanges: () => ({ ...registry }), writeAtomic, exists: () => false };
+
+    await expect(applyRequest(request, undefined, { ...options,
+      readDir: (path: string) => path === '/etc/systemd/nspawn' ? ['elowen-project-61-g4.nspawn'] : [],
+    })).rejects.toThrow(/machine envelope still exists/);
+    await expect(applyRequest(request, undefined, { ...options,
+      readDir: (path: string) => path === '/etc/systemd/system' ? ['elowen-machine@elowen-project-61-g4.service.d'] : [],
+    })).rejects.toThrow(/machine drop-in still exists/);
+    expect(registry).toHaveProperty('project:61');
+
+    await applyRequest(request, undefined, { ...options, readDir: () => [] });
+    expect(registry).toEqual({ 'project:62': UID_RANGE_BASE + 65_536 });
+    await expect(applyRequest(request, undefined, { ...options, readDir: () => [] })).resolves.toMatchObject({ ok: true });
+
+    await expect(applyRequest({ ...request, resource: '62' }, undefined, {
+      ...options, exists: (path: string) => path.endsWith('/projects/62'), readDir: () => [],
+    })).rejects.toThrow(/storage still exists/);
+    expect(registry).toEqual({ 'project:62': UID_RANGE_BASE + 65_536 });
   });
 
   it('refuses an envelope over a root filesystem some other range owns', async () => {
@@ -1519,6 +1589,16 @@ describe('privileged helper: the disk identity record', () => {
     for (const bad of ['workspace', '/..', '/workspace/..', '/./etc', '/workspace/.git/objects', '/Workspace', '/work space', '/etc\u0000']) {
       expect(safeGuestMountTarget(bad), bad).toBe(false);
     }
+  });
+
+  it('refuses to rewrite the envelope while its machine is active', async () => {
+    const fixture = diskFixture();
+    const runner = (file: string, args: string[]) => file === '/usr/bin/systemctl' && args[0] === 'show' && args.includes('ActiveState')
+      ? { ok: true, stdout: 'active\n' }
+      : fixture.options.runner(file, args);
+    await expect(applyRequest({ domain: 'nspawn', op: 'write-envelope', ...diskRef,
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, binds: [], ports: [], dropCapabilities: [], privateNetwork: true,
+    }, undefined, { ...fixture.options, runner })).rejects.toThrow(/must be stopped before its envelope is rewritten/);
   });
 
   it('refuses to write the identity through a planted symlink', async () => {
@@ -2261,7 +2341,7 @@ describe('privileged helper: the invocation the sudoers drop-in pins', () => {
     // Every operation the bundled runtime can name is one this helper answers.
     for (const op of ['materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
       'site-data-archive', 'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync',
-      'tree-verify', 'destroy']) {
+      'tree-verify', 'destroy', 'release-uid-range']) {
       expect(helperRequest(op, {})).toEqual({ domain: 'nspawn', op });
       let refusal = '';
       try { applyNspawnRequest({ domain: 'nspawn', op }, { storage }); } catch (error) { refusal = String(error); }

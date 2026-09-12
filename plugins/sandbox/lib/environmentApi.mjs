@@ -78,13 +78,24 @@ export function registerEnvironmentApi(ctx, runtime) {
   // GET is side-effect free and safe to poll. POST installs packages, writes root-owned unit, polkit and
   // sysctl files and applies firewall rules, so it is deliberately a separate verb on a separate route
   // rather than a flag on the read — nothing a browser does by merely LOOKING can change the host.
-  const machine = (method, handler) => ctx.registerApiRoute({ path: 'runtime/host', method, access: 'user', handler: async (req) => {
+  const machine = (method, handler) => ctx.registerApiRoute({ path: 'runtime/host', method, access: 'admin', handler: async (req) => {
     try {
       const accountUserId = req.auth?.userId;
       if (!Number.isSafeInteger(accountUserId) || accountUserId <= 0) return { status: 401, body: { error: 'account_required' } };
-      return { status: 200, body: await handler({ accountUserId }) };
+      return await handler(req, { accountUserId });
     } catch (cause) { return failure(cause); }
   } });
-  machine('GET', (actor) => control.machineRuntimeReadiness(actor));
-  machine('POST', (actor) => control.provisionMachineRuntime(actor));
+  machine('GET', async (_req, actor) => ({ status: 200, body: await control.machineRuntimeReadiness(actor) }));
+  machine('POST', async (req, actor) => {
+    let input;
+    try { input = await req.json(); }
+    catch { throw bad('JSON object body required'); }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw bad('JSON object body required');
+    if (Object.keys(input).some((key) => !['action', 'requestId'].includes(key))) throw bad('Only action and requestId are accepted');
+    if (!input.action || typeof input.action !== 'object' || Array.isArray(input.action)
+      || Object.keys(input.action).length !== 1 || input.action.kind !== 'provision') throw bad('The provision action is required');
+    if (input.requestId !== undefined && !isRequestId(input.requestId)) throw bad('Invalid idempotency key');
+    return { status: 202, body: await control.provisionMachineRuntime({ ...actor, action: input.action,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }) }) };
+  });
 }

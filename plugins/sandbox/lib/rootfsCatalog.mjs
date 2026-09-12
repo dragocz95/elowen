@@ -134,10 +134,8 @@ export function artifactReference(name) {
  *  It is recognised only so a refusal can say what the value actually is. Nothing converts it. */
 const LEGACY_IMAGE = /^(localhost|docker\.io|quay\.io|ghcr\.io)\//;
 
-/** Whether a reference is one of those tags. Stated once here, because two places now ask the question
- *  for different reasons — materialization refuses such a disk, and the identity migration is the one
- *  operation that moves a disk off one — and a second copy of the rule is how the two would come to
- *  disagree about which environments still need migrating. */
+/** Whether a reference is one of those tags. Stated once here because materialization and readiness both
+ *  have to identify the removed runtime consistently and refuse it with the same actionable message. */
 export function isLegacyImageReference(reference) {
   return typeof reference === 'string' && LEGACY_IMAGE.test(reference);
 }

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
@@ -34,6 +34,9 @@ if (process.platform !== 'linux') blockers.push('the host is not Linux');
 if (!existsSync('/usr/bin/systemd-nspawn')) blockers.push('systemd-container is not installed');
 if (!existsSync(PROOF_HELPER)) blockers.push(`the privileged helper is not present at ${PROOF_HELPER}`);
 if (!existsSync(MACHINE_UNIT_TEMPLATE)) blockers.push('the machine unit template is not installed');
+else if (!readFileSync(MACHINE_UNIT_TEMPLATE, 'utf8').includes('--settings=trusted')) {
+  blockers.push('the installed machine unit predates trusted root-owned settings, so systemd-nspawn ignores inbound Port= rules; provision the Sandbox host runtime before this proof');
+}
 if (!existsSync(RECEIPT_PATH)) {
   blockers.push('the proof host harness is not prepared, and its teardown is what returns the uid ranges'
     + ' these suites allocate: run `sudo node tests/plugins/nspawnProofHost.mjs run`');

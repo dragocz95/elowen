@@ -25,9 +25,24 @@
     "defaultPidsLimit": {
       "label": "Procesy",
       "hint": "Nejvyšší počet procesů a vláken uvnitř prostředí."
+    },
+    "sec_network": {
+      "label": "Síť prostředí",
+      "hint": "Síťový režim, který se zkopíruje do prostředí projektu při prvním vytvoření. Existující prostředí si ponechají vlastní nastavení."
+    },
+    "defaultNetworkMode": {
+      "label": "Výchozí síťový režim",
+      "hint": "Sdílený režim poskytuje odchozí internet přes privátní síť stroje. Izolovaný režim poskytuje pouze loopback uvnitř prostředí.",
+      "options": {
+        "shared": "Sdílená odchozí síť",
+        "isolated": "Pouze izolovaný loopback"
+      }
     }
   },
   "web": {
+    "settings": {
+      "host-runtime": "Runtime hostitele"
+    },
     "user": {
       "environment": "Vývojové prostředí"
     },
@@ -141,9 +156,53 @@
       "runtimeNotReady": "Tento hostitel zatím nemůže vytvořit prostředí.",
       "runtimeMachine": "Stroj",
       "runtimeContainer": "Kontejner",
+      "hostRuntimeTitle": "Runtime strojů",
+      "hostRuntimeHint": "Balíčky hostitele, systémové služby, privilegovaná pravidla, izolace sítě a publikované kořenové systémy souborů potřebné pro spravovaná prostředí.",
+      "hostReady": "Připraveno pro nová prostředí",
+      "hostPrepared": "Připraveno a uloženo lokálně",
+      "hostBlocked": "Je potřeba příprava",
+      "hostProvision": "Připravit hostitele",
+      "hostProvisioning": "Připravuji hostitele",
+      "hostOperation": "Průběh přípravy",
+      "hostWorking": "Pracuji",
+      "hostRequirementReady": "Připraveno",
+      "hostRequirementMissing": "Chybí",
+      "hostArea_package": "Nástroje kontejnerů",
+      "hostArea_packageHint": "Balíčky operačního systému potřebné ke spouštění systemd strojů.",
+      "hostArea_systemd": "Systémové služby",
+      "hostArea_systemdHint": "Kořenové šablony jednotek a služby, které spouštějí a hlídají stroje.",
+      "hostArea_helper": "Privilegovaná hranice",
+      "hostArea_helperHint": "Pevný kontrakt pomocníka a kontroly kompatibility hostitele.",
+      "hostArea_polkit": "Pravidla přístupu ke strojům",
+      "hostArea_polkitHint": "Úzce vymezená pravidla pro životní cyklus strojů.",
+      "hostArea_firewall": "Izolace sítě",
+      "hostArea_firewallHint": "Přesměrování, konfigurace spojení a pevná izolační pravidla privátních sítí strojů.",
+      "hostArea_rootfs": "Publikované kořenové systémy",
+      "hostArea_rootfsHint": "Připnuté archivy, které tato verze umí ověřit a rozbalit. Chybějící lokální kopie se stáhnou při přípravě nebo prvním použití.",
+      "hostArea_runtime": "Existující prostředí",
+      "hostArea_runtimeHint": "Stav kompatibility záznamů prostředí uložených v této instanci.",
+      "hostStepHost": "Připravuji služby hostitele",
+      "hostStepRootfs": "Ukládám kořenový systém",
+      "hostStepVerify": "Ověřuji připravenost",
       "restoreWarning": "Nahradit prostředí tímto snímkem? Změny od vytvoření snímku budou ztraceny a běžící práce bude přerušena.",
       "resources": "Prostředky",
       "resourcesHint": "Co smí toto prostředí využívat. Změna se použije na běžící kontejner, restart není potřeba.",
+      "networking": "Síť",
+      "networkingHint": "Odchozí přístup a malá sada portů hostitele přesměrovaných do tohoto Projektu. Použití změny prostředí krátce zastaví a vrátí do předchozího stavu.",
+      "networkMode": "Síťový režim",
+      "networkShared": "Sdílená odchozí síť",
+      "networkSharedHint": "Prostředí má odchozí internet přes privátní spojení stroje a nemůže přímo přistupovat ke službám hostitele.",
+      "networkIsolated": "Pouze izolovaný loopback",
+      "networkIsolatedHint": "Komunikovat mohou jen procesy uvnitř prostředí. Odchozí přístup i příchozí přesměrování jsou vypnuté.",
+      "inboundPorts": "Příchozí porty",
+      "inboundPortsHint": "Přesměruje neprivilegovaný port hostitele na jeden TCP nebo UDP port uvnitř prostředí.",
+      "addInboundPort": "Přidat port",
+      "removeInboundPort": "Odebrat port",
+      "noInboundPorts": "Do tohoto prostředí nejsou přesměrovány žádné porty hostitele.",
+      "protocol": "Protokol",
+      "hostPort": "Port hostitele",
+      "guestPort": "Port prostředí",
+      "applyNetworking": "Použít síťové nastavení",
       "limitsAdminOnly": "Pouze pro správce",
       "unitCpu": "CPU",
       "unitProcesses": "procesů",

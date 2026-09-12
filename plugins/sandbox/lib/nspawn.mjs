@@ -57,8 +57,8 @@ const PROBE_TIMEOUT_MS = 5_000;
  *  control above it, and every other operation here still REPORTS an unready host rather than repairing
  *  it — `write-envelope` re-checks the same rows and refuses. That split is the whole point: serving a
  *  project never changes the host, and an operator asking to prepare the host does. */
-const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
-  'site-data-archive', 'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']);
+const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw',
+  'site-data-archive', 'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy', 'release-uid-range']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
  *  shape to read and one place to change. `domain` is what separates the nspawn dispatch table from the
@@ -163,10 +163,9 @@ function readIdentity(diskDirectory) {
 
 /** Concrete internal driver for systemd-nspawn machines, behind the runtime-neutral client interface.
  *
- *  Two transports and no third. The machine LIFECYCLE runs as the service account over a unit-scoped
- *  polkit rule with no sudo at all: start, stop, set-property, show, list. Everything that needs root —
- *  guest execution, freeze and thaw, and every operation on a tree owned by the machine's uid range —
- *  goes through the single privileged helper, which re-derives its own paths and command lines.
+ *  Two transports and no third. Read-only unit and machine inspection runs as the service account.
+ *  Every mutation that needs root, including start, stop and limit changes, goes through the single
+ *  privileged helper, which re-derives its own paths and command lines.
  *
  *  The guest side of that line is intended capability: what runs inside a managed environment is the
  *  environment's purpose, so `argv` is carried through untouched and only its transport hygiene is
@@ -281,8 +280,8 @@ export class NspawnClient {
   }
 
   /** The machine name IS the specification name, which is already `<ns>-<kind>-<id>-g<gen>` and already a
-   *  valid machine name. The polkit rule and the helper are both scoped to this exact shape, so a
-   *  namespace outside it has no privilege path and is refused here rather than denied later. */
+   *  valid machine name. The helper is scoped to this exact shape, so a namespace outside it has no
+   *  privilege path and is refused here rather than denied later. */
   #machine(spec) {
     this.#assertScope(spec);
     if (!MACHINE_PATTERN.test(spec.name)) throw new Error('Machine name is outside the privileged runtime scope');
@@ -292,10 +291,6 @@ export class NspawnClient {
   #diskDirectory(spec) { return dirname(spec.disk.rootfsPath); }
 
   #envelopePaths(machine) { return envelopePaths(machine, this.#configRoot); }
-
-  #limitProperties(limits) {
-    return [`CPUQuota=${limits.cpus * 100}%`, `MemoryMax=${limits.memoryMb}M`, `TasksMax=${limits.pidsLimit}`];
-  }
 
   /** What the host still owes this runtime, in the item shape the other readiness surfaces already use:
    *  `{ ready, items: [{ id, label, ok, detail }] }`. Each unmet row's detail carries the exact command an
@@ -445,7 +440,7 @@ export class NspawnClient {
     return { machine, namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id),
       generation: spec.generation, diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'],
       limits: { cpus: spec.limits.cpus, memoryMb: spec.limits.memoryMb, pidsLimit: spec.limits.pidsLimit },
-      binds: this.#binds(spec), environment: this.#environment(spec), dropCapabilities: [...DROPPED_CAPABILITIES],
+      binds: this.#binds(spec), environment: this.#environment(spec), ports: spec.inboundPorts ?? [], dropCapabilities: [...DROPPED_CAPABILITIES],
       // The specification's own network policy, carried across rather than decided here. Everything but an
       // explicitly isolated environment gets a virtual ethernet, because that is what the container
       // runtime gives the same specification today: without it a guest has its own loopback and nothing
@@ -471,7 +466,7 @@ export class NspawnClient {
   async start(spec) {
     const machine = this.#machine(spec);
     await this.#owned(spec);
-    await this.#systemctl(['start', unitFor(machine)]);
+    await this.#helper('start', { machine });
     await this.#awaitRegistration(machine);
   }
 
@@ -498,7 +493,7 @@ export class NspawnClient {
     positive(timeoutSeconds, 120, 'stop timeout');
     const machine = this.#machine(spec);
     await this.#owned(spec);
-    await this.#systemctl(['stop', unitFor(machine)]);
+    await this.#helper('stop', { machine });
   }
 
   async remove(spec) {
@@ -542,7 +537,7 @@ export class NspawnClient {
       // Recover a completed live update whose durable acknowledgement was interrupted.
       try { await this.#owned(next); return next; } catch { throw cause; }
     }
-    await this.#systemctl(['set-property', unitFor(machine), ...this.#limitProperties(next.limits)]);
+    await this.#helper('set-limits', { machine, limits: next.limits });
     await this.#owned(next);
     return next;
   }
@@ -878,9 +873,14 @@ export class NspawnClient {
   async removeStorage(spec) {
     this.#assertScope(spec);
     if (await this.containerExists(spec)) throw new Error('Container still owns environment storage');
-    try { checkedHostPath(spec.storageRoot); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
-    await this.removeDiskPath(spec.storageRoot);
+    try {
+      checkedHostPath(spec.storageRoot);
+      await this.removeDiskPath(spec.storageRoot);
+    } catch (cause) {
+      if (cause.code !== 'ENOENT') throw cause;
+    }
     if (!absent(spec.storageRoot)) throw new Error('Environment storage removal was not verified');
+    await this.#helper('release-uid-range', { namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id) });
   }
 
   async removeGenerationStorage(spec) {

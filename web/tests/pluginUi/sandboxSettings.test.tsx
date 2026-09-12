@@ -7,6 +7,7 @@ import manifest from '../../../plugins/sandbox/elowen-plugin.json';
 import { WorkspacesSettings } from '../../../plugins/sandbox/web-src/WorkspacesSettings';
 import { EnvironmentSettings } from '../../../plugins/sandbox/web-src/EnvironmentSettings';
 import { ProjectEnvironmentSettings } from '../../../plugins/sandbox/web-src/ProjectEnvironmentSettings';
+import { HostRuntimeSettings } from '../../../plugins/sandbox/web-src/HostRuntimeSettings';
 import { ensurePluginUiRuntime } from '../../lib/pluginUi';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
@@ -15,7 +16,7 @@ import { en } from '../../lib/i18n/dictionaries/en';
 
 ensurePluginUiRuntime();
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
-const listing = [{ name: 'sandbox', url: '/plugins/sandbox/web/index.js', apiVersion: 5, nav: [], user: manifest.web.user, project: manifest.web.project, settings: [], strings }];
+const listing = [{ name: 'sandbox', url: '/plugins/sandbox/web/index.js', apiVersion: 5, nav: [], user: manifest.web.user, project: manifest.web.project, settings: manifest.web.settings, strings }];
 const targetUser = {
   id: 2, username: 'bob', created_at: '', is_admin: false, allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [],
   name: 'Bob', email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false,
@@ -55,12 +56,38 @@ function mount(node: ReactNode) {
   return client;
 }
 
+describe('Sandbox host runtime', () => {
+  it('shows structured readiness and sends only the typed provisioning action', async () => {
+    let submitted: unknown;
+    server.use(
+      http.get('*/api/plugins/sandbox/api/runtime/host', () => HttpResponse.json({
+        runtime: 'nspawn', ready: false, prepared: false, operation: null,
+        requirements: [
+          { id: 'package:systemd-container', area: 'package', label: 'systemd container tools', ok: false, detail: 'not installed' },
+          { id: 'rootfs:project-base@1', area: 'rootfs', label: 'project-base@1', ok: true, published: true, present: false, sizeBytes: 104857600, detail: 'published; downloaded on first use' },
+        ],
+      })),
+      http.post('*/api/plugins/sandbox/api/runtime/host', async ({ request }) => {
+        submitted = await request.json();
+        return HttpResponse.json({ id: 'env-host', runtime: 'nspawn', status: 'pending', error: null, errorCode: null, steps: ['host'], stepIndex: 0, stepTotal: 1, stepLabel: 'host', percent: 0 }, { status: 202 });
+      }),
+    );
+    mount(<HostRuntimeSettings />);
+
+    expect(await screen.findByText(strings.hostBlocked!)).toBeInTheDocument();
+    expect(screen.getByText('systemd container tools')).toBeInTheDocument();
+    expect(screen.getByText('100 MiB')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: strings.hostProvision }));
+    await waitFor(() => expect(submitted).toEqual({ action: { kind: 'provision' }, requestId: expect.stringMatching(/^host-/) }));
+  });
+});
+
 describe('sandbox Project workspaces', () => {
   // The project surface reports the PROJECT's environment, never the account's HOME. Starting and
   // stopping it belongs to the project's row in the register now — see sandboxProjectRows.test.tsx —
   // so what this panel still owns is the state, the resources and the snapshots.
   it('shows the managed project environment and its resources, with no lifecycle buttons and no account HOME', async () => {
-    const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
+    const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, network: { mode: 'shared', inboundPorts: [] } };
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
       http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment, snapshots: [], operations: [] })),
@@ -110,7 +137,7 @@ describe('sandbox Project workspaces', () => {
 
 describe('managed environment lifecycle', () => {
   const project = { id: 1, slug: 'demo', path: '', executionKind: 'managed' as const };
-  const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
+  const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, network: { mode: 'shared', inboundPorts: [] } };
   const detail = { environment, operations: [], snapshots: [{ id: 'complete', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Before change', completeProject: true }, { id: 'partial', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Incomplete', completeProject: false }] };
   const setup = () => server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })), http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(detail)));
 
@@ -159,6 +186,42 @@ describe('managed environment lifecycle', () => {
       () => expect(submitted).toEqual({ action: { kind: 'limits', limits: { ...environment.limits, memoryMb: 1152 } }, expectedGeneration: 2, requestId: expect.any(String) }),
       { timeout: 4000 },
     );
+  });
+
+  it('adds an inbound port and submits one durable network action', async () => {
+    setup();
+    let submitted: any;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
+        submitted = await request.json();
+        return HttpResponse.json({ id: 'op-network', requestId: submitted.requestId, projectId: 1, generation: 2, accountUserId: 1,
+          action: submitted.action, status: 'pending', error: null });
+      }),
+    );
+    mount(<ProjectEnvironmentSettings project={project} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: strings.addInboundPort }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: strings.hostPort }), { target: { value: '9080' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: strings.guestPort }), { target: { value: '3000' } });
+    fireEvent.click(screen.getByRole('button', { name: strings.applyNetworking }));
+
+    await waitFor(() => expect(submitted).toMatchObject({ action: { kind: 'network', network: { mode: 'shared', inboundPorts: [
+      { protocol: 'tcp', hostPort: 9080, guestPort: 3000 },
+    ] } }, expectedGeneration: 2, requestId: expect.any(String) }));
+  });
+
+  it('removes inbound rows when isolated mode is selected', async () => {
+    const isolatedDetail = { ...detail, environment: { ...environment, network: { mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] } } };
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(isolatedDetail)),
+    );
+    mount(<ProjectEnvironmentSettings project={project} />);
+    const mode = await screen.findByRole('combobox', { name: strings.networkMode });
+    fireEvent.keyDown(mode, { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: strings.networkIsolated }));
+    expect(screen.queryByRole('spinbutton', { name: strings.hostPort })).toBeNull();
   });
 
   it('keeps the sent slider value until the refreshed environment reports it', async () => {
@@ -279,7 +342,7 @@ describe('managed environment lifecycle', () => {
     fireEvent.click(dialog.getByRole('button', { name: strings.restoreEnvironment }));
     await waitFor(() => expect(submitted).toEqual({ action: { kind: 'restore', snapshotId: 'complete' }, expectedGeneration: 2, requestId: expect.any(String) }));
     // This member is not an administrator: the resource figures are readable, not editable.
-    expect(screen.getByText(strings.limitsAdminOnly!)).toBeInTheDocument();
+    expect(screen.getAllByText(strings.limitsAdminOnly!)).toHaveLength(2);
     expect(screen.queryByRole('slider', { name: strings.memoryLimit })).toBeNull();
   });
 

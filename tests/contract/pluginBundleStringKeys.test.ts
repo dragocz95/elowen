@@ -36,6 +36,15 @@ const COMPUTED_READS: { file: string; keys: string[] }[] = [
       'state_deleting', 'state_deleted',
     ],
   },
+  {
+    file: 'sandbox/web-src/HostRuntimeSettings.tsx',
+    keys: [
+      'hostArea_package', 'hostArea_packageHint', 'hostArea_systemd', 'hostArea_systemdHint',
+      'hostArea_helper', 'hostArea_helperHint', 'hostArea_polkit', 'hostArea_polkitHint',
+      'hostArea_firewall', 'hostArea_firewallHint', 'hostArea_rootfs', 'hostArea_rootfsHint',
+      'hostArea_runtime', 'hostArea_runtimeHint',
+    ],
+  },
   // The project register row labels the same states and picks each menu item's label from the action
   // table, so both reads are computed. Declared here: every state, and every ACTIONS label.
   {

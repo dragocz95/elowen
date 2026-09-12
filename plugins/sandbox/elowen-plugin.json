@@ -115,6 +115,23 @@
       "step": 32,
       "display": { "control": "slider", "unit": "processes" },
       "hint": "Maximum number of processes and threads inside the environment."
+    },
+    {
+      "key": "sec_network",
+      "label": "Environment networking",
+      "type": "section",
+      "hint": "The network mode copied into a project environment when it is first provisioned. Existing environments keep their own policy."
+    },
+    {
+      "key": "defaultNetworkMode",
+      "label": "Default network mode",
+      "type": "enum",
+      "default": "shared",
+      "options": [
+        { "value": "shared", "label": "Shared outbound network" },
+        { "value": "isolated", "label": "Isolated loopback only" }
+      ],
+      "hint": "Shared mode provides outbound internet through a private machine link. Isolated mode provides only the guest loopback interface."
     }
   ],
   "capabilities": {
@@ -133,6 +150,14 @@
     "entry": "web/index.js",
     "css": "web/index.css",
     "requiresApiVersion": 16,
+    "settings": [
+      {
+        "id": "host-runtime",
+        "label": "Host runtime",
+        "icon": "Server",
+        "placement": "pluginDetail"
+      }
+    ],
     "user": [
       {
         "id": "environment",
@@ -255,9 +280,53 @@
       "runtimeNotReady": "This host cannot create an environment yet.",
       "runtimeMachine": "Machine",
       "runtimeContainer": "Container",
+      "hostRuntimeTitle": "Machine runtime",
+      "hostRuntimeHint": "Host packages, system services, privileged policy, network isolation and published root filesystems required by managed environments.",
+      "hostReady": "Ready for new environments",
+      "hostPrepared": "Ready and cached locally",
+      "hostBlocked": "Preparation required",
+      "hostProvision": "Prepare host",
+      "hostProvisioning": "Preparing host",
+      "hostOperation": "Preparation progress",
+      "hostWorking": "Working",
+      "hostRequirementReady": "Ready",
+      "hostRequirementMissing": "Missing",
+      "hostArea_package": "Container tools",
+      "hostArea_packageHint": "Operating-system packages required to launch systemd machines.",
+      "hostArea_systemd": "System services",
+      "hostArea_systemdHint": "Root-owned unit templates and services that start and supervise machines.",
+      "hostArea_helper": "Privileged boundary",
+      "hostArea_helperHint": "The fixed helper contract and host compatibility checks.",
+      "hostArea_polkit": "Machine access policy",
+      "hostArea_polkitHint": "The narrow policy used for machine lifecycle operations.",
+      "hostArea_firewall": "Network isolation",
+      "hostArea_firewallHint": "Forwarding, link configuration and fixed isolation rules for private machine links.",
+      "hostArea_rootfs": "Published root filesystems",
+      "hostArea_rootfsHint": "Pinned archives this release can verify and materialize. Missing local copies are downloaded during preparation or first use.",
+      "hostArea_runtime": "Existing environments",
+      "hostArea_runtimeHint": "Compatibility state of environment records already stored on this instance.",
+      "hostStepHost": "Preparing host services",
+      "hostStepRootfs": "Caching root filesystem",
+      "hostStepVerify": "Verifying readiness",
       "restoreWarning": "Replace the environment with this snapshot? Changes since the snapshot will be lost and running work will be interrupted.",
       "resources": "Resources",
       "resourcesHint": "What this environment may use. A change is applied to the running container; no restart is required.",
+      "networking": "Networking",
+      "networkingHint": "Outbound access and the small set of host ports forwarded into this Project. Applying a change briefly stops the environment and returns it to its previous state.",
+      "networkMode": "Network mode",
+      "networkShared": "Shared outbound network",
+      "networkSharedHint": "The environment has outbound internet through a private machine link and cannot reach host services directly.",
+      "networkIsolated": "Isolated loopback only",
+      "networkIsolatedHint": "Only processes inside the environment can communicate. Outbound access and inbound forwarding are disabled.",
+      "inboundPorts": "Inbound ports",
+      "inboundPortsHint": "Forward an unprivileged host port to one TCP or UDP port inside this environment.",
+      "addInboundPort": "Add port",
+      "removeInboundPort": "Remove port",
+      "noInboundPorts": "No host ports are forwarded into this environment.",
+      "protocol": "Protocol",
+      "hostPort": "Host port",
+      "guestPort": "Environment port",
+      "applyNetworking": "Apply networking",
       "limitsAdminOnly": "Administrators only",
       "unitCpu": "CPU",
       "unitProcesses": "processes",

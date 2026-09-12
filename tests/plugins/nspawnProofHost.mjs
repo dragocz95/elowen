@@ -1,9 +1,8 @@
 #!/usr/bin/node
 /** Host preparation for the systemd-nspawn proof suite, and its removal.
  *
- *  The proof suite asserts properties of a RUNNING machine, so it needs three root-owned artefacts that
- *  an unprovisioned host does not have: the machine unit template, the polkit rule that lets the service
- *  account start those units without sudo, and a sudoers line naming one privileged helper.
+ *  The proof suite asserts properties of a RUNNING machine, so it installs a root-owned machine unit,
+ *  an isolated helper copy and wrapper, and a sudoers line naming only that typed helper.
  *
  *  The helper it names is deliberately NOT the installed one. `/usr/local/libexec/elowen-site-gateway`
  *  serves published sites in production; replacing it to test a branch would deploy that branch's whole
@@ -12,8 +11,8 @@
  *  the shape the production drop-in pins while the bytes that answer come from the branch.
  *
  *  Everything written here is recorded and removed again, and an artefact that already existed is left
- *  alone: an operator who has provisioned this host keeps their own unit template and rule. The uid
- *  ranges the run's environments were allocated are given back the same way, and on the same terms.
+ *  alone: an operator who has provisioned this host keeps their own unit template. The uid ranges the
+ *  run's environments were allocated are given back the same way, and on the same terms.
  *
  *  Run as root, from the working tree:
  *
@@ -63,13 +62,12 @@ if (!existsSync(HELPER_SOURCE)) fail(`the working tree helper is missing at ${HE
 // of a unit template proves that copy works, not the one the branch ships. The module's self-invocation
 // guard compares `import.meta.url` against `process.argv[1]`, which is this file, so nothing runs.
 const helper = await import(`file://${HELPER_SOURCE}`);
-for (const name of ['MACHINE_UNIT_PATH', 'MACHINE_UNIT_TEMPLATE', 'POLKIT_RULE_PATH', 'renderPolkitRule',
-  'storageRootsFor', 'acquireMutationLock']) {
+for (const name of ['MACHINE_UNIT_PATH', 'MACHINE_UNIT_TEMPLATE', 'storageRootsFor', 'acquireMutationLock']) {
   if (helper[name] === undefined) fail(`the working tree helper does not export ${name}`);
 }
 
-/** The account the daemon runs as, which is the account the polkit rule and the sudoers line are scoped
- *  to. `sudo` states it; guessing it would scope a root-owned rule to the wrong user. */
+/** The account the daemon runs as, which is the account the sudoers line is scoped to. `sudo` states it;
+ *  guessing it would grant the proof helper to the wrong user. */
 function resolveServiceUser() {
   const user = process.env.ELOWEN_TEST_NSPAWN_USER ?? process.env.SUDO_USER ?? '';
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user) || user === 'root') {
@@ -91,7 +89,6 @@ ${serviceUser} ALL=(root) NOPASSWD: ${WRAPPER_PATH} ""
     { id: 'wrapper', path: WRAPPER_PATH, content: wrapper, mode: 0o755 },
     { id: 'sudoers', path: SUDOERS_PATH, content: sudoers, mode: 0o440 },
     { id: 'unit', path: helper.MACHINE_UNIT_PATH, content: helper.MACHINE_UNIT_TEMPLATE, mode: 0o644, reload: true },
-    { id: 'polkit', path: helper.POLKIT_RULE_PATH, content: helper.renderPolkitRule(serviceUser), mode: 0o644 },
   ];
 }
 
@@ -241,7 +238,7 @@ if (invoked) {
   else if (mode === 'run') {
     const serviceUser = resolveServiceUser();
     install(serviceUser);
-    const suite = run('/usr/bin/sudo', ['-u', serviceUser, '--preserve-env=ELOWEN_TEST_NSPAWN_HELPER',
+    const suite = run('/usr/bin/sudo', ['-u', serviceUser, '--preserve-env=ELOWEN_TEST_NSPAWN_HELPER,ELOWEN_TEST_NSPAWN_ARTIFACT',
       'npx', 'vitest', 'run', 'tests/plugins/environmentNspawnProof.test.ts'], {
       cwd: WORKTREE, stdio: 'inherit', timeout: 45 * 60_000,
       env: { ...process.env, ELOWEN_TEST_NSPAWN_HELPER: WRAPPER_PATH },

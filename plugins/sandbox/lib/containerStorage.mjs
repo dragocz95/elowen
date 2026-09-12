@@ -84,11 +84,7 @@ function absent(path) {
 }
 
 /** Every field of a disk record that ties it to ONE environment, ONE generation and ONE set of trees.
- *
- *  `sourceImage` is deliberately not among them, because the two callers own that field for opposite
- *  reasons: `prepare` refuses a record whose reference is not its specification's, while
- *  `adoptDiskIdentity` exists precisely to move that field. Stating the shared part once keeps a change
- *  to what a disk record IS from reaching only one of them. */
+ *  The published root filesystem reference is checked beside this shared structural identity. */
 function diskOwnershipMismatch(manifest, spec) {
   return manifest.diskId !== spec.disk.id || manifest.format !== 2 || manifest.resource?.kind !== spec.resource.kind
     || manifest.resource?.id !== spec.resource.id || manifest.rootfsPath !== spec.disk.rootfsPath
@@ -196,57 +192,6 @@ export class ContainerStorage {
     syncPath(directory);
     renameSync(pendingManifestPath, manifestPath);
     syncPath(directory);
-  }
-
-  /** The disk's own durable record, held against the specification that claims it. This is the read the
-   *  identity migration proves its starting state with: a disk whose record does not agree with the row
-   *  is not a disk anything should be rewriting. */
-  readDiskRecord(spec) {
-    assertContainerSpec(spec);
-    if (!spec.disk) throw new Error('An environment without a persistent disk has no durable disk record');
-    const manifest = JSON.parse(readFileSync(checkedHostPath(join(dirname(spec.disk.rootfsPath), 'disk.json'), { file: true }), 'utf8'));
-    if (diskOwnershipMismatch(manifest, spec) || manifest.sourceImage !== spec.disk.sourceImage) throw new Error('Environment disk manifest ownership mismatch');
-    return manifest;
-  }
-
-  /** Move the disk record onto the reference its specification now carries, WITHOUT touching a byte of
-   *  the trees it describes.
-   *
-   *  The record is a shadow of the stored row, and this is what makes it agree again: `prepare` compares
-   *  `sourceImage` against the specification before it will start anything, so moving the row alone leaves
-   *  the environment refusing to start. Only the provenance triple is written — the reference, the digest
-   *  of the artifact it names, and where adopted bytes came from — and every other key the record already
-   *  carried is preserved, because this operation knows nothing about them.
-   *
-   *  `sourceImageId` keeps one meaning: the digest of the artifact `sourceImage` names, or explicit null
-   *  when the bytes were adopted rather than unpacked from it. It is written as null rather than omitted,
-   *  because a dropped key is not the same record to anything comparing them.
-   *
-   *  Convergent and idempotent: a record already carrying the wanted provenance is returned untouched, so
-   *  a crash anywhere between the row and here is repaired by running it again. */
-  async adoptDiskIdentity(spec, provenance) {
-    assertContainerSpec(spec);
-    if (!spec.disk) throw new Error('An environment without a persistent disk has no durable disk record');
-    if (!provenance || typeof provenance !== 'object' || !Object.hasOwn(provenance, 'sourceImageId')) throw new Error('A complete disk provenance record is required');
-    const directory = checkedHostPath(dirname(spec.disk.rootfsPath));
-    const manifestPath = join(directory, 'disk.json');
-    const manifest = JSON.parse(readFileSync(checkedHostPath(manifestPath, { file: true }), 'utf8'));
-    if (diskOwnershipMismatch(manifest, spec)) throw new Error('Environment disk manifest ownership mismatch');
-    const adoptedFrom = provenance.adoptedFrom ?? null;
-    if (manifest.sourceImage === spec.disk.sourceImage && manifest.sourceImageId === provenance.sourceImageId
-      && JSON.stringify(manifest.adoptedFrom ?? null) === JSON.stringify(adoptedFrom)) return manifest;
-    const { adoptedFrom: _superseded, ...carried } = manifest;
-    const next = { ...carried, sourceImage: spec.disk.sourceImage, sourceImageId: provenance.sourceImageId,
-      ...(adoptedFrom ? { adoptedFrom } : {}) };
-    // Its own staging name, never the materialization journal's: `prepare` treats `disk.pending` as an
-    // interrupted fill and would activate whatever it found there.
-    const pending = join(directory, 'disk.adopting');
-    try { unlinkSync(pending); } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    writeDurable(pending, next);
-    syncPath(directory);
-    renameSync(pending, manifestPath);
-    syncPath(directory);
-    return next;
   }
 
   /** Bring a HOST project's directory into the project's own workspace volume, once. Core's
@@ -497,10 +442,9 @@ export class ContainerStorage {
       writeDurable(receiptPath, tree); syncPath(directory);
     }
     // The reference is the TARGET specification's, never the snapshot's. A restore fills the disk from
-    // trees it copies, so its bytes are adopted exactly as a migrated disk's are — and a snapshot retained
-    // from before an identity migration must not be able to put the old reference back on a row that has
-    // moved. `prepare` compares this field against the specification before it will start anything, so
-    // writing the snapshot's reference over a canonicalized row would also leave it unable to start.
+    // copied trees, and a retained snapshot naming the removed container runtime must not move a current
+    // row back onto it. `prepare` compares this field against the specification before it starts anything,
+    // so writing the snapshot's reference over the target would also leave it unable to start.
     // Nothing here reads a clock: `createdAt` is the one field the completion comparison strips, so every
     // other value has to be derivable again identically when a restore resumes.
     const adopted = targetSpec.disk.sourceImage !== manifest.sourceImage.reference;

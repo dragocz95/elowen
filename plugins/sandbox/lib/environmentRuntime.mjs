@@ -7,15 +7,15 @@ import { createSiteImageService } from './environmentSiteImages.mjs';
 import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
-import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
+import { createEnvironmentStore, hostOperationView, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createEnvironmentDiskSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
+import { createContainerSpec, createEnvironmentDiskSpec, createBoundSiteSpec, withContainerLimits, normalizeEnvironmentNetwork, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { NspawnClient } from './nspawn.mjs';
 import { selectRuntimeClient, unsupportedRuntime, UNSUPPORTED_RUNTIME_MESSAGE } from './runtimeClient.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
 import { RootfsArtifactStore } from './rootfsArtifacts.mjs';
-import { ARTIFACT_MIRROR_SETTING, PROJECT_ARTIFACT, SITE_ARTIFACTS, artifactReference, isLegacyImageReference } from './rootfsCatalog.mjs';
+import { ARTIFACT_MIRROR_SETTING, PROJECT_ARTIFACT, artifactReference, isLegacyImageReference, knownReferences } from './rootfsCatalog.mjs';
 
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
@@ -25,7 +25,10 @@ const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url
  *  live environment would make it unownable. */
 const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512 };
+const DEFAULT_NETWORK = Object.freeze({ mode: 'shared', inboundPorts: [] });
 const LIMIT_KEYS = Object.keys(DEFAULT_LIMITS);
+const HOST_KIND = 'host';
+const HOST_RESOURCE = 'nspawn';
 /** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
  *  DECLARED before the work starts, so a surface watching an operation can say "step 2 of 5" from the
  *  first frame instead of discovering the shape as it goes. The weights are rough durations rather than
@@ -39,9 +42,8 @@ const STEP_PLANS = {
   snapshot: [['quiesce', 1], ['capture', 8], ['record', 1]],
   restore: [['quiesce', 1], ['stop', 2], ['import', 8], ['container', 2], ['boot', 2], ['switch', 1], ['cleanup', 1]],
   limits: [['apply', 1]],
+  network: [['quiesce', 1], ['stop', 2], ['apply', 1], ['boot', 2]],
   delete: [['stop', 2], ['containers', 2], ['storage', 2], ['records', 1]],
-  'migrate-identity': [['quiesce', 1], ['guard', 1], ['snapshot', 8], ['verify', 1], ['stop', 2], ['checksum', 4],
-    ['restamp', 1], ['prove', 4], ['restart', 2]],
 };
 /** Every Sites-only action and the image jobs: one step, honestly unlabelled, rather than a fabricated
  *  breakdown of work whose shape nobody has described. */
@@ -91,18 +93,27 @@ function configuredDefaults(config) {
   try { return limits(chosen); }
   catch { return { ...DEFAULT_LIMITS }; }
 }
+function network(value) {
+  try { return normalizeEnvironmentNetwork(value); }
+  catch (cause) { throw error('invalid_network', cause.message, 400); }
+}
+function effectiveNetwork(record) {
+  try { return network(record?.input?.network); }
+  catch { return { ...DEFAULT_NETWORK, inboundPorts: [] }; }
+}
+function configuredNetwork(config) {
+  return config?.defaultNetworkMode === 'isolated'
+    ? { mode: 'isolated', inboundPorts: [] }
+    : { mode: 'shared', inboundPorts: [] };
+}
 function action(value, kind) {
   if (!value || typeof value !== 'object') throw error('invalid_action', 'An environment action is required', 400);
   // `recreate` is a project-only repair: it removes the container this runtime can no longer verify and
   // builds a new one from the current specification. The storage volumes are untouched, so the project's
   // files come back with it — which is exactly why it is an explicit action and never an automatic one.
-  // `migrate-identity` moves an environment created under the container runtime onto the canonical
-  // root-filesystem artifact identity, without rebuilding the disk. A project has one artifact and needs
-  // no argument; which fixed recipe a SITE runs on is the Sites plugin's to know, so the caller names the
-  // kind and this runtime maps it through the catalogue, exactly as image provisioning does.
   const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'],
-    ...(kind === 'project' ? { recreate: [], 'migrate-identity': [] } : {}),
-    ...(kind === 'site' ? { 'migrate-identity': ['imageKind'], prepare: [], 'cleanup-stage': [], 'provision-image': ['imageKind'], 'import-data': ['artifactId'], 'export-data': ['artifactId'], 'remove-artifact': ['artifactId'], 'export-project': ['artifactId'] } : {}) };
+    ...(kind === 'project' ? { recreate: [], network: ['network'] } : {}),
+    ...(kind === 'site' ? { prepare: [], 'cleanup-stage': [], 'provision-image': ['imageKind'], 'import-data': ['artifactId'], 'export-data': ['artifactId'], 'remove-artifact': ['artifactId'], 'export-project': ['artifactId'] } : {}) };
   if (value.imageKind !== undefined && !['base', 'static', 'node'].includes(value.imageKind)) throw error('invalid_action', 'Unknown fixed Sites image recipe', 400);
   for (const key of ['artifactId', 'snapshotId']) if (value[key] !== undefined && (typeof value[key] !== 'string' || !/^[A-Za-z0-9_.:-]{1,160}$/.test(value[key]))) throw error('invalid_action', 'Invalid retained artifact identity', 400);
   if (!Object.hasOwn(fields, value.kind) || Object.keys(value).some((key) => key !== 'kind' && !fields[value.kind].includes(key))) throw error('invalid_action', 'Invalid environment action', 400);
@@ -110,7 +121,9 @@ function action(value, kind) {
   for (const key of ['includeData', 'restoreData']) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw error('invalid_action', 'Invalid data policy', 400);
   if (kind === 'project' && (value.includeData === false || value.restoreData === false)) throw error('invalid_action', 'Project snapshots and restores require every component', 400);
   for (const key of ['artifactId', 'snapshotId', 'imageKind']) if (fields[value.kind].includes(key) && typeof value[key] !== 'string') throw error('invalid_action', `Missing ${key}`, 400);
-  return value.kind === 'limits' ? { kind: 'limits', limits: limits(value.limits) } : { ...value };
+  if (value.kind === 'limits') return { kind: 'limits', limits: limits(value.limits) };
+  if (value.kind === 'network') return { kind: 'network', network: network(value.network) };
+  return { ...value };
 }
 function guestPath(value) {
   if (typeof value !== 'string' || !value.startsWith('/') || value.includes('\0') || value.length > 4096) throw error('invalid_path', 'An absolute guest path is required', 400);
@@ -200,44 +213,70 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         ? 'every environment names a published root filesystem'
         : `${pending} environment${pending === 1 ? '' : 's'} still ${pending === 1 ? 'belongs' : 'belong'} to the removed Podman runtime. ${UNSUPPORTED_RUNTIME_MESSAGE}` };
   }
-  /** The host's readiness rows, plus what this instance still owes the runtime.
-   *
-   *  `ready` remains the HOST's answer alone. It is the gate a new environment is created through, and an
-   *  unmigrated row elsewhere on the instance says nothing about whether this host can hold a machine —
-   *  folding it in would refuse every creation until an unrelated environment was migrated. The count is
-   *  computed on every call rather than cached with the probe, so an operator watching the row sees it
-   *  reach zero when the last migration completes. */
-  async function machineReadiness() {
-    const host = await hostReadiness();
-    return { ready: host.ready, items: [...host.items, legacyReferenceRow()] };
+  const readinessArea = (id) => {
+    if (id.startsWith('package:')) return 'package';
+    if (id.startsWith('polkit:')) return 'polkit';
+    if (id.startsWith('firewall:') || id.startsWith('sysctl:') || id.startsWith('resolver:') || id === 'service:systemd-networkd') return 'firewall';
+    if (id.startsWith('unit:') || id.startsWith('service:')) return 'systemd';
+    return 'helper';
+  };
+  function artifactReadinessRows() {
+    return knownReferences().map((reference) => {
+      const status = artifacts.status(reference);
+      return { id: `rootfs:${reference}`, area: 'rootfs', label: reference, ok: status.published,
+        detail: status.published ? (status.present ? 'published and present on this host' : 'published; downloaded on first use') : 'no published copy is pinned', ...status };
+    });
   }
-  const readinessRefusal = (readiness) => readiness.items.filter((item) => !item.ok)
+  /** The complete administrator-facing host report. `ready` requires host support and published artifacts;
+   *  `prepared` additionally means every verified archive is already local. Legacy rows remain informational
+   *  because one old environment must not block creation of an unrelated new one. */
+  async function machineReadiness() {
+    let host;
+    try { host = await hostReadiness(); }
+    catch (cause) {
+      host = { ready: false, items: [{ id: 'helper:transport', label: 'Privileged machine helper', ok: false, detail: cause.message }] };
+    }
+    const hostRows = host.items.map((item) => ({ area: readinessArea(item.id), ...item }));
+    const rootfs = artifactReadinessRows();
+    const latest = store.recentOperations(HOST_KIND, HOST_RESOURCE, 1)[0];
+    const ready = host.ready && rootfs.every((item) => item.published);
+    const requirements = [...hostRows, ...rootfs, { area: 'runtime', ...legacyReferenceRow() }];
+    return { runtime: HOST_RESOURCE, ready, prepared: ready && rootfs.every((item) => item.present), requirements, items: requirements,
+      operation: latest ? hostOperationView(latest) : null };
+  }
+  async function environmentRuntimeReadiness(reference) {
+    const host = await hostReadiness();
+    const artifact = artifacts.status(reference);
+    const items = [...host.items, { id: `rootfs:${reference}`, label: reference, ok: artifact.published,
+      detail: artifact.published ? 'published root filesystem' : 'no published copy is pinned', ...artifact }, legacyReferenceRow()];
+    return { ready: host.ready && artifact.published, items };
+  }
+  const readinessRefusal = (readiness) => (readiness.items ?? readiness.requirements).filter((item) => !item.ok)
     .map((item) => `${item.label}: ${item.detail ?? 'not satisfied'}`).join('; ');
-  /** Prepare the HOST for the machine runtime, on an administrator's explicit request.
-   *
-   *  This is the only path in the plugin that changes the host rather than reporting on it, so it is
-   *  gated on a current administrator and nothing else reaches it: an ordinary environment action still
-   *  refuses an unready host and names the rows. The privileged side is convergent, so running it twice
-   *  is running it once, and the answer is the readiness report as it stands afterwards — a caller shows
-   *  the same rows whether it provisioned or merely looked.
-   *
-   *  The cached readiness is dropped before the round trip rather than after it. A provisioning run that
-   *  throws part-way has still changed the host, and answering the next poll from a snapshot taken before
-   *  it would describe a host that no longer exists. */
+  /** Queue the one typed host provisioning operation. The durable row is the idempotency and progress
+   *  boundary; daemon reconciliation rechecks the administrator before touching the host. */
   async function provisionMachineRuntime(input) {
     account(input.accountUserId, true);
     if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may prepare the host for the machine runtime', 403);
-    if (!nspawn || typeof nspawn.provisionHost !== 'function') throw error('runtime_unavailable', 'This runtime has no machine client to prepare', 503);
-    readinessCache = null;
-    try {
-      const value = await nspawn.provisionHost();
-      readinessCache = { at: Date.now(), value };
-      ctx.logger.info(`machine runtime provisioning requested by account ${input.accountUserId}: ${value.ready ? 'host ready' : `still unmet — ${readinessRefusal(value)}`}`);
-      return await machineReadiness();
-    } catch (cause) {
-      readinessCache = null;
-      throw error('provision_failed', cause.message, 500);
-    }
+    if (!input.action || input.action.kind !== 'provision' || Object.keys(input.action).length !== 1) throw error('invalid_action', 'The provision action is required', 400);
+    if (input.requestId !== undefined && !isRequestId(input.requestId)) throw error('invalid_request_id', 'Invalid idempotency key', 400);
+    return store.transaction(() => {
+      account(input.accountUserId, true);
+      if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Administrator authority was revoked', 403);
+      const prior = input.requestId ? store.prior(HOST_KIND, HOST_RESOURCE, input.accountUserId, input.requestId) : null;
+      if (prior && !same(prior.action, input.action)) throw error('request_conflict', 'Idempotency key belongs to another action');
+      if (prior && prior.status !== 'failed') return hostOperationView(prior);
+      const active = store.active(HOST_KIND, HOST_RESOURCE);
+      if (prior) {
+        if (active) throw error('environment_busy', 'Host provisioning is already pending');
+        prior.status = 'pending'; prior.error = null; delete prior.checkpoint.errorCode; store.saveOperation(prior);
+        return hostOperationView(prior);
+      }
+      if (active) return hostOperationView(active);
+      const op = store.enqueueHost(input.accountUserId, { kind: 'provision' }, input.requestId);
+      declareSteps(op); store.saveOperation(op);
+      return hostOperationView(op);
+    });
   }
   /** Which runtime a NEW environment is built on, decided once, here, and nowhere else.
    *
@@ -252,7 +291,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  readiness answer can move it. */
   async function decideRuntime(row) {
     if (!row.spec.runtimePending) return;
-    const readiness = await machineReadiness();
+    const readiness = await environmentRuntimeReadiness(row.spec.input.disk.sourceImage);
     if (!readiness.ready) throw error('runtime_not_ready', `This host cannot run an environment yet — ${readinessRefusal(readiness)}`);
     const disk = row.spec.input.disk;
     row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: disk.sourceImage, runtime: 'nspawn' },
@@ -279,7 +318,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   let reconciling = false;
   const releasingAdoptions = new Set();
   const previews = new Set();
-  const publicationEstablishments = new Map();
+  const publicationMutations = new Map();
   const publicationRecoveryStates = new Map();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
@@ -369,7 +408,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // Nothing is materialized yet, so the runtime is still open. `decideRuntime` closes it at the first
       // start; until then the disk record carries no runtime, which is what keeps the serialization of a
       // row that never starts identical to the rows written before the runtime became explicit.
-      const spec = { input: { resource, generation: 1, image: PROJECT_ROOTFS, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths, runtimePending: true };
+      const spec = { input: { resource, generation: 1, image: PROJECT_ROOTFS, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit }, network: configuredNetwork(ctx.config) }, paths, runtimePending: true };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
     return row;
@@ -387,7 +426,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (decided && !row.spec.runtimePending) return { name: decided.runtime ?? null, pending: false, readiness: null };
     if (row && !row.spec.runtimePending) return { name: null, pending: false, readiness: null };
     let readiness;
-    try { readiness = await machineReadiness(); }
+    try { readiness = await environmentRuntimeReadiness(row?.spec?.input?.disk?.sourceImage ?? PROJECT_ROOTFS); }
     catch (cause) {
       readiness = { ready: false, items: [{ id: 'runtime:machine', label: 'Machine runtime', ok: false, detail: cause.message }] };
     }
@@ -395,7 +434,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
 
   const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
-    generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: effectiveLimits(row.limits) });
+    generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null,
+    limits: effectiveLimits(row.limits), network: effectiveNetwork(row.spec) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
 
   /** The one place an operation's live state leaves this process. Everything a watcher needs travels in
@@ -418,11 +458,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     try {
       ctx.publishEvent({ type: 'plugin', plugin: 'sandbox', kind: 'environment-operation',
         projectId: op.kind === 'project' ? Number(op.resource_id) : null,
-        data: { operation: operationView(op), logTail: store.logTail(op.kind, op.resource_id, 40) } });
+        data: { operation: op.kind === HOST_KIND ? hostOperationView(op) : operationView(op), logTail: store.logTail(op.kind, op.resource_id, 40) } });
     } catch (cause) { ctx.logger.warn(`environment operation progress was not published: ${cause.message}`); }
   }
   const checkpoint = (op, values) => { Object.assign(op.checkpoint, values); store.saveOperation(op); publishOperation(op, false); };
-  const stepPlan = (op) => (STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS).filter(([id]) => op.kind === 'project' || !PROJECT_STEPS.includes(id));
+  const stepPlan = (op) => (op.kind === HOST_KIND
+    ? [['host', 2], ...knownReferences().map((reference) => [`rootfs:${reference}`, 10]), ['verify', 1]]
+    : (STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS).filter(([id]) => op.kind === 'project' || !PROJECT_STEPS.includes(id)));
   const declareSteps = (op) => { op.steps = stepPlan(op).map(([id]) => id); op.step_index = 0; op.percent = 0; };
   /** Declare the step list on the durable row as the operation is claimed. An operation RESUMED after a
    *  restart already declared it and reached a position its checkpoints kept, so only one that never
@@ -460,6 +502,21 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (published.length || store.all().some((site) => site.kind === 'site' && site.project_id === Number(id) && site.state !== 'deleted')) throw error('published_sites_exist', 'Transfer or delete this Project\'s published Sites before deleting the Project');
   }
 
+  function assertNetworkPortsAvailable(id, requested) {
+    const wanted = new Set(requested.inboundPorts.map((port) => `${port.protocol}:${port.hostPort}`));
+    if (!wanted.size) return;
+    for (const row of store.all().filter((entry) => entry.kind === 'project' && Number(entry.resource_id) !== Number(id) && entry.state !== 'deleted')) {
+      for (const port of effectiveNetwork(row.spec).inboundPorts) {
+        if (wanted.has(`${port.protocol}:${port.hostPort}`)) throw error('network_port_conflict', `${port.protocol.toUpperCase()} host port ${port.hostPort} is already assigned to Project ${row.resource_id}`);
+      }
+    }
+    for (const pending of store.operations().filter((entry) => entry.kind === 'project' && Number(entry.resource_id) !== Number(id) && entry.action.kind === 'network')) {
+      for (const port of pending.action.network.inboundPorts) {
+        if (wanted.has(`${port.protocol}:${port.hostPort}`)) throw error('network_port_conflict', `${port.protocol.toUpperCase()} host port ${port.hostPort} is already reserved by another pending Project change`);
+      }
+    }
+  }
+
   async function request(kind, id, input) {
     assertLive();
     account(input.accountUserId, true);
@@ -486,7 +543,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       assertGeneration(row, input.expectedGeneration);
       if (requested.kind === 'limits' && !stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change resource limits', 403);
-      if (requested.kind === 'migrate-identity' && !stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may migrate an environment root filesystem identity', 403);
+      if (requested.kind === 'network' && !stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change environment networking', 403);
+      if (requested.kind === 'network') assertNetworkPortsAvailable(id, requested.network);
       if (row.state === 'deleted') throw error('environment_deleted', 'The environment has been deleted');
       if (row.desired_state === 'deleted' && requested.kind !== 'delete') throw error('environment_deleting', 'The environment is deleting');
       if (prior) {
@@ -1043,156 +1101,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     ? { sitesDataDir: record.binding.sitesDataDir, namespace: record.binding.namespace }
     : record.paths;
 
-  /** The root filesystem identity an environment of this kind SHOULD carry. A project is built from one
-   *  artifact and needs no argument; which fixed recipe a Site runs on is the Sites plugin's to know, so
-   *  the request names the kind and the catalogue resolves it — the same split image provisioning uses. */
-  const canonicalRootfsReference = (row, request) => (row.kind === 'project'
-    ? PROJECT_ROOTFS : artifactReference(SITE_ARTIFACTS[request.imageKind]));
-
-  /** The root filesystem and every component tree, as one record of what this disk IS. It is taken before
-   *  the identity moves and again after it, because "not one byte was replaced" is a claim that needs
-   *  both halves. The fingerprint covers ownership, mode, size, modification time and extended
-   *  attributes, so an ownership pass that actually changed something cannot reproduce it. */
-  async function fingerprintEveryTree(spec) {
-    const client = runtimeFor(spec);
-    const trees = { rootfs: await client.fingerprintDiskTree(spec.disk.rootfsPath) };
-    for (const component of spec.disk.components) trees[component.component] = await client.fingerprintDiskTree(component.path);
-    return trees;
-  }
-
-  /** What the disk record should say about where its bytes came from, for the reference the row carries
-   *  RIGHT NOW.
-   *
-   *  `sourceImageId` keeps one meaning: the digest of the artifact `sourceImage` names, or explicit null
-   *  when the bytes were adopted rather than unpacked from it. A migrated disk's bytes were never that
-   *  artifact, so the Podman-era image id moves to `adoptedFrom`, where it stays readable without
-   *  pretending to be a digest of something this disk was built from. `migratedAt` comes from the durable
-   *  checkpoint and never from a clock, so a resumed pass writes the same record rather than a new one. */
-  const migrationProvenance = (row, op) => (isLegacyImageReference(row.spec.input.disk.sourceImage)
-    ? { sourceImageId: op.checkpoint.legacy.sourceImageId }
-    : { sourceImageId: null, adoptedFrom: { reference: op.checkpoint.from, imageId: op.checkpoint.legacy.sourceImageId, migratedAt: op.checkpoint.migratedAt } });
-
-  /** Drive an environment's two identity SHADOWS onto what its stored row says.
-   *
-   *  The row is the authority; the disk record and the machine's identity record either agree with it or
-   *  the environment refuses to start and refuses to prove it owns anything. One function serves the first
-   *  pass, a resume and a rollback, because all three are the same direction of work: read the stored
-   *  specification, make the shadows match. Both halves converge, so running it again after a crash
-   *  anywhere inside it is how it finishes. Nothing here copies, unpacks or replaces a tree. */
-  async function reconcileDiskIdentity(row, provenance) {
-    const spec = specFor(row.spec);
-    await storage.adoptDiskIdentity(spec, provenance);
-    // The canonical operation that re-stamps an EXISTING disk: it writes the identity record from this
-    // specification and leaves a tree already on the machine's uid range untouched, down to its ctime.
-    await runtimeFor(spec).shiftOwnership(spec);
-  }
-
-  /** Put the environment back on the reference it started from.
-   *
-   *  The row and the operation's own position move in ONE transaction, so a rollback interrupted half way
-   *  is either not started at all or started and finished by reconciling again. It never restores the
-   *  snapshot: that would discard everything written into the environment since the operation began. The
-   *  snapshot is the operator's last resort, not this path. */
-  async function rollbackIdentity(row, op) {
-    store.transaction(() => {
-      row.spec = JSON.parse(JSON.stringify(op.checkpoint.oldSpec));
-      store.save(row);
-      checkpoint(op, { restamped: false });
-    });
-    await reconcileDiskIdentity(row, migrationProvenance(row, op));
-    store.log(row.kind, row.resource_id, `identity migration rolled back to ${row.spec.input.disk.sourceImage}`);
-  }
-
-  /** Move an environment created under the container runtime onto the canonical root filesystem identity,
-   *  without replacing a byte of the disk it already has.
-   *
-   *  The reference lives inside the specification hash and therefore inside the machine's identity record,
-   *  so this is three writes that have to end up agreeing: the stored row, the disk's own record and
-   *  identity.json. The row goes FIRST, because it is the authority — once it has moved, every resume is
-   *  the ordinary direction of work and `reconcileDiskIdentity` is the whole of it. What does NOT move is
-   *  the envelope: the immutable machine identity is hashed from the namespace, the machine name, the disk
-   *  id, the root filesystem path and the two configuration files, none of which this touches, so the
-   *  machine is never recreated and never re-bound. */
-  async function migrateIdentity(row, op) {
-    step(op, 'guard');
-    if (!stores().usersRead.isAdmin(op.user_id)) throw error('admin_required', 'Root filesystem identity migration requires a current administrator', 403);
-    // A row that never became an nspawn disk has no tree to adopt and no identity record to re-stamp.
-    // There is no rule that turns a container image tag into a published root filesystem, so this refuses
-    // by name rather than inventing one.
-    if (neverMaterialized(row) || !row.spec.input.disk) {
-      throw unsupportedRuntime();
-    }
-    // Once the row has moved, its own reference no longer says what this operation is doing. The target is
-    // therefore read back from the checkpoint on every pass after the first.
-    const started = op.checkpoint.to !== undefined;
-    const from = started ? op.checkpoint.from : row.spec.input.disk.sourceImage;
-    const to = started ? op.checkpoint.to : canonicalRootfsReference(row, op.action);
-    if (!started) {
-      if (!isLegacyImageReference(from)) {
-        store.log(row.kind, row.resource_id, `root filesystem identity is already ${from}`);
-        return;
-      }
-      checkpoint(op, { from, to, migratedAt: new Date().toISOString(), oldSpec: row.spec });
-    }
-
-    step(op, 'snapshot');
-    if (!op.snapshot_id) { op.snapshot_id = `migrate-${op.id.slice(4)}`; store.saveOperation(op); }
-    await cancelLeases(row);
-    await snapshot(row, op, op.snapshot_id, `before root filesystem identity migration to ${to}`, true);
-
-    if (!op.checkpoint.restamped) {
-      if (!op.checkpoint.legacy) {
-        step(op, 'verify');
-        const current = specFor(row.spec);
-        // The ownership proof reads the machine's identity record and holds every field of it against this
-        // specification, so a pass here is also the proof that identity.json is readable and agrees.
-        const observed = await runtimeFor(current).inspect(current);
-        if (!observed) throw error('environment_missing', 'The machine this environment names is missing; its identity can only be migrated from a verified environment');
-        const record = storage.readDiskRecord(current);
-        checkpoint(op, { legacy: { sourceImageId: record.sourceImageId ?? null }, wasRunning: observed.state === 'running' });
-      }
-      step(op, 'stop');
-      await stopRow(row);
-      if (!op.checkpoint.trees) {
-        step(op, 'checksum');
-        checkpoint(op, { trees: await fingerprintEveryTree(specFor(row.spec)) });
-      }
-      step(op, 'restamp');
-      const next = JSON.parse(JSON.stringify(row.spec));
-      next.input.image = to;
-      next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: to, runtime: next.input.disk.runtime },
-        diskPathsFor(next), next.input.disk.id, next.input.disk.componentGeneration);
-      store.transaction(() => { row.spec = next; store.save(row); checkpoint(op, { restamped: true }); });
-      store.log(row.kind, row.resource_id, `root filesystem identity moved from ${from} to ${to}`);
-    }
-
-    try {
-      await reconcileDiskIdentity(row, migrationProvenance(row, op));
-      step(op, 'prove');
-      const migrated = specFor(row.spec);
-      if (!await runtimeFor(migrated).inspect(migrated)) throw error('migration_unproved', 'The migrated environment could not be verified');
-      const trees = await fingerprintEveryTree(migrated);
-      if (!same(trees, op.checkpoint.trees)) throw error('migration_bytes_changed', 'A disk tree changed during the root filesystem identity migration');
-      step(op, 'restart');
-      if (op.checkpoint.wasRunning) {
-        if (row.kind === 'site') await sites.beforeStart(row.resource_id);
-        if ((await runtimeFor(migrated).inspect(migrated))?.state !== 'running') await runtimeFor(migrated).start(migrated);
-        if ((await runtimeFor(migrated).inspect(migrated))?.state !== 'running') throw error('migration_start_failed', 'The migrated environment did not start again');
-        if (row.kind === 'project') {
-          await runtimeFor(migrated).waitForSystemBus(migrated);
-          await establishPublications(row);
-        }
-      }
-      row.state = op.checkpoint.wasRunning ? 'running' : 'stopped'; row.error = null; store.save(row);
-    } catch (cause) {
-      await rollbackIdentity(row, op);
-      throw cause;
-    }
-  }
-
   async function perform(row, op) {
     const kind = op.action.kind;
-    if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore', 'migrate-identity'].includes(kind)) {
+    if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore', 'network'].includes(kind)) {
       step(op, 'quiesce');
       await cancelLeases(row);
       await transfers.quiesce({ row });
@@ -1249,12 +1160,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         next.input.generation = Math.max(old.generation, Number(reserved?.generation ?? 0)) + 1;
         if (manifest.version === 2) {
           if (!old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A disk snapshot requires a rootfs-backed environment');
-          // A snapshot retained from before an identity migration still names the container image tag it
-          // was taken under, and retained snapshots live indefinitely. A restore fills the disk from trees
-          // it copies, so its bytes are adopted exactly as a migrated disk's are; putting the old
-          // reference back would move a row that has already migrated onto a legacy one, for an operation
-          // that discarded nothing. A row still on a legacy reference is left exactly as it was, because
-          // there is no canonical identity to keep. The disk record follows this field.
+          // A retained snapshot can still name a removed container image tag. A restore fills a new disk
+          // from trees it copies, so a currently published reference stays authoritative rather than moving
+          // the row back onto a runtime this release cannot drive. A row already on a legacy reference stays
+          // legacy and is refused consistently. The disk record follows this field.
           next.input.image = isLegacyImageReference(manifest.sourceImage.reference) && !isLegacyImageReference(old.spec.input.image)
             ? old.spec.input.image : manifest.sourceImage.reference;
           // A restore replaces the disk, never the runtime that reads it: the snapshot is a copy of THIS
@@ -1328,8 +1237,46 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       row.spec.creationLimits ??= row.spec.input.limits;
       row.spec.input.limits = { cpus: op.action.limits.cpus, memoryMb: op.action.limits.memoryMb, pidsLimit: op.action.limits.pidsLimit };
       row.limits = op.action.limits; store.save(row);
-    } else if (kind === 'migrate-identity') {
-      await migrateIdentity(row, op);
+    } else if (kind === 'network') {
+      if (!stores().usersRead.isAdmin(op.user_id)) throw error('admin_required', 'Environment-network authority was revoked', 403);
+      if (op.checkpoint.switched) return;
+      if (neverMaterialized(row)) {
+        step(op, 'stop'); step(op, 'apply');
+        row.spec.input.network = op.action.network; row.error = null; store.save(row);
+        return;
+      }
+      if (!op.checkpoint.oldSpec) checkpoint(op, { oldSpec: row.spec, wasRunning: row.state === 'running' });
+      const old = { ...row, spec: op.checkpoint.oldSpec };
+      if (!op.checkpoint.stopped) {
+        step(op, 'stop'); await stopRow(old); checkpoint(op, { stopped: true });
+      }
+      if (!op.checkpoint.newSpec) {
+        const next = JSON.parse(JSON.stringify(op.checkpoint.oldSpec));
+        next.input.network = op.action.network;
+        delete next.containerId;
+        checkpoint(op, { newSpec: next });
+      }
+      step(op, 'apply');
+      const previous = specFor(op.checkpoint.oldSpec);
+      if (await runtimeFor(previous).containerExists(previous)) await runtimeFor(previous).remove(previous);
+      let target = specFor(op.checkpoint.newSpec);
+      let current = await runtimeFor(target).inspect(target);
+      if (!current) current = await runtimeFor(target).create(target);
+      if (!op.checkpoint.newSpec.containerId) {
+        op.checkpoint.newSpec.containerId = current.id;
+        checkpoint(op, { newSpec: op.checkpoint.newSpec });
+        target = specFor(op.checkpoint.newSpec);
+      }
+      step(op, 'boot');
+      if (op.checkpoint.wasRunning && (await runtimeFor(target).inspect(target))?.state !== 'running') {
+        await runtimeFor(target).start(target);
+        await runtimeFor(target).waitForSystemBus(target);
+        await establishPublications({ ...row, spec: op.checkpoint.newSpec });
+      }
+      store.transaction(() => {
+        row.spec = op.checkpoint.newSpec; row.state = op.checkpoint.wasRunning ? 'running' : 'stopped'; row.error = null; store.save(row);
+        op.checkpoint.switched = true; store.saveOperation(op);
+      });
     } else if (kind === 'delete') {
       if (row.kind === 'project') await assertNoPublishedSites(row.resource_id);
       step(op, 'stop');
@@ -1447,6 +1394,34 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     });
   }
 
+  async function performHostProvision(op) {
+    const user = stores().usersRead.list().find((entry) => entry.id === op.user_id);
+    if (!user || !stores().usersRead.mayUsePlugin(op.user_id, 'sandbox') || !stores().usersRead.isAdmin(op.user_id)) {
+      throw error('admin_required', 'Administrator authority for host provisioning was revoked', 403);
+    }
+    if (!nspawn || typeof nspawn.provisionHost !== 'function') throw error('runtime_unavailable', 'This runtime has no machine client to prepare', 503);
+    if (!op.checkpoint.hostPrepared) {
+      step(op, 'host', null);
+      readinessCache = null;
+      const value = await nspawn.provisionHost();
+      readinessCache = { at: Date.now(), value };
+      if (!value.ready) throw error('provision_incomplete', readinessRefusal(value));
+      checkpoint(op, { hostPrepared: true });
+    }
+    const completed = new Set(op.checkpoint.artifacts ?? []);
+    for (const reference of knownReferences()) {
+      if (completed.has(reference)) continue;
+      step(op, `rootfs:${reference}`, 0);
+      await artifacts.ensure(reference, { onProgress: (received, total) => step(op, `rootfs:${reference}`, total > 0 ? received / total : null, true) });
+      completed.add(reference); checkpoint(op, { artifacts: [...completed] });
+    }
+    step(op, 'verify');
+    readinessCache = null;
+    const report = await machineReadiness();
+    if (!report.prepared) throw error('provision_incomplete', readinessRefusal(report));
+    ctx.logger.info(`machine runtime provisioning completed for account ${op.user_id}`);
+  }
+
   function publicationRecoveryState(row) {
     if (row.error?.startsWith(`Automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts`)) {
       return { key: 'terminal', detail: `automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts` };
@@ -1475,6 +1450,30 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!daemon || disposed || reconciling) return;
     reconciling = true;
     try {
+      // Host provisioning runs before machine inventory: its purpose may be to install the very tools that
+      // inventory needs, so making inventory its prerequisite would leave a fresh host impossible to repair.
+      for (const op of store.operations().filter((entry) => entry.kind === HOST_KIND)) {
+        if (op.status === 'running' && !ownerProvablyDead({ outer_pid: op.owner_pid, runner_identity: op.owner_identity })) continue;
+        let claimed = false;
+        try {
+          claimed = store.transaction(() => {
+            const current = store.getOperation(op.id);
+            if (!current || (current.status !== 'pending' && !(current.status === 'running' && ownerProvablyDead({ outer_pid: current.owner_pid, runner_identity: current.owner_identity })))) return false;
+            Object.assign(op, current, { status: 'running', owner_pid: process.pid, owner_identity: processIdentity(), error: null });
+            store.saveOperation(op); return true;
+          });
+          if (!claimed) continue;
+          beginSteps(op);
+          await performHostProvision(op);
+          delete op.checkpoint.errorCode;
+          op.status = 'succeeded'; op.error = null; op.step_index = Math.max(0, (op.steps ?? []).length - 1); op.percent = 100;
+          store.saveOperation(op); publishOperation(op);
+        } catch (cause) {
+          if (!claimed) throw cause;
+          op.checkpoint.errorCode = cause.code ?? 'provision_failed';
+          op.status = 'failed'; op.error = sanitize(cause.message ?? cause).slice(0, 2000); store.saveOperation(op); publishOperation(op);
+        }
+      }
       // One map of every envelope that is up, found the way the runtime finds them: by machine-name prefix
       // over this namespace.
       const inventory = await nspawn.containerInventory(namespace);
@@ -1496,6 +1495,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       for (const op of store.operations()) {
         if (disposed) break;
+        if (op.kind === HOST_KIND) continue;
         if (op.kind === 'project' && releasingAdoptions.has(Number(op.resource_id))) continue;
         if (op.status === 'running' && !ownerProvablyDead({ outer_pid: op.owner_pid, runner_identity: op.owner_identity })) continue;
         let claimed = false;
@@ -1575,12 +1575,18 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           store.log('project', row.resource_id, 'Publication reconciliation resumed after automatic recovery');
           publicationRecoveryStates.delete(row.resource_id);
         }
-        const present = publications.filter((publication) => forwarderSocketPresent(join(spec.storageRoot, 'broker', publicationSocketName(publication.publicationId))));
-        const active = new Set(present.length ? await runtimeFor(spec).activePublications(spec, present.map((publication) => publication.publicationId)) : []);
         for (const publication of publications) {
-          if (active.has(publication.publicationId)) continue;
-          try { await establishPublication(row, publication.publicationId, publication.port); }
-          catch (cause) { store.log('project', publication.projectId, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`); }
+          const key = `${row.resource_id}:${publication.publicationId}`;
+          try {
+            await withPublicationMutation(key, async () => {
+              const current = store.publications(Number(row.resource_id))
+                .find((entry) => entry.publicationId === publication.publicationId);
+              if (!current || await publicationForwarderActive(row, publication.publicationId)) return;
+              await establishPublication(row, publication.publicationId, current.port);
+            });
+          } catch (cause) {
+            store.log('project', publication.projectId, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`);
+          }
         }
       }
     } finally { reconciling = false; }
@@ -1640,14 +1646,30 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return socketPath;
   }
 
-  async function establishPublication(row, publicationId, port) {
-    const active = publicationEstablishments.get(publicationId);
-    if (active) return await active;
-    const establishing = startForwarder(row, publicationSocketName(publicationId), port, 'publication',
+  async function withPublicationMutation(key, mutate) {
+    const previous = publicationMutations.get(key) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(mutate);
+    publicationMutations.set(key, current);
+    try { return await current; }
+    finally { if (publicationMutations.get(key) === current) publicationMutations.delete(key); }
+  }
+
+  function establishPublication(row, publicationId, port) {
+    return startForwarder(row, publicationSocketName(publicationId), port, 'publication',
       (spec, argv) => runtimeFor(spec).startPublication(spec, publicationId, argv));
-    publicationEstablishments.set(publicationId, establishing);
-    try { return await establishing; }
-    finally { if (publicationEstablishments.get(publicationId) === establishing) publicationEstablishments.delete(publicationId); }
+  }
+
+  function publicationSocketReady(row, publicationId) {
+    const path = join(specFor(row.spec).storageRoot, 'broker', publicationSocketName(publicationId));
+    try { return lstatSync(path).isSocket(); }
+    catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
+  }
+
+  async function publicationForwarderActive(row, publicationId) {
+    if (!publicationSocketReady(row, publicationId)) return false;
+    const spec = specFor(row.spec);
+    const active = await runtimeFor(spec).activePublications(spec, [publicationId]);
+    return active.includes(publicationId);
   }
 
   /** Every publication of one project, established again after the container that carried them ended.
@@ -1655,8 +1677,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  everything else about the project is usable — so it is named and reconciliation retries it. */
   async function establishPublications(row) {
     for (const publication of store.publications(Number(row.resource_id))) {
-      try { await establishPublication(row, publication.publicationId, publication.port); }
-      catch (cause) { store.log(row.kind, row.resource_id, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`); }
+      const key = `${row.resource_id}:${publication.publicationId}`;
+      try {
+        await withPublicationMutation(key, async () => {
+          if (await publicationForwarderActive(row, publication.publicationId)) return;
+          await establishPublication(row, publication.publicationId, publication.port);
+        });
+      } catch (cause) {
+        store.log(row.kind, row.resource_id, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`);
+      }
     }
   }
 
@@ -1667,24 +1696,26 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const id = projectId(input.project);
     const publicationId = resourceToken(String(input.publicationId ?? ''));
     if (!Number.isSafeInteger(input.port) || input.port < 1 || input.port > 65535) throw error('invalid_port', 'Invalid guest publication port', 400);
-    const existing = store.publications(id).find((publication) => publication.publicationId === publicationId);
-    let row;
-    if (input.accountUserId === undefined) {
-      if (!existing || existing.port !== input.port) throw error('publication_identity_required', 'An account is required to create or change a publication binding', 403);
-      row = store.get('project', id);
-      if (!row || row.state !== 'running' || store.active('project', id)) throw error('environment_stopped', 'The publication project environment is not running');
-      const running = specFor(row.spec);
-      if ((await runtimeFor(running).inspect(running))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
-    } else {
-      account(input.accountUserId, true);
-      row = await ready('project', id, input.accountUserId);
-      // The record first: it is the whole of the durability claim, and a transport that cannot be
-      // established on this attempt is then reconciliation's to establish rather than something the
-      // caller has to remember to ask for again.
-      store.savePublication(row, publicationId, input.port);
-    }
-    const socketPath = await establishPublication(row, publicationId, input.port);
-    return { generation: row.generation, socketPath };
+    return await withPublicationMutation(`${id}:${publicationId}`, async () => {
+      const existing = store.publications(id).find((publication) => publication.publicationId === publicationId);
+      let row;
+      if (input.accountUserId === undefined) {
+        if (!existing || existing.port !== input.port) throw error('publication_identity_required', 'An account is required to create or change a publication binding', 403);
+        row = store.get('project', id);
+        if (!row || row.state !== 'running' || store.active('project', id)) throw error('environment_stopped', 'The publication project environment is not running');
+        const running = specFor(row.spec);
+        if ((await runtimeFor(running).inspect(running))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
+      } else {
+        account(input.accountUserId, true);
+        row = await ready('project', id, input.accountUserId);
+        // The record first: it is the whole of the durability claim, and a transport that cannot be
+        // established on this attempt is then reconciliation's to establish rather than something the
+        // caller has to remember to ask for again.
+        store.savePublication(row, publicationId, input.port);
+      }
+      const socketPath = await establishPublication(row, publicationId, input.port);
+      return { generation: row.generation, socketPath };
+    });
   }
 
   /** The only thing that takes a publication away again: stop its forwarder when the container is running,
@@ -1693,13 +1724,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     assertLive();
     const id = projectId(input.project);
     const publicationId = resourceToken(String(input.publicationId ?? ''));
-    const row = store.get('project', id);
-    if (row) {
-      const spec = specFor(row.spec);
-      if ((await runtimeFor(spec).inspect(spec))?.state === 'running') await runtimeFor(spec).stopPublication(spec, publicationId);
-      removeForwarderSocket(join(spec.storageRoot, 'broker', publicationSocketName(publicationId)), 'publication');
-    }
-    store.removePublication(id, publicationId);
+    await withPublicationMutation(`${id}:${publicationId}`, async () => {
+      const row = store.get('project', id);
+      if (row) {
+        const spec = specFor(row.spec);
+        if ((await runtimeFor(spec).inspect(spec))?.state === 'running') await runtimeFor(spec).stopPublication(spec, publicationId);
+        removeForwarderSocket(join(spec.storageRoot, 'broker', publicationSocketName(publicationId)), 'publication');
+      }
+      store.removePublication(id, publicationId);
+    });
   }
 
   async function releaseAdoptedWorkspace(input) {
@@ -1801,7 +1834,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       const record = row?.spec ?? {
         input: { resource: { kind: 'project', id }, generation: 1, image: PROJECT_ROOTFS,
-          previewBroker: true, workspaceTarget: managedGuestRoot(project.slug, id), limits: configuredDefaults(ctx.config) },
+          previewBroker: true, workspaceTarget: managedGuestRoot(project.slug, id), limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) },
         paths: { sandboxDataDir: dataDir, namespace },
       };
       const workspace = specFor(record).volumes.find((volume) => volume.component === 'workspace');
@@ -1819,7 +1852,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const row = store.get('project', id);
       // An unprovisioned project has no stored limits yet, so it reports the defaults it WOULD be
       // created with rather than the built-in figures the administrator may have moved away from.
-      return row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null, limits: configuredDefaults(ctx.config) };
+      return row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
+        limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) };
     },
     async projectOverview(input) {
       const environment = await control.environmentFor(input);

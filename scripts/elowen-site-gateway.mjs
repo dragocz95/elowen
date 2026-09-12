@@ -455,10 +455,9 @@ const invokedByRoot = (env) => env.SUDO_USER === 'root' && env.SUDO_UID === '0';
  *  An operator running `elowen install` or `elowen update` reaches the helper through their own root
  *  shell, so the inner sudo can only report `root` and the derivation above has nothing to work with — the
  *  documented operator path provisioned nothing at all and said the service user could not be determined.
- *  A root caller may therefore name the account, because the two artefacts this decides — a polkit rule
- *  scoped to that account and the readiness rows describing it — are files root already owns outright, and
- *  the name is still resolved through passwd rather than believed. Nothing else accepts a named account,
- *  and no operation that reads a storage root is reachable this way. */
+ *  A root caller may therefore name the account that owns this runtime. The name is still resolved through
+ *  passwd rather than believed, nothing else accepts a named account, and no operation that reads a storage
+ *  root is reachable this way. */
 function machineServiceUser(runner, env, request) {
   const named = request.user;
   if (named !== undefined && typeof named !== 'string') fail('the machine runtime service user is invalid');
@@ -493,8 +492,7 @@ function defaultSetOwner(fd, uid, gid) {
 }
 
 /** The permission bits of a managed artefact, or -1 when it is not there at all. Content alone does not
- *  settle whether a root-owned artefact is intact: a polkit rule left group-writable is a rule anyone in
- *  that group can rewrite, so provisioning treats the mode as part of the artefact. */
+ *  settle whether a root-owned unit is intact, so provisioning treats its mode as part of the artefact. */
 function defaultReadMode(path) {
   try { return statSync(path).mode & 0o7777; } catch { return -1; }
 }
@@ -650,8 +648,8 @@ const NSPAWN_DROP_CAPABILITIES = Object.freeze([
 
 /** The shipped `systemd-nspawn@.service` hardcodes `/var/lib/machines/%i`, which the disk layout does
  *  not use, so the envelope is our own template: the same unit with the directory taken from the
- *  per-machine drop-in, no journal link into the host, and `--settings=override` so the `.nspawn` file
- *  wins over the unit's own command line. */
+ *  per-machine drop-in, no journal link into the host, and `--settings=trusted` because the root-owned
+ *  helper validates and writes every field, including the inbound port rules nspawn ignores otherwise. */
 export const MACHINE_UNIT_TEMPLATE = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
 [Unit]
 Description=Elowen machine %i
@@ -662,7 +660,7 @@ Before=machines.target
 After=network.target modprobe@tun.service modprobe@loop.service modprobe@dm_mod.service
 
 [Service]
-ExecStart=systemd-nspawn --quiet --keep-unit --boot --link-journal=no --settings=override --directory=\${ELOWEN_MACHINE_DIRECTORY} --machine=%i
+ExecStart=systemd-nspawn --quiet --keep-unit --boot --link-journal=no --settings=trusted --directory=\${ELOWEN_MACHINE_DIRECTORY} --machine=%i
 KillMode=mixed
 Type=notify
 RestartForceExitStatus=133
@@ -677,10 +675,9 @@ DeviceAllow=char-pts rw
 DeviceAllow=/dev/net/tun rwm
 `;
 
-/** The lifecycle runs as the service user with no sudo, over this rule. It is scoped to units named
- *  `elowen-machine@elowen-*` and to the three verbs the runtime actually issues — start, stop and
- *  set-property; a restart is a stop and a start, and nothing asks for one. Every other unit and verb
- *  falls through to the system default, so restarting an unrelated service stays refused. */
+/** Exact content of the retired lifecycle rule. It remains code only so provisioning can distinguish the
+ *  rule this runtime used to own from an unrelated administrator file at the same path and remove only its
+ *  own broad authorization. New lifecycle mutations go through the typed privileged helper. */
 export function renderPolkitRule(user) {
   if (!SAFE_USER.test(user) || user === 'root') fail('the invoking service user cannot be determined');
   return `// Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
@@ -732,8 +729,8 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine forwarding',
     binary: '/usr/sbin/iptables',
     chain: 'DOCKER-USER',
-    insert: true,
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']),
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-forward-out', '-j', 'ACCEPT']),
     why: 'Docker sets the FORWARD policy to DROP, so without it a machine reaches nothing',
   }),
   Object.freeze({
@@ -741,8 +738,8 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine return path',
     binary: '/usr/sbin/iptables',
     chain: 'DOCKER-USER',
-    insert: true,
-    spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']),
+    insertAt: 2,
+    spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-forward-back', '-j', 'ACCEPT']),
     why: 'a reply comes back the other way round and matches neither the rule above nor any chain Docker owns, so a machine sends and never receives',
   }),
   Object.freeze({
@@ -750,17 +747,17 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine address lease',
     binary: '/usr/sbin/iptables',
     chain: 'INPUT',
-    insert: true,
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-j', 'ACCEPT']),
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-m', 'comment', '--comment', 'elowen-machine-dhcp', '-j', 'ACCEPT']),
     why: 'the host runs the address server for the link, so the guard below must not cover it',
   }),
   Object.freeze({
     id: 'firewall:host-guard',
     label: 'Machine-to-host guard',
     binary: '/usr/sbin/iptables',
-    insert: false,
+    insertAt: 2,
     chain: 'INPUT',
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']),
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-host-guard', '-j', 'DROP']),
     why: 'everything else a machine addresses to the host arrives here, not on FORWARD',
   }),
   Object.freeze({
@@ -768,16 +765,32 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine-to-host guard (IPv6)',
     binary: '/usr/sbin/ip6tables',
     chain: 'INPUT',
-    insert: false,
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']),
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-host-guard6', '-j', 'DROP']),
     why: 'the link carries IPv6 link-local addressing, which the IPv4 table does not see',
   }),
 ]);
 
-/** The exact command an operator runs, in the order the rules are listed: the lease exception is inserted
- *  at the head of INPUT and the guard is appended, so the guard cannot shadow it. */
+const RETIRED_NSPAWN_FIREWALL_RULES = Object.freeze([
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']) }),
+  Object.freeze({ binary: '/usr/sbin/ip6tables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']) }),
+]);
+
+/** The exact command an operator runs. Each managed rule has a fixed position so an earlier unrelated
+ *  accept cannot bypass the machine-to-host guard, while DHCP remains immediately above that guard. */
 export function firewallRuleCommand(rule) {
-  return `${rule.binary} ${rule.insert ? `-I ${rule.chain} 1` : `-A ${rule.chain}`} ${rule.spec.join(' ')}`;
+  return `${rule.binary} -I ${rule.chain} ${rule.insertAt} ${rule.spec.join(' ')}`;
+}
+
+function firewallRuleRemovalCommand(rule) {
+  return `while ${rule.binary} -D ${rule.chain} ${rule.spec.join(' ')} 2>/dev/null; do :; done`;
+}
+
+function firewallRuleResetCommand(rule) {
+  return `${firewallRuleRemovalCommand(rule)}; ${firewallRuleCommand(rule)}`;
 }
 
 export const MACHINE_FIREWALL_UNIT_NAME = 'elowen-machine-firewall.service';
@@ -792,9 +805,9 @@ export const MACHINE_FIREWALL_UNIT_PATH = `/etc/systemd/system/${MACHINE_FIREWAL
  *  Ordering is the whole design. Docker rebuilds its chains when it starts, so a unit that ran before it
  *  would leave the guard missing while machines are running; this one is ordered after `docker.service`
  *  and is also pulled in BY it, so a Docker restart re-applies the rules rather than silently dropping
- *  them. Each line checks before it acts, which is what makes a second boot, a re-run and a hand-applied
- *  rule all end in the same state. The condition keeps a host without a packet filter from failing the
- *  unit: the readiness rows then report the rules as missing, which is the truth. */
+ *  them. Every run removes the exact retired and current rules, then inserts the current rules at their
+ *  fixed positions. This repairs an older append-only guard and any later ordering drift. The condition
+ *  keeps a host without a packet filter from failing the unit: readiness then reports the rules as missing. */
 export const MACHINE_FIREWALL_UNIT = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
 [Unit]
 Description=Elowen machine firewall rules
@@ -805,7 +818,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecCondition=/usr/bin/test -x /usr/sbin/iptables -a -x /usr/sbin/ip6tables
-${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${rule.binary} -C ${rule.chain} ${rule.spec.join(' ')} 2>/dev/null || ${firewallRuleCommand(rule)}'`).join('\n')}
+${RETIRED_NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleRemovalCommand(rule)}'`).join('\n')}
+${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleResetCommand(rule)}'`).join('\n')}
 
 [Install]
 WantedBy=multi-user.target docker.service
@@ -822,6 +836,7 @@ export const MACHINE_SYSCTL_CONTENT = `# Managed by Elowen. Do not edit: the roo
 # A machine given a virtual ethernet routes through the host, which needs forwarding on.
 net.ipv4.ip_forward=1
 `;
+export const MACHINE_UPLINK_RESOLVER = '/run/systemd/resolve/resolv.conf';
 
 export function machineUnitFor(machine) {
   if (typeof machine !== 'string' || !NSPAWN_MACHINE.test(machine)) fail('the machine name is invalid');
@@ -907,7 +922,7 @@ export function trustedPath(storage, value, { file = false, allowMissing = false
  *  step. This is the ONE derivation left, and it is the one that matters: the machine's root filesystem
  *  and its identity record come from the trusted roots plus a validated resource and disk id, never from
  *  a path the request names. */
-export function nspawnDiskPaths(storage, request) {
+function nspawnResourceStorage(storage, request) {
   const kind = request?.kind;
   const resource = request?.resource;
   if (kind !== 'project' && kind !== 'site') fail('the resource kind is invalid');
@@ -917,20 +932,17 @@ export function nspawnDiskPaths(storage, request) {
     || (kind === 'project' ? !/^[1-9][0-9]{0,15}$/.test(resource) : !SAFE_RESOURCE_TOKEN.test(resource))) {
     fail('the resource id is invalid');
   }
-  if (typeof request.diskId !== 'string' || !SAFE_RESOURCE_TOKEN.test(request.diskId)) fail('the disk id is invalid');
-  const storageRoot = kind === 'project'
+  return Object.freeze({ kind, resource, storageRoot: kind === 'project'
     ? join(storage.sandboxDataDir, 'projects', resource)
-    : join(storage.sitesDataDir, resource, 'environment');
+    : join(storage.sitesDataDir, resource, 'environment') });
+}
+
+export function nspawnDiskPaths(storage, request) {
+  const { kind, resource, storageRoot } = nspawnResourceStorage(storage, request);
+  if (typeof request.diskId !== 'string' || !SAFE_RESOURCE_TOKEN.test(request.diskId)) fail('the disk id is invalid');
   const directory = join(storageRoot, 'disks', request.diskId);
-  return Object.freeze({
-    kind,
-    resource,
-    diskId: request.diskId,
-    storageRoot,
-    directory,
-    rootfs: join(directory, 'rootfs'),
-    identity: join(directory, '.elowen', 'identity.json'),
-  });
+  return Object.freeze({ kind, resource, diskId: request.diskId, storageRoot, directory,
+    rootfs: join(directory, 'rootfs'), identity: join(directory, '.elowen', 'identity.json') });
 }
 
 /** The `systemd-run` command line, built here and never taken from the request. The guest argv is opaque
@@ -1040,13 +1052,18 @@ const UID_REGISTRY_KEY = /^(?:project:[1-9][0-9]*|site:[a-z0-9][a-z0-9-]{0,127})
 function validateUidRangeRegistry(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('machine uid range registry has the wrong shape');
   const ranges = {};
-  const occupied = new Set();
+  const occupied = new Map();
+  const environmentRanges = new Map();
   for (const [key, base] of Object.entries(value)) {
     if (!UID_REGISTRY_KEY.test(key)) fail(`machine uid range registry has an invalid key: ${key}`);
     if (!Number.isSafeInteger(base) || base < UID_RANGE_BASE || (base - UID_RANGE_BASE) % UID_RANGE_SIZE !== 0
       || base >= UID_RANGE_BASE + UID_RANGE_SLOTS * UID_RANGE_SIZE) fail(`machine uid range registry has an invalid range for ${key}`);
-    if (occupied.has(base)) fail(`machine uid range registry assigns range ${base} more than once`);
-    occupied.add(base); ranges[key] = base;
+    const environment = key.split(':').slice(0, 2).join(':');
+    if (environmentRanges.has(environment) && environmentRanges.get(environment) !== base) {
+      fail(`machine uid range registry assigns more than one range to ${environment}`);
+    }
+    if (occupied.has(base) && occupied.get(base) !== environment) fail(`machine uid range registry assigns range ${base} to more than one environment`);
+    environmentRanges.set(environment, base); occupied.set(base, environment); ranges[key] = base;
   }
   return ranges;
 }
@@ -1123,6 +1140,34 @@ function uidRangeFor(paths, options) {
     return base;
   }
   return fail('no machine uid range is available');
+}
+
+/** Release a range only after every environment-owned tree and machine artefact is gone. The complete
+ *  storage root contains active disks, retained snapshots, rollback disks and backups, so its absence is
+ *  the point at which no preserved tree can still carry this mapping. Old disk-key aliases are removed
+ *  with the environment key, and a retry after a completed release is a no-op. */
+function releaseUidRange(request, storage, options) {
+  const { kind, resource, storageRoot } = nspawnResourceStorage(storage, request);
+  const namespace = typeof request.namespace === 'string' && SAFE_RESOURCE_TOKEN.test(request.namespace)
+    ? request.namespace : fail('the namespace is invalid');
+  const exists = options.exists ?? existsSync;
+  const readDir = options.readDir ?? ((path) => readdirSync(path));
+  if (exists(storageRoot)) fail('the environment storage still exists');
+  const stem = `${namespace}-${kind}-${resource}-g`;
+  const settings = (() => { try { return readDir(NSPAWN_SETTINGS_ROOT); } catch (cause) { if (cause?.code === 'ENOENT') return []; throw cause; } })();
+  if (settings.some((name) => name.startsWith(stem) && name.endsWith('.nspawn'))) fail('an environment machine envelope still exists');
+  const units = (() => { try { return readDir('/etc/systemd/system'); } catch (cause) { if (cause?.code === 'ENOENT') return []; throw cause; } })();
+  if (units.some((name) => name.startsWith(`elowen-machine@${stem}`) && name.endsWith('.service.d'))) fail('an environment machine drop-in still exists');
+
+  const ranges = readUidRanges(options);
+  const key = `${kind}:${resource}`;
+  let changed = false;
+  for (const candidate of Object.keys(ranges)) {
+    if (candidate !== key && !candidate.startsWith(`${key}:`)) continue;
+    delete ranges[candidate]; changed = true;
+  }
+  if (changed) (options.writeAtomic ?? atomicWrite)(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+  return { ok: true, kind, resource };
 }
 
 /** Move a tree onto the machine's own fixed uid range, in place: guest id g appears on the host as
@@ -1443,6 +1488,16 @@ function nspawnDropCapabilities(raw) {
   return [...new Set([...NSPAWN_DROP_CAPABILITIES, ...requested])];
 }
 
+function machineResolver(readText) {
+  for (const path of [MACHINE_UPLINK_RESOLVER, '/etc/resolv.conf']) {
+    let content;
+    try { content = readText(path); } catch (cause) { if (cause?.code === 'ENOENT') continue; throw cause; }
+    const servers = String(content).split(/\r?\n/).map((line) => /^\s*nameserver\s+(\S+)/.exec(line)?.[1]).filter(Boolean);
+    if (servers.some((server) => !server.startsWith('127.') && server !== '::1')) return path;
+  }
+  fail('the host has no non-loopback DNS resolver for machine networking');
+}
+
 function nspawnEnvironment(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 64) fail('the machine environment is invalid');
   return Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, raw]) => {
@@ -1452,10 +1507,25 @@ function nspawnEnvironment(value) {
   });
 }
 
+function nspawnPorts(raw) {
+  if (!Array.isArray(raw) || raw.length > 32) fail('the machine inbound ports are invalid');
+  const seen = new Set();
+  return raw.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Object.keys(entry).some((key) => !['protocol', 'hostPort', 'guestPort'].includes(key))) fail('the machine inbound ports are invalid');
+    if (entry.protocol !== 'tcp' && entry.protocol !== 'udp') fail('the machine inbound port protocol is invalid');
+    if (!Number.isSafeInteger(entry.hostPort) || entry.hostPort < 1024 || entry.hostPort > 65535
+      || !Number.isSafeInteger(entry.guestPort) || entry.guestPort < 1 || entry.guestPort > 65535) fail('the machine inbound port is invalid');
+    const key = `${entry.protocol}:${entry.hostPort}`;
+    if (seen.has(key)) fail('the machine inbound host port is duplicated');
+    seen.add(key);
+    return { protocol: entry.protocol, hostPort: entry.hostPort, guestPort: entry.guestPort };
+  }).sort((a, b) => a.protocol.localeCompare(b.protocol) || a.hostPort - b.hostPort || a.guestPort - b.guestPort);
+}
+
 /** `:rootidmap` gives the guest's root the identity of the directory's host owner: a file the guest
  *  writes appears on the host as the service user, and a service-user file appears inside the machine as
  *  root. */
-export function renderMachineSettings(binds, { privateNetwork = true, uidBase, environment = {}, dropCapabilities = NSPAWN_DROP_CAPABILITIES }) {
+export function renderMachineSettings(binds, { privateNetwork = true, uidBase, environment = {}, ports = [], resolverPath = null, dropCapabilities = NSPAWN_DROP_CAPABILITIES }) {
   if (!Number.isSafeInteger(uidBase) || uidBase < UID_RANGE_BASE) fail('the machine uid range is invalid');
   const lines = [
     '# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.',
@@ -1471,14 +1541,24 @@ export function renderMachineSettings(binds, { privateNetwork = true, uidBase, e
     // the whole tree. 255.4 reads this key in [Files]; in [Exec] it parses as an unknown name, logs that
     // it is ignoring it and leaves the intent resting on nspawn's default instead of stating it.
     'PrivateUsersOwnership=off',
+    // Resolver delivery is an explicit read-only bind below. Letting nspawn choose from /etc/resolv.conf
+    // can copy the host's 127.0.0.53 stub into the guest, where it points at the wrong loopback.
+    'ResolvConf=off',
   ];
   for (const bind of binds) {
     lines.push(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);
   }
+  if (resolverPath !== null) {
+    if (resolverPath !== MACHINE_UPLINK_RESOLVER && resolverPath !== '/etc/resolv.conf') fail('the machine resolver path is invalid');
+    lines.push(`BindReadOnly=${resolverPath}:/etc/resolv.conf`);
+  }
   // Both keys are always written. `VirtualEthernet=` implies a private network namespace on its own, but
   // the failure mode of relying on that implication is a machine sharing the host's namespace outright,
   // so the namespace is stated rather than inferred.
+  const inbound = nspawnPorts(ports);
+  if (privateNetwork && inbound.length) fail('a loopback-only machine cannot publish inbound ports');
   lines.push('', '[Network]', 'Private=yes', `VirtualEthernet=${privateNetwork ? 'no' : 'yes'}`);
+  for (const port of inbound) lines.push(`Port=${port.protocol}:${port.hostPort}:${port.guestPort}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -1501,15 +1581,20 @@ function nspawnWriteEnvelope(request, storage, options) {
   const readText = options.readText ?? defaultReadText;
   const writeAtomic = options.writeAtomic ?? atomicWrite;
   const machine = nspawnMachineName(request.machine);
+  const activeState = runner('/usr/bin/systemctl', ['show', '-p', 'ActiveState', '--value', machineUnitFor(machine)]);
+  if (activeState.ok && ['active', 'activating', 'deactivating'].includes(String(activeState.stdout ?? '').trim())) fail('the machine must be stopped before its envelope is rewritten');
   const paths = nspawnDiskPaths(storage, request);
   const rootfs = realpathSync(trustedPath(storage, paths.rootfs));
   if (typeof request.privateNetwork !== 'boolean') fail('the machine network request is invalid');
+  const ports = nspawnPorts(request.ports ?? []);
+  if (request.privateNetwork && ports.length) fail('a loopback-only machine cannot publish inbound ports');
   // The envelope is what turns veth on, so this is where the gate belongs: a machine cannot be started
   // with a link the host is not ready to isolate, and no client can skip the check by not asking for it.
   if (request.privateNetwork === false) {
     const unmet = vethReadiness(runner, readText).filter((item) => !item.ok);
     if (unmet.length > 0) fail(`the host is not ready for machine networking — ${unmet.map((item) => item.detail).join('; ')}`);
   }
+  const resolverPath = request.privateNetwork ? null : machineResolver(readText);
   const limits = nspawnLimits(request.limits);
   const binds = nspawnBinds(storage, request.binds ?? []);
   ensureNestedMountPoints(binds, options.writeAtomic === undefined);
@@ -1523,7 +1608,7 @@ function nspawnWriteEnvelope(request, storage, options) {
   // the two agree is one lstat, and it is exact.
   const owner = (options.readOwner ?? defaultReadOwner)(rootfs);
   if (owner !== uidBase) fail(`the root filesystem is owned by ${owner} and this envelope declares the range at ${uidBase}`);
-  const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, environment: request.environment ?? {}, dropCapabilities });
+  const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, environment: request.environment ?? {}, ports, resolverPath, dropCapabilities });
   const dropIn = renderMachineDropIn(rootfs, limits, uidBase);
   const settingsPath = join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`);
   const dropInPath = join('/etc/systemd/system', `elowen-machine@${machine}.service.d`, '10-elowen.conf');
@@ -2068,7 +2153,7 @@ function nspawnDestroy(request, options) {
   const runner = options.runner ?? defaultCommandRunner;
   const machine = nspawnMachineName(request.machine);
   // Stop before the envelope goes: a running machine holds the configuration this removes.
-  runner('/usr/bin/systemctl', ['stop', machineUnitFor(machine)]);
+  runRequired(runner, '/usr/bin/systemctl', ['stop', machineUnitFor(machine)], 'machine stop failed');
   rmSync(join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`), { force: true });
   rmSync(join('/etc/systemd/system', `elowen-machine@${machine}.service.d`), { recursive: true, force: true });
   runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
@@ -2076,7 +2161,11 @@ function nspawnDestroy(request, options) {
 }
 
 function firewallRulePresent(runner, rule) {
-  return runner(rule.binary, ['-C', rule.chain, ...rule.spec]).ok;
+  const result = runner(rule.binary, ['-S', rule.chain]);
+  if (!result.ok) return false;
+  const rules = String(result.stdout || '').split('\n').map((line) => line.trim())
+    .filter((line) => line.startsWith(`-A ${rule.chain} `));
+  return rules[rule.insertAt - 1] === `-A ${rule.chain} ${rule.spec.join(' ')}`;
 }
 
 /** systemd cannot be asked about a template by its own name, only through an instance of it, so the
@@ -2102,10 +2191,8 @@ function unitTemplateLoaded(runner) {
  *  differs, so a run against a converged host writes nothing and reloads nothing, and a run against a
  *  hand-edited host restores exactly the artefact that drifted.
  *
- *  The polkit rule carries no reload because polkitd watches its rules directories and reloads a changed
- *  rule by itself; there is no reload command to run and so nothing to check afterwards. The unit
- *  template carries one, because systemd reads unit files only when it is told to. */
-function nspawnArtefacts(user) {
+ *  The unit template carries a reload because systemd reads unit files only when it is told to. */
+function nspawnArtefacts() {
   return [
     {
       id: 'unit:elowen-machine',
@@ -2138,16 +2225,24 @@ function nspawnArtefacts(user) {
         ],
       },
     },
-    {
-      id: 'polkit:machines',
-      label: 'Machine lifecycle authorization',
-      path: POLKIT_RULE_PATH,
-      mode: 0o644,
-      content: renderPolkitRule(user.name),
-      ready: `scoped to elowen-machine units for ${user.name}`,
-      effect: null,
-    },
   ];
+}
+
+function legacyPolkitRow(user, readText, readMode) {
+  const mode = readMode(POLKIT_RULE_PATH);
+  if (mode < 0) return { id: 'polkit:machines', label: 'Machine lifecycle authorization', ok: true, detail: 'no direct service-user authorization; lifecycle mutations use the privileged helper' };
+  const expected = renderPolkitRule(user.name);
+  const content = readText(POLKIT_RULE_PATH);
+  if (content === expected) return { id: 'polkit:machines', label: 'Machine lifecycle authorization', ok: false, detail: 'the retired broad lifecycle rule is still installed — run environment provisioning to remove it' };
+  return { id: 'polkit:machines', label: 'Machine lifecycle authorization', ok: false, detail: 'an unmanaged file occupies the retired lifecycle rule path; inspect it before removing it' };
+}
+
+function retireLegacyPolkit(user, readText, readMode, removeFile) {
+  if (readMode(POLKIT_RULE_PATH) < 0) return;
+  if (readText(POLKIT_RULE_PATH) !== renderPolkitRule(user.name)) {
+    fail('the retired machine lifecycle rule path contains unmanaged content');
+  }
+  removeFile(POLKIT_RULE_PATH);
 }
 
 function artefactRow(artefact, runner, readText, readMode) {
@@ -2209,6 +2304,14 @@ function vethReadiness(runner, readText) {
       ? 'active and enabled'
       : `it configures the host side of the link, leases the machine its address and masquerades the traffic — run: systemctl enable --now systemd-networkd${active ? ' (running, but it would not come back after a reboot)' : ''}`,
   });
+  let resolverPath = null;
+  try { resolverPath = machineResolver(readText); } catch { /* Report the fixed requirement below. */ }
+  items.push({
+    id: 'resolver:uplink',
+    label: 'Machine DNS resolver',
+    ok: resolverPath !== null,
+    detail: resolverPath ? `using ${resolverPath}` : 'the host has no non-loopback nameserver a machine can use',
+  });
   for (const rule of NSPAWN_FIREWALL_RULES) {
     const ok = firewallRulePresent(runner, rule);
     items.push({
@@ -2258,7 +2361,8 @@ function nspawnStatus(request, options = {}) {
       detail: installed ? 'installed' : 'not installed — run environment provisioning to install it',
     },
     apparmorRow(readText),
-    ...nspawnArtefacts(user).map((artefact) => artefactRow(artefact, runner, readText, readMode)),
+    legacyPolkitRow(user, readText, readMode),
+    ...nspawnArtefacts().map((artefact) => artefactRow(artefact, runner, readText, readMode)),
   ];
   if (request.veth === true) items.push(...vethReadiness(runner, readText));
   return { ok: true, ready: items.every((item) => item.ok), items };
@@ -2300,6 +2404,7 @@ function nspawnProvision(request, options = {}) {
   const readText = options.readText ?? defaultReadText;
   const readMode = options.readMode ?? defaultReadMode;
   const writeAtomic = options.writeAtomic ?? atomicWrite;
+  const removeFile = options.removeFile ?? ((path) => rmSync(path));
   const env = options.env ?? process.env;
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
   if (!os.ok) fail(os.detail);
@@ -2308,10 +2413,11 @@ function nspawnProvision(request, options = {}) {
     runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
     runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');
   }
+  retireLegacyPolkit(user, readText, readMode, removeFile);
   // The uid ledger's own directory needs nothing here: `atomicWrite` creates the parent of whatever it
   // writes, so the first allocation in `uidRangeFor` establishes it. Reaching for it here would also
   // reach for `/var/lib/elowen`, which the Sites gateway already owns state in.
-  for (const artefact of nspawnArtefacts(user)) {
+  for (const artefact of nspawnArtefacts()) {
     if (readText(artefact.path) !== artefact.content || readMode(artefact.path) !== artefact.mode) {
       writeAtomic(artefact.path, Buffer.from(artefact.content), artefact.mode);
     }
@@ -2339,6 +2445,9 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'write-envelope': nspawnWriteEnvelope,
   'shift-ownership': nspawnShiftOwnership,
   exec: (request, _storage, options) => nspawnExec(request, options),
+  start: (request, _storage, options) => nspawnLifecycle(request, 'start', options),
+  stop: (request, _storage, options) => nspawnLifecycle(request, 'stop', options),
+  'set-limits': (request, _storage, options) => nspawnLifecycle(request, 'set-limits', options),
   freeze: (request, _storage, options) => nspawnMachineState(request, 'freeze', options),
   thaw: (request, _storage, options) => nspawnMachineState(request, 'thaw', options),
   'site-data-archive': nspawnSiteDataArchive,
@@ -2349,12 +2458,27 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'tree-remove': (request, storage) => nspawnTreeRemove(request, storage),
   'tree-verify': nspawnTreeVerify,
   destroy: (request, _storage, options) => nspawnDestroy(request, options),
+  'release-uid-range': releaseUidRange,
 });
 
 /** The operations that need no trusted storage root at all, so they never read the deployment record.
  *  `destroy` is one of them: it removes the machine's own configuration files, whose paths come from the
  *  validated machine name, and never touches the disk. */
-const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'freeze', 'thaw', 'destroy']);
+const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'destroy']);
+
+function nspawnLifecycle(request, action, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const unit = machineUnitFor(request.machine);
+  if (action === 'set-limits') {
+    const limits = nspawnLimits(request.limits);
+    runRequired(runner, '/usr/bin/systemctl', ['set-property', unit,
+      `CPUQuota=${limits.cpus * 100}%`, `MemoryMax=${limits.memoryMb}M`, `TasksMax=${limits.pidsLimit}`],
+    'the machine limits could not be applied');
+    return { ok: true, machine: request.machine, unit, limits };
+  }
+  runRequired(runner, '/usr/bin/systemctl', [action, unit], `the machine could not be ${action === 'start' ? 'started' : 'stopped'}`);
+  return { ok: true, machine: request.machine, unit };
+}
 
 function nspawnMachineState(request, verb, options) {
   const runner = options.runner ?? defaultCommandRunner;

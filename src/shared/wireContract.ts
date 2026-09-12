@@ -26,17 +26,18 @@ export type ProjectExecutionRef =
  *  belong here. */
 export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number }
 
+export type EnvironmentNetworkMode = 'shared' | 'isolated';
+export interface EnvironmentInboundPort { protocol: 'tcp' | 'udp'; hostPort: number; guestPort: number }
+export interface EnvironmentNetwork { mode: EnvironmentNetworkMode; inboundPorts: EnvironmentInboundPort[] }
+
 export type EnvironmentAction =
   /** `recreate` rebuilds the container from the current specification without touching the storage
    *  volumes: the repair for an environment whose container this runtime can no longer verify. */
-  /** `migrate-identity` moves an environment created under the container runtime onto the canonical
-   *  published root filesystem identity. It is administrator-only and rewrites metadata only: the
-   *  persistent disk is authoritative and keeps every byte it has, so the packages and configuration
-   *  inside it survive. It takes a restore point first and rolls the reference back on any failure. */
-  | { kind: 'start' | 'stop' | 'restart' | 'delete' | 'recreate' | 'migrate-identity' }
+  | { kind: 'start' | 'stop' | 'restart' | 'delete' | 'recreate' }
   | { kind: 'snapshot'; note?: string; includeData?: boolean }
   | { kind: 'restore'; snapshotId: string; restoreData?: boolean }
-  | { kind: 'limits'; limits: EnvironmentLimits };
+  | { kind: 'limits'; limits: EnvironmentLimits }
+  | { kind: 'network'; network: EnvironmentNetwork };
 
 /** One durable environment lifecycle operation, as the managed delete response and the environment
  *  screens read it. `plugins/environmentTypes` re-exports these to the daemon side.

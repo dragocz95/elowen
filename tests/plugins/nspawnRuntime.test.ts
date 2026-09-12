@@ -20,7 +20,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 /** A complete host-side envelope for one machine: the disk with its identity record, the two root-owned
  *  configuration files, and a `systemctl show` answer that matches all of them. Each test then breaks
  *  exactly one of those facts and asserts that the ownership proof refuses. */
-function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean, outputLimitBytes?: number } = {}) {
+function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean, outputLimitBytes?: number, network?: any } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-test-'));
   roots.push(root);
   const configRoot = join(root, 'config');
@@ -31,7 +31,7 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
   const generation = options.generation ?? 2;
   const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' }, paths, 'a'.repeat(32));
   const spec: any = createContainerSpec({ resource, workspaceTarget: '/demo', generation, image, disk, limits: options.limits,
-    ...(options.previewBroker ? { previewBroker: true } : {}) }, paths);
+    ...(options.network ? { network: options.network } : {}), ...(options.previewBroker ? { previewBroker: true } : {}) }, paths);
   mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
   for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
   const diskDirectory = dirname(spec.disk.rootfsPath);
@@ -303,6 +303,21 @@ describe('nspawn privileged transport', () => {
     expect(artifacts.ensure).toHaveBeenCalledWith(spec.disk.sourceImage, { onProgress });
   });
 
+  it('releases the uid reservation only after storage is verified absent, including retries', async () => {
+    const { client, spec, envelope, requests } = fixture();
+    rmSync(envelope.nspawn, { force: true });
+    rmSync(envelope.dropIn, { force: true });
+    rmSync(spec.storageRoot, { recursive: true, force: true });
+
+    await client.removeStorage(spec);
+    await client.removeStorage(spec);
+
+    expect(requests.filter((request) => request.op === 'release-uid-range')).toEqual([
+      { domain: 'nspawn', op: 'release-uid-range', namespace: 'elowen', kind: 'project', resource: '7' },
+      { domain: 'nspawn', op: 'release-uid-range', namespace: 'elowen', kind: 'project', resource: '7' },
+    ]);
+  });
+
   it('reports what the host still owes the machine runtime, in the rows the privileged side named', async () => {
     const { client, helperReply, requests } = fixture();
     helperReply.status = { ok: true, ready: false, items: [
@@ -556,6 +571,23 @@ describe('nspawn guest execution', () => {
 });
 
 describe('nspawn limits', () => {
+  it('writes the envelope with canonical inbound port mappings', async () => {
+    const state = fixture({ network: { mode: 'shared', inboundPorts: [
+      { protocol: 'udp', hostPort: 5353, guestPort: 53 },
+      { protocol: 'tcp', hostPort: 8080, guestPort: 3000 },
+    ] } });
+    rmSync(state.envelope.nspawn); rmSync(state.envelope.dropIn);
+    state.unit.ActiveState = 'inactive'; state.unit.SubState = 'dead';
+    state.helperReply['write-envelope'] = () => { state.writeEnvelope(); return { ok: true }; };
+
+    await state.client.create(state.spec);
+
+    expect(state.requests.find((entry) => entry.op === 'write-envelope')).toMatchObject({ privateNetwork: false, ports: [
+      { protocol: 'tcp', hostPort: 8080, guestPort: 3000 },
+      { protocol: 'udp', hostPort: 5353, guestPort: 53 },
+    ] });
+  });
+
   it('writes the envelope with the limits the environment declares', async () => {
     const state = fixture({ limits: { cpus: 2, memoryMb: 2048, pidsLimit: 1024 } });
     rmSync(state.envelope.nspawn); rmSync(state.envelope.dropIn);
@@ -573,21 +605,18 @@ describe('nspawn limits', () => {
     expect(request.binds.map((bind: any) => bind.target)).toEqual(['/demo', '/root', '/data']);
   });
 
-  it('applies a live limit change through set-property and verifies the effective values', async () => {
+  it('applies a live limit change through the typed helper and verifies the effective values', async () => {
     const state = fixture();
-    state.executor.run.mockImplementation(async (file: string, args: string[]) => {
-      if (file === '/usr/bin/systemctl' && args[0] === 'set-property') {
-        state.unit.CPUQuotaPerSecUSec = '750ms'; state.unit.MemoryMax = String(384 * 1024 * 1024); state.unit.TasksMax = '300';
-        return { code: 0, stdout: '', stderr: '' };
-      }
-      if (file === '/usr/bin/systemctl' && args[0] === 'show') return { code: 0, stdout: Object.entries(state.unit).map(([key, value]) => `${key}=${value}`).join('\n'), stderr: '' };
-      if (file === '/usr/bin/machinectl' && args[0] === 'show') return { code: 0, stdout: `Unit=${state.machine.Unit}\nRootDirectory=${state.machine.RootDirectory}`, stderr: '' };
-      return { code: 0, stdout: '', stderr: '' };
-    });
+    state.helperReply['set-limits'] = () => {
+      state.unit.CPUQuotaPerSecUSec = '750ms'; state.unit.MemoryMax = String(384 * 1024 * 1024); state.unit.TasksMax = '300';
+      return { ok: true };
+    };
     const next = await state.client.update(state.spec, { cpus: 0.75, memoryMb: 384, pidsLimit: 300 });
     expect(next.limits).toEqual({ cpus: 0.75, memoryMb: 384, pidsLimit: 300 });
-    const applied = state.executor.run.mock.calls.find((call) => call[1][0] === 'set-property');
-    expect(applied![1]).toEqual(['set-property', unitFor(state.spec.name), 'CPUQuota=75%', 'MemoryMax=384M', 'TasksMax=300']);
+    expect(state.requests.find((request) => request.op === 'set-limits')).toMatchObject({
+      machine: state.spec.name,
+      limits: { cpus: 0.75, memoryMb: 384, pidsLimit: 300 },
+    });
   });
 });
 

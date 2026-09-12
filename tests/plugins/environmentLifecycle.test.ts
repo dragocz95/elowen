@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
-import { PROJECT_ARTIFACT, ROOTFS_RECIPES, artifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
+import { PROJECT_ARTIFACT, ROOTFS_RECIPES, SITE_ARTIFACTS, artifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
@@ -18,6 +18,7 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 /** The published root filesystem a NEW managed project is stamped with, in both the envelope image and
  *  the disk's source. Nothing on the host produces it: it is fetched by reference and verified by digest. */
 const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
+const SITE_ROOTFS = artifactReference(SITE_ARTIFACTS.base);
 /** `machineHost` answers the readiness probe the way a provisioned or an unprovisioned host answers it,
  *  which is where production makes the decision. There is no third world any more: every environment is a
  *  machine on a disk materialized from a published artifact, so `'ready'` is what almost every test below
@@ -208,7 +209,7 @@ describe('durable managed environment lifecycle', () => {
 
   it('restores a rootfs-backed Site without snapshot data through disk restore while stopped', async () => {
     const { runtime, root, nspawn, storage, containers } = setup();
-    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
+    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: SITE_ROOTFS, network: 'shared',
       workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
     mkdirSync(registration.sourcePath, { recursive: true });
@@ -328,6 +329,45 @@ describe('durable managed environment lifecycle', () => {
   it('keeps the built-in figure for a setting that is missing or unusable', async () => {
     const { runtime } = setup({ defaultCpus: 0, defaultMemoryMb: 4096, defaultPidsLimit: 'many' });
     expect((await runtime.environmentFor(input)).limits).toEqual({ cpus: 1, memoryMb: 4096, pidsLimit: 512 });
+  });
+
+  it('copies the network default once and applies an admin change through a stopped envelope', async () => {
+    const { runtime, nspawn } = setup({ defaultNetworkMode: 'isolated' });
+    expect((await runtime.environmentFor(input)).network).toEqual({ mode: 'isolated', inboundPorts: [] });
+    await runtime.requestEnvironment({ ...input, requestId: 'network-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect(nspawn.create.mock.calls[0]![0].network).toBe('none');
+
+    await expect(runtime.requestEnvironment({ ...input, requestId: 'network-denied', action: { kind: 'network', network: { mode: 'shared', inboundPorts: [] } } }))
+      .rejects.toMatchObject({ code: 'admin_required', status: 403 });
+    const changed = await runtime.requestEnvironment({ ...input, accountUserId: 3, requestId: 'network-shared', action: { kind: 'network', network: {
+      mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }],
+    } } });
+    expect(changed.steps).toEqual(['quiesce', 'stop', 'apply', 'boot']);
+    await runtime.reconcile();
+
+    expect(nspawn.stop).toHaveBeenCalled();
+    expect(nspawn.remove).toHaveBeenCalled();
+    expect(nspawn.create.mock.calls.at(-1)![0]).toMatchObject({ network: 'slirp4netns:allow_host_loopback=false',
+      inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] });
+    expect((await runtime.environmentFor({ ...input, accountUserId: 3 })).network)
+      .toEqual({ mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] });
+  });
+
+  it('rejects malformed and already reserved host ports before enqueueing work', async () => {
+    const { runtime, db } = setup();
+    const actor = { ...input, accountUserId: 3 };
+    for (const network of [
+      { mode: 'isolated', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] },
+      { mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 80, guestPort: 80 }] },
+      { mode: 'shared', inboundPorts: [{ protocol: 'sctp', hostPort: 8080, guestPort: 3000 }] },
+    ]) {
+      await expect(runtime.requestEnvironment({ ...actor, action: { kind: 'network', network } as any })).rejects.toMatchObject({ code: 'invalid_network' });
+    }
+    db.prepare("INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,spec_json,limits_json) VALUES('project','8',8,?,?)")
+      .run(JSON.stringify({ input: { network: { mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 80 }] } } }), JSON.stringify({}));
+    await expect(runtime.requestEnvironment({ ...actor, action: { kind: 'network', network: { mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] } } }))
+      .rejects.toMatchObject({ code: 'network_port_conflict' });
   });
 
   it('round-trips stored limits through the public read and write contract', async () => {
@@ -856,7 +896,7 @@ describe('durable managed environment lifecycle', () => {
    *  since been serving from. */
   it('seeds a new Site data directory from the bootstrap archive, and only on the first start', async () => {
     const { runtime, nspawn, root } = setup();
-    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed',
+    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: SITE_ROOTFS,
       network: 'shared', workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'),
       sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
@@ -1005,7 +1045,7 @@ describe('adopted workspace rollback', () => {
     mkdirSync(join(host, sourceRel), { recursive: true });
     project.executionKind = 'host'; project.path = host;
     runtime.connectSitesRuntime({
-      resolve: async () => ({ siteId: 'shop', projectId: 7, sourceRel, image: 'localhost/elowen/site:fixed', network: 'shared',
+      resolve: async () => ({ siteId: 'shop', projectId: 7, sourceRel, image: SITE_ROOTFS, network: 'shared',
         workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel),
         brokerDir: join(root, 'brokers'), limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true }),
       beforeStart: async () => {}, afterStop: async () => {},
@@ -1043,7 +1083,7 @@ describe('adopted workspace rollback', () => {
 describe('site environment tombstones', () => {
   it('re-registers a deleted Site at a new generation and rejects lifecycle actions on its tombstone', async () => {
     const { runtime, root, db, nspawn } = setup();
-    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
+    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: SITE_ROOTFS, network: 'shared',
       workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'host-project', 'sites', 'shop'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
     mkdirSync(registration.sourcePath, { recursive: true });
@@ -1083,7 +1123,7 @@ describe('site environment tombstones', () => {
 
   function mismatchedSite() {
     const state = setup();
-    const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared' as const,
+    const registration = { siteId: 'shop', projectId: 7, image: SITE_ROOTFS, network: 'shared' as const,
       workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(state.root, 'sites'), sourcePath: join(state.root, 'sources'), brokerDir: join(state.root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
     let current = registration;
@@ -1294,6 +1334,31 @@ describe('durable project publications', () => {
     expect(nspawn.startPublication).toHaveBeenCalledTimes(1);
   });
 
+  it('serializes release behind an in-flight publication establishment', async () => {
+    const { runtime, nspawn, sql } = setup();
+    await starting(runtime);
+    const startPublication = nspawn.startPublication.getMockImplementation()!;
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    nspawn.startPublication.mockImplementationOnce(async (spec: any, publicationId: string, argv: string[]) => {
+      await gate;
+      return await (startPublication as any)(spec, publicationId, argv);
+    });
+
+    const bindingPromise = runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    await vi.waitFor(() => expect(nspawn.startPublication).toHaveBeenCalledTimes(1));
+    const releasePromise = runtime.projectPublicationRelease({ project: input.project, publicationId: 'shop' });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(nspawn.stopPublication).not.toHaveBeenCalled();
+
+    resume();
+    const binding = await bindingPromise;
+    await releasePromise;
+    expect(nspawn.stopPublication).toHaveBeenCalledWith(expect.anything(), 'shop');
+    expect(records(sql)).toEqual([]);
+    expect(() => lstatSync(binding.socketPath)).toThrow();
+  });
+
   it('restores a lost forwarder on reconciliation and keeps serving for an account that lost access', async () => {
     const { runtime, nspawn, members, forwarders, staleSocket, publicationSocket } = setup();
     await starting(runtime);
@@ -1473,11 +1538,10 @@ describe('a new environment on a machine host', () => {
     expect(overview.runtime.name).toBeNull();
     expect(overview.runtime.readiness.ready).toBe(false);
     // The rows travel to the surface as the helper wrote them: nothing is keyed off an id, and every
-    // detail with its command survives the trip. The instance's own row is appended after them, and it
-    // does NOT move `ready`: that stays the host's answer, because an unmigrated environment elsewhere
-    // says nothing about whether this host can hold a machine.
+    // detail with its command survives the trip. The exact published root filesystem required by this
+    // environment follows the host rows, and the instance's legacy count remains informational.
     expect(overview.runtime.readiness.items.map((item: any) => item.id))
-      .toEqual(['os:supported', 'package:systemd-container', 'unit:elowen-machine', 'runtime:legacy-references']);
+      .toEqual(['os:supported', 'package:systemd-container', 'unit:elowen-machine', `rootfs:${PROJECT_ROOTFS}`, 'runtime:legacy-references']);
     expect(overview.runtime.readiness.items.find((item: any) => item.id === 'unit:elowen-machine').detail)
       .toContain('systemctl daemon-reload');
     expect(overview.runtime.readiness.items.at(-1)).toMatchObject({ id: 'runtime:legacy-references', ok: true });

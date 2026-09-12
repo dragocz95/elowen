@@ -113,6 +113,7 @@ type PluginProjectRowsHook = (input: { projects: Project[] }) => {
 };
 interface Registration {
   requiresApiVersion: number;
+  settings?: Record<string, ComponentType<{ plugin: string; panelId: string; surface: 'page' | 'deck' }>>;
   user?: Record<string, PluginUserComponent>;
   project?: Record<string, PluginProjectComponent>;
   projectRows?: PluginProjectRowsHook;

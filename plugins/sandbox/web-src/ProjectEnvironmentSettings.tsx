@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CircleDashed, CircleSlash, Loader2, Play, Square, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { CircleDashed, CircleSlash, Loader2, Network, Plus, Play, Square, Trash2, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { acknowledgeEnvironmentRequest, dispatchEnvironmentAction } from './environmentRequest';
 import type { EnvironmentAction, EnvironmentOperation, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
 import { localizedError, runtime, type Project } from './runtime';
@@ -20,6 +20,8 @@ export interface ProjectEnvironmentDetail {
 }
 
 type Limits = ProjectEnvironment['limits'];
+type NetworkPolicy = ProjectEnvironment['network'];
+type InboundPort = NetworkPolicy['inboundPorts'][number];
 type LimitKey = 'cpus' | 'memoryMb' | 'pidsLimit';
 
 /** One resource row per ceiling the container actually enforces. The bounds are the plugin's usable
@@ -35,6 +37,8 @@ const LIMIT_KEYS = ROWS.map((row) => row.key);
 /** CPU carries one decimal; every other figure is a whole number the runtime validates as an integer. */
 const readout = (key: LimitKey, value: number) => key === 'cpus' ? String(Math.round(value * 10) / 10) : String(Math.round(value));
 const sameLimits = (a: Limits, b: Limits) => LIMIT_KEYS.every((key) => a[key] === b[key]);
+const sameNetwork = (a: NetworkPolicy, b: NetworkPolicy) => JSON.stringify(a) === JSON.stringify(b);
+const emptyPort = (): InboundPort => ({ protocol: 'tcp', hostPort: 8080, guestPort: 3000 });
 
 /** The same glyph and tone the project register draws for a state, so the drawer and the row agree. */
 const STATE_GLYPH: Record<ProjectEnvironment['state'], { icon: LucideIcon; className: string; spin?: boolean }> = {
@@ -72,6 +76,7 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   // Local edits only. `null` means "no unsaved change", so a pushed refresh keeps owning the displayed
   // figures and a slider cannot be dragged back by an update landing mid-gesture.
   const [draft, setDraft] = useState<Limits | null>(null);
+  const [networkDraft, setNetworkDraft] = useState<NetworkPolicy | null>(null);
   const accountId = me.data?.user?.id;
   useEffect(() => {
     if (!accountId || !query.data) return;
@@ -101,12 +106,17 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   };
 
   const stored = query.data?.environment.limits;
+  const storedNetwork = query.data?.environment.network;
   useEffect(() => {
     if (!stored) return;
     // A successful mutation only means the lifecycle request was accepted. Keep showing the submitted
     // figures until the refreshed environment proves that those exact limits became authoritative.
     setDraft((current) => (current && sameLimits(current, stored) ? null : current));
   }, [stored]);
+  useEffect(() => {
+    if (!storedNetwork) return;
+    setNetworkDraft((current) => (current && sameNetwork(current, storedNetwork) ? null : current));
+  }, [storedNetwork]);
   const isAdmin = me.data?.user?.is_admin === true;
   const operations = query.data?.operations ?? [];
   const running = operations.some((item) => item.status === 'pending' || item.status === 'running');
@@ -137,6 +147,8 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const busy = !accountId || me.isError || mutate.isPending || pending || ['deleting', 'deleted'].includes(environment.state) || project.lifecycle === 'deleting';
   const completeSnapshots = snapshots.filter((item) => item.completeProject);
   const values = draft ?? environment.limits;
+  const networkValues = networkDraft ?? environment.network;
+  const networkChanged = !!networkDraft && !sameNetwork(networkDraft, environment.network);
   const labels: Record<LimitKey, string> = { cpus: s.cpuLimit, memoryMb: s.memoryLimit, pidsLimit: s.processLimit };
   const units: Record<LimitKey, string> = { cpus: s.unitCpu, memoryMb: 'MiB', pidsLimit: s.unitProcesses };
   // The daemon names the stale-container case in the error it stores, so the repair is offered from what
@@ -166,6 +178,10 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const unmet = runtimeDetail.readiness && !runtimeDetail.readiness.ready
     ? runtimeDetail.readiness.items.filter((item) => !item.ok)
     : [];
+  const setNetworkMode = (mode: NetworkPolicy['mode']) => setNetworkDraft({ mode, inboundPorts: mode === 'isolated' ? [] : networkValues.inboundPorts });
+  const updatePort = (index: number, patch: Partial<InboundPort>) => setNetworkDraft({ ...networkValues,
+    inboundPorts: networkValues.inboundPorts.map((port, position) => position === index ? { ...port, ...patch } : port) });
+  const removePort = (index: number) => setNetworkDraft({ ...networkValues, inboundPorts: networkValues.inboundPorts.filter((_port, position) => position !== index) });
 
   return <section className="flex flex-col gap-4 border-b border-border py-4">
     {requestError ? <p role="alert" className="text-sm text-destructive">{requestError}</p> : null}
@@ -210,6 +226,40 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
             : undefined}
         />
       ))}
+    </C.SettingsGroup>
+
+    <C.SettingsGroup
+      title={s.networking}
+      description={s.networkingHint}
+      density="compact"
+      actions={isAdmin ? <C.Button variant="accent" icon={Network} disabled={busy || !networkChanged}
+        onClick={() => report(mutate.mutateAsync({ kind: 'network', network: networkValues }))}>{s.applyNetworking}</C.Button>
+        : <C.Badge tone="muted">{s.limitsAdminOnly}</C.Badge>}
+    >
+      <C.SettingsRow label={s.networkMode} description={networkValues.mode === 'shared' ? s.networkSharedHint : s.networkIsolatedHint}
+        control={<C.SelectMenu label={s.networkMode} value={networkValues.mode} disabled={!isAdmin || busy}
+          onChange={setNetworkMode} options={[{ value: 'shared', label: s.networkShared }, { value: 'isolated', label: s.networkIsolated }]} />} />
+      {networkValues.mode === 'shared' ? <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">{s.inboundPorts}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{s.inboundPortsHint}</p>
+          </div>
+          {isAdmin ? <C.Button variant="ghost" icon={Plus} disabled={busy || networkValues.inboundPorts.length >= 32}
+            onClick={() => setNetworkDraft({ ...networkValues, inboundPorts: [...networkValues.inboundPorts, emptyPort()] })}>{s.addInboundPort}</C.Button> : null}
+        </div>
+        {networkValues.inboundPorts.length ? <div className="flex flex-col gap-2">
+          {networkValues.inboundPorts.map((port, index) => <div key={index} className="grid grid-cols-1 items-end gap-2 rounded-md border border-border bg-background p-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <C.SelectMenu label={s.protocol} value={port.protocol} disabled={!isAdmin || busy} onChange={(protocol: InboundPort['protocol']) => updatePort(index, { protocol })}
+              options={[{ value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }]} />
+            <C.Field label={s.hostPort}><C.Input type="number" min={1024} max={65535} value={port.hostPort} disabled={!isAdmin || busy}
+              onChange={(event: { target: { value: string } }) => updatePort(index, { hostPort: Number(event.target.value) })} /></C.Field>
+            <C.Field label={s.guestPort}><C.Input type="number" min={1} max={65535} value={port.guestPort} disabled={!isAdmin || busy}
+              onChange={(event: { target: { value: string } }) => updatePort(index, { guestPort: Number(event.target.value) })} /></C.Field>
+            {isAdmin ? <C.Button variant="ghost" icon={Trash2} aria-label={s.removeInboundPort} disabled={busy} onClick={() => removePort(index)} /> : null}
+          </div>)}
+        </div> : <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">{s.noInboundPorts}</p>}
+      </div> : null}
     </C.SettingsGroup>
 
     {/* Start, stop, restart and snapshot are not here any more. They are the project's row actions in the

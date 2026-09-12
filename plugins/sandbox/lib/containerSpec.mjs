@@ -99,6 +99,29 @@ export function withContainerLimits(spec, requested) {
   freeze(next); trustedSpecs.add(next); return next;
 }
 
+/** The complete SIMPLE network policy. Legacy string values remain readable so an existing environment's
+ * identity stays byte-for-byte stable until an administrator explicitly changes its network policy. */
+export function normalizeEnvironmentNetwork(value) {
+  if (value === undefined || value === 'shared') return { mode: 'shared', inboundPorts: [] };
+  if (value === 'isolated') return { mode: 'isolated', inboundPorts: [] };
+  closed(value, ['mode', 'inboundPorts']);
+  if (value.mode !== 'shared' && value.mode !== 'isolated') throw new Error('Invalid container network mode');
+  if (!Array.isArray(value.inboundPorts) || value.inboundPorts.length > 32) throw new Error('Invalid container inbound ports');
+  const seen = new Set();
+  const inboundPorts = value.inboundPorts.map((entry) => {
+    closed(entry, ['protocol', 'hostPort', 'guestPort']);
+    if (entry.protocol !== 'tcp' && entry.protocol !== 'udp') throw new Error('Invalid container inbound port protocol');
+    if (!Number.isSafeInteger(entry.hostPort) || entry.hostPort < 1024 || entry.hostPort > 65535
+      || !Number.isSafeInteger(entry.guestPort) || entry.guestPort < 1 || entry.guestPort > 65535) throw new Error('Invalid container inbound port');
+    const key = `${entry.protocol}:${entry.hostPort}`;
+    if (seen.has(key)) throw new Error('Duplicate container inbound host port');
+    seen.add(key);
+    return { protocol: entry.protocol, hostPort: entry.hostPort, guestPort: entry.guestPort };
+  }).sort((a, b) => a.protocol.localeCompare(b.protocol) || a.hostPort - b.hostPort || a.guestPort - b.guestPort);
+  if (value.mode === 'isolated' && inboundPorts.length) throw new Error('An isolated container cannot publish inbound ports');
+  return { mode: value.mode, inboundPorts };
+}
+
 function buildSpec(input, paths, binding = null) {
   closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker', 'workspaceTarget', 'disk']);
   if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
@@ -109,8 +132,8 @@ function buildSpec(input, paths, binding = null) {
   if (kind === 'site') resourceToken(id);
   if (!Number.isSafeInteger(input.generation) || input.generation < 1) throw new Error('Invalid runtime generation');
   if (typeof input.image !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(input.image)) throw new Error('Invalid container image');
-  const network = input.network ?? 'shared';
-  if (network !== 'shared' && network !== 'isolated') throw new Error('Invalid container network');
+  const legacyNetwork = input.network === undefined || typeof input.network === 'string';
+  const network = normalizeEnvironmentNetwork(input.network);
   if (input.workspaceReadOnly !== undefined && (kind !== 'site' || typeof input.workspaceReadOnly !== 'boolean')) throw new Error('Invalid read-only workspace policy');
   closed(input.limits ?? {}, ['cpus', 'memoryMb', 'pidsLimit']);
   // An envelope keeps the limits it was created with until an explicit limits action updates them
@@ -164,7 +187,8 @@ function buildSpec(input, paths, binding = null) {
     resource, generation, namespace, name, image: input.image, limits, ...(disk ? { disk } : {}),
     workdir,
     ipcMode: 'private',
-    network: network === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
+    network: network.mode === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
+    ...(legacyNetwork ? {} : { inboundPorts: network.inboundPorts }),
     storageRoot, volumes, mounts, envFile: kind === 'site' ? join(storageRoot, 'container.env') : null,
   };
   // The hash preimage keeps the `legacy: null` key every spec carried while Sites containers created by

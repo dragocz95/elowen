@@ -6,6 +6,7 @@ import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
+import { knownReferences } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 import type { NspawnClient } from '../../plugins/sandbox/lib/nspawn.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
@@ -66,12 +67,18 @@ function setup() {
     removeStorage: vi.fn(), removeGenerationStorage: vi.fn(), removeSnapshotStorage: vi.fn(), removeDiskPath: vi.fn(), syncDiskTree: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
     hostReadiness: vi.fn(async () => ({ ready: true, items: [{ id: 'unit:elowen-machine', label: 'Machine unit template', ok: true, detail: 'installed and loaded' }] })),
+    provisionHost: vi.fn(async () => ({ ready: true, items: [{ id: 'unit:elowen-machine', label: 'Machine unit template', ok: true, detail: 'installed and loaded' }] })),
+  };
+  const present = new Set<string>();
+  const artifacts = {
+    status: vi.fn((reference: string) => ({ reference, name: reference.split('@')[0], version: 1, published: true, present: present.has(reference), digest: `sha256:${'a'.repeat(64)}`, sizeBytes: 4096 })),
+    ensure: vi.fn(async (reference: string, options: any = {}) => { options.onProgress?.(1024, 4096); options.onProgress?.(4096, 4096); present.add(reference); return { path: `/cache/${reference}`, fetched: true }; }),
   };
   const storage = { prepare: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), removeDisk: vi.fn() };
   const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, nspawn: nspawn as unknown as NspawnClient,
-    storage: storage as unknown as ContainerStorage, daemon: true });
+    artifacts: artifacts as any, storage: storage as unknown as ContainerStorage, daemon: true });
   cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, db, ctx, nspawn, storage, containers, published, project, root,
+  return { runtime, db, ctx, nspawn, artifacts, storage, containers, published, project, root,
     // A guest whose boot never finishes: the container runs, the bus never listens. That is what a host
     // out of inotify instances produced, and it must be reported as a boot that did not come up.
     failSystemBus: () => { busFails = true; } };
@@ -149,6 +156,42 @@ describe('environment operation progress', () => {
       const done = await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 });
       expect([done?.status, done?.percent]).toEqual(['succeeded', 100]);
     }
+  });
+
+  it('provisions the host and every root filesystem as one durable idempotent operation', async () => {
+    const { runtime, nspawn, artifacts, db } = setup();
+    await expect(runtime.provisionMachineRuntime({ accountUserId: 1, action: { kind: 'provision' } }))
+      .rejects.toMatchObject({ code: 'admin_required', status: 403 });
+
+    const requested = await runtime.provisionMachineRuntime({ accountUserId: 3, action: { kind: 'provision' }, requestId: 'host-setup' });
+    expect(requested.runtime).toBe('nspawn');
+    expect(requested.steps).toEqual(['host', ...knownReferences().map((reference) => `rootfs:${reference}`), 'verify']);
+    expect((await runtime.provisionMachineRuntime({ accountUserId: 3, action: { kind: 'provision' }, requestId: 'host-setup' })).id).toBe(requested.id);
+
+    await runtime.reconcile();
+
+    const readiness = await runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    expect(readiness).toMatchObject({ runtime: 'nspawn', ready: true, prepared: true, operation: { id: requested.id, status: 'succeeded', percent: 100 } });
+    expect(nspawn.provisionHost).toHaveBeenCalledOnce();
+    expect(artifacts.ensure.mock.calls.map(([reference]: any[]) => reference)).toEqual(knownReferences());
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE kind='host' AND resource_id='nspawn'").get()).toEqual({ n: 1 });
+  });
+
+  it('keeps a failed host provisioning checkpoint retryable with a stable error code', async () => {
+    const { runtime, nspawn, artifacts } = setup();
+    artifacts.ensure.mockImplementationOnce(async () => { throw Object.assign(new Error('artifact mirror unavailable'), { code: 'artifact_unreachable' }); });
+    const requested = await runtime.provisionMachineRuntime({ accountUserId: 3, action: { kind: 'provision' }, requestId: 'host-retry' });
+
+    await runtime.reconcile();
+    expect((await runtime.machineRuntimeReadiness({ accountUserId: 3 })).operation)
+      .toMatchObject({ id: requested.id, status: 'failed', errorCode: 'artifact_unreachable', error: 'artifact mirror unavailable' });
+
+    expect(await runtime.provisionMachineRuntime({ accountUserId: 3, action: { kind: 'provision' }, requestId: 'host-retry' }))
+      .toMatchObject({ id: requested.id, status: 'pending', errorCode: null });
+    await runtime.reconcile();
+    expect((await runtime.machineRuntimeReadiness({ accountUserId: 3 })).operation)
+      .toMatchObject({ id: requested.id, status: 'succeeded', errorCode: null });
+    expect(nspawn.provisionHost).toHaveBeenCalledOnce();
   });
 
   it('reports admin limits and project deletion with their own steps', async () => {
@@ -351,7 +394,7 @@ describe('environment operation progress', () => {
   // never run either, so declaring them told a Site's watcher about work that never happens.
   it('declares only the steps a Site actually takes', async () => {
     const { runtime, root } = setup();
-    const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared',
+    const registration = { siteId: 'shop', projectId: 7, image: knownReferences().find((reference) => reference.startsWith('site-base@'))!, network: 'shared',
       workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
     runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
