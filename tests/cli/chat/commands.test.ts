@@ -340,6 +340,7 @@ describe('/stop — targets the session the user is LOOKING at', () => {
       set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
     };
     const abort = vi.fn(async () => {});
+    const killCommands = vi.fn(async () => ({ killed: 1 }));
     const render = vi.fn();
     const state = new ChatState({ transcript: new TranscriptModel() });
     const childTranscript = new TranscriptModel();
@@ -348,13 +349,13 @@ describe('/stop — targets the session the user is LOOKING at', () => {
     wireSubmit(
       state,
       {
-        client: { abort }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        client: { abort, killCommands }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
         commandDefs: STOP_COMMAND_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
       } as never,
       { render } as never,
       { stream: {}, pickers: {} } as never,
     );
-    return { onSubmit, abort, state };
+    return { onSubmit, abort, killCommands, state, childTranscript };
   }
 
   it('a running viewed child is stopped by explicit session — the hidden parent stays untouched', async () => {
@@ -370,6 +371,91 @@ describe('/stop — targets the session the user is LOOKING at', () => {
     onSubmit?.('/stop');
     expect(abort).not.toHaveBeenCalled();
     expect(state.notice).toContain('nothing is running');
+  });
+
+  it('a repeated /stop escalates to a kill of THAT child\'s command, never the parent\'s', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { onSubmit, abort, killCommands, state } = stopHarness(true);
+      // A running foreground command is what could pin the aborted child turn.
+      state.childView!.processes = [{
+        id: 'p-child', command: 'child build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-ch-subagent-child', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+      state.processes = [{
+        id: 'p-parent', command: 'parent build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-parent', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+
+      onSubmit?.('/stop'); // first press: graceful abort of the child, escalation armed
+      await Promise.resolve();
+      expect(abort).toHaveBeenCalledTimes(1);
+      expect(abort).toHaveBeenCalledWith('brain-ch-subagent-child');
+      expect(killCommands).not.toHaveBeenCalled();
+      expect(state.notice).toContain('again to kill');
+
+      vi.setSystemTime(10_500); // still inside the confirmation window; the child stayed pinned
+      onSubmit?.('/stop'); // second press: hard-kill the CHILD's foreground command
+      await Promise.resolve();
+      expect(killCommands).toHaveBeenCalledOnce();
+      expect(killCommands).toHaveBeenCalledWith({ session: 'brain-ch-subagent-child' });
+      // Still exactly one abort: the escalation replaced the stop, it did not re-send it.
+      expect(abort).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a fresh drill resets the ladder — the escalation never fires for the wrong child', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { onSubmit, abort, killCommands, state } = stopHarness(true);
+      state.childView!.processes = [{
+        id: 'p-b', command: 'b build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-ch-subagent-child', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+      onSubmit?.('/stop'); // abort B, ladder armed for B
+      await Promise.resolve();
+
+      // Drill into B's grandchild C: the viewed session changed, so the very next /stop must ABORT C —
+      // B's abort marker must not turn it into a kill of C's (or anyone else's) command.
+      const childCTranscript = new TranscriptModel();
+      childCTranscript.apply({ type: 'tool_authoring', name: 'Bash', detail: 'c build' } as never);
+      state.childView = { sessionId: 'brain-ch-subagent-grandchild', transcript: childCTranscript, loading: false, processes: [] } as never;
+      onSubmit?.('/stop');
+      await Promise.resolve();
+      expect(abort).toHaveBeenLastCalledWith('brain-ch-subagent-grandchild');
+      expect(killCommands).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a settled child run resets the ladder — the next run starts with a graceful stop again', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { onSubmit, abort, killCommands, state, childTranscript } = stopHarness(true);
+      state.childView!.processes = [{
+        id: 'p-child', command: 'child build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-ch-subagent-child', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+      onSubmit?.('/stop'); // abort; escalation armed for this run
+      await Promise.resolve();
+
+      // The run settles (idle reaches the child lane), then the child starts a NEW run.
+      childTranscript.apply({ type: 'idle' } as never);
+      onSubmit?.('/stop');
+      expect(state.notice).toContain('nothing is running'); // idle observed → ladder cleared
+      childTranscript.apply({ type: 'user', text: 'next run' } as never); // a fresh run is thinking again
+      onSubmit?.('/stop');
+      expect(abort).toHaveBeenCalledTimes(2); // graceful again — no stale kill
+      expect(killCommands).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -862,5 +948,56 @@ describe('/editor terminal handoff', () => {
       else process.env.EDITOR = priorEditor;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+/** Drilled A→B→C, a slash must leave the WHOLE drill-in (Back would only reach B) and then act on the
+ *  parent conversation — the user sees the parent again before anything parent-scoped happens. */
+describe('slash inside a deep drill-in — leaves the drill-in, acts on the parent', () => {
+  function deepHarness(command: string, defs: unknown) {
+    let onSubmit: ((text: string) => void) | undefined;
+    const editor = {
+      addToHistory: vi.fn(), setText: vi.fn(),
+      set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+    };
+    const render = vi.fn();
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    // Viewing C with B retained on the trail — the deepest level a drill-in reaches.
+    state.childTrail = [{ sessionId: 'brain-ch-subagent-B', transcript: new TranscriptModel() }];
+    state.childView = { sessionId: 'brain-ch-subagent-C', transcript: new TranscriptModel(), loading: false } as never;
+    const stream = {
+      exitSubagent: vi.fn(() => { state.childView = null; state.childTrail = []; }),
+      closeSubagent: vi.fn(),
+      switchTo: vi.fn(async () => {}),
+    };
+    const pickers = { applyModelArg: vi.fn(), openModelPicker: vi.fn() };
+    wireSubmit(
+      state,
+      {
+        client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        commandDefs: defs, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+      } as never,
+      { render } as never,
+      { stream, pickers } as never,
+    );
+    return { onSubmit, state, stream, pickers };
+  }
+
+  const DEEP_DEFS = [...TEST_COMMAND_DEFS, { name: 'model' }] as never;
+
+  it('/model exits the drill-in to the parent first, then applies the model to the PARENT', () => {
+    const { onSubmit, state, stream, pickers } = deepHarness('/model gpt-9', DEEP_DEFS);
+    onSubmit?.('/model gpt-9');
+    expect(stream.exitSubagent).toHaveBeenCalledOnce();
+    expect(stream.closeSubagent).not.toHaveBeenCalled(); // Back is navigation; a slash is a full exit
+    expect(state.childView).toBeNull(); // the view is the parent again
+    expect(pickers.applyModelArg).toHaveBeenCalledWith('gpt-9');
+  });
+
+  it('/new from the deepest level re-targets the whole CLI to a fresh parent conversation', () => {
+    const { onSubmit, stream } = deepHarness('/new', [...TEST_COMMAND_DEFS, { name: 'new' }] as never);
+    onSubmit?.('/new');
+    expect(stream.exitSubagent).toHaveBeenCalledOnce();
+    expect(stream.switchTo).toHaveBeenCalledWith({ fresh: true });
   });
 });

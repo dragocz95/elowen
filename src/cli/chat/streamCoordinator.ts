@@ -571,9 +571,10 @@ export class StreamCoordinator implements StreamCoordinatorPort {
 
     /** Back: exactly ONE level. From a grandchild to its parent level (reopened from its durable
      *  transcript), from a top-level child back to the parent conversation. Esc keeps this meaning —
-     *  navigation first, never a stop. */
+     *  navigation first, never a stop. A stale call after the view already closed is a no-op: it must
+     *  not re-render the closed state or raise a plan decision nobody is looking at. */
     const closeSubagent = (): void => {
-      if (stopped || switchingSessionGeneration !== null) return;
+      if (stopped || switchingSessionGeneration !== null || !rt.childView) return;
       const back = rt.childTrail.pop();
       teardownChild();
       if (back) { void openSubagent(back.sessionId); return; }
@@ -582,9 +583,9 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     };
 
     /** A slash command must act on the parent conversation itself, so the whole drill-in (however
-     *  deep) collapses at once — this is not Back, it is leaving the drill-in. */
+     *  deep) collapses at once — this is not Back, it is leaving the drill-in. Same stale guard. */
     const exitSubagent = (): void => {
-      if (stopped || switchingSessionGeneration !== null) return;
+      if (stopped || switchingSessionGeneration !== null || !rt.childView) return;
       rt.childTrail = [];
       teardownChild();
       if (!stopped) render('child:closed');

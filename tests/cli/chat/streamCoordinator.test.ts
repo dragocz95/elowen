@@ -2133,4 +2133,29 @@ describe('StreamCoordinator — nested drill-in rail (A→B→C)', () => {
     lanes.get('brain-ch-subagent-C')!(snapshot([]));
     expect(idsOf(stream.ancestorSubagentStates())).toEqual(['brain-ch-subagent-C']);
   });
+
+  it('stale navigation after the view closed is a no-op — it cannot re-close or raise a plan decision', async () => {
+    const lanes = new Map<string, Lane>();
+    const rt = state();
+    rt.transcript.replaceHistory([anchoredRow('brain-ch-subagent-B', 'call-B')]);
+    const render = vi.fn();
+    const stream = new StreamCoordinator(
+      rt, { client: childLaneClient(lanes) }, { ...actions(), render },
+      { launchAsk: () => {}, openPlanDecision: vi.fn() } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    await stream.openSubagent('brain-ch-subagent-B');
+    lanes.get('brain-ch-subagent-B')!(snapshot([]));
+    stream.exitSubagent(); // a slash command left the drill-in entirely
+    render.mockClear();
+
+    // A trailing Esc (closeSubagent) and a repeated snap-back race the same closed view: both must be
+    // silent no-ops — no second 'child:closed' render and no plan decision raised out of nowhere.
+    stream.closeSubagent();
+    stream.exitSubagent();
+
+    expect(rt.childView).toBeNull();
+    expect(rt.childTrail).toEqual([]);
+    expect(render).not.toHaveBeenCalled();
+  });
 });
