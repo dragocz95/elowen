@@ -9,6 +9,205 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ## [Unreleased]
 
+## [0.28.42] - 2026-09-12
+
+Version 0.28.41 has no section of its own; the changes it carried are included below.
+
+### Added
+
+- Added a second container runtime for managed Project and Site environments: systemd-nspawn machines
+  alongside the existing rootless Podman containers. A runtime client interface now sits in front of both,
+  and every environment operation is routed to the client that owns that environment. The runtime is decided
+  once, when an environment is first materialized, and recorded on its disk record; it is not a setting and
+  not a per-environment choice. Every environment created from this release onwards is a systemd-nspawn
+  machine on a persistent disk of its own, and an environment created before it keeps running under Podman
+  until an administrator migrates it. Podman is still required as the image store. The Project environment
+  panel shows which runtime an environment uses as a read-only badge, `Machine` or `Container`.
+- Added a machine runtime domain to the privileged host helper, so one root-owned executable now serves both
+  the published-sites gateway and the machine runtime, each as a typed domain with its own operations. The
+  helper is installed on every instance rather than only on one that publishes sites, its sudoers drop-in
+  pins the argv it may be invoked with, and the operation itself arrives framed on standard input. The
+  install step is named "Installing privileged host helper".
+- Added per-environment uid ranges for machine environments: 65536 uids per environment out of 4096 slots,
+  allocated from a root-owned durable registry and keyed on the environment rather than on its disk, so a
+  restore that mints a new disk id keeps the ownership the tree already carries. Allocation is forward-only
+  and a slot is not reused.
+- Added an identity file kept outside the environment's root filesystem. It lives in the disk directory
+  beside the root filesystem, root-owned and readable only by the service group, and records the namespace,
+  kind, resource, generation, disk id, machine name, runtime, spec hash and uid range that the daemon checks
+  before it trusts an environment. The guest has no path to it, and it holds no secret.
+- Added persistent environment disks with snapshot and restore. A snapshot copies each component tree with
+  its own fingerprint and logical byte count into a versioned manifest after a free-space preflight, and a
+  restore verifies every tree against that manifest and fails on a mismatch rather than starting from a
+  partially restored disk. Snapshots are crash-consistent: execution is paused while one is taken. The
+  operations are `EnvironmentSnapshot` and `EnvironmentRestore`, shown as "Create snapshot" and "Restore
+  snapshot".
+- Added firewall rules applied by a systemd unit, `elowen-machine-firewall.service`, written and enabled when
+  the machine runtime is provisioned. It applies five idempotent rules for the machine interface family at
+  boot and again whenever Docker restarts, each guarded by a check before it acts. The daemon never mutates
+  the firewall itself; starting an environment only verifies the rules are present and refuses when a
+  required one is missing.
+- Added two migrations for existing environments. A disk migration captures a legacy container root
+  filesystem into a persistent disk; a runtime migration moves an environment that already sits on a
+  persistent disk from Podman to the machine runtime without copying any data, swapping the envelope over the
+  same disk and reporting its progress as receipts. Both are administrator-only, are refused when their
+  preconditions do not hold, reverse their ownership pass on failure, and have no reverse operation once they
+  succeed.
+- Added an effective tokens-per-second measure. It divides the provider's own output token count, reasoning
+  and tool-call tokens included, by the whole logical request measured on a monotonic clock from the moment
+  the request is initiated to the stream's terminal event, so the provider's header wait, prompt processing,
+  queueing and every automatic retry with its backoff are inside the figure while tool execution between
+  model calls is not. Compaction requests are never stamped. The figure reported is the latest completed
+  model call rather than a session blend, and a call that ended in an error or was aborted is skipped. It
+  appears as `tok/s` in the CLI statusline and its per-model table, as "Effective speed" and "Avg effective
+  speed" in the web stats view, and as `effectiveTps` on the usage API, beside a new "first content" reading
+  that names every wait before the first streamed content.
+- Added a cross-runner background process registry. A background shell process started inside a sub-agent
+  runner process is now visible to the daemon, so the owner's process surfaces list, read and stop it instead
+  of losing it behind the runner boundary, conversation teardown sweeps the whole delegated subtree and
+  refuses the delete when a kill is unconfirmed, and a runner that dies abruptly has its processes swept
+  afterwards. Process ids became full UUIDs so two registries cannot collide. The tool-level boundary is
+  unchanged: a sub-agent still sees only its own session's processes, and only for its own account.
+- Added a built-in `review` sub-agent type for adversarial review of a change before it merges: it reads the
+  diff, the tests and the surrounding code, runs the focused checks and reports severity-labelled findings
+  with file and line evidence plus a verdict. It keeps the caller's full toolset so it can run real checks,
+  and is instructed to change no repository.
+- Added read tracking to the in-app release notes. An administrator sees, beside each release, who has read
+  it and how many have, and can mark a release unread for everyone; that moves each account's marker back
+  behind the chosen release, so the release and every later one count as new again, including the navigation
+  badge.
+- Added managed project adoption. An administrator can adopt an existing host Project as managed in place and
+  release it back again, and a managed project's environment is now started as part of creating the project.
+- Added a durable operation row for environment lifecycle progress, with the steps an operation really takes
+  reported once, and moved the environment lifecycle out of a drawer into the Project register row itself. A
+  plugin can contribute row status and actions to that register.
+- Added a project question when a new conversation is created: the web asks which project the conversation
+  runs in, and the answer is carried into the conversation's execution target. A scheduled job now runs in the
+  project it was filed against, and a managed turn is told in its runtime context that it runs inside a
+  project container.
+- `DelegateContinue` gained a `background` parameter of its own, and the `plan` sub-agent type now keeps the
+  caller's full toolset so it can run read-only checks and write the plan file the caller named.
+
+### Changed
+
+- Delegated work now runs in the background by default. `Delegate`, `DelegateContinue` and `WorkflowStart`
+  start asynchronously when the call has a conversation identity and a durable completion sink, return a job
+  id immediately and deliver the result in a new turn; an explicit `background: false` still blocks and
+  returns the child's final text inline. On a surface that has no conversation identity or no durable sink,
+  an omitted `background` still blocks, because nothing would collect the handle.
+- Every provider's conversation is now compacted on the session's own warm prefix. The ChatGPT account route
+  was the last exception, and it only existed because the provider-side path owned the same hook.
+- The context breakdown now reports only the provider's own token count, and reports nothing where the
+  provider reported nothing, instead of presenting a local estimate as a provider figure. The local estimate
+  is still published separately.
+- Model capability lookups resolve correctly for Together and Fireworks models, for Gemini 3 generations
+  beyond 3.5, and for the native DeepSeek model ids, so their reasoning level, pricing and vision support are
+  no longer reported from a missing catalog row. No new model became selectable.
+- Delegated sub-agent turns are billed to the request that ordered them rather than to internal work,
+  transitively through a chain of delegations, and a `DelegateContinue` is billed to the live pin of the turn
+  that ordered it. The dashboard bucket for work with no request behind it is now labelled "Internal" and
+  says what lands there.
+- An explicit operator sub-agent pool cap may now oversubscribe CPU, while memory stays a hard ceiling.
+- Four type-aware lint rules were enabled across the codebase, and a duplicate-block report and
+  property-based testing were added to the tooling.
+
+### Fixed
+
+- Machine runtime correctness: a guest execution is launched in raw mode so a terminal reads the command's
+  own output and exit status rather than a wrapper's verdict; guest output is bounded by the caller's figure
+  instead of by its encoded envelope; privileged whole-tree work is budgeted and reports why a command
+  failed; a materialized machine root is given to the guest root the environment declares; a runtime change
+  is refused at request time and its ownership pass is reversed on rollback; the ownership receipt is dropped
+  before the rollback that reverses it; the helper is spawned with the argv its sudoers drop-in pins; and
+  named volume handles are removed through the runtime that holds them.
+- Environment lifecycle: recovery keeps going past a container it cannot verify, leaves pre-mount
+  environments out of automatic recovery, preserves container identity across a limit update, prioritizes an
+  explicit shutdown over recovery, recreates a container with its effective limits and resets the creation
+  baseline, and sizes a migration preflight from the container rather than from its image. Container
+  inventory is batched and listed portably, the stored operation history is bounded and cleared with its
+  project, and one dispatch now serves every environment action and reports it once.
+- Sites publication: a deletion requested by a tool runner that holds no privileged broker is finished by the
+  daemon instead of being dropped, a site queued for deletion is out of every caller's reach while that runs,
+  publication establishment is deduplicated, a durable publication can be rebound, publication runtime names
+  are bounded, the publication sweep is paused during recovery and skips pre-mount rows, and directory
+  artifacts are retired with the site.
+- Sites certificates: publishing no longer announces an address as working before a certificate exists for
+  it. The certificate verdict now comes from a real TLS handshake against the gateway using the site's own
+  hostname, reported as ready, pending or error with a recorded issuance error outranking the handshake, and
+  the probe endpoint is derived rather than assumed. A settling gateway reload is distinguished from a gateway
+  that will not serve.
+- The published-sites gateway helper on the host is now compared against the shipped copy and reported as
+  drifted when a deploy left an older one behind, with the repair command in the detail; `elowen update` and
+  the missing-dependency action both repair it.
+- Compaction and context: a split turn's prefix is summarized on the session's own context, the turn-prefix
+  question is read from the text it was appended to, an already-compacted session is reported accurately,
+  pending payload snapshots are cleared on every compaction end, and a branched conversation can read the
+  spill files it inherited, resolving the whole inherited chain rather than one hop.
+- Sub-agents and workflows: a managed workflow definition is no longer sent to a path the guest does not
+  use, the managed guest root is served instead of a stale constant, a continuation pushes its identity on
+  the blocking path, and a stored managed reference is resolved in one place for status, spawn and the turn.
+- Memory and usage: a fractional importance is kept out of a pin, limit and importance are bounded before
+  they reach the store, live recall stops after three searches that inject nothing and no longer counts a
+  failed retrieval as fruitless, and one setting is the only live-recall search ceiling.
+- Web: projects open from direct links, the People tab directory reports loading or failure instead of
+  emptiness, an environment operation settles even when its progress window was hidden and the window's
+  self-close survives a re-render, a horizontal strip is remeasured when its content changes rather than only
+  its box, the Projects register stays up when a contributing bundle misbehaves, sub-agent trees are not
+  requested when no page is on screen, and a projectless execution target is named instead of being called
+  unselected.
+- CLI: the `api` verb waits for a long route through a dispatcher with no timeout, the launcher and the chat
+  interface are loaded only in their own branches, and a resolved keypress has a type that excludes the
+  leader.
+- Guest file operations: the PDF tools are installed in the image, a guest fault is answered as an internal
+  error without leaking the launcher or the guest's errno, symlinks are reported from the guest walk instead
+  of dropped, four bounds holes in that walk are closed, a managed tree is walked in one guest operation, and
+  only the operations that change the tree are serialized.
+- Other: Anthropic OAuth is refreshed before its rotation window expires, stale Codex sockets are released
+  between turns, provider retries and severe loop stalls are surfaced, a moved MCP server is patched on the
+  revision its transfer produced, the MCP escape hatch has the same no-timeout path as the API verb, a
+  project switch is no longer pinned to a conversation-lifetime idempotency key, a reserved managed slug is
+  refused, and the API maps provider refusals and the project limit instead of answering 500.
+
+### Removed
+
+- Removed the provider-side remote compaction path, its `remoteCompactionEnabled` setting and the Runtime
+  settings switch "Compact ChatGPT conversations on the provider". Every provider now compacts on the
+  session's warm prefix, which is what that switch was an alternative to.
+- Removed the advisory environment disk ceiling from the Sandbox and Sites settings, the wire contract and
+  the container spec. Nothing measured or enforced it, and a request that still sends it is refused.
+- Removed the legacy Site container adoption path, the cancelled environment status and several dead
+  environment routes and seams, the deprecated `allowedPrompts` surface of the `ExitPlanMode` schema, and the
+  unread response fields and dead control probes of the API.
+
+### Security
+
+- An unknown hostname under the published-sites base is now answered by a wildcard block that returns the
+  same concealed page the Sites handler returns for an unknown or forbidden site, with no-store, nosniff,
+  no-referrer, a content security policy and a no-index header. Exact site names still match first. This
+  closes a probe that could tell a real site address from a free one at the gateway layer, before the
+  plugin's own concealment applied; no route or access check was bypassed.
+- The identity write path is hardened: the disk directory is resolved against the trusted storage roots
+  before an identity write, the identity directory is opened without following a symlink instead of relying
+  on a recursive create, and the polkit rule for machine units no longer grants restart, only start, stop and
+  set-property.
+- Managed project access is dropped before the membership row it depends on, and the host Project path is
+  kept out of a Site read result.
+
+### Compatibility
+
+- `elowen@0.28.42` ships shared-helper API 4 through `elowen-plugin-shared@0.3.0`, unchanged, and Plugin UI
+  API 16 through `elowen-plugin-ui-kit@0.11.0`. The UI kit minor is additive type and token surface only —
+  two exported interfaces, a widened provider type and new theme tokens — and the runtime component contract
+  is unchanged, so a bundle built against 0.10.0 keeps working. `requiresSharedApi` remains an exact match.
+- A new environment requires the machine runtime on the host: the privileged helper, the machine unit
+  template and the polkit rule, which `elowen install` and `elowen update` provision. On a host that does not
+  carry it, creating an environment is refused with the missing readiness named instead of falling back to
+  Podman. Environments created before this release keep running under Podman.
+- Machine environments do not carry completion working-directory capture, have no AppArmor profile, and
+  refuse named volumes and image-backed migration sources; Podman environments are unaffected.
+- The minimum supported Node.js version stays 22.12.0. Registry plugin versions remain on their independent
+  release stream and are not implied by the core release.
+
 ## [0.28.40] - 2026-09-09
 
 Versions 0.28.26 through 0.28.39 were development versions and were never published, so everything below

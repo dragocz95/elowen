@@ -37,7 +37,7 @@ To create a leader sequence, press `Enter`, then press the leader chord (`Ctrl+X
 | `reasoning_cycle` | `Ctrl+R` | Cycle through the active model's reasoning-effort levels. |
 | `stash` | `Ctrl+S` | Stash the current draft; with empty input, restore the latest draft. The stack is session-local and holds up to 10 drafts. |
 | `subagent_cycle` | `Ctrl+O` | Cycle focus through the parent conversation and child sub-agent sessions. |
-| `subagent_background` | `Ctrl+B` | Move foreground sub-agents, workflows, and shell commands to the background. With no such work, the chord remains available to the text editor. |
+| `subagent_background` | `Ctrl+B` | Move foreground sub-agents, workflows, and shell commands to the background. A blocking `ProcessOutput` read is released the same way: the tool returns the output so far, marked as still running with the wait released, and the process is left for a later read. With no such work, the chord remains available to the text editor. |
 | `telemetry_toggle` | `Ctrl+P` | Show or hide the telemetry rail. |
 | `queue_remove` | `leader x` | Remove the last queued message. |
 | `help` | `leader h` | Open the command help picker. |

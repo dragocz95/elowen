@@ -42,7 +42,7 @@ A child inherits the caller's model, reasoning level, working directory, Project
 
 - `read_only: true` for inspection and reporting without the normal `Write`/`Edit` tools. This is a narrower execution boundary, not a filesystem sandbox: the shell clamp still permits some redirection, so do not use it as a guarantee that no file can ever be changed;
 - `tools` for an explicit tool allow-list;
-- `subagent_type` for a named role such as the built-in read-only `explore` or `plan` type;
+- `subagent_type` for a named role: the read-only built-in `explore`, or `plan` and `review`, which keep the full toolset but change no repository;
 - `model` for another configured model. Use `DelegateModels` to see the valid `provider/model` values.
 
 To continue a child that already ran, use `DelegateContinue`. It keeps that child's transcript and original boundary instead of making a new child rediscover the work. An idle child's follow-up turn is delivered like a delegation, in a later turn, unless the call passes `background: false`; a child that is still working is steered instead, and its updated conclusion arrives through the original delegation.

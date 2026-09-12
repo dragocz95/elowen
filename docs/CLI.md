@@ -142,7 +142,7 @@ The following built-in commands are available to the CLI when their required plu
 
 Only one turn executes in a conversation at a time. Messages sent while it is working are queued durably and can survive a daemon restart. `Esc` with a non-empty queue injects the queued message immediately; the leader `x` shortcut removes the last queued message.
 
-The default interrupt window is `1.8` seconds. Press `Esc` while a turn is running to arm interruption, then press it again within the window to abort. Escalation can terminate a pinned foreground command. `Ctrl+B` backgrounds foreground delegated work, workflows, or daemon shell commands without cancelling them.
+The default interrupt window is `1.8` seconds. Press `Esc` while a turn is running to arm interruption, then press it again within the window to abort. Escalation can terminate a pinned foreground command. `Ctrl+B` backgrounds foreground delegated work, workflows, or daemon shell commands without cancelling them. It also releases a blocking `ProcessOutput` read: the tool returns the output so far, marked as still running with the wait released, and the process is left for a later read.
 
 `Ctrl+O` cycles between the parent conversation and child sub-agent views. While a child is selected, plain text steers that child; slash commands still act on the parent conversation.
 
