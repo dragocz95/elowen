@@ -545,14 +545,14 @@ export function createChatComposition(
     const goal = goalMeta(rt.goal);
     const trimmedGoal = goal && opts.goalSuffix === false ? { primary: goal.primary, suffix: '' } : goal;
     const child = rt.childView;
-    // Drilled into a sub-agent: the meta row must describe the CHILD, not the parent. Its model, elapsed
-    // seconds and reasoning level all come from the matching subagent rail entry; its activity from the
-    // child transcript. Work mode stays the parent's — it is a session-wide setting the sub-agent
-    // inherits, not a per-agent one.
+    // Drilled into a sub-agent: the meta row must describe the CHILD, not the parent. Its model and
+    // elapsed seconds come from the child's own lane (usage/activityStartedAt ride the child snapshot);
+    // its reasoning level and name come from the level that DELEGATED it — the ancestor projection,
+    // because the active rail now lists the focused child's own children instead.
     // A workflow node is not on the subagent rail; its live seconds and level sit on the workflow snapshot.
     const childEntry = child
-      ? currentAgents.find((agent) => agent.sessionId === child.sessionId)
-        ?? currentWorkflows.flatMap((wf) => wf.nodes).find((node) => node.sessionId === child.sessionId)
+      ? stream.ancestorSubagentStates().find((agent) => agent.sessionId === child.sessionId)
+        ?? stream.ancestorWorkflowStates().flatMap((wf) => wf.nodes).find((node) => node.sessionId === child.sessionId)
       : undefined;
     // The child snapshot is authoritative. A parent rail entry may be stale after a model switch, and the
     // parent itself may use an entirely different model from this delegated session.
@@ -1195,11 +1195,14 @@ export function createChatComposition(
         }
         // Cycle main conversation → each sub-agent session → back to main (opencode-style).
         case 'subagent_cycle': stream.cycleSubagent(); return;
-        // Ctrl+B backgrounds whatever is waiting in the foreground: a delegate's blocked parent tool result
-        // and/or a running Bash command. Each detach resolves only that wait — the child channel or the
-        // process keeps running and its completion is delivered back to this conversation asynchronously.
+        // Ctrl+B backgrounds whatever is waiting in the foreground of the session the user is LOOKING
+        // at: a delegate's blocked parent tool result and/or a running Bash command. Drilled into a
+        // child, that is the child's own foreground work — the hidden parent's waits stay untouched.
+        // Each detach resolves only that wait — the child channel or the process keeps running and its
+        // completion is delivered back to its own conversation asynchronously.
         case 'subagent_background': {
-          const { subagents: fgSubagents, commands: fgCommands, workflows: fgWorkflows, total } = foregroundWork(stream, rt.processes);
+          const activeSession = rt.childView?.sessionId;
+          const { subagents: fgSubagents, commands: fgCommands, workflows: fgWorkflows, total } = foregroundWork(stream, rt.childView?.processes ?? rt.processes);
           if (total === 0) {
             rt.notice = color.dim('nothing running in the foreground to background');
             render('input:foreground-background-empty');
@@ -1208,12 +1211,13 @@ export function createChatComposition(
           rt.notice = color.dim('moving foreground work to the background…');
           rt.noticeSticky = true; // live progress — the outcome below replaces it and expires normally
           // Fire whichever detaches apply as ONE session task so a single combined notice reports all,
-          // instead of independent callbacks racing to overwrite rt.notice.
+          // instead of independent callbacks racing to overwrite rt.notice. An explicit child session
+          // carries no CLI binding — the daemon authorizes it through the durable ancestry instead.
           lifetime.runSession(
             () => Promise.all([
-              fgSubagents > 0 ? client.backgroundSubagents() : Promise.resolve({ detached: 0 }),
-              fgCommands > 0 ? client.backgroundCommands() : Promise.resolve({ detached: 0 }),
-              fgWorkflows > 0 ? client.backgroundWorkflows() : Promise.resolve({ detached: 0 }),
+              fgSubagents > 0 ? client.backgroundSubagents(activeSession) : Promise.resolve({ detached: 0 }),
+              fgCommands > 0 ? client.backgroundCommands(activeSession) : Promise.resolve({ detached: 0 }),
+              fgWorkflows > 0 ? client.backgroundWorkflows(activeSession) : Promise.resolve({ detached: 0 }),
             ]),
             ([subs, cmds, workflows]) => {
               const parts: string[] = [];

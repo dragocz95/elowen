@@ -368,9 +368,12 @@ export class BrainClient {
     return { usage: body.usage ?? null, compacted: !!body.compacted, message: body.message };
   }
 
-  /** Stop the streaming turn (Esc) — on the bound conversation. */
-  async abort(): Promise<void> {
-    await this.post('/brain/abort', this.bound ? { session: this.bound } : {});
+  /** Stop the streaming turn (Esc / `/stop`) — on the bound conversation, or on an explicit session
+   *  (a delegated child the user drilled into; ownership is enforced server-side through the durable
+   *  ancestry, and a child carries no CLI binding, so no client generation rides along). */
+  async abort(session?: string): Promise<void> {
+    const target = session ?? this.bound;
+    await this.post('/brain/abort', target ? { session: target } : {});
   }
 
   /** Abort the active turn and promote its oldest PI-native queued message into a fresh turn. The server
@@ -386,20 +389,25 @@ export class BrainClient {
     return await res.json() as { interrupted: boolean; injected: boolean };
   }
 
-  /** Release foreground delegate waits while leaving their child sessions running. */
-  async backgroundSubagents(): Promise<{ detached: number }> {
-    const binding = this.bound && this.boundGeneration !== undefined
-      ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
-      : this.bound ? { session: this.bound } : {};
+  /** Release foreground delegate waits while leaving their child sessions running. An explicit
+   *  `session` targets a drilled-in child (authorized server-side); absent targets the binding. */
+  async backgroundSubagents(session?: string): Promise<{ detached: number }> {
+    const binding = session
+      ? { session }
+      : this.bound && this.boundGeneration !== undefined
+        ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
+        : this.bound ? { session: this.bound } : {};
     const res = await this.post('/brain/subagents/background', binding);
     return await res.json() as { detached: number };
   }
 
   /** Move a running foreground Bash command to the background while it keeps running. */
-  async backgroundCommands(): Promise<{ detached: number }> {
-    const binding = this.bound && this.boundGeneration !== undefined
-      ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
-      : this.bound ? { session: this.bound } : {};
+  async backgroundCommands(session?: string): Promise<{ detached: number }> {
+    const binding = session
+      ? { session }
+      : this.bound && this.boundGeneration !== undefined
+        ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
+        : this.bound ? { session: this.bound } : {};
     const res = await this.post('/brain/commands/background', binding);
     return await res.json() as { detached: number };
   }
@@ -408,19 +416,23 @@ export class BrainClient {
    *  Esc or a repeat Ctrl+C after the graceful interrupt). `afterStop` drops the client-generation fence:
    *  the quit path has already released this client's binding via stopSession, so a fenced request would
    *  be rejected as stale — session ownership still authorizes the kill server-side. */
-  async killCommands(opts: { afterStop?: boolean; signal?: AbortSignal } = {}): Promise<{ killed: number }> {
-    const binding = !opts.afterStop && this.bound && this.boundGeneration !== undefined
-      ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
-      : this.bound ? { session: this.bound } : {};
+  async killCommands(opts: { afterStop?: boolean; signal?: AbortSignal; session?: string } = {}): Promise<{ killed: number }> {
+    const binding = opts.session
+      ? { session: opts.session }
+      : !opts.afterStop && this.bound && this.boundGeneration !== undefined
+        ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
+        : this.bound ? { session: this.bound } : {};
     const res = await this.post('/brain/commands/kill', binding, opts.signal);
     return await res.json() as { killed: number };
   }
 
   /** Detach a foreground workflow so its DAG keeps running and delivers its summary asynchronously. */
-  async backgroundWorkflows(): Promise<{ detached: number }> {
-    const binding = this.bound && this.boundGeneration !== undefined
-      ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
-      : this.bound ? { session: this.bound } : {};
+  async backgroundWorkflows(session?: string): Promise<{ detached: number }> {
+    const binding = session
+      ? { session }
+      : this.bound && this.boundGeneration !== undefined
+        ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
+        : this.bound ? { session: this.bound } : {};
     const res = await this.post('/brain/workflows/background', binding);
     return await res.json() as { detached: number };
   }
@@ -923,14 +935,19 @@ export class BrainClient {
   }
 
   /** The owner talking into a delegated sub-agent's session (steered into its running turn, or a fresh
-   *  turn when idle). Fire-and-forget server-side — the reply rides the tapped session stream. */
-  async subagentSend(session: string, text: string): Promise<void> {
+   *  turn when idle). Fire-and-forget server-side — the reply rides the tapped session stream. Image
+   *  attachments ride as content blocks with the same bounds as /brain/send. A non-OK status carries
+   *  the daemon's precise refusal (foreign, recovery-required, access unavailable) in its body. */
+  async subagentSend(session: string, text: string, images?: { data: string; mimeType: string }[]): Promise<void> {
     const res = await this.f(`${this.o.base}/brain/subagent/send`, {
       method: 'POST', headers: { ...this.headers(), 'content-type': 'application/json' },
-      body: JSON.stringify({ session, text }),
+      body: JSON.stringify({ session, text, ...(images?.length ? { images } : {}) }),
     });
     if (res.status === 401) throw new Unauthorized();
-    if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/subagent/send`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      throw new Error(body?.error ?? `elowen brain ${res.status} on /brain/subagent/send`);
+    }
   }
 
   /** Open the SSE stream and deliver each BrainEvent to `onEvent` until `signal` aborts. Follows the

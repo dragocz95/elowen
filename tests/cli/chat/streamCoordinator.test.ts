@@ -1992,3 +1992,145 @@ describe('foregroundWork — command work Ctrl+B can release', () => {
     ]).commands).toBe(0);
   });
 });
+
+describe('StreamCoordinator — nested drill-in rail (A→B→C)', () => {
+  type Lane = (frame: BrainEvent | Record<string, unknown>) => void;
+
+  /** One delegation as the daemon serves it: a Delegate tool row anchoring the child's durable state.
+   *  Projection rows exist only when anchored (applySubagent no-ops without its tool row), so every
+   *  fixture here seeds history the way the real snapshot does. */
+  const anchoredRow = (sessionId: string, callId: string, status: 'running' | 'done' = 'running') => ({
+    role: 'assistant', text: '',
+    segments: [{ kind: 'tool', name: 'Delegate', id: callId, sub: { sessionId, status, task: `work for ${sessionId}`, tools: 1, seconds: 3 } }],
+  });
+  const subRow = (sessionId: string, callId: string, status: 'running' | 'done' = 'running'): BrainEvent =>
+    ({ type: 'subagent', id: callId, sessionId, status, task: `work for ${sessionId}`, tools: 1, seconds: 3 }) as BrainEvent;
+
+  /** Fake client whose child lane hands back its own frame callback, keyed by session. */
+  function childLaneClient(lanes: Map<string, Lane>): BrainClient {
+    return {
+      stream: (cb: Lane, _s?: AbortSignal, _r?: number, _x?: unknown, session?: string) => {
+        if (session) lanes.set(session, cb);
+        return Promise.resolve();
+      },
+      history: () => Promise.resolve([]),
+      processes: () => Promise.resolve([]),
+      rebind: () => {},
+    } as unknown as BrainClient;
+  }
+
+  function snapshot(history: unknown[], events: BrainEvent[] = []): Record<string, unknown> {
+    return { type: 'snapshot', cursor: 0, history, events, truncated: false };
+  }
+
+  function coordinator(rt: ChatState, lanes: Map<string, Lane>): StreamCoordinator {
+    const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+    return new StreamCoordinator(
+      rt, { client: childLaneClient(lanes) }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+  }
+
+  const idsOf = (states: readonly { sessionId: string }[]): string[] => states.map((s) => s.sessionId);
+
+  it('the rail follows the FOCUSED session: drilled into B, it shows B\'s children instead of A\'s', async () => {
+    const lanes = new Map<string, Lane>();
+    const rt = state();
+    // The parent level delegates B (what the rail showed before drilling in).
+    rt.transcript.replaceHistory([anchoredRow('brain-ch-subagent-B', 'call-B')]);
+    const stream = coordinator(rt, lanes);
+
+    await stream.openSubagent('brain-ch-subagent-B');
+    // B's own lane reports that B delegated C.
+    lanes.get('brain-ch-subagent-B')!(snapshot([anchoredRow('brain-ch-subagent-C', 'call-C')]));
+
+    expect(rt.childView?.sessionId).toBe('brain-ch-subagent-B');
+    expect(idsOf(stream.subagentStates())).toEqual(['brain-ch-subagent-C']);
+  });
+
+  it('two calls of the same child render that child ONCE in the focused rail', async () => {
+    const lanes = new Map<string, Lane>();
+    const rt = state();
+    const stream = coordinator(rt, lanes);
+    await stream.openSubagent('brain-ch-subagent-B');
+    lanes.get('brain-ch-subagent-B')!(snapshot([
+      anchoredRow('brain-ch-subagent-C', 'call-C-1', 'done'),
+      anchoredRow('brain-ch-subagent-C', 'call-C-2'),
+    ]));
+
+    expect(idsOf(stream.subagentStates())).toEqual(['brain-ch-subagent-C']);
+  });
+
+  it('drilling into a grandchild keeps a one-level trail; Back returns exactly one level, twice for the parent', async () => {
+    const lanes = new Map<string, Lane>();
+    const rt = state();
+    rt.transcript.replaceHistory([anchoredRow('brain-ch-subagent-B', 'call-B')]);
+    const stream = coordinator(rt, lanes);
+    await stream.openSubagent('brain-ch-subagent-B');
+    lanes.get('brain-ch-subagent-B')!(snapshot([anchoredRow('brain-ch-subagent-C', 'call-C')]));
+
+    await stream.openSubagent('brain-ch-subagent-C');
+    lanes.get('brain-ch-subagent-C')!(snapshot([]));
+    expect(rt.childView?.sessionId).toBe('brain-ch-subagent-C');
+    expect(rt.childTrail.map((level) => level.sessionId)).toEqual(['brain-ch-subagent-B']);
+
+    stream.closeSubagent();
+    await vi.waitFor(() => expect(rt.childView?.sessionId).toBe('brain-ch-subagent-B'));
+    expect(rt.childTrail).toEqual([]);
+    // B reopens DURABLY (a fresh snapshot hydrate), and its rail is restored: C is a child of B again.
+    lanes.get('brain-ch-subagent-B')!(snapshot([anchoredRow('brain-ch-subagent-C', 'call-C')]));
+    expect(idsOf(stream.subagentStates())).toEqual(['brain-ch-subagent-C']);
+
+    stream.closeSubagent();
+    await vi.waitFor(() => expect(rt.childView).toBeNull());
+    // The top level's rail is restored too.
+    expect(idsOf(stream.subagentStates())).toEqual(['brain-ch-subagent-B']);
+  });
+
+  it('stale frames on a lane left behind by drilling deeper cannot touch the focused view or its rail', async () => {
+    const lanes = new Map<string, Lane>();
+    const rt = state();
+    const stream = coordinator(rt, lanes);
+    await stream.openSubagent('brain-ch-subagent-B');
+    lanes.get('brain-ch-subagent-B')!(snapshot([anchoredRow('brain-ch-subagent-C', 'call-C')]));
+
+    await stream.openSubagent('brain-ch-subagent-C');
+    lanes.get('brain-ch-subagent-C')!(snapshot([]));
+    const focusedRevision = rt.childView?.transcript.revision;
+
+    // A late event on the OLD lane (B, torn down when C opened) — including one naming a fresh child of
+    // B — must change nothing at the focused level.
+    lanes.get('brain-ch-subagent-B')!(subRow('brain-ch-subagent-C2', 'call-late'));
+
+    expect(rt.childView?.sessionId).toBe('brain-ch-subagent-C');
+    expect(rt.childView?.transcript.revision).toBe(focusedRevision);
+    expect(idsOf(stream.subagentStates())).toEqual([]);
+  });
+
+  it('Ctrl+B counts the FOCUSED level\'s foreground work, never the hidden parent\'s', async () => {
+    const lanes = new Map<string, Lane>();
+    const rt = state();
+    rt.transcript.replaceHistory([anchoredRow('brain-ch-subagent-B', 'call-B')]);
+    const stream = coordinator(rt, lanes);
+    await stream.openSubagent('brain-ch-subagent-B');
+    lanes.get('brain-ch-subagent-B')!(snapshot([anchoredRow('brain-ch-subagent-C', 'call-C')]));
+
+    // Drilled into B: B's own delegate C is the foreground work in view; A's rail entries must not count.
+    expect(foregroundWork(stream, []).subagents).toBe(1);
+  });
+
+  it('the focused child\'s own rail row is read one level up, from the level that delegated it', async () => {
+    const lanes = new Map<string, Lane>();
+    const rt = state();
+    rt.transcript.replaceHistory([anchoredRow('brain-ch-subagent-B', 'call-B')]);
+    const stream = coordinator(rt, lanes);
+    await stream.openSubagent('brain-ch-subagent-B');
+    lanes.get('brain-ch-subagent-B')!(snapshot([anchoredRow('brain-ch-subagent-C', 'call-C')]));
+
+    // Active rail = B's children; the level above still knows B itself.
+    expect(idsOf(stream.ancestorSubagentStates())).toEqual(['brain-ch-subagent-B']);
+    await stream.openSubagent('brain-ch-subagent-C');
+    lanes.get('brain-ch-subagent-C')!(snapshot([]));
+    expect(idsOf(stream.ancestorSubagentStates())).toEqual(['brain-ch-subagent-C']);
+  });
+});

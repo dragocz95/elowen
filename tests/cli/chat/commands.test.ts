@@ -266,8 +266,8 @@ describe('sub-agent child submit echo', () => {
       wireSubmit(
         state,
         {
-          client: { subagentSend }, editor, shellContext: {}, attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
-          lifetime: new ChatApplicationLifetime<'metadata'>(),
+          client: { subagentSend }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+          commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render } as never,
         { stream: {}, pickers: {} } as never,
@@ -285,6 +285,91 @@ describe('sub-agent child submit echo', () => {
       else process.env.HOME = priorHome;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  it('delivers pending image attachments to the VIEWED child and clears the chips', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-child-attach-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const subagentSend = vi.fn(async () => {});
+      const render = vi.fn();
+      const attachmentChips = testAttachmentChips();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      state.childView = { sessionId: 'brain-ch-subagent-child', transcript: new TranscriptModel(), loading: false };
+      state.pendingImages = [{ name: 'shot.png', data: 'aGk=', mimeType: 'image/png' } as never];
+      wireSubmit(
+        state,
+        {
+          client: { subagentSend }, editor, shellContext: new LocalShellBuffer(), attachmentChips,
+          commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('what is in this screenshot');
+      await Promise.resolve();
+
+      expect(subagentSend).toHaveBeenCalledWith('brain-ch-subagent-child', 'what is in this screenshot',
+        [{ data: 'aGk=', mimeType: 'image/png' }]);
+      expect(state.pendingImages).toEqual([]);
+      expect(attachmentChips.set).toHaveBeenCalledWith([]);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('/stop — targets the session the user is LOOKING at', () => {
+  /** The catalog the daemon publishes for these tests must carry `/stop` — an unpublished name is
+   *  treated as chat text, which is exactly the routing under test here. */
+  const STOP_COMMAND_DEFS = [...TEST_COMMAND_DEFS, { name: 'stop' }] as never;
+
+  function stopHarness(childThinking: boolean) {
+    let onSubmit: ((text: string) => void) | undefined;
+    const editor = {
+      addToHistory: vi.fn(), setText: vi.fn(),
+      set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+    };
+    const abort = vi.fn(async () => {});
+    const render = vi.fn();
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const childTranscript = new TranscriptModel();
+    if (childThinking) childTranscript.apply({ type: 'tool_authoring', name: 'Bash', detail: 'long build' } as never);
+    state.childView = { sessionId: 'brain-ch-subagent-child', transcript: childTranscript, loading: false };
+    wireSubmit(
+      state,
+      {
+        client: { abort }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        commandDefs: STOP_COMMAND_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+      } as never,
+      { render } as never,
+      { stream: {}, pickers: {} } as never,
+    );
+    return { onSubmit, abort, state };
+  }
+
+  it('a running viewed child is stopped by explicit session — the hidden parent stays untouched', async () => {
+    const { onSubmit, abort } = stopHarness(true);
+    onSubmit?.('/stop');
+    await Promise.resolve();
+    expect(abort).toHaveBeenCalledWith('brain-ch-subagent-child');
+  });
+
+  it('reports nothing running when the VIEWED child is idle, even if the parent runs', () => {
+    const { onSubmit, abort, state } = stopHarness(false);
+    state.transcript.apply({ type: 'tool_authoring', name: 'Bash', detail: 'long build' } as never); // parent busy, but it is NOT in view
+    onSubmit?.('/stop');
+    expect(abort).not.toHaveBeenCalled();
+    expect(state.notice).toContain('nothing is running');
   });
 });
 

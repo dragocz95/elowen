@@ -21,10 +21,20 @@ const historyNotice = (scope: 'conversation' | 'sub-agent', error: unknown): str
 };
 
 export interface StreamCoordinatorPort {
+  /** The rail subtree of the session the user is LOOKING at: the parent's direct children at the top
+   *  level, the focused child's direct children once drilled in. */
   subagentStates(): readonly SubagentState[];
   workflowStates(): readonly WorkflowState[];
+  /** The level ABOVE the focused child — where that child's own rail row lives. Same as
+   *  `subagentStates()` when nothing is focused. */
+  ancestorSubagentStates(): readonly SubagentState[];
+  ancestorWorkflowStates(): readonly WorkflowState[];
   openSubagent(sessionId: string): Promise<void>;
+  /** Back ONE level: a grandchild to its parent level, a top-level child to the conversation. */
   closeSubagent(): void;
+  /** Leave the drill-in entirely — the parent conversation is the view again (a slash command that
+   *  must act on the parent conversation itself snaps back through this, never through Back). */
+  exitSubagent(): void;
   cycleSubagent(): void;
   openStream(ac: AbortController): void;
   restartStream(): void;
@@ -69,8 +79,11 @@ export function foregroundWork(
 export class StreamCoordinator implements StreamCoordinatorPort {
   readonly subagentStates: () => readonly SubagentState[];
   readonly workflowStates: () => readonly WorkflowState[];
+  readonly ancestorSubagentStates: () => readonly SubagentState[];
+  readonly ancestorWorkflowStates: () => readonly WorkflowState[];
   readonly openSubagent: (sessionId: string) => Promise<void>;
   readonly closeSubagent: () => void;
+  readonly exitSubagent: () => void;
   readonly cycleSubagent: () => void;
   readonly openStream: (ac: AbortController) => void;
   readonly restartStream: () => void;
@@ -109,10 +122,21 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       clearHydrationNotice('child');
     };
 
-    const subagentStates = (): readonly SubagentState[] => rt.transcript.subagents();
-    const workflowStates = (): readonly WorkflowState[] => rt.transcript.workflows();
-    const subagentSessions = (): { sessionId: string }[] =>
-      subagentStates().map(({ sessionId }) => ({ sessionId }));
+    const subagentStates = (): readonly SubagentState[] =>
+      rt.childView ? rt.childView.transcript.subagents() : rt.transcript.subagents();
+    const workflowStates = (): readonly WorkflowState[] =>
+      rt.childView ? rt.childView.transcript.workflows() : rt.transcript.workflows();
+    /** The rail of the level ABOVE the focused child: the transcript that delegated it, which is the
+     *  only projection holding the focused child's own row (name, model, reasoning level) for the
+     *  header. With nothing focused this is simply the parent's own rail. */
+    const ancestorSubagentStates = (): readonly SubagentState[] => {
+      const above = rt.childTrail.at(-1);
+      return above ? above.transcript.subagents() : rt.transcript.subagents();
+    };
+    const ancestorWorkflowStates = (): readonly WorkflowState[] => {
+      const above = rt.childTrail.at(-1);
+      return above ? above.transcript.workflows() : rt.transcript.workflows();
+    };
 
     const replayParent = (
       events: readonly BrainEvent[],
@@ -343,6 +367,21 @@ export class StreamCoordinator implements StreamCoordinatorPort {
 
     const openSubagent = async (sessionId: string): Promise<void> => {
       if (stopped || switchingSessionGeneration !== null) return;
+      // Drilling DOWN (the target is one of the focused session's own children) pushes the level being
+      // left onto the trail, so Back can reopen it and its retained projection can still answer "who
+      // delegated the level we are now on". A LATERAL move — cycling to a sibling, any target the
+      // focused session did not delegate itself — replaces the view in place and leaves the trail, and
+      // therefore "one level up", exactly where it was.
+      const focused = rt.childView;
+      if (focused && focused.sessionId !== sessionId) {
+        const ownChildren = new Set([
+          ...focused.transcript.subagents().map((s) => s.sessionId),
+          ...focused.transcript.workflows().flatMap((wf) => wf.nodes.filter((n) => n.sessionId).map((n) => n.sessionId)),
+        ]);
+        if (ownChildren.has(sessionId)) {
+          rt.childTrail.push({ sessionId: focused.sessionId, transcript: focused.transcript });
+        }
+      }
       const parentGeneration = sessionGeneration;
       teardownChild();
       const generation = childGeneration;
@@ -530,7 +569,23 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     flows.openPlanDecision();
   };
 
+    /** Back: exactly ONE level. From a grandchild to its parent level (reopened from its durable
+     *  transcript), from a top-level child back to the parent conversation. Esc keeps this meaning —
+     *  navigation first, never a stop. */
     const closeSubagent = (): void => {
+      if (stopped || switchingSessionGeneration !== null) return;
+      const back = rt.childTrail.pop();
+      teardownChild();
+      if (back) { void openSubagent(back.sessionId); return; }
+      if (!stopped) render('child:closed');
+      maybeRaisePlanDecision();
+    };
+
+    /** A slash command must act on the parent conversation itself, so the whole drill-in (however
+     *  deep) collapses at once — this is not Back, it is leaving the drill-in. */
+    const exitSubagent = (): void => {
+      if (stopped || switchingSessionGeneration !== null) return;
+      rt.childTrail = [];
       teardownChild();
       if (!stopped) render('child:closed');
       maybeRaisePlanDecision();
@@ -538,7 +593,10 @@ export class StreamCoordinator implements StreamCoordinatorPort {
 
     const cycleSubagent = (): void => {
       if (stopped || switchingSessionGeneration !== null) return;
-      const ring = subagentSessions();
+      // Ctrl+O walks the ring the focused child belongs to — its siblings, or the parent's own children
+      // at the top level — so cycling past the last one goes back one level ("cycle to main"), exactly
+      // as it always did in the flat case.
+      const ring = ancestorSubagentStates().map(({ sessionId }) => ({ sessionId }));
       if (ring.length === 0) { rt.notice = color.dim('no sub-agent in this conversation yet'); render(); return; }
       const at = rt.childView ? ring.findIndex((row) => row.sessionId === rt.childView!.sessionId) : -1;
       const next = ring[at + 1];
@@ -551,6 +609,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       const generation = ++sessionGeneration;
       switchingSessionGeneration = generation;
       teardownChild();
+      rt.childTrail = [];
       invalidateAsyncState();
       rt.setGoal(null);
       rt.streamAc.abort();
@@ -609,14 +668,18 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       sessionGeneration += 1;
       switchingSessionGeneration = null;
       teardownChild();
+      rt.childTrail = [];
       rt.streamAc.abort();
       hydrator.stop();
     };
 
     this.subagentStates = subagentStates;
     this.workflowStates = workflowStates;
+    this.ancestorSubagentStates = ancestorSubagentStates;
+    this.ancestorWorkflowStates = ancestorWorkflowStates;
     this.openSubagent = openSubagent;
     this.closeSubagent = closeSubagent;
+    this.exitSubagent = exitSubagent;
     this.cycleSubagent = cycleSubagent;
     this.openStream = openStream;
     this.restartStream = restartStream;

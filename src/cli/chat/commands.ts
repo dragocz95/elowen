@@ -326,15 +326,45 @@ export function wireSubmit(
     // Inside a sub-agent view, plain text goes to the CHILD (steered into its running turn, or a fresh
     // child turn when idle) — the reply streams into the open view. Slash commands always act on the
     // parent conversation, so they snap back first (running /new while "inside" a child would be chaos).
+    // The payload is composed EXACTLY like a parent send — buffered `!` shell context, `@` mention
+    // expansions, pasted image attachments — because the viewed child is the conversation this message
+    // belongs to; only the transport differs (the sub-agent send seam, which enforces the child's
+    // durable scope server-side).
     if (rt.childView && !command) {
       const target = rt.childView.sessionId;
+      const mentions = expandMentions(trimmed, process.cwd());
       // The child daemon stream emits the authoritative `user` event for both a running steer and an
       // idle fresh turn. Do not echo locally: on a running child that produced two identical bubbles.
-      render(); // flush the cleared editor while the request reaches the daemon
-      runSession(() => client.subagentSend(target, trimmed), () => {}, fail);
+      const sendChild = (clipboardImages: PendingImage[]): void => {
+        const all = [...rt.pendingImages, ...mentions.images, ...clipboardImages];
+        const images = all.slice(0, MAX_IMAGES_PER_MESSAGE);
+        if (all.length > images.length) rt.notice = color.warning(`only ${MAX_IMAGES_PER_MESSAGE} images per message — ${all.length - images.length} dropped`);
+        rt.pendingImages = [];
+        attachmentChips.set([]);
+        render(); // flush the cleared editor + attachment chips while the request reaches the daemon
+        runSession(
+          () => client.subagentSend(
+            target,
+            shellContext.take(composeWithAttachments(trimmed, mentions.block)),
+            ...(images.length ? [images.map((i) => ({ data: i.data, mimeType: i.mimeType }))] : []),
+          ),
+          () => {},
+          fail,
+        );
+      };
+      if (mentions.wantsClipboard) {
+        runSession((signal) => readClipboard(signal), (r) => {
+          if (!r.image) rt.notice = color.error(r.error ?? 'no image on the clipboard');
+          sendChild(r.image ? [r.image] : []);
+        });
+        return;
+      }
+      sendChild([]);
       return;
     }
-    if (rt.childView && command) stream.closeSubagent();
+    // `/stop` is the one slash that acts INSIDE the focused view: it stops the session the user is
+    // LOOKING at (the viewed child), not the hidden parent — so it must not snap back first.
+    if (rt.childView && command && command.cmd !== 'stop') stream.exitSubagent();
     if (command) {
       switch (command.cmd) {
         case 'quit': quit(); return;
@@ -630,10 +660,14 @@ export function wireSubmit(
           return;
         }
         case 'stop': {
-          if (!rt.transcript.thinking) { rt.notice = color.dim('nothing is running'); render(); return; }
+          // The control targets the VIEWED session: a focused child is stopped by explicit session
+          // (authorized server-side through the durable ancestry), never the hidden parent.
+          const child = rt.childView;
+          const active = child?.transcript ?? rt.transcript;
+          if (!active.thinking) { rt.notice = color.dim('nothing is running'); render(); return; }
           rt.notice = color.dim('stopping…');
           render();
-          runSession(() => client.abort(), () => { rt.notice = color.dim('agent stopped'); render(); }, fail);
+          runSession(() => client.abort(child?.sessionId), () => { rt.notice = color.dim('agent stopped'); render(); }, fail);
           return;
         }
         case 'stats':
