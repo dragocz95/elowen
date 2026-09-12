@@ -1231,11 +1231,11 @@ export interface TokenUsage {
    *  over the WHOLE logical model request, measured from its initiation — before the provider's
    *  response headers were awaited — to the complete response, retries and backoff included, tool
    *  execution excluded. An end-to-end rate the client experienced, not a pure decode rate. Only
-   *  generations carrying the recorder's effective stamp count, so history written before it existed
-   *  never leaks its narrower post-header window into this figure (null = nothing effective measured). */
+   *  successful generations carrying the recorder's effective stamp count. Failed retry prefixes,
+   *  unversioned compaction rollups and older history remain unknown (null = nothing effective measured). */
   effectiveTps?: number | null;
   /** The output tokens `effectiveTps` was measured over — same contract as `measuredOutput` over the
-   *  end-to-end window. Cross-bucket averages prefer this pair. */
+   *  end-to-end window. Effective-speed averages use this pair. */
   effectiveMeasuredOutput?: number;
 }
 

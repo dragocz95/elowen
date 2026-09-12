@@ -60,8 +60,8 @@ describe('stats overlay — Σ speed', () => {
     // x timed only 10k of its 1.01M output (200 s → 50 tok/s); y timed all 20k (200 s → 100 tok/s).
     // Duration-weighted: 30k over 400 s = 75 tok/s. Weighting by TOTAL output would yield ~50.
     expect(sigmaRow([
-      model('elowen:x', { output: 1_010_000, total: 1_010_000, outputTps: 50, measuredOutput: 10_000 }),
-      model('elowen:y', { output: 20_000, total: 20_000, outputTps: 100, measuredOutput: 20_000 }),
+      model('elowen:x', { output: 1_010_000, total: 1_010_000, effectiveTps: 50, effectiveMeasuredOutput: 10_000 }),
+      model('elowen:y', { output: 20_000, total: 20_000, effectiveTps: 100, effectiveMeasuredOutput: 20_000 }),
     ])).toMatch(/\s75\s/);
   });
 
@@ -72,20 +72,19 @@ describe('stats overlay — Σ speed', () => {
     expect(row).not.toMatch(/\s40\s/);
   });
 
-  it('prefers the EFFECTIVE pair for the average, falling back to legacy only when nothing measured end-to-end', () => {
-    // Effective pair for x (100 over 2 s → 50 tok/s) and legacy-only for y: the Σ uses the effective
-    // samples it can weight — the legacy window of y must NOT leak into it.
+  it('uses only the EFFECTIVE pair for the average', () => {
     expect(sigmaRow([
       model('elowen:x', { output: 200, total: 200, effectiveTps: 50, effectiveMeasuredOutput: 100, outputTps: 400, measuredOutput: 50 }),
       model('elowen:y', { output: 100, total: 100, outputTps: 10, measuredOutput: 5000 }),
     ])).toMatch(/\s50\s/);
-    // No effective samples anywhere → the legacy weighting answers as before.
-    expect(sigmaRow([
+    const legacyOnly = sigmaRow([
       model('elowen:x', { output: 100, total: 100, outputTps: 40, measuredOutput: 100 }),
-    ])).toMatch(/\s40\s/);
+    ]);
+    expect(legacyOnly).toContain('—');
+    expect(legacyOnly).not.toMatch(/\s40\s/);
   });
 
-  it('shows each model row at its effective rate when it measured one, legacy otherwise', () => {
+  it('shows effective model rates and keeps legacy-only rows unknown', () => {
     const lines = renderOverlay({
       models: [
         model('elowen:new', { output: 100, total: 100, effectiveTps: 250, outputTps: 999, measuredOutput: 100 }),
@@ -94,9 +93,9 @@ describe('stats overlay — Σ speed', () => {
       keys: ['\x1b[C'],
     });
     const body = lines.join('\n');
-    expect(body).toContain('250');           // effective wins where it exists
-    expect(body).toContain('80');            // legacy still answers for pre-effective history
-    expect(body).not.toContain('999');       // the legacy rate is hidden behind the effective one
+    expect(body).toContain('250');
+    expect(body).not.toContain('80');
+    expect(body).not.toContain('999');
   });
 });
 
