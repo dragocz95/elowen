@@ -167,6 +167,7 @@ elowen api GET /auth/me
 | `POST` | `/projects/default` | Authenticated | Ensure the caller has a default project, creating it if needed. |
 | `PATCH` | `/projects/:id` | Managed: project member; host: admin | Update a host project's path, notes, or project-relative image icon; managed project members may update notes, icon, and the `memoryShared` flag. The slug is immutable. |
 | `DELETE` | `/projects/:id` | Managed: project manage rights; host: admin | Remove a project from Elowen's registry and access grants without touching host files. A managed project is deleted through the environment provider and answers `202` with the deletion operation. The home project cannot be removed. |
+| `POST` | `/projects/:id/adopt` | Admin | Adopt a host project as managed in place, keeping the row, its members and its history and recording the directory it came from. `{ "undo": true }` releases it back to a host project. The home project cannot be adopted. |
 | `GET` | `/projects/:id/memory-members` | Admin | Read the accounts allowed to use the Project's shared memory pool. An empty share list means every Project member is included. |
 | `PUT` | `/projects/:id/memory-members` | Admin | Replace the shared-memory member list with `{ "userIds": [ ... ] }`; every account must exist and already be assigned to the Project. |
 | `GET` | `/projects/:id/git` | Project access | Read the project's Git snapshot, branches, and recent commits. |

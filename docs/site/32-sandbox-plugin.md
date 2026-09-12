@@ -8,7 +8,7 @@ group: Plugin reference
 
 # Sandbox & Environments
 
-The `sandbox` plugin, listed in **Settings → Plugins** under the label Environments, gives each linked account a private development environment and real Git worktrees, and runs persistent container environments for managed Projects. It has two halves. Account worktrees give one conversation an isolated checkout of a Project branch, with its own commit flow. Project environments are long-lived rootless containers that host services, worktrees and data, and can be started, stopped, snapshotted and restored. The plugin also owns how command execution is contained for accounts without operator authority.
+The `sandbox` plugin, listed in **Settings → Plugins** under the label Environments, gives each linked account a private development environment and real Git worktrees, and runs persistent container environments for managed Projects. It has two halves. Account worktrees give one conversation an isolated checkout of a Project branch, with its own commit flow. Project environments are long-lived machines with a persistent disk of their own that host services, worktrees and data, and can be started, stopped, snapshotted and restored. The plugin also owns how command execution is contained for accounts without operator authority.
 
 For how Projects, Sandbox and GitHub fit together from a member's point of view, see [Projects, Sandbox & GitHub](projects-workflow). This page documents the plugin itself: surfaces, tools, settings, and the limits visible in its behavior.
 
@@ -60,9 +60,8 @@ The plugin has one instance-wide configuration, edited in its detail view under 
 | Processor | `defaultCpus` | number, slider | `1` | CPU cores a newly provisioned environment may use, 0.1 to 64, enforced by the CPU quota. |
 | Memory | `defaultMemoryMb` | number, slider | `1024` | Memory ceiling in MiB, 128 to 65536. A process that exceeds it is terminated by the kernel. |
 | Processes | `defaultPidsLimit` | number, slider | `512` | Maximum number of processes and threads inside the environment, 32 to 8192. |
-| Disk threshold | `defaultDiskSoftMb` | number, input | `10240` | Advisory disk figure in MiB, 512 to 1048576. Usage is reported against it, not enforced. |
 
-The four resource defaults apply when an environment is first provisioned. Existing environments keep the limits they were created with; an administrator changes those on the Project itself, and a change is applied to the running container without a restart. If a configured value is missing or unusable, provisioning falls back to the built-in figures of 1 CPU, 1024 MiB memory, 512 processes and a 10240 MiB disk threshold.
+The three resource defaults apply when an environment is first provisioned. Existing environments keep the limits they were created with; an administrator changes those on the Project itself, and a change is applied to the running environment without a restart. If a configured value is missing or unusable, provisioning falls back to the built-in figures of 1 CPU, 1024 MiB memory and 512 processes.
 
 ## The normal workspace flow
 
@@ -96,9 +95,11 @@ A confined terminal session is the only command surface that receives the accoun
 
 ## Persistent Project environments
 
-A managed Project has one persistent environment, a rootless container that requires rootless Podman on the host. It is provisioned on demand the first time it is needed and reports one of the states unprovisioned, starting, running, stopped, failed, deleting or deleted.
+A managed Project has one persistent environment. A new environment is built on the systemd-nspawn machine runtime, which the installer provisions and which the host must carry before the first environment can be created; environments created earlier keep running under rootless Podman until an administrator migrates them. It is provisioned on demand the first time it is needed and reports one of the states unprovisioned, starting, running, stopped, failed, deleting or deleted.
 
 Lifecycle tools write durable requests, and daemon reconciliation performs the actual work. `EnvironmentStart`, `EnvironmentStop`, `EnvironmentSnapshot` and `EnvironmentRestore` return an operation immediately; `EnvironmentOperation` reports its real status. Reuse the same request id to retry an interrupted request without queuing a second one, and pass an expected generation to fail cleanly if the environment changed in the meantime. `EnvironmentLogs` reads the bounded lifecycle log and the guest system journal; `EnvironmentStatus` reads state without starting anything.
+
+An environment that predates persistent disks is moved onto one with a disk migration, and an environment already on a persistent disk is moved from Podman to the machine runtime with a runtime migration. Both are administrator-only, are requested like any other lifecycle operation, and a runtime change copies no data: the same disk keeps running under a different envelope.
 
 Stopping interrupts shared project services and running commands while preserving files and installed packages. A snapshot pauses execution and captures the root filesystem, HOME, worktrees and data. It is crash-consistent, not database-consistent, so an application database may need its own export; a note up to 2,000 characters can describe it. Project snapshots always include every component. A restore replaces the environment with the chosen snapshot in a fresh generation, discarding everything since the snapshot and interrupting running work, so it requires the user's explicit confirmation first. Deleting a Project deletes its environment with it; published Sites must be transferred or deleted first, and cleanup completion is reported asynchronously.
 
@@ -118,8 +119,8 @@ Project boundaries remain the real gate. Every workspace operation, environment 
 - Release and removal are blocked while a process lease is active; stale leases are reaped automatically.
 - Environment tools work only on managed Projects and refuse anything else.
 - Snapshots are crash-consistent rather than database-consistent, and databases may need a separate export before a restore.
-- Resource limits are fixed at provisioning for an existing environment until an administrator changes them on the Project; the disk threshold is advisory and never enforced.
-- Environments need rootless Podman on the host. When the runtime is unavailable, provisioning fails and the state reports it.
+- Resource limits are fixed at provisioning for an existing environment until an administrator changes them on the Project.
+- A new environment needs the machine runtime on the host: the privileged helper, the machine unit template and the polkit rule, installed by `elowen install` and `elowen update`. Podman is still needed as the image store. When either is unavailable, the first start refuses and names what is missing.
 - If legacy and current account HOME directories both exist after an upgrade, startup migration is refused and the readiness panel names the collision for an operator to resolve.
 
 For the account HOME, reset behavior and Git author, see [Projects, Sandbox & GitHub](projects-workflow). For plugin settings in general, see [Plugins](plugins).

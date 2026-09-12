@@ -26,7 +26,7 @@ Opening a site in the screen shows its detail: the address, the runtime state, r
 
 **Roll back.** `SiteRollback` restores an earlier file release, or schedules the restoration of an environment snapshot. Older releases beyond the configured count are removed automatically, and the release a site currently serves is never removed.
 
-**Delete.** `SiteDelete` stops the address working and deletes every release. The source folder in the Project is left untouched.
+**Delete.** `SiteDelete` stops the address working, retires the site's gateway block and its certificate, and deletes every release. The source folder in the Project is left untouched.
 
 ## Runtimes
 
@@ -35,13 +35,13 @@ Opening a site in the screen shows its detail: the address, the runtime state, r
 | Static | Files are served from the published release. A static site has no runtime process and no runtime log. |
 | Command | A start command runs Node, Bun, Python or TypeScript inside the published release. It listens on a private unix socket exposed as `SOCKET_PATH`, or on a loopback `HOST` and `PORT` when an administrator enables ports. |
 | PHP | The site is served through PHP-CGI and takes no start command. |
-| Environment | A persistent rootless Podman environment with systemd, a private root filesystem, `/workspace` and `/data` volumes, and a single host-owned ingress socket. It survives publishes and is started, stopped and restarted deliberately. |
+| Environment | A persistent environment with systemd, a private root filesystem, `/workspace` and `/data` volumes, and a single host-owned ingress socket. A new one is a systemd-nspawn machine; one created before that runtime keeps running under rootless Podman. It survives publishes and is started, stopped and restarted deliberately. |
 
 Command, PHP and environment runtimes share one transport: requests and responses are buffered whole, request bodies are capped at 1 MB, and streaming, server-sent events and WebSockets are not supported.
 
 The site detail shows the runtime state, and for a command site also the start command, the connection mode and its recent output.
 
-Persistent environments need host dependencies and a wildcard domain that leads to this Elowen instance. The **Environment setup** panel in the plugin detail checks both, reports the observed DNS target, and can install what is missing. The check shows the record type, name and value needed to point the domain correctly. Installation adds the required packages such as Podman and its supporting tools, configures subordinate IDs, user linger and cgroup delegation, and builds the deterministic base image. It does not restart Elowen or the host web stack.
+Persistent environments need host dependencies and a wildcard domain that leads to this Elowen instance. The **Environment setup** panel in the plugin detail checks both, reports the observed DNS target, and can install what is missing. The check shows the record type, name and value needed to point the domain correctly. Installation adds the required packages such as Podman and its supporting tools, configures subordinate IDs, user linger and cgroup delegation, and builds the deterministic base image. It does not restart Elowen or the host web stack. The machine runtime an environment actually boots on is installed and provisioned by `elowen install` and `elowen update`, not by this panel.
 
 ## Sharing and visibility
 
@@ -64,7 +64,7 @@ The Sites screen keeps the two audiences apart: sites you own on one side, and s
 
 ## Addresses and certificates
 
-Every site keeps its own address for as long as the site exists. Public Sites DNS is directed at the hostname or IP configured in **Sites DNS destination**; left empty, the Elowen app hostname is used. The destination must reach the host directly, since an external proxy would need its own TLS support. Issuing certificates requires a contact email address, which is sent to the certificate authority and stored nowhere else.
+Every site keeps its own address for as long as the site exists. Public Sites DNS is directed at the hostname or IP configured in **Sites DNS destination**; left empty, the Elowen app hostname is used. The destination must reach the host directly, since an external proxy would need its own TLS support. Issuing certificates requires a contact email address, which is sent to the certificate authority and stored nowhere else. A certificate is issued separately from the publish, so a freshly published site reports its certificate as pending until a TLS check confirms that the gateway serves this hostname's own certificate. `SitePublish` and `SiteGet` report that verdict as ready, pending or error, and the address is presented as usable HTTPS only once it is ready.
 
 ## Logs and snapshots
 
@@ -91,11 +91,11 @@ Every site keeps its own address for as long as the site exists. Public Sites DN
 
 ## How to install and enable
 
-Install the plugin from **Settings → Plugins → Available**. The manifest requires Elowen 0.28.35 or newer; the marketplace refuses installation on an older core. The plugin is not user-grantable, so there is no per-user grant step. Enabling asks for consent to the plugin's declared capabilities, which include mutating events, alongside its reads and network access. See [Plugins](plugins) for the general lifecycle.
+Install the plugin from **Settings → Plugins → Available**. The manifest requires Elowen 0.28.42 or newer; the marketplace refuses installation on an older core. The plugin is not user-grantable, so there is no per-user grant step. Enabling asks for consent to the plugin's declared capabilities, which include mutating events, alongside its reads and network access. See [Plugins](plugins) for the general lifecycle.
 
 ## Configuration
 
-Configuration is instance-wide and edited in the plugin's detail view under **Settings → Plugins**. The schema contains 29 entries: the four group headings `publishing`, `runtimes`, `limits` and `access`, which store no value, and the 25 fields below. Fields marked as advanced appear under the **Advanced** tab of the detail view.
+Configuration is instance-wide and edited in the plugin's detail view under **Settings → Plugins**. The schema contains 28 entries: the four group headings `publishing`, `runtimes`, `limits` and `access`, which store no value, and the 24 fields below. Fields marked as advanced appear under the **Advanced** tab of the detail view.
 
 ### Publishing
 
@@ -110,12 +110,11 @@ Configuration is instance-wide and edited in the plugin's detail view under **Se
 | Field | Key | Type | Default | What it does |
 | --- | --- | --- | --- | --- |
 | Allow command and PHP runtimes | `allowCommandRuntime` | boolean | off | Lets a published release run Node, Bun, Python or TypeScript behind a private unix socket or an explicitly enabled loopback port, or execute PHP through PHP-CGI. |
-| Allow persistent environments | `allowEnvironments` | boolean | off | Allows persistent rootless Podman environments with systemd, a private root filesystem and a single host-owned ingress socket. |
+| Allow persistent environments | `allowEnvironments` | boolean | off | Allows persistent machine environments with systemd, a private root filesystem and a single host-owned ingress socket. |
 | Environment network | `environmentNetwork` | enum | shared | Outbound internet uses rootless slirp4netns with host loopback disabled. No network gives the environment no interface beyond its own loopback. Options: shared, isolated. |
 | Environment CPUs | `environmentCpus` | number | 1 | CPU limit applied when an environment container is created. Range 0.25 to 8. |
 | Environment memory | `environmentMemoryMb` | number | 1024 | Memory and memory-plus-swap limit in MB applied when an environment container is created. Range 128 to 32,768. |
 | Environment process limit | `environmentPidsLimit` | number | 512 | Maximum number of processes and threads in one environment. Range 16 to 4,096. |
-| Environment disk threshold | `environmentDiskSoftMb` | number | 4096 | Recorded soft disk threshold in MB, reported with the environment. Sites does not measure disk usage, warn about it, or enforce a quota. Range 256 to 131,072. |
 | Environments per account | `maxEnvironmentsPerAccount` | number | 3 | How many persistent environments one account may keep, counted separately from ordinary sites. Range 1 to 20. |
 | Command and PHP network | `runtimeNetwork` | enum | isolated | Shared gives site processes ordinary outbound internet and access to network services visible from the host. Site processes receive no Elowen bearer token or daemon secrets. Options: isolated, shared. |
 | Allow loopback ports | `allowLoopbackPorts` | boolean | off | Compatibility mode for frameworks that cannot listen on `SOCKET_PATH`. Every local process on the host can reach these ports, so keep it off on mutually untrusted multi-user installations. |
@@ -153,7 +152,7 @@ Static sites are always available. The two heavier runtime families are disabled
 
 ## Environment state and limits
 
-An environment reports a desired state and an observed state, and `SiteControl` requests start, stop or restart as a durable intent the daemon carries out. Administrators can adjust an environment's CPU, memory, process and disk figures per site, from the site detail or through `SiteUpdate`; a blank value inherits the instance default, and values outside the instance bounds are clamped. The disk figure is a recorded threshold reported with the environment. Environments are counted separately from ordinary sites, with their own per-account cap.
+An environment reports a desired state and an observed state, and `SiteControl` requests start, stop or restart as a durable intent the daemon carries out. Administrators can adjust an environment's CPU, memory and process figures per site, from the site detail or through `SiteUpdate`; a blank value inherits the instance default, and values outside the instance bounds are clamped. Environments are counted separately from ordinary sites, with their own per-account cap.
 
 Snapshots are listed in the site detail with their ids and notes. A restore is scheduled rather than immediate: the environment stops, the snapshot replaces its root filesystem, and, when chosen, the data volume as well.
 
@@ -172,7 +171,6 @@ The plugin is not user-grantable, so authenticated accounts reach its tools acco
 | Releases | Kept per `releasesKept`; the live release is never removed |
 | Static sites | No runtime process and no runtime log |
 | Snapshots | Crash-consistent, not database-consistent; databases need their own backup procedure |
-| Disk | `environmentDiskSoftMb` is a reported figure only; Sites does not measure, warn about or enforce disk usage |
 | Per-account caps | `maxSitesPerAccount` sites and `maxEnvironmentsPerAccount` environments |
 | Public visibility | Needs an explicit confirmation by a person in the Sites screen |
 | Preview | A preview origin is for Project members and administrators only and is not a published release |

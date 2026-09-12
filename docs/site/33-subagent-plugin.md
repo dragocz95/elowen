@@ -50,7 +50,7 @@ A child inherits the caller's model, reasoning level, working directory and effe
 
 - `read_only` gives the child look-only tools without write and edit tools, a shell clamped to non-destructive commands, and no ability to delegate further. The clamp is a guardrail rather than a sandbox: redirection can still write files.
 - `tools` names an exact toolset drawn from the caller's own tools. An empty list is rejected, and a tool the caller does not hold is refused by name.
-- `subagent_type` runs the child as a typed role from the catalog. The built-in `explore` and `plan` types ship read-only, administrators add more in the **Agents** panel, and an unknown type is refused with the valid names.
+- `subagent_type` runs the child as a typed role from the catalog. Three types ship built in: `explore`, which is read-only, and `plan` and `review`, which keep the caller's full toolset so they can run real checks and write their plan or report, while changing no repository. Administrators add more in the **Agents** panel, and an unknown type is refused with the valid names.
 - `model` and `thinkingLevel` choose a configured model and reasoning effort for this delegation only. `DelegateModels` lists the valid values; by default the child inherits the caller's model.
 - `workspaceId` confines the child to one Git Sandbox worktree as its logical filesystem root.
 

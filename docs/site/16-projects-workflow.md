@@ -66,7 +66,7 @@ Choose the whole Project or one folder, then use the mirror controls to pause, r
 
 The optional **Sites** plugin creates a `sites/` source folder inside the active Project or Sandbox workspace. `SiteCreate` creates a draft, and `SitePublish` copies the finished output into a retained release. Static sites are available by default; command and PHP runtimes require an administrator to enable them.
 
-Sites can be private, visible to Project members, available to signed-in accounts, shared with named guests, or made public through an explicit confirmation in the Sites UI. Persistent rootless environments are a separate high-privilege option and require administrator setup, host dependencies, and resource limits. Site source remains in the Project even if the published site is deleted.
+Sites can be private, visible to Project members, available to signed-in accounts, shared with named guests, or made public through an explicit confirmation in the Sites UI. Persistent environments are a separate high-privilege option and require administrator setup, host dependencies, and resource limits. Site source remains in the Project even if the published site is deleted.
 
 ### Project Editor
 

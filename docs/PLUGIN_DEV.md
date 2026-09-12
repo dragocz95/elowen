@@ -607,7 +607,7 @@ Use domain keys such as `sandbox`, `mcp`, or `workflow`, not the current plugin 
 
 A Project's execution target is declared in the shared wire contract, never inferred from a filesystem path. The Project DTO carries an `executionKind` of `host` or `managed`, and a managed target always names its stable registry identity.
 
-A managed Project runs in its own rootless Podman container that survives across turns. Three volumes are mounted read-write: the project itself under its own name (`/kolin` for a project with the slug `kolin`, which is also the working directory), a home directory, and a data volume at `/data`. Elowen's own guest artifacts (plan mirrors, tool-result spills) live under `/data/.elowen`, off the project tree. Each execution runs inside the container as a transient systemd unit. Networking is either shared with the host with loopback denied, or none. Default limits are 1 CPU, 1024 MB of memory, and 512 pids. Container specs are frozen and host-derived; a caller-authored mount list is not an execution capability.
+A managed Project runs in its own persistent environment that survives across turns, a systemd-nspawn machine for every environment created now and a rootless Podman container for those created earlier. Three volumes are mounted read-write: the project itself under its own name (`/kolin` for a project with the slug `kolin`, which is also the working directory), a home directory, and a data volume at `/data`. Elowen's own guest artifacts (plan mirrors, tool-result spills) live under `/data/.elowen`, off the project tree. Each execution runs inside the container as a transient systemd unit. Networking is either shared with the host with loopback denied, or none. Default limits are 1 CPU, 1024 MB of memory, and 512 pids. Container specs are frozen and host-derived; a caller-authored mount list is not an execution capability.
 
 Plugins reach this machinery through the `sandbox` control, subject to the consumer allowlist described above. The control's workspace half exposes workspace roots and listings, the active workspace for a conversation and Project, workspace resolution that refuses stale, orphaned, foreign, path-mismatched, or inaccessible workspaces, delegation lease acquisition, and `prepareExecution`. `prepareExecution` takes a closed set of lease kinds (`terminal`, `github`, `sites`, `files`, `editor`, `lsp`, `mcp`, `browser`, `cron`) and offers no way to ask for unconfined execution: an explicit request always runs under bubblewrap. Its result carries a mode of `confined`, `direct`, or `managed`, a host working directory beside the logical display directory a workspace-scoped model sees, the home, the roots, the launch shape, bounded stdin, completion metadata, cancel, the workspace, the lease, and an output sanitizer.
 
@@ -741,7 +741,7 @@ The request function is bound to the calling MCP client's token. A plugin MCP to
 
 Keep these version axes separate:
 
-- The daemon version is the root `package.json` version (`0.28.36` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
+- The daemon version is the root `package.json` version (`0.28.42` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
 - A plugin's manifest `version` is that plugin's own release version. Bump it whenever its installed bytes change, so reload cache-busting and marketplace update detection see the new build. It does not need to match the daemon version.
 - `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `4`.
 - `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `16`; it must not be used to signal removals.
@@ -754,8 +754,8 @@ Add a file named after the version, with front matter and a body:
 
 ```markdown
 ---
-version: 0.28.36
-date: 2026-09-09
+version: 0.28.42
+date: 2026-09-12
 title: What this release gives the reader
 tags: [Chat, Plugins]
 pinned: false
