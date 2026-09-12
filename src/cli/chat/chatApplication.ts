@@ -393,8 +393,12 @@ export class ChatApplication {
       // Goal lifecycle events are newer than a GET that was already in flight. A monotonic revision is
       // required here: reference/value comparison cannot detect a null → active → null ABA transition.
       if (goal !== undefined && this.state.goalRevision === goalRevisionAtRequest) this.state.setGoal(goal);
-      // Fetch only after status commits so a provider switch cannot race a request keyed to stale UI state.
-      void this.refreshRateLimits();
+      // Fetch only after status commits so a provider switch cannot race a request keyed to stale UI
+      // state, and under the same 60 s window a turn settle uses: metadata is refreshed on EVERY idle
+      // event, so an unconditional fetch here would issue one per turn and leave the throttle with
+      // nothing to throttle. `applyStatus` retires the window when the usage provider changes, so the
+      // rail still follows a provider switch immediately.
+      if (shouldRefreshRateLimits(this.rateLimitsFetchedAt, Date.now(), 'idle')) void this.refreshRateLimits();
     });
   }
 
@@ -407,7 +411,12 @@ export class ChatApplication {
       state.provider = status.provider;
       state.providerLabel = status.providerLabel ?? '';
     }
+    // The rail's limits are keyed on the usage provider, so a switch does not make the cached answer
+    // merely old — it makes it the WRONG provider's. Retiring the throttle window is what lets the next
+    // refresh fetch the new provider's limits at once while ordinary refreshes stay inside it.
+    const previousUsageProvider = state.usageProvider;
     state.usageProvider = usageProviderOf(status);
+    if (state.usageProvider !== previousUsageProvider) this.rateLimitsFetchedAt = 0;
     state.modelName = status.model || state.modelName;
     state.conversationTitle = status.title ?? state.conversationTitle;
     state.lineCfg = status.statusline;
