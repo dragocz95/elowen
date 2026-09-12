@@ -9346,6 +9346,26 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
     await expect(svc.sendToSubagent(1, c, 'use the old authority')).rejects.toThrow('no longer');
   });
 
+  it('refuses a project-scoped child immediately after that project access is revoked', async () => {
+    const d = fakeDeps();
+    let allowedProjectIds = new Set([3]);
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds, allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-project-revoked';
+    d.store.createSession({
+      id: child,
+      userId: 1,
+      model: 'm',
+      parentSessionId: sessionId,
+      delegatedAccess: { admin: false, owner: true, projectIds: [3], permissionBoundary: null },
+    });
+
+    expect(() => svc.preflightSubagentSend(1, child)).not.toThrow();
+    allowedProjectIds = new Set([4]);
+    expect(() => svc.preflightSubagentSend(1, child)).toThrow('no longer');
+  });
+
   it('refuses a grandchild of another account and a session outside the sub-agent family', async () => {
     const { d, svc, sessionId, c } = await seedNest();
     d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });

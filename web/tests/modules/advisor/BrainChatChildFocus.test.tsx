@@ -33,13 +33,17 @@ const parentSends: unknown[] = [];
 const childModelSwitches: { session: string; provider?: string; model?: string }[] = [];
 const parentModelSwitches: unknown[] = [];
 const commandCalls: unknown[] = [];
+const statusRequests: (string | null)[] = [];
 
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-parent' }, { status: 201 })),
   http.post('*/api/brain/visibility', () => HttpResponse.json({ ok: true })),
-  http.get('*/api/brain/status', () => HttpResponse.json({
-    running: true, sessionId: 'brain-parent', model: 'parent-model', provider: 'anthropic', usage: null, statusline: null, cards: [], queued: [],
-  })),
+  http.get('*/api/brain/status', ({ request }) => {
+    statusRequests.push(new URL(request.url).searchParams.get('session'));
+    return HttpResponse.json({
+      running: true, sessionId: 'brain-parent', model: 'parent-model', provider: 'anthropic', usage: null, statusline: null, cards: [], queued: [],
+    });
+  }),
   http.get('*/api/brain/messages', () => HttpResponse.json([{ id: 'parent-message', role: 'assistant', text: 'parent history' }])),
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
   http.get('*/api/brain/sessions', () => HttpResponse.json([])),
@@ -84,6 +88,7 @@ afterEach(() => {
   childModelSwitches.length = 0;
   parentModelSwitches.length = 0;
   commandCalls.length = 0;
+  statusRequests.length = 0;
 });
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -101,6 +106,7 @@ function Harness() {
     })}>pick model</button>
     <button onClick={() => void chat.runSlash({ name: 'stop', kind: 'action' } as never)}>slash stop</button>
     <button onClick={() => void chat.runSlash({ name: 'compact', kind: 'action' } as never)}>slash compact</button>
+    <button onClick={() => void chat.runSlash({ name: 'stats' } as never)}>slash stats</button>
     <button onClick={() => void chat.runSlash({ name: 'plan', kind: 'mode' } as never)}>slash plan</button>
     <button onClick={() => void chat.runSlash({ name: 'rename' } as never)}>slash rename</button>
     <button onClick={() => chat.setReasoningOpen(true)}>open reasoning</button>
@@ -191,6 +197,17 @@ describe('BrainChatProvider — session-local actions inside a child view', () =
     expect(commandCalls).toEqual([]);
     expect(subagentSends).toEqual([]);
     expect(parentSends).toEqual([]);
+  });
+
+  it('/stats is refused without fetching the hidden parent status', async () => {
+    await renderHarness();
+    const before = [...statusRequests];
+
+    await act(async () => { fireEvent.click(screen.getByText('slash stats')); });
+
+    expect(await screen.findByText(/parent conversation/i, { selector: '[data-slot="toast-description"]' }))
+      .toBeInTheDocument();
+    expect(statusRequests).toEqual(before);
   });
 
   it('mode switching and the reasoning picker are refused with the reason while focused', async () => {

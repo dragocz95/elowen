@@ -378,7 +378,7 @@ export function wireSubmit(
       // remain available; navigation commands explicitly leave the drill-in. Every command whose current
       // transport is bound to the parent is refused here, before any picker or route can leak the action.
       const safeInChild = new Set<ParsedCommand['cmd']>([
-        'quit', 'stop', 'stats', 'context', 'model', 'fast', 'theme', 'maskot', 'cd', 'editor',
+        'quit', 'stop', 'model', 'theme', 'maskot', 'cd', 'editor',
         'keybinds', 'statusline', 'lsp', 'mcp', 'skills', 'tools', 'paste', 'help', 'restart',
       ]);
       const leavesDrillIn = new Set<ParsedCommand['cmd']>(['new', 'sessions', 'resume', 'delete']);

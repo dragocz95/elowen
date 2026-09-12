@@ -315,14 +315,14 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (d.brainStore) {
       try {
         const branches = d.brainStore.conversationSubagentBranches(rootIds);
-        // Drill-in eligibility is caller-relative and rooted in an OWN user conversation. A shared
-        // channel's delegated child can carry the instance owner's `user_id` as a storage owner; that
-        // never authorizes the admin register to write as the channel sender. The write route re-walks
-        // the same durable ancestry, so this is a truthful UI capability hint rather than the boundary.
-        const rootOwners = all ? d.brainStore.ownersOfSessions(Object.keys(branches.byConversation)) : undefined;
-        for (const [rootId, nodes] of Object.entries(branches.byConversation)) {
-          const continuableRoot = !all || (rootOwners?.get(rootId) === user.id && !isNonUserSession(rootId));
-          setSubagentContinuables(nodes, () => continuableRoot);
+        // The capability hint uses the exact write preflight. That re-walks durable owner ancestry and
+        // compares the stored delegated scope with the account and project access that exist NOW, so a
+        // refetch immediately removes write UI after an admin or project grant is revoked.
+        for (const nodes of Object.values(branches.byConversation)) {
+          setSubagentContinuables(nodes, (childSessionId) => {
+            try { brain.preflightSubagentSend(user.id, childSessionId); return true; }
+            catch { return false; }
+          });
         }
         subagents = branches.byConversation;
         subagentStatus = 'available';

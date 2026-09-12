@@ -340,17 +340,21 @@ describe('focused-child slash routing', () => {
     const render = vi.fn();
     const exitSubagent = vi.fn();
     const command = vi.fn(async () => ({ message: 'parent changed' }));
-    const pickers = { openThinkingPicker: vi.fn(), openTasksModal: vi.fn(), openModelPicker: vi.fn(), applyModelArg: vi.fn() };
+    const setFast = vi.fn(async () => ({ fast: true, fastAvailable: true }));
+    const pickers = {
+      openThinkingPicker: vi.fn(), openTasksModal: vi.fn(), openModelPicker: vi.fn(),
+      openStatsModal: vi.fn(), applyModelArg: vi.fn(),
+    };
     wireSubmit(
       state,
       {
-        client: { command }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        client: { command, setFast }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
         commandDefs, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(), termSettings: null,
       } as never,
       { render } as never,
       { stream: { exitSubagent }, pickers } as never,
     );
-    return { onSubmit, state, exitSubagent, command, pickers };
+    return { onSubmit, state, exitSubagent, command, setFast, pickers };
   }
 
   it('explicitly refuses parent-scoped session commands instead of exiting and mutating the hidden parent', async () => {
@@ -365,6 +369,28 @@ describe('focused-child slash routing', () => {
     expect(h.command).not.toHaveBeenCalled();
     expect(h.pickers.openThinkingPicker).not.toHaveBeenCalled();
     expect(h.pickers.openTasksModal).not.toHaveBeenCalled();
+    expect(h.state.notice).toContain('unavailable while viewing a sub-agent');
+  });
+
+  it('disables /fast in the child view without calling the parent-bound Fast API', async () => {
+    const h = childCommandHarness([{ name: 'fast' }] as never);
+
+    h.onSubmit?.('/fast on');
+    await Promise.resolve();
+
+    expect(h.setFast).not.toHaveBeenCalled();
+    expect(h.exitSubagent).not.toHaveBeenCalled();
+    expect(h.state.notice).toContain('unavailable while viewing a sub-agent');
+  });
+
+  it('disables /stats and /context without opening the hidden parent status modal', () => {
+    const h = childCommandHarness([{ name: 'stats' }, { name: 'context' }] as never);
+
+    h.onSubmit?.('/stats');
+    h.onSubmit?.('/context');
+
+    expect(h.pickers.openStatsModal).not.toHaveBeenCalled();
+    expect(h.exitSubagent).not.toHaveBeenCalled();
     expect(h.state.notice).toContain('unavailable while viewing a sub-agent');
   });
 

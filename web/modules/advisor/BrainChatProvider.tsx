@@ -1310,7 +1310,7 @@ function useBrainChatController(): BrainChatValue {
     // supports. Prompt macros prefill and then ride the child send seam; /stop is the child's abort;
     // the rest is parent-scoped (mode/reasoning/rename/actions/pickers) and is refused with the
     // reason here — never executed against the hidden parent behind the view.
-    const childCapable = cmd.kind === 'prompt' || ['new', 'help', 'stats', 'skills', 'tasks', 'stop'].includes(cmd.name);
+    const childCapable = cmd.kind === 'prompt' || ['new', 'help', 'skills', 'tasks', 'stop'].includes(cmd.name);
     if (childFocus && !childCapable) { toast(t.brainChat.childFocusCommandDisabled, 'error'); return; }
     try {
       if (cmd.name === 'new') { await startNewConversation(); return; }

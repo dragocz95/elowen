@@ -30,8 +30,8 @@ function setup(opts: {
   managed?: { id: string }[];
   /** Session rows the run-target resolution may find, keyed by id. Absent = no store at all. */
   rows?: Record<string, { user_id: number }>;
-  /** Root-session owners the eligibility pass resolves in the admin register (id → user id). */
-  owners?: Record<string, number>;
+  /** The production preflight seam used to decide whether one child is writable for this caller. */
+  preflightSubagentSend?: (userId: number, childSessionId: string) => void;
   /** The sub-agent branch the core store answers with, or a thrower to simulate a failed read. */
   branches?: (rootIds: readonly string[]) => ConversationSubagentBranches;
 } = {}) {
@@ -68,6 +68,7 @@ function setup(opts: {
   const brain = {
     listSessions: () => opts.mine ?? [],
     listManagedSessions: () => opts.managed ?? [],
+    preflightSubagentSend: (userId: number, childSessionId: string) => opts.preflightSubagentSend?.(userId, childSessionId),
   };
   const app = createServer({
     bus: new EventBus(),
@@ -75,13 +76,9 @@ function setup(opts: {
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     brain: brain as never, plugins,
-    ...(opts.rows || opts.branches || opts.owners ? {
+    ...(opts.rows || opts.branches ? {
       brainStore: {
         getSession: (id: string) => opts.rows?.[id],
-        ownersOfSessions: (ids: readonly string[]) => {
-          const owners = opts.owners ?? {};
-          return new Map(ids.filter((id) => id in owners).map((id) => [id, owners[id]!]));
-        },
         conversationSubagentBranches: (rootIds: readonly string[]) => {
           branchCalls.push([...rootIds]);
           return opts.branches ? opts.branches(rootIds) : { byConversation: {}, truncated: false };
@@ -457,8 +454,9 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     const { app, adminTok } = setup({
       cron: () => [],
       managed: [{ id: 'brain-2' }, { id: 'brain-1-own' }, { id: 'brain-ch-discord-shared' }],
-      // admin is account 1; amy owns brain-2. The shared channel is storage-owned by admin too.
-      owners: { 'brain-2': 2, 'brain-1-own': 1, 'brain-ch-discord-shared': 1 },
+      preflightSubagentSend: (_userId, childSessionId) => {
+        if (childSessionId !== 'brain-ch-subagent-sub-own') throw new Error('read-only');
+      },
       branches: () => ({
         byConversation: {
           'brain-2': [node()],
@@ -474,5 +472,26 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     expect(body.subagents['brain-2']![0]!.continuable).toBeUndefined();
     expect(body.subagents['brain-1-own']![0]!.continuable).toBe(true);
     expect(body.subagents['brain-ch-discord-shared']![0]!.continuable).toBeUndefined();
+  });
+
+  it('re-runs live continuation authorization on refetch after a stale writable snapshot', async () => {
+    let accessRevoked = false;
+    const { app, amyTok } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      preflightSubagentSend: () => {
+        if (accessRevoked) throw new Error('delegated scope exceeds current project access');
+      },
+      branches: () => ({ byConversation: { 'brain-2': [node()] }, truncated: false }),
+    });
+
+    const stale = (await links(app, amyTok)).body;
+    expect(stale.subagents['brain-2']![0]!.continuable).toBe(true);
+
+    accessRevoked = true;
+    const refreshed = (await links(app, amyTok)).body;
+
+    expect(stale.subagents['brain-2']![0]!.continuable).toBe(true);
+    expect(refreshed.subagents['brain-2']![0]!.continuable).toBeUndefined();
   });
 });
