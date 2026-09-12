@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bindContainerIdentity, createContainerSpec, createEnvironmentDiskSpec, executionUnit, publicationUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { cleanPodmanEnv, PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
@@ -935,6 +935,28 @@ describe('project container storage and crash-consistent snapshots', () => {
     client.fingerprintDiskTree.mockClear();
     await storage.readSnapshot(spec, 'preflight');
     expect(client.fingerprintDiskTree).not.toHaveBeenCalled();
+  });
+
+  it('removes a disk whose directory is already gone, and still fails on one that survives removal', async () => {
+    // Measured on the deployed build: deleting an environment whose disk directory was no longer there
+    // reached step `storage` and failed with `privileged tree-remove failed (1): the requested path does
+    // not exist`, so the row could not be deleted at all. Removal has to tolerate an absent path the way
+    // removeStorage, removeGenerationStorage and removeSnapshotStorage already do — and no further.
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' }, paths, '8'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    const removeDiskPath = vi.fn(async () => { throw new Error('privileged tree-remove failed (1): the requested path does not exist'); });
+    await expect(new ContainerStorage(null, { nspawn: { inspect: vi.fn(async () => null), removeDiskPath } }).removeDisk(spec, [spec]))
+      .resolves.toBeUndefined();
+    expect(removeDiskPath).not.toHaveBeenCalled();
+
+    // A directory that IS there and outlives its removal is still a failure: the tolerance is for a path
+    // that is gone, not for a removal that did not happen.
+    mkdirSync(dirname(disk.rootfsPath), { recursive: true });
+    await expect(new ContainerStorage(null, { nspawn: { inspect: vi.fn(async () => null), removeDiskPath: vi.fn(async () => {}) } }).removeDisk(spec, [spec]))
+      .rejects.toThrow(/Environment disk removal was not verified/);
   });
 
   it('labels volumes by exact resource, storage generation and component', () => {

@@ -821,8 +821,8 @@ describe('privileged helper: host artefacts and readiness', () => {
 });
 
 describe('privileged helper: the disk identity record', () => {
-  function diskFixture() {
-    const paths = nspawnDiskPaths(storage, diskRef);
+  function diskFixture(ref: typeof diskRef = diskRef) {
+    const paths = nspawnDiskPaths(storage, ref);
     mkdirSync(paths.rootfs, { recursive: true });
     const writes: { path: string; content: string; mode: number }[] = [];
     const calls: Call[] = [];
@@ -837,6 +837,9 @@ describe('privileged helper: the disk identity record', () => {
         // away to. An empty range registry allocates the first slot, so this is the range every envelope
         // written through this fixture declares.
         readOwner: () => UID_RANGE_BASE,
+        // The other half of the same limitation: a test cannot give a directory away either, so the
+        // handover the extraction performs is recorded rather than made.
+        setOwner: () => {},
         readText: (path: string) => (path === '/etc/subuid' ? 'azureuser:100000:65536\n' : ''),
         writeAtomic: (path: string, content: Buffer, mode: number) => {
           writes.push({ path, content: content.toString('utf8'), mode });
@@ -887,6 +890,56 @@ describe('privileged helper: the disk identity record', () => {
     const shift = fixture.calls.find((call) => call.file === '/usr/bin/python3');
     expect(shift?.args[1]).toContain('os.lchown');
     expect(shift?.args[1]).not.toContain('chmod');
+    rmSync(archive, { force: true });
+  });
+
+  it('materializes a tree the machine root owns whole, including the directory that becomes its /', async () => {
+    // Measured on the deployed build: every freshly created environment failed its first start with
+    // `the root filesystem is owned by 1076953121 and this envelope declares the range at 1076953088`,
+    // 33 apart. The extraction target is a directory the SERVICE ACCOUNT created, and tar chowns what it
+    // unpacks rather than the directory it unpacks into, so the root directory entered the `offset` pass
+    // carrying uid 33 and came out at base+33 while `/etc` and the rest came out at base+0. The envelope
+    // guard is right to refuse that tree; what has to change is the tree.
+    const ref = { ...diskRef, generation: 5, diskId: 'c'.repeat(32), machine: 'elowen-project-54-g5' };
+    const fixture = diskFixture(ref);
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+    // The host, modelled: who owns the machine's root directory, and what each step does to that owner.
+    const SERVICE_UID = 33;
+    let rootOwner = SERVICE_UID;
+    fixture.options.setOwner = (_fd: number, uid: number) => { rootOwner = uid; };
+    fixture.options.readOwner = () => rootOwner;
+    fixture.options.runner = (file: string, args: string[]) => {
+      if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
+      if (file === '/usr/bin/python3') {
+        // Exactly what the shipped ownership script does to an id in `offset` mode: g becomes base+g.
+        const shift = JSON.parse(args[2]!);
+        if (shift.mode === 'offset' && rootOwner < shift.size) rootOwner = shift.base + rootOwner;
+        return { ok: true, stdout: JSON.stringify({ entries: 4242 }) };
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    const materialized = await applyRequest({
+      domain: 'nspawn',
+      op: 'materialize',
+      ...ref,
+      archivePath: archive,
+      targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options) as { uidBase: number };
+
+    expect(rootOwner).toBe(materialized.uidBase);
+    // Which is the whole point of it: the envelope the very next lifecycle step writes goes through on
+    // the first attempt, with nothing left for a retry to repair.
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'write-envelope',
+      ...ref,
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+      binds: [],
+      dropCapabilities: [],
+      privateNetwork: true,
+    }, undefined, fixture.options)).resolves.toMatchObject({ ok: true, uidBase: materialized.uidBase });
     rmSync(archive, { force: true });
   });
 
