@@ -38,5 +38,11 @@ export default defineConfig({
     // choice stays visible instead of silently dropping it.
     include: ['tests/**/*.test.{ts,tsx}'],
     exclude: ['tests/e2e/**'],
+    // The same reason the root suite raises it: several suites here render real component trees in jsdom
+    // — one mounts 300 tool pills — and vitest's default 5 s is an incidental limit rather than a budget
+    // any of them asserts on. On a loaded host that render exceeds it and fails while every assertion in
+    // it (regrouping counts, rendered pills) would have held.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });
