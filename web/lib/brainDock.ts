@@ -10,7 +10,7 @@ export const BRAIN_OPEN_EVENT = 'elowen:open-brain-session';
  *  Elowen launcher use this instead of implementing a second send path. */
 export const BRAIN_COMPOSE_EVENT = 'elowen:open-brain-composer';
 
-export interface BrainOpenRequest { sessionId: string; continuable: boolean }
+export interface BrainOpenRequest { sessionId: string; continuable: boolean; /** The request names a DELEGATED sub-agent transcript: when continuable it opens as a FOCUSED CHILD — the composer stays and its sends ride the subagent send seam — never bound as the account's active conversation. */ delegated?: boolean }
 
 let pending: BrainOpenRequest | null = null;
 let pendingComposer: string | null = null;
@@ -22,9 +22,11 @@ export function mergeBrainComposerText(current: string, incoming: string): strin
   return `${current}\n\n${incoming}`;
 }
 
-/** Request the advisor dock to open the given stored session — continue it, or view it read-only. */
-export function openBrainSession(sessionId: string, continuable: boolean): void {
-  pending = { sessionId, continuable };
+/** Request the advisor dock to open the given stored session — continue it, focus it as a delegated
+ *  child (writable through the subagent send seam), or view it read-only. `delegated` is carried only
+ *  when true, so every non-delegated request keeps its historical two-field shape. */
+export function openBrainSession(sessionId: string, continuable: boolean, delegated = false): void {
+  pending = { sessionId, continuable, ...(delegated ? { delegated: true } : {}) };
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(BRAIN_OPEN_EVENT, { detail: pending }));
   }

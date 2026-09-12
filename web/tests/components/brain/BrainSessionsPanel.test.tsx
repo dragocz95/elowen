@@ -609,21 +609,32 @@ describe('BrainSessionsPanel — sub-agent tree', () => {
     expect(await screen.findByRole('menuitem', { name: 'Sub-agents (0)' })).toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('opens a sub-agent read-only and lets its host dismiss', async () => {
-    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'error', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
+  it('opens an OWN child writable through the delegated seam, a foreign one read-only', async () => {
+    // The host marks per read what the CALLING account may write into: an own child is continuable,
+    // another account's child (visible to an admin) never is — reading it does not mean writing.
+    branch({
+      'brain-1': [
+        { kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'error', childSessionId: 'brain-ch-subagent-sub-a', continuable: true, children: [] },
+        { kind: 'delegate', key: 'sub:foreign', name: 'Foreign worker', status: 'done', childSessionId: 'brain-ch-subagent-sub-foreign', children: [] },
+      ],
+    });
     const opened: BrainOpenRequest[] = [];
     const listener = (event: Event) => opened.push((event as CustomEvent<BrainOpenRequest>).detail);
     window.addEventListener(BRAIN_OPEN_EVENT, listener);
     try {
       renderPanel();
       await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
-      await openTree('Conversation 1');
+      await openTree('Conversation 1', 2);
       fireEvent.click(await screen.findByRole('button', { name: 'Audit auth' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Foreign worker' }));
     } finally {
       window.removeEventListener(BRAIN_OPEN_EVENT, listener);
     }
 
-    expect(opened).toEqual([{ sessionId: 'brain-ch-subagent-sub-a', continuable: false }]);
+    expect(opened).toEqual([
+      { sessionId: 'brain-ch-subagent-sub-a', continuable: true, delegated: true },
+      { sessionId: 'brain-ch-subagent-sub-foreign', continuable: false, delegated: true },
+    ]);
   });
 
   /** The branch is a tree walk, and this register spans every account. It is asked for the page on

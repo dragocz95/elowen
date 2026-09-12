@@ -266,8 +266,8 @@ describe('sub-agent child submit echo', () => {
       wireSubmit(
         state,
         {
-          client: { subagentSend }, editor, shellContext: {}, attachmentChips: testAttachmentChips(), commandDefs: TEST_COMMAND_DEFS, tui: {},
-          lifetime: new ChatApplicationLifetime<'metadata'>(),
+          client: { subagentSend }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+          commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
         } as never,
         { render } as never,
         { stream: {}, pickers: {} } as never,
@@ -284,6 +284,251 @@ describe('sub-agent child submit echo', () => {
       if (priorHome === undefined) delete process.env.HOME;
       else process.env.HOME = priorHome;
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('delivers pending image attachments to the VIEWED child and clears the chips', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-child-attach-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const subagentSend = vi.fn(async () => {});
+      const render = vi.fn();
+      const attachmentChips = testAttachmentChips();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      state.childView = { sessionId: 'brain-ch-subagent-child', transcript: new TranscriptModel(), loading: false };
+      state.pendingImages = [{ name: 'shot.png', data: 'aGk=', mimeType: 'image/png' } as never];
+      wireSubmit(
+        state,
+        {
+          client: { subagentSend }, editor, shellContext: new LocalShellBuffer(), attachmentChips,
+          commandDefs: TEST_COMMAND_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('what is in this screenshot');
+      await Promise.resolve();
+
+      expect(subagentSend).toHaveBeenCalledWith('brain-ch-subagent-child', 'what is in this screenshot',
+        [{ data: 'aGk=', mimeType: 'image/png' }]);
+      expect(state.pendingImages).toEqual([]);
+      expect(attachmentChips.set).toHaveBeenCalledWith([]);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('focused-child slash routing', () => {
+  function childCommandHarness(commandDefs: unknown[]) {
+    let onSubmit: ((text: string) => void) | undefined;
+    const editor = {
+      addToHistory: vi.fn(), setText: vi.fn(),
+      set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+    };
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    state.childView = { sessionId: 'brain-ch-subagent-child', transcript: new TranscriptModel(), loading: false } as never;
+    const render = vi.fn();
+    const exitSubagent = vi.fn();
+    const command = vi.fn(async () => ({ message: 'parent changed' }));
+    const setFast = vi.fn(async () => ({ fast: true, fastAvailable: true }));
+    const pickers = {
+      openThinkingPicker: vi.fn(), openTasksModal: vi.fn(), openModelPicker: vi.fn(),
+      openStatsModal: vi.fn(), applyModelArg: vi.fn(),
+    };
+    wireSubmit(
+      state,
+      {
+        client: { command, setFast }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        commandDefs, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(), termSettings: null,
+      } as never,
+      { render } as never,
+      { stream: { exitSubagent }, pickers } as never,
+    );
+    return { onSubmit, state, exitSubagent, command, setFast, pickers };
+  }
+
+  it('explicitly refuses parent-scoped session commands instead of exiting and mutating the hidden parent', async () => {
+    const h = childCommandHarness([{ name: 'clear' }, { name: 'reasoning' }, { name: 'tasks' }] as never);
+
+    h.onSubmit?.('/clear');
+    h.onSubmit?.('/reasoning high');
+    h.onSubmit?.('/tasks');
+    await Promise.resolve();
+
+    expect(h.exitSubagent).not.toHaveBeenCalled();
+    expect(h.command).not.toHaveBeenCalled();
+    expect(h.pickers.openThinkingPicker).not.toHaveBeenCalled();
+    expect(h.pickers.openTasksModal).not.toHaveBeenCalled();
+    expect(h.state.notice).toContain('unavailable while viewing a sub-agent');
+  });
+
+  it('disables /fast in the child view without calling the parent-bound Fast API', async () => {
+    const h = childCommandHarness([{ name: 'fast' }] as never);
+
+    h.onSubmit?.('/fast on');
+    await Promise.resolve();
+
+    expect(h.setFast).not.toHaveBeenCalled();
+    expect(h.exitSubagent).not.toHaveBeenCalled();
+    expect(h.state.notice).toContain('unavailable while viewing a sub-agent');
+  });
+
+  it('disables /stats and /context without opening the hidden parent status modal', () => {
+    const h = childCommandHarness([{ name: 'stats' }, { name: 'context' }] as never);
+
+    h.onSubmit?.('/stats');
+    h.onSubmit?.('/context');
+
+    expect(h.pickers.openStatsModal).not.toHaveBeenCalled();
+    expect(h.exitSubagent).not.toHaveBeenCalled();
+    expect(h.state.notice).toContain('unavailable while viewing a sub-agent');
+  });
+
+  it('keeps /model inside the child view and routes the picker without exiting', () => {
+    const h = childCommandHarness([{ name: 'model' }] as never);
+    h.onSubmit?.('/model next-model');
+    expect(h.pickers.applyModelArg).toHaveBeenCalledWith('next-model');
+    expect(h.exitSubagent).not.toHaveBeenCalled();
+  });
+});
+
+describe('/stop — targets the session the user is LOOKING at', () => {
+  /** The catalog the daemon publishes for these tests must carry `/stop` — an unpublished name is
+   *  treated as chat text, which is exactly the routing under test here. */
+  const STOP_COMMAND_DEFS = [...TEST_COMMAND_DEFS, { name: 'stop' }] as never;
+
+  function stopHarness(childThinking: boolean) {
+    let onSubmit: ((text: string) => void) | undefined;
+    const editor = {
+      addToHistory: vi.fn(), setText: vi.fn(),
+      set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+    };
+    const abort = vi.fn(async () => {});
+    const killCommands = vi.fn(async () => ({ killed: 1 }));
+    const render = vi.fn();
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const childTranscript = new TranscriptModel();
+    if (childThinking) childTranscript.apply({ type: 'tool_authoring', name: 'Bash', detail: 'long build' } as never);
+    state.childView = { sessionId: 'brain-ch-subagent-child', transcript: childTranscript, loading: false };
+    wireSubmit(
+      state,
+      {
+        client: { abort, killCommands }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        commandDefs: STOP_COMMAND_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+      } as never,
+      { render } as never,
+      { stream: {}, pickers: {} } as never,
+    );
+    return { onSubmit, abort, killCommands, state, childTranscript };
+  }
+
+  it('a running viewed child is stopped by explicit session — the hidden parent stays untouched', async () => {
+    const { onSubmit, abort } = stopHarness(true);
+    onSubmit?.('/stop');
+    await Promise.resolve();
+    expect(abort).toHaveBeenCalledWith('brain-ch-subagent-child');
+  });
+
+  it('reports nothing running when the VIEWED child is idle, even if the parent runs', () => {
+    const { onSubmit, abort, state } = stopHarness(false);
+    state.transcript.apply({ type: 'tool_authoring', name: 'Bash', detail: 'long build' } as never); // parent busy, but it is NOT in view
+    onSubmit?.('/stop');
+    expect(abort).not.toHaveBeenCalled();
+    expect(state.notice).toContain('nothing is running');
+  });
+
+  it('a repeated /stop escalates to a kill of THAT child\'s command, never the parent\'s', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { onSubmit, abort, killCommands, state } = stopHarness(true);
+      // A running foreground command is what could pin the aborted child turn.
+      state.childView!.processes = [{
+        id: 'p-child', command: 'child build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-ch-subagent-child', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+      state.processes = [{
+        id: 'p-parent', command: 'parent build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-parent', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+
+      onSubmit?.('/stop'); // first press: graceful abort of the child, escalation armed
+      await Promise.resolve();
+      expect(abort).toHaveBeenCalledTimes(1);
+      expect(abort).toHaveBeenCalledWith('brain-ch-subagent-child');
+      expect(killCommands).not.toHaveBeenCalled();
+      expect(state.notice).toContain('again to kill');
+
+      vi.setSystemTime(10_500); // still inside the confirmation window; the child stayed pinned
+      onSubmit?.('/stop'); // second press: hard-kill the CHILD's foreground command
+      await Promise.resolve();
+      expect(killCommands).toHaveBeenCalledOnce();
+      expect(killCommands).toHaveBeenCalledWith({ session: 'brain-ch-subagent-child' });
+      // Still exactly one abort: the escalation replaced the stop, it did not re-send it.
+      expect(abort).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a fresh drill resets the ladder — the escalation never fires for the wrong child', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { onSubmit, abort, killCommands, state } = stopHarness(true);
+      state.childView!.processes = [{
+        id: 'p-b', command: 'b build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-ch-subagent-child', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+      onSubmit?.('/stop'); // abort B, ladder armed for B
+      await Promise.resolve();
+
+      // Drill into B's grandchild C: the viewed session changed, so the very next /stop must ABORT C —
+      // B's abort marker must not turn it into a kill of C's (or anyone else's) command.
+      const childCTranscript = new TranscriptModel();
+      childCTranscript.apply({ type: 'tool_authoring', name: 'Bash', detail: 'c build' } as never);
+      state.childView = { sessionId: 'brain-ch-subagent-grandchild', transcript: childCTranscript, loading: false, processes: [] } as never;
+      onSubmit?.('/stop');
+      await Promise.resolve();
+      expect(abort).toHaveBeenLastCalledWith('brain-ch-subagent-grandchild');
+      expect(killCommands).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a settled child run resets the ladder — the next run starts with a graceful stop again', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { onSubmit, abort, killCommands, state, childTranscript } = stopHarness(true);
+      state.childView!.processes = [{
+        id: 'p-child', command: 'child build', cwd: '/w', startedAt: '2026-09-12T10:00:00.000Z',
+        sessionId: 'brain-ch-subagent-child', running: true, exitCode: null, completionMode: 'foreground',
+      } as never];
+      onSubmit?.('/stop'); // abort; escalation armed for this run
+      await Promise.resolve();
+
+      // The run settles (idle reaches the child lane), then the child starts a NEW run.
+      childTranscript.apply({ type: 'idle' } as never);
+      onSubmit?.('/stop');
+      expect(state.notice).toContain('nothing is running'); // idle observed → ladder cleared
+      childTranscript.apply({ type: 'user', text: 'next run' } as never); // a fresh run is thinking again
+      onSubmit?.('/stop');
+      expect(abort).toHaveBeenCalledTimes(2); // graceful again — no stale kill
+      expect(killCommands).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
@@ -777,5 +1022,56 @@ describe('/editor terminal handoff', () => {
       else process.env.EDITOR = priorEditor;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+/** Drilled A→B→C, explicit navigation commands may leave the whole drill-in. Session-local commands
+ *  either stay on C through a validated child route or are refused before touching the hidden parent. */
+describe('slash inside a deep drill-in', () => {
+  function deepHarness(command: string, defs: unknown) {
+    let onSubmit: ((text: string) => void) | undefined;
+    const editor = {
+      addToHistory: vi.fn(), setText: vi.fn(),
+      set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+    };
+    const render = vi.fn();
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    // Viewing C with B retained on the trail — the deepest level a drill-in reaches.
+    state.childTrail = [{ sessionId: 'brain-ch-subagent-B', transcript: new TranscriptModel() }];
+    state.childView = { sessionId: 'brain-ch-subagent-C', transcript: new TranscriptModel(), loading: false } as never;
+    const stream = {
+      exitSubagent: vi.fn(() => { state.childView = null; state.childTrail = []; }),
+      closeSubagent: vi.fn(),
+      switchTo: vi.fn(async () => {}),
+    };
+    const pickers = { applyModelArg: vi.fn(), openModelPicker: vi.fn() };
+    wireSubmit(
+      state,
+      {
+        client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        commandDefs: defs, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+      } as never,
+      { render } as never,
+      { stream, pickers } as never,
+    );
+    return { onSubmit, state, stream, pickers };
+  }
+
+  const DEEP_DEFS = [...TEST_COMMAND_DEFS, { name: 'model' }] as never;
+
+  it('/model stays on the grandchild and lets the picker use the delegated model route', () => {
+    const { onSubmit, state, stream, pickers } = deepHarness('/model gpt-9', DEEP_DEFS);
+    onSubmit?.('/model gpt-9');
+    expect(stream.exitSubagent).not.toHaveBeenCalled();
+    expect(stream.closeSubagent).not.toHaveBeenCalled();
+    expect(state.childView?.sessionId).toBe('brain-ch-subagent-C');
+    expect(pickers.applyModelArg).toHaveBeenCalledWith('gpt-9');
+  });
+
+  it('/new from the deepest level re-targets the whole CLI to a fresh parent conversation', () => {
+    const { onSubmit, stream } = deepHarness('/new', [...TEST_COMMAND_DEFS, { name: 'new' }] as never);
+    onSubmit?.('/new');
+    expect(stream.exitSubagent).toHaveBeenCalledOnce();
+    expect(stream.switchTo).toHaveBeenCalledWith({ fresh: true });
   });
 });

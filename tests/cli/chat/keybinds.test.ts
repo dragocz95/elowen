@@ -3,8 +3,9 @@ import {
   chordFromInput, createKeymap, createLeaderState, keybindDefault, keybindRows, parseKeybind, KEYBIND_ACTIONS,
 } from '../../../src/cli/chat/keys.js';
 import {
-  escalationPress, INTERRUPT_CONFIRM_MS, interruptPress, noticeAction, resolveInterruptConfirmMs,
-} from '../../../src/cli/chat/chatComposition.js';
+  escalationPress, INTERRUPT_CONFIRM_MS, interruptPress, resolveInterruptConfirmMs,
+} from '../../../src/cli/chat/interruptLadder.js';
+import { noticeAction } from '../../../src/cli/chat/chatComposition.js';
 import {
   bottomHintItems, modelMetaLine, quitHint, settledTurnMeta, startScreenHintItems,
 } from '../../../src/cli/chat/composeLines.js';

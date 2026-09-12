@@ -1580,9 +1580,13 @@ export class ChannelSessionService {
         // fence it on both sides of the await. If stop clears PI's queue while steer() is pending, the
         // second check clears it again before rejecting; no late instruction survives the aborted tree.
         if (delegationAborted()) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
-        await enqueueMirrored(streaming, 'steer', turnText, undefined, {
-          persistText: turnText, displayText: senderText, sourceText: senderText, publish: true,
-        });
+        await enqueueMirrored(
+          streaming,
+          'steer',
+          turnText,
+          opts.images?.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType })),
+          { persistText: turnText, displayText: senderText, sourceText: senderText, publish: true },
+        );
         if (delegationAborted()) {
           streaming.session.clearQueue();
           clearDeliveredUserEchoes(streaming);

@@ -56,6 +56,19 @@ function requestedConversationIds(raw?: string): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/** Depth-first over one branch read: mark every sub-agent node whose transcript the VIEWER may write
+ *  into. This is the one host pass that decides drill-in eligibility, so no client ever has to guess
+ *  it from session ids or owner labels — `continuable` stays absent (falsy) on everything else. */
+function setSubagentContinuables(
+  nodes: import('../../store/brainDelegationStore.js').ConversationSubagentNode[],
+  eligible: (childSessionId: string) => boolean,
+): void {
+  for (const node of nodes) {
+    if (node.childSessionId && eligible(node.childSessionId)) node.continuable = true;
+    setSubagentContinuables(node.children, eligible);
+  }
+}
+
 /** One navigation row of GET /brain/conversation-links. Mirrors ConversationJobLink in web/lib/types.ts. */
 interface ConversationJobLink {
   jobId: string;
@@ -302,6 +315,15 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (d.brainStore) {
       try {
         const branches = d.brainStore.conversationSubagentBranches(rootIds);
+        // The capability hint uses the exact write preflight. That re-walks durable owner ancestry and
+        // compares the stored delegated scope with the account and project access that exist NOW, so a
+        // refetch immediately removes write UI after an admin or project grant is revoked.
+        for (const nodes of Object.values(branches.byConversation)) {
+          setSubagentContinuables(nodes, (childSessionId) => {
+            try { brain.preflightSubagentSend(user.id, childSessionId); return true; }
+            catch { return false; }
+          });
+        }
         subagents = branches.byConversation;
         subagentStatus = 'available';
       } catch (e) {

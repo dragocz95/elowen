@@ -5,7 +5,7 @@ import { DELEGATION_WAIT_TOOLS, settlePartialTurn, outstandingToolCalls } from '
 import { toolAuthorityForUser } from '../brainDeps.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ChannelSessionService } from '../channels.js';
-import type { DelegatedExecutionScope } from '../delegatedScope.js';
+import type { DelegatedExecutionScope, DelegatingTurnAccess } from '../delegatedScope.js';
 import { delegatedToolPolicy, normalizeDelegatedExecutionScope, promoteDelegatedScope, scopeExceedsCurrentAccess } from '../delegatedScope.js';
 import type { BrainEvent } from '../events.js';
 import type { IdentityResolver } from '../identity.js';
@@ -13,7 +13,7 @@ import { extractText } from '../messageView.js';
 import type { BrainModelSelection } from '../providers.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
-import { channelIdOf, isSubagentSession, subagentSessionId } from '../sessionId.js';
+import { channelIdOf, isOwnedUserSession, isSubagentSession, subagentSessionId } from '../sessionId.js';
 import type { DelegatedContinueResult, KnownControls, SubagentProgressEvent } from '../../plugins/api.js';
 import type { RecoveryOutcome } from '../recovery/types.js';
 import { logger } from '../../shared/logger.js';
@@ -103,6 +103,9 @@ interface DelegatedSessionDeps {
   identity: IdentityResolver;
   users: BrainDeps['users'];
   policyForProjects?: BrainDeps['policyForProjects'];
+  /** Rebuild the calling account's CURRENT owner-conversation authority for a hand-ordered drill-in.
+   *  The durable child scope is only a ceiling captured at spawn; it must still fit this live boundary. */
+  ownerAccessFor: (userId: number, rootSessionId: string) => DelegatingTurnAccess;
   sandbox?: () => KnownControls['sandbox'] | undefined;
   /** Ask the sub-agent runner to drop its live record for a child before this process rehydrates it.
    *  Every send below runs the turn HERE, so a record still held over there would leave one session live
@@ -457,10 +460,17 @@ export class DelegatedSessionService {
     return 'resumed';
   }
 
-  /** Synchronous route preflight for `/brain/subagent/send`: a legacy child with no immutable scope
-   *  must return 409 now, not be silently swallowed by the route's detached promise. */
+  /** Synchronous route preflight for `/brain/subagent/send`: prove both the durable owner ancestry and
+   *  that the captured child scope still fits the account's CURRENT authority before the route detaches
+   *  the potentially long continuation. */
   preflightSubagentSend(userId: number, sessionId: string): void {
-    this.delegatedContinuation(userId, sessionId);
+    this.assertOwnerContinuation(userId, sessionId);
+  }
+
+  /** Authorization for targeted controls that do not start another model turn. A user may still stop or
+   *  kill their own old child after access narrows; only a new continuation must fit the current ceiling. */
+  preflightOwnerRelation(userId: number, sessionId: string): void {
+    this.ownerContinuation(userId, sessionId);
   }
 
   /** The owner talking INTO a delegated sub-agent's session: steers the message into the child's
@@ -468,9 +478,14 @@ export class DelegatedSessionService {
    *  (continue the conversation after it finished). Restricted to the caller's OWN
    *  `brain-ch-subagent-*` sessions — the child executes with access inherited from the caller's own
    *  delegation, so this can never escalate; shared platform channels are deliberately NOT reachable
-   *  here (steering another member's turn would mix privileges). */
-  async sendToSubagent(userId: number, sessionId: string, text: string): Promise<void> {
-    await this.sendDelegated(userId, sessionId, text);
+   *  here (steering another member's turn would mix privileges). Optional image attachments ride the
+   *  same send the caller's own conversation would use — content the user provided, never widened access. */
+  async sendToSubagent(userId: number, sessionId: string, text: string,
+    images?: { data: string; mimeType: string }[]): Promise<void> {
+    await this.sendDelegated(userId, sessionId, text, {
+      ownerInitiated: true,
+      ...(images?.length ? { images } : {}),
+    });
   }
 
   /** A delegating turn reading the final stored reply of one of its own sub-agents. The durable parent
@@ -527,6 +542,33 @@ export class DelegatedSessionService {
       && !this.d.store.recoveringSubagentSessionIds(parentSessionId).includes(childSessionId)) return { stopped: false };
     await this.d.channelService.abort(channelIdOf(childSessionId));
     return { stopped: true };
+  }
+
+  /** The owner's STOP of a delegated child they drilled into (the CLI/web control routes): resolve the
+   *  child through the SAME durable ancestry predicate every other drill-in path uses
+   *  ({@link delegatedContinuation}), then run the targeted teardown above against its durable parent.
+   *  Explicitly NOT the whole-tree abort: stopping the session the user is LOOKING at must never reach
+   *  the hidden parent or a sibling branch. */
+  async stopForOwner(userId: number, childSessionId: string): Promise<{ stopped: boolean }> {
+    const { parentSessionId } = this.ownerContinuation(userId, childSessionId);
+    return this.stopSubagent(parentSessionId, childSessionId);
+  }
+
+  /** The owner's MODEL SWITCH for a delegated child they drilled into — the session-local op a child
+   *  DOES support, routed through the same durable ancestry predicate as every other drill-in control.
+   *  A child has no owner session to respawn: the pick is persisted on the child's row, which is exactly
+   *  what a continuation reads back ({@link sendDelegated} restores the stored provider/model), so the
+   *  next turn — and any respawn of an evicted or runner-owned channel — comes up on it. A running turn
+   *  refuses, the same rule {@link continueSubagent} applies to its explicit model override: a live turn
+   *  cannot change model, and silently dropping the switch would lie about what the child runs on. */
+  switchModelForOwner(userId: number, childSessionId: string,
+    sel: { provider?: string; model: string }): { model: string } {
+    this.ownerContinuation(userId, childSessionId);
+    if (this.d.sessions.isActiveChild(childSessionId)) {
+      throw new Error('that sub-agent has a turn in flight and cannot switch model — wait for it to finish');
+    }
+    this.d.store.setSessionModel(childSessionId, sel.model, sel.provider);
+    return { model: sel.model };
   }
 
   /** A delegating TURN continuing one of its own sub-agents — the agent-facing counterpart of the owner's
@@ -654,11 +696,10 @@ export class DelegatedSessionService {
     return { status: 'reply', reply };
   }
 
-  /** Resolve the durable, immutable scope for an owner drill-in. Kept synchronous so the HTTP route can
-   *  reject a legacy/corrupt child before it fire-and-forgets the actual long-running continuation. */
+  /** Resolve one delegated child and its direct durable parent. Internal result delivery and recovery use
+   *  this for owner conversations, shared channels and workflow nodes alike. Human drill-in adds the stricter
+   *  root walk below; keeping the two predicates distinct prevents a UI write while preserving recovery. */
   private delegatedContinuation(userId: number, sessionId: string): {
-    // `model`/`provider` are carried because a continuation has to resume on the model the sub-agent
-    // actually ran on — see sendDelegated, where omitting them silently fell back to the account default.
     row: { id: string; user_id: number; parent_session_id: string | null; model: string; provider: string };
     parentSessionId: string;
     scope: DelegatedExecutionScope;
@@ -675,6 +716,41 @@ export class DelegatedSessionService {
     return { row, parentSessionId, scope };
   }
 
+  /** Human web/CLI drill-in must climb to an OWN user-conversation root. A channel/task/cron root can carry
+   *  the instance owner's `user_id` as storage ownership, but never grants authority to impersonate its
+   *  sender. Cycles and cross-account edges fail closed. */
+  private ownerContinuation(userId: number, sessionId: string): ReturnType<DelegatedSessionService['delegatedContinuation']> & { rootSessionId: string } {
+    const resolved = this.delegatedContinuation(userId, sessionId);
+    const seen = new Set<string>([sessionId]);
+    let ancestorId = resolved.parentSessionId;
+    while (true) {
+      if (seen.has(ancestorId)) throw new Error('invalid parent session');
+      seen.add(ancestorId);
+      const ancestor = this.d.store.getSession(ancestorId);
+      if (!ancestor || ancestor.user_id !== userId) throw new Error('invalid parent session');
+      if (!isSubagentSession(ancestorId)) {
+        if (!isOwnedUserSession(ancestor, userId, ancestorId)) {
+          throw new Error('delegated session is not rooted in an owner conversation');
+        }
+        return { ...resolved, rootSessionId: ancestorId };
+      }
+      if (!ancestor.parent_session_id) throw new Error('invalid parent session');
+      ancestorId = ancestor.parent_session_id;
+    }
+  }
+
+  /** A hand-ordered owner continuation replays durable authority, so compare it to the account and root
+   *  conversation as they exist NOW. Current denies are layered later; every widening condition refuses. */
+  private assertOwnerContinuation(userId: number, sessionId: string): ReturnType<DelegatedSessionService['ownerContinuation']> {
+    const resolved = this.ownerContinuation(userId, sessionId);
+    const exceeds = scopeExceedsCurrentAccess(
+      resolved.scope,
+      this.d.ownerAccessFor(userId, resolved.rootSessionId),
+    );
+    if (exceeds) throw new Error(`cannot continue that sub-agent: ${exceeds}`);
+    return resolved;
+  }
+
   /** The single delegated-turn dispatch, shared by the owner's drill-in continuations (`sendToSubagent`)
    *  and hidden host system turns (durable sub-agent result delivery, via `internalSystem`). Resolves the
    *  child's immutable execution scope, rebuilds its captured policy + current account deny-list, and drives
@@ -688,6 +764,9 @@ export class DelegatedSessionService {
     opts?: {
       /** Re-check the boot claim after releasing the remote runtime, before starting a continuation. */
       recoveryClaim?: true;
+      /** A human typed into the child through the drill-in surface. Re-check the current owner ceiling
+       *  immediately before dispatch, after any runner release wait. */
+      ownerInitiated?: true;
       internalSystem?: { customType: string; resultId: string; continuation?: boolean };
       /** Additional tool denies from the CALLING turn, layered on the account's own. Only ever narrows;
        *  the captured allow-list stays authoritative (see ChannelSessionService.delegatedExecution). */
@@ -698,10 +777,13 @@ export class DelegatedSessionService {
       /** Drop the child's live session before this turn so it is reassembled from the CURRENT stored
        *  scope. Needed only after a promotion — see continueSubagent. */
       rebuildSession?: boolean;
+      /** Image attachments the OWNER attached to a drill-in message. Content, not capability: the
+       *  child's tool scope is untouched, these only reach its context like any user image would. */
+      images?: { data: string; mimeType: string }[];
       onEvent?: (e: BrainEvent) => void;
     },
   ): Promise<string> {
-    const { row, parentSessionId, scope } = this.delegatedContinuation(userId, sessionId);
+    let { row, parentSessionId, scope } = this.delegatedContinuation(userId, sessionId);
     // The child may be living in the sub-agent runner. Reclaim it before rehydrating it here — and refuse
     // outright while it is still WORKING there, because steering a turn this process cannot see would run
     // two live sessions on one transcript. (`continueSubagent` already refuses a running child through
@@ -728,6 +810,9 @@ export class DelegatedSessionService {
     }
     if (opts?.recoveryClaim && !this.d.store.recoveringSubagentSessionIds(parentSessionId).includes(sessionId)) {
       throw new Error('delegation recovery claim no longer held');
+    }
+    if (opts?.ownerInitiated) {
+      ({ row, parentSessionId, scope } = this.assertOwnerContinuation(userId, sessionId));
     }
     const policy = scope.admin
       ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
@@ -788,6 +873,7 @@ export class DelegatedSessionService {
         ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
         ownerSteer: true,
         ...(opts?.rebuildSession ? { rebuildSession: true } : {}),
+        ...(opts?.images?.length ? { images: opts.images } : {}),
         ...(opts?.internalSystem ? { internalSystem: opts.internalSystem } : {}),
         ...(opts?.onEvent ? { onEvent: opts.onEvent } : {}),
       }, content);

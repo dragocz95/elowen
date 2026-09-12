@@ -667,10 +667,11 @@ describe('ConversationHistoryPanel — sub-agent tree', () => {
     expect(await screen.findByRole('menuitem', { name: 'Sub-agents (0)' })).toHaveAttribute('aria-disabled', 'true');
   });
 
-  /** A finished delegation is a record of what happened, not a chat to resume — and the daemon would
-   *  refuse a post into it anyway. `continuable` must therefore be FALSE. */
-  it('opens a sub-agent read-only and dismisses the switcher behind it', async () => {
-    withBranch({ s1: [agent()] });
+  /** Whether the child opens writable is the HOST's per-read statement: an own child (continuable)
+   *  focuses writable through the delegated seam — its sends ride /brain/subagent/send, at any depth —
+   *  while a node without that mark stays read-only. */
+  it('opens an own child continuable through the delegated seam and dismisses the switcher behind it', async () => {
+    withBranch({ s1: [agent({ continuable: true })] });
     const opened = vi.fn();
     const onNavigate = vi.fn();
     window.addEventListener(BRAIN_OPEN_EVENT, opened);
@@ -683,8 +684,24 @@ describe('ConversationHistoryPanel — sub-agent tree', () => {
     }
 
     expect((opened.mock.calls[0]![0] as CustomEvent<BrainOpenRequest>).detail)
-      .toEqual({ sessionId: 'brain-ch-subagent-sub-a', continuable: false });
+      .toEqual({ sessionId: 'brain-ch-subagent-sub-a', continuable: true, delegated: true });
     expect(onNavigate).toHaveBeenCalled();
+  });
+
+  it('opens a child without the host continuable mark read-only', async () => {
+    withBranch({ s1: [agent()] });
+    const opened = vi.fn();
+    window.addEventListener(BRAIN_OPEN_EVENT, opened);
+    try {
+      renderPanel();
+      await openTree('First');
+      fireEvent.click(await screen.findByRole('button', { name: 'Audit auth' }));
+    } finally {
+      window.removeEventListener(BRAIN_OPEN_EVENT, opened);
+    }
+
+    expect((opened.mock.calls[0]![0] as CustomEvent<BrainOpenRequest>).detail)
+      .toEqual({ sessionId: 'brain-ch-subagent-sub-a', continuable: false, delegated: true });
   });
 
   /** A workflow fans out to N node sessions and never had a transcript of its own, so its row groups

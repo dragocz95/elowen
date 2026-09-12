@@ -823,6 +823,9 @@ export interface ConversationSubagentNode {
   status: ConversationSubagentStatus;
   childSessionId?: string;
   model?: string;
+  /** The CALLING account may write into this transcript (its own drill-in, host-verified per read);
+   *  absent means read-only — another account's delegation, or nothing to write into at all. */
+  continuable?: boolean;
   children: ConversationSubagentNode[];
   /** This row's own children were cut by a bound, so what is shown is not the whole branch. */
   truncated?: boolean;

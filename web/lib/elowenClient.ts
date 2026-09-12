@@ -272,6 +272,15 @@ export const elowenClient = {
   brainThink: (level: string, session?: string) => req<{ thinkingLevel: string }>('/brain/think', json({ level, ...(session ? { session } : {}) })),
   /** Stop the streaming turn for ALL watchers of the bound conversation (the explicit Stop intent). */
   brainAbort: (session?: string) => req<{ ok: boolean }>('/brain/abort', json(session ? { session } : {})),
+  /** The owner talking into a DELEGATED sub-agent's session they drilled into: steered into its running
+   *  turn, or run as a fresh turn when idle. Eligibility is enforced server-side (durable ancestry);
+   *  a refusal carries the daemon's precise reason in `error`. */
+  brainSubagentSend: (session: string, text: string) => req<{ ok: boolean }>('/brain/subagent/send', json({ session, text })),
+  /** Switch the model a drilled-in sub-agent runs on (the model picker while INSIDE a child view):
+   *  the pick is persisted on the child's row, so its next turn comes up on it. A child with a turn in
+   *  flight refuses — the daemon's precise reason arrives in `error`. */
+  brainSubagentSetModel: (sel: { provider?: string; model?: string }, session: string) =>
+    req<{ model: string }>('/brain/subagent/model', json({ ...sel, session })),
   /** Detach-unless-last on tab close: abort this client's run + dispose the live session only when it is
    *  the final attachment. `detachOnly` (what the web always sends) additionally forbids tearing down a
    *  session with work in flight — a closing tab must never kill a running agent. Fire-and-forget via

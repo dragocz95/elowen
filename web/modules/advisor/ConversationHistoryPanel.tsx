@@ -605,8 +605,9 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   /** The sub-agents that ran under one conversation, as a view of their own inside this surface.
    *
    *  It is a drill-down rather than rows spliced into the list: the register is a list of conversations,
-   *  and hanging a tree off each row made every conversation two rows tall. Following a row opens its
-   *  transcript READ-ONLY — a finished delegation is a record of what happened, not a chat to resume. */
+   *  and hanging a tree off each row made every conversation two rows tall. Following a row focuses the
+   *  child the way the host marked it — own children writable (sends ride the subagent send seam,
+   *  however deep the nesting), everything else read-only. */
   const agentsView = (target: { id: string; title: string }): ReactNode => {
     const rows = subagentBranchRows({
       conversation: target,
@@ -615,7 +616,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
       rowDomId: (suffix) => `${uid}-${encodeURIComponent(target.id)}-${suffix}`,
       openKeys: openAgentNodes,
       onToggleNode: (key) => toggleIds(setOpenAgentNodes, key),
-      onOpenSession: (sessionId) => { dismiss(); openBrainSession(sessionId, false); },
+      onOpenSession: (sessionId, node) => { dismiss(); openBrainSession(sessionId, node.continuable === true, true); },
     });
     return (
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">

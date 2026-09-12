@@ -146,10 +146,20 @@ export const brainGoalSchema = z.object({
 
 /** The owner talking into a delegated sub-agent's session (POST /brain/subagent/send): steered into the
  *  child's running turn, or run as a fresh turn when it is idle. Ownership + the `brain-ch-subagent-`
- *  kind are enforced in BrainService.sendToSubagent. */
+ *  kind are enforced in BrainService.sendToSubagent. Images ride as content with the same bounds as
+ *  /brain/send — they never widen what the child may execute. */
 export const subagentSendSchema = z.object({
   session: z.string().min(1).max(200),
   text: z.string().min(1).max(32_000),
+  images: z.array(imageSchema).max(4).optional(),
+});
+
+/** Switch the model a drilled-in delegated child runs on (POST /brain/subagent/model). Ownership is
+ *  enforced in BrainService.switchSubagentModelForOwner; a child with a turn in flight refuses. */
+export const subagentModelSchema = z.object({
+  session: z.string().min(1).max(200),
+  provider: z.string().optional(),
+  model: z.string().min(1),
 });
 
 /** The user's answer to a parked AskUserQuestion (POST /brain/answer). `id` is the question id carried

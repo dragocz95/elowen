@@ -1205,7 +1205,10 @@ describe('chat application shell ownership', () => {
     const h = compositionHarness({ columns: 140, rows: 24, turns: 4 });
     h.rt.thinkingLevel = 'high';
     h.rt.thinkingLevelLabels = { high: 'vysoká', low: 'nízká' };
-    h.stream.subagentStates = () => ([{
+    // While focused, the rail lists the focused child's OWN children; the child's row itself lives one
+    // level up, in the projection of the level that delegated it.
+    h.stream.subagentStates = () => [];
+    h.stream.ancestorSubagentStates = () => ([{
       id: 'call-1', sessionId: 'child-1', status: 'running', task: 'delegated task',
       tools: 0, seconds: 3, model: 'child-model', thinkingLevel: 'low',
     }] as unknown as ReturnType<typeof h.stream.subagentStates>);
@@ -1241,7 +1244,8 @@ describe('chat application shell ownership', () => {
     h.rt.thinkingLevel = 'high';
     h.rt.thinkingLevelLabels = { high: 'vysoká', low: 'nízká' };
     h.stream.subagentStates = () => [];
-    h.stream.workflowStates = () => ([{
+    h.stream.workflowStates = () => [];
+    h.stream.ancestorWorkflowStates = () => ([{
       id: 'wf-1', status: 'running', nodes: [
         { id: 'plan', task: 'plan it', status: 'running', deps: [], sessionId: 'node-1', model: 'node-model', thinkingLevel: 'low', seconds: 7 },
       ],
@@ -1675,7 +1679,8 @@ describe('chat application shell ownership', () => {
       usage: null,
       cards: [],
     };
-    vi.spyOn(h.stream, 'subagentStates').mockReturnValue([{
+    vi.spyOn(h.stream, 'subagentStates').mockReturnValue([]);
+    vi.spyOn(h.stream, 'ancestorSubagentStates').mockReturnValue([{
       sessionId: 'child-42',
       task: 'the sub-task',
       status: 'running',

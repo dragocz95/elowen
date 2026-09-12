@@ -5,6 +5,7 @@ import { localShellTurn, parseBangCommand, runLocalShell } from './localShell.js
 import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
 import { sessionItems, openPicker, openTextInput } from './picker.js';
+import { escalationPress, resolveInterruptConfirmMs } from './interruptLadder.js';
 import type { BrainClient } from './brainClient.js';
 import type { SlashCommandDef } from '../../shared/wireContract.js';
 import type { ChatState } from './chatState.js';
@@ -277,7 +278,7 @@ export function compactNotice(result: { compacted: boolean; message?: string }):
  *  (`!` local shell, sub-agent steering, prompt commands, `@` mention expansion, image attachments). */
 export function wireSubmit(
   rt: ChatState,
-  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'attachmentChips' | 'shellContext' | 'commandDefs' | 'lifetime' | 'localShellTimeoutMs' | 'promptHistoryDepth'>,
+  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'attachmentChips' | 'shellContext' | 'commandDefs' | 'lifetime' | 'localShellTimeoutMs' | 'promptHistoryDepth' | 'termSettings'>,
   actions: ChatApplicationActions,
   deps: {
     stream: StreamCoordinatorPort;
@@ -299,6 +300,16 @@ export function wireSubmit(
   const runSession: ChatTaskScope['runSession'] = (operation, onFulfilled, onRejected) =>
     lifetime.runSession(operation, onFulfilled, onRejected);
   const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
+  // The escalating /stop ladder for a FOCUSED child — same window and semantics as the parent's
+  // double-Esc (`escalationPress`), fed by the user's Account → Terminal setting. Client-side on purpose:
+  // the daemon never auto-escalates, so a stop meant for the viewed child can never SIGKILL another
+  // session's command. `stopRequested` marks the abort already fired for THIS child run.
+  const childStopWindowMs = resolveInterruptConfirmMs(resources.termSettings?.interruptConfirmMs);
+  let childStopArmedUntil = 0;
+  let stopRequested = false;
+  /** The run the ladder is armed for (`sessionId@turnStart`) — another child or a fresh run resets it,
+   *  so a stale window or abort marker can never kill the wrong session's command. */
+  let childStopFor: string | null = null;
 
   editor.onSubmit = (text: string): void => {
     const trimmed = text.trim();
@@ -316,7 +327,7 @@ export function wireSubmit(
       render();
       runSession((signal) => runShell(localCmd, process.cwd(), signal), (result) => {
         shellContext.add(result);
-        rt.transcript.appendLocalTurn(localShellTurn(result));
+        (rt.childView?.transcript ?? rt.transcript).appendLocalTurn(localShellTurn(result));
         if (rt.notice.includes('running locally')) rt.notice = '';
         render();
       });
@@ -326,15 +337,59 @@ export function wireSubmit(
     // Inside a sub-agent view, plain text goes to the CHILD (steered into its running turn, or a fresh
     // child turn when idle) — the reply streams into the open view. Slash commands always act on the
     // parent conversation, so they snap back first (running /new while "inside" a child would be chaos).
+    // The payload is composed EXACTLY like a parent send — buffered `!` shell context, `@` mention
+    // expansions, pasted image attachments — because the viewed child is the conversation this message
+    // belongs to; only the transport differs (the sub-agent send seam, which enforces the child's
+    // durable scope server-side).
     if (rt.childView && !command) {
       const target = rt.childView.sessionId;
+      const mentions = expandMentions(trimmed, process.cwd());
       // The child daemon stream emits the authoritative `user` event for both a running steer and an
       // idle fresh turn. Do not echo locally: on a running child that produced two identical bubbles.
-      render(); // flush the cleared editor while the request reaches the daemon
-      runSession(() => client.subagentSend(target, trimmed), () => {}, fail);
+      const sendChild = (clipboardImages: PendingImage[]): void => {
+        const all = [...rt.pendingImages, ...mentions.images, ...clipboardImages];
+        const images = all.slice(0, MAX_IMAGES_PER_MESSAGE);
+        if (all.length > images.length) rt.notice = color.warning(`only ${MAX_IMAGES_PER_MESSAGE} images per message — ${all.length - images.length} dropped`);
+        rt.pendingImages = [];
+        attachmentChips.set([]);
+        render(); // flush the cleared editor + attachment chips while the request reaches the daemon
+        runSession(
+          () => client.subagentSend(
+            target,
+            shellContext.take(composeWithAttachments(trimmed, mentions.block)),
+            ...(images.length ? [images.map((i) => ({ data: i.data, mimeType: i.mimeType }))] : []),
+          ),
+          () => {},
+          fail,
+        );
+      };
+      if (mentions.wantsClipboard) {
+        runSession((signal) => readClipboard(signal), (r) => {
+          if (!r.image) rt.notice = color.error(r.error ?? 'no image on the clipboard');
+          sendChild(r.image ? [r.image] : []);
+        });
+        return;
+      }
+      sendChild([]);
       return;
     }
-    if (rt.childView && command) stream.closeSubagent();
+    if (rt.childView && command) {
+      // A focused child is the active session surface. Commands that are purely terminal/account UI may
+      // remain available; navigation commands explicitly leave the drill-in. Every command whose current
+      // transport is bound to the parent is refused here, before any picker or route can leak the action.
+      const safeInChild = new Set<ParsedCommand['cmd']>([
+        'quit', 'stop', 'model', 'theme', 'maskot', 'cd', 'editor',
+        'keybinds', 'statusline', 'lsp', 'mcp', 'skills', 'tools', 'paste', 'help', 'restart',
+      ]);
+      const leavesDrillIn = new Set<ParsedCommand['cmd']>(['new', 'sessions', 'resume', 'delete']);
+      const reasoningDisplayOnly = command.cmd === 'reasoning' && command.arg?.trim() === 'show';
+      if (!safeInChild.has(command.cmd) && !leavesDrillIn.has(command.cmd) && !reasoningDisplayOnly) {
+        rt.notice = color.error(`/${command.cmd === 'plugin-picker' ? command.name : command.cmd} is unavailable while viewing a sub-agent because it would act on the parent conversation`);
+        render('state:child-command-disabled');
+        return;
+      }
+      if (leavesDrillIn.has(command.cmd)) stream.exitSubagent();
+    }
     if (command) {
       switch (command.cmd) {
         case 'quit': quit(); return;
@@ -630,8 +685,75 @@ export function wireSubmit(
           return;
         }
         case 'stop': {
-          if (!rt.transcript.thinking) { rt.notice = color.dim('nothing is running'); render(); return; }
+          // The control targets the VIEWED session: a focused child is stopped by explicit session
+          // (authorized server-side through the durable ancestry), never the hidden parent.
+          const child = rt.childView;
+          const active = child?.transcript ?? rt.transcript;
+          if (!active.thinking) {
+            childStopArmedUntil = 0;
+            childStopFor = null;
+            stopRequested = false;
+            rt.notice = color.dim('nothing is running');
+            render();
+            return;
+          }
           rt.notice = color.dim('stopping…');
+          if (child) {
+            // The ladder is keyed to THIS run (session + its turn-start stamp): drilling to another child
+            // or a fresh run after a settled stop starts a clean ladder, so a stale armed window or an
+            // abort marker from B can never kill C's — or the parent's — command.
+            const runKey = `${child.sessionId}@${child.transcript.activityStartedAt ?? 0}`;
+            if (childStopFor !== runKey) {
+              childStopFor = runKey;
+              childStopArmedUntil = 0;
+              stopRequested = false;
+            }
+            // The SAME escalating ladder the parent's double-Esc rides, driven by repeated /stop (Esc is
+            // navigation in a focused view). Unlike Esc, the first /stop is explicit intent: it ABORTS
+            // right away and marks the run, so the next press — while the turn can still be pinned by a
+            // long foreground command — hard-kills THAT child's command. Precise by session: neither the
+            // parent nor a sibling ever sees a stop meant for this child.
+            const next = escalationPress(stopRequested, childStopArmedUntil, Date.now(), childStopWindowMs);
+            if (next.action === 'kill') {
+              childStopArmedUntil = 0;
+              stopRequested = false;
+              rt.notice = color.dim('killing the foreground command…');
+              rt.noticeSticky = true; // live progress — the outcome below replaces it and expires normally
+              runSession(
+                () => client.killCommands({ session: child.sessionId }),
+                ({ killed }) => {
+                  rt.notice = killed > 0
+                    ? color.success(`killed ${killed} foreground command${killed === 1 ? '' : 's'}`)
+                    : color.dim('no foreground command left to kill');
+                  render('state:child-stop-kill-complete');
+                },
+                (error) => { rt.notice = color.error(error.message); render('state:child-stop-kill-error'); },
+              );
+              render();
+              return;
+            }
+            childStopArmedUntil = next.armedUntil;
+            stopRequested = true; // the abort below is THIS run's stop; the next /stop escalates
+            // Only a running foreground command can pin the aborted child turn — advertise the escalation
+            // only then; otherwise the visible end rides the child's SSE idle one round trip away.
+            const pinned = (child.processes ?? []).some((proc) => proc.running && proc.completionMode === 'foreground');
+            if (pinned) {
+              // Same wording as the parent's double-Esc hint, but naming the trigger this view actually has.
+              rt.notice = color.dim('interrupting · /stop again to kill the running command');
+            }
+            runSession(
+              () => client.abort(child.sessionId),
+              () => {
+                if (!pinned) { rt.notice = color.dim('agent stopped'); render('state:child-stop-settled'); }
+              },
+              fail,
+            );
+            render();
+            return;
+          }
+          childStopArmedUntil = 0;
+          childStopFor = null;
+          stopRequested = false;
           render();
           runSession(() => client.abort(), () => { rt.notice = color.dim('agent stopped'); render(); }, fail);
           return;

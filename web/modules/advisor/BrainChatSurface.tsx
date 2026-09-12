@@ -1,6 +1,6 @@
 'use client';
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, type LucideIcon } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, Bot, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { renderMarkdown } from '../../lib/markdown';
 import { langForPath, parseDiffRow } from '../../lib/codeDiff';
@@ -1383,9 +1383,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   const {
     turns, busy, ready, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, pluginPicker, closePluginPicker,
-    helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
+    helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly, childFocus,
     usage, goal, lineCfg, currentModel, subagents, attachments, removeAttachment, startNewConversation,
-    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
+    focusSubagentSession, exitReadOnly, exitChildFocus, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
     ensureAttached, loadOlder, hasMoreHistory, showThoughts,
     planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface, openHistory,
@@ -2166,7 +2166,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
           <AgentsTable
             agents={subagents}
             onClose={() => setAgentsOpen(false)}
-            onOpen={(sessionId) => { setAgentsOpen(false); void openReadOnly(sessionId).catch(() => toast(t.brainChat.searchOpenError, 'error')); }}
+            onOpen={(sessionId) => { setAgentsOpen(false); void focusSubagentSession(sessionId).catch(() => toast(t.brainChat.searchOpenError, 'error')); }}
           />
         ) : null}
         {statsOpen ? (
@@ -2320,8 +2320,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
       ) : null}
 
       {/* Pending mid-turn queue: messages sent while a turn streams, parked until it ends. Removable
-          until delivered; hidden in the read-only session preview (no composer there). */}
-      {!readOnly && queued.length > 0 ? (
+          until delivered; hidden while a focused session replaces the bound conversation's view (a
+          focused child's sends do not queue, and a read-only preview has no composer at all). */}
+      {!readOnly && !childFocus && queued.length > 0 ? (
         <div className={`flex flex-col gap-1 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
           {queued.map((q) => (
             <div key={q.id} className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-tiny">
@@ -2341,7 +2342,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         </div>
       ) : null}
 
-      {/* Composer — replaced by a read-only banner when viewing a channel/task session's history. */}
+      {/* Composer — replaced by a read-only banner when viewing a channel/task session's history;
+          framed by a focused-child bar when the view is an OWN delegated child (sends/steers go to
+          that child, the way back is the bar's button). */}
       {readOnly ? (
         <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
           <div className={`flex items-center justify-between gap-2 bg-muted/40 p-3 text-sm text-muted-foreground ${variant === 'full' ? 'rounded-xl border border-border' : ''}`}>
@@ -2351,6 +2354,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         </div>
       ) : (
       <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
+      {childFocus ? (
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-2"><Bot size={13} className="shrink-0 text-primary" aria-hidden /><span className="truncate" data-testid="chat-child-focus-hint">{t.brainChat.childFocusHint}</span></span>
+          <button type="button" onClick={exitChildFocus} data-testid="chat-child-focus-exit" className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent">{t.brainChat.childFocusExit}</button>
+        </div>
+      ) : null}
       {/* In the full page the whole composer is ONE quiet rounded field (attach + textarea + send inside
           it, Claude-style); the dock keeps its original three-control row. */}
       <ChatComposer variant={variant} composerRef={composerRef} pinToNewest={pinToNewest} />
