@@ -110,7 +110,7 @@ function serviceFixture() {
     messages: [], isStreaming: false, getContextUsage: () => undefined, agent: {}, systemPrompt: '',
     getAllTools: () => [], getActiveToolNames: () => [], setActiveToolsByName: vi.fn(),
     supportsThinking: () => false, getSteeringMessages: () => [], getFollowUpMessages: () => [],
-    setSteeringMode: vi.fn(),
+    setSteeringMode: vi.fn(), clearQueue: vi.fn(() => ({ steering: [], followUp: [] })),
   };
   const sandbox = {
     prepareExecution: vi.fn(), environmentFor: vi.fn(), requestEnvironment: vi.fn(),
@@ -137,6 +137,40 @@ function serviceFixture() {
   };
   return { d, store, projects, owner, root };
 }
+
+describe('fresh conversation project selection', () => {
+  it.each(['managed', 'host'] as const)('keeps a selected %s target through first-turn resolution and cold hydration', async (kind) => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const project = kind === 'managed'
+      ? h.projects.createForUser(h.owner.id, { slug: 'selected-project' })
+      : h.projects.create({ slug: 'selected-project', path: h.root });
+    const target = { kind, projectId: project.id };
+    h.d.plugins.peek().control('sandbox')!.environmentFor.mockResolvedValue({ state: 'running' });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id, { fresh: true, surface: 'web' });
+    const marker = vi.spyOn(h.store, 'appendSessionEvent');
+    const response = await service.selectProjectExecution(h.owner.id, target, sessionId);
+    expect(response.projectRef).toEqual(target);
+    expect(h.store.getProjectExecution(sessionId)).toEqual(target);
+    expect(service.status(h.owner.id, sessionId).projectRef).toEqual(target);
+    expect(marker).not.toHaveBeenCalled();
+    const resolveTurn = () => effectiveTurnWorkDir({
+      policy: h.d.policy(h.owner.id), accountUserId: h.owner.id, sessionId,
+      projectRef: h.store.getProjectExecution(sessionId), projects: h.projects,
+      sandbox: h.d.plugins.peek().control('sandbox') as never, baseWorkDir: h.root, hostAuthorized: true,
+    });
+    expect(resolveTurn()).toMatchObject({ projectRef: target, workDir: kind === 'managed' ? '/selected-project' : h.root });
+    // Closing an entirely empty conversation prunes it; hydration here follows the first stored turn.
+    h.store.appendMessage({ id: 'first-request', sessionId, parentId: null, role: 'user', content: { role: 'user', content: 'First request' } });
+    await service.stopSession(h.owner.id, sessionId);
+    await service.start(h.owner.id, { session: sessionId, surface: 'web' });
+    expect(h.store.getProjectExecution(sessionId)).toEqual(target);
+    expect(service.status(h.owner.id, sessionId).projectRef).toEqual(target);
+    expect(resolveTurn().projectRef).toEqual(target);
+    await service.stopSession(h.owner.id, sessionId);
+  });
+});
 
 describe('the execution-change marker', () => {
   // `/workspace` is the path inside the project's own container: it names nothing a reader recognizes,
