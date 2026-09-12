@@ -468,9 +468,11 @@ export class DelegatedSessionService {
    *  (continue the conversation after it finished). Restricted to the caller's OWN
    *  `brain-ch-subagent-*` sessions — the child executes with access inherited from the caller's own
    *  delegation, so this can never escalate; shared platform channels are deliberately NOT reachable
-   *  here (steering another member's turn would mix privileges). */
-  async sendToSubagent(userId: number, sessionId: string, text: string): Promise<void> {
-    await this.sendDelegated(userId, sessionId, text);
+   *  here (steering another member's turn would mix privileges). Optional image attachments ride the
+   *  same send the caller's own conversation would use — content the user provided, never widened access. */
+  async sendToSubagent(userId: number, sessionId: string, text: string,
+    images?: { data: string; mimeType: string }[]): Promise<void> {
+    await this.sendDelegated(userId, sessionId, text, images?.length ? { images } : undefined);
   }
 
   /** A delegating turn reading the final stored reply of one of its own sub-agents. The durable parent
@@ -527,6 +529,16 @@ export class DelegatedSessionService {
       && !this.d.store.recoveringSubagentSessionIds(parentSessionId).includes(childSessionId)) return { stopped: false };
     await this.d.channelService.abort(channelIdOf(childSessionId));
     return { stopped: true };
+  }
+
+  /** The owner's STOP of a delegated child they drilled into (the CLI/web control routes): resolve the
+   *  child through the SAME durable ancestry predicate every other drill-in path uses
+   *  ({@link delegatedContinuation}), then run the targeted teardown above against its durable parent.
+   *  Explicitly NOT the whole-tree abort: stopping the session the user is LOOKING at must never reach
+   *  the hidden parent or a sibling branch. */
+  async stopForOwner(userId: number, childSessionId: string): Promise<{ stopped: boolean }> {
+    const { parentSessionId } = this.delegatedContinuation(userId, childSessionId);
+    return this.stopSubagent(parentSessionId, childSessionId);
   }
 
   /** A delegating TURN continuing one of its own sub-agents — the agent-facing counterpart of the owner's
@@ -698,6 +710,9 @@ export class DelegatedSessionService {
       /** Drop the child's live session before this turn so it is reassembled from the CURRENT stored
        *  scope. Needed only after a promotion — see continueSubagent. */
       rebuildSession?: boolean;
+      /** Image attachments the OWNER attached to a drill-in message. Content, not capability: the
+       *  child's tool scope is untouched, these only reach its context like any user image would. */
+      images?: { data: string; mimeType: string }[];
       onEvent?: (e: BrainEvent) => void;
     },
   ): Promise<string> {
@@ -788,6 +803,7 @@ export class DelegatedSessionService {
         ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
         ownerSteer: true,
         ...(opts?.rebuildSession ? { rebuildSession: true } : {}),
+        ...(opts?.images?.length ? { images: opts.images } : {}),
         ...(opts?.internalSystem ? { internalSystem: opts.internalSystem } : {}),
         ...(opts?.onEvent ? { onEvent: opts.onEvent } : {}),
       }, content);

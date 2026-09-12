@@ -9265,6 +9265,139 @@ describe('BrainService.stopSubagent (targeted teardown of one runaway or finishe
   });
 });
 
+describe('owner drill-in through the durable ancestry (nested A→B→C)', () => {
+  const SCOPE = { admin: true, owner: true, projectIds: [], permissionBoundary: null };
+
+  /** A conversation A that delegated B, which itself delegated C — the deepest level a drill-in can
+   *  reach. Every drill-in control (send/stop/detach) must resolve C through the SAME durable parent
+   *  chain, never through the id prefix alone and never through the caller's active-session pointer. */
+  async function seedNest() {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const b = 'brain-ch-subagent-sub-nest-b';
+    const c = 'brain-ch-subagent-sub-nest-c';
+    d.store.createSession({ id: b, userId: 1, model: 'b-model', parentSessionId: sessionId, delegatedAccess: SCOPE });
+    d.store.createSession({ id: c, userId: 1, model: 'c-model', parentSessionId: b, delegatedAccess: SCOPE });
+    const abort = vi.fn(async () => undefined);
+    (svc as unknown as { channelService: { abort: unknown } }).channelService.abort = abort;
+    const sessions = (svc as unknown as {
+      sessions: { setChildRunning(parent: string, child: string, running: boolean): void };
+    }).sessions;
+    return { d, svc, sessionId, b, c, abort, sessions };
+  }
+
+  it('continues the grandchild by owner drill-in: the durable parent chain authorizes the deepest level', async () => {
+    const { svc, b, c } = await seedNest();
+    const channel = (svc as unknown as { channelService: { send: ReturnType<typeof vi.fn> } }).channelService;
+    const send = vi.spyOn(channel, 'send').mockResolvedValue('');
+
+    await svc.sendToSubagent(1, c, 'finish the sweep');
+
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      channelId: 'subagent-sub-nest-c',
+      ownerUserId: 1,
+      // The durable edge stays B→C so parent stop/status keep owning the continuation.
+      parentSessionId: b,
+      ownerSteer: true,
+      // The child's OWN stored model is authoritative for a hand-ordered continuation.
+      model: { model: 'c-model' },
+    }), 'finish the sweep');
+  });
+
+  it('carries image attachments into the drilled-in child turn', async () => {
+    const { svc, c } = await seedNest();
+    const channel = (svc as unknown as { channelService: { send: ReturnType<typeof vi.fn> } }).channelService;
+    const send = vi.spyOn(channel, 'send').mockResolvedValue('');
+
+    await svc.sendToSubagent(1, c, 'what is in this screenshot', [{ data: 'aGk=', mimeType: 'image/png' }]);
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: 'subagent-sub-nest-c', images: [{ data: 'aGk=', mimeType: 'image/png' }] }),
+      'what is in this screenshot',
+    );
+  });
+
+  it('refuses a grandchild of another account and a session outside the sub-agent family', async () => {
+    const { d, svc, sessionId, c } = await seedNest();
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    d.store.createSession({
+      id: 'brain-ch-subagent-sub-nest-foreign', userId: 2, model: 'm',
+      parentSessionId: 'brain-2', delegatedAccess: SCOPE,
+    });
+    d.store.createSession({ id: 'brain-ch-discord-nest', userId: 1, model: 'm', parentSessionId: sessionId });
+
+    await expect(svc.sendToSubagent(2, c, 'x')).rejects.toThrow('unknown session');
+    await expect(svc.sendToSubagent(1, 'brain-ch-subagent-sub-nest-foreign', 'x')).rejects.toThrow('unknown session');
+    await expect(svc.sendToSubagent(1, 'brain-ch-discord-nest', 'x')).rejects.toThrow('not a sub-agent session');
+  });
+
+  it('abort on the viewed grandchild stops exactly that child through the channel abort tree', async () => {
+    const { svc, b, c, abort, sessions } = await seedNest();
+    sessions.setChildRunning(b, c, true);
+
+    await svc.abort(1, c);
+
+    expect(abort).toHaveBeenCalledWith('subagent-sub-nest-c');
+    // Exactly one teardown, rooted at the viewed child: the hidden parent and the middle level keep
+    // running — a stop of the viewed session must not cascade upwards.
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('abort through drill-in resolves without error for a child that already finished', async () => {
+    const { svc, c, abort } = await seedNest();
+    await expect(svc.abort(1, c)).resolves.toBeUndefined();
+    expect(abort).not.toHaveBeenCalled();
+  });
+
+  it('abort refuses a child belonging to another account', async () => {
+    const { d, svc, abort } = await seedNest();
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    d.store.createSession({
+      id: 'brain-ch-subagent-sub-nest-foreign', userId: 2, model: 'm',
+      parentSessionId: 'brain-2', delegatedAccess: SCOPE,
+    });
+
+    await expect(svc.abort(1, 'brain-ch-subagent-sub-nest-foreign')).rejects.toThrow('unknown session');
+    expect(abort).not.toHaveBeenCalled();
+  });
+
+  it('the Ctrl+B detach and kill-escalation controls resolve the viewed child through the same predicate', async () => {
+    const { svc, c, d } = await seedNest();
+    const reg = new PluginRegistry();
+    const detachCommands = vi.fn(async () => ({ detached: 2 }));
+    const kill = vi.fn(async () => ({ killed: 1 }));
+    reg.contextFor('terminal', {}, { info() {}, warn() {}, error() {} })
+      .registerControl('terminal', { detachForeground: detachCommands, killForeground: kill });
+    const detachSubagents = vi.fn(async () => ({ detached: 1 }));
+    reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} })
+      .registerControl('subagent', { detachForeground: detachSubagents, activeCount: () => 0 });
+    const detachWorkflows = vi.fn(async () => ({ detached: 0 }));
+    reg.contextFor('workflow', {}, { info() {}, warn() {}, error() {} })
+      .registerControl('workflow', { detachForeground: detachWorkflows });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+
+    await expect(svc.detachForegroundCommands(1, c)).resolves.toEqual({ detached: 2 });
+    expect(detachCommands).toHaveBeenCalledWith({ sessionId: c, principal: 'elowen:1' });
+    await expect(svc.detachForegroundSubagents(1, c)).resolves.toEqual({ detached: 1 });
+    expect(detachSubagents).toHaveBeenCalledWith({ sessionId: c, principal: 'elowen:1' });
+    await expect(svc.detachForegroundWorkflows(1, c)).resolves.toEqual({ detached: 0 });
+    await expect(svc.killForegroundCommands(1, c)).resolves.toEqual({ killed: 1 });
+    expect(kill).toHaveBeenCalledWith({ sessionId: c, principal: 'elowen:1' });
+  });
+
+  it('detach refuses a foreign child', async () => {
+    const { svc, d } = await seedNest();
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    d.store.createSession({
+      id: 'brain-ch-subagent-sub-nest-foreign', userId: 2, model: 'm',
+      parentSessionId: 'brain-2', delegatedAccess: SCOPE,
+    });
+
+    await expect(svc.detachForegroundCommands(1, 'brain-ch-subagent-sub-nest-foreign')).rejects.toThrow('unknown session');
+  });
+});
+
 describe('cold-start compaction (the first turn after the prompt cache expired)', () => {
   // The production activation chain this exercises END TO END through the real BrainService: the
   // factory builds assessColdCompaction → the spawner carries it onto the LiveBrain → the turn runner

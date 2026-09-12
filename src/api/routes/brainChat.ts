@@ -482,7 +482,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     // through the delegation's carried origin instead (see brain/spawnOrigin.ts) — the pin here only has
     // to cover the turns a human actually ordered.
     pinOrigin(c, body.session);
-    void brain.sendToSubagent(c.get('user').id, body.session, body.text).catch(() => { /* surfaced on the child's stream */ });
+    void brain.sendToSubagent(c.get('user').id, body.session, body.text, body.images).catch(() => { /* surfaced on the child's stream */ });
     return c.json({ ok: true });
   }));
 

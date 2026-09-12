@@ -39,7 +39,7 @@ function fakeBrain() {
   const startCalls: { id: number; opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number; surface?: 'web' | 'cli' } }[] = [];
   const readActivityCalls: { id: number; session: string; through: number; surface: 'web' | 'cli' }[] = [];
   const tapSnapshotCalls: { id: number; session: string; history?: { limit: number; before?: number } }[] = [];
-  const subagentSends: { id: number; session: string; text: string }[] = [];
+  const subagentSends: { id: number; session: string; text: string; images?: { data: string; mimeType: string }[] }[] = [];
   const acceptedSendFailures: { session: string; message: string }[] = [];
   const turnRequests: Omit<TurnRequest, 'onAdmitted'>[] = [];
   const bindContextCalls: { id: number; channel: string; session: string }[] = [];
@@ -269,7 +269,7 @@ function fakeBrain() {
     messagesPage: (_id: number, session: string | undefined, opts: { limit: number; before?: number }) =>
       ({ items: [{ role: 'user', text: `page ${session ?? 'active'} l${opts.limit} b${opts.before ?? '-'}` }], hasMore: true, nextBefore: 7 }),
     preflightSubagentSend: () => { if (subagentPreflightError) throw subagentPreflightError; },
-    sendToSubagent: async (id: number, session: string, text: string) => { subagentSends.push({ id, session, text }); },
+    sendToSubagent: async (id: number, session: string, text: string, images?: { data: string; mimeType: string }[]) => { subagentSends.push({ id, session, text, ...(images ? { images } : {}) }); },
     searchMessages: (id: number, q: string) =>
       q.trim().length < 2 ? [] : [{ sessionId: `s-${id}`, sessionTitle: 'T', role: 'user', snippet: q, ts: '2026-01-01 00:00:00' }],
     bindContextCalls,
@@ -732,6 +732,26 @@ describe('brain routes', () => {
     expect(accepted.status).toBe(200);
     await Promise.resolve(); // detached route continuation
     expect(brain.subagentSends).toEqual([{ id: 2, session: 'brain-ch-subagent-good', text: 'continue' }]);
+  });
+
+  it('carries image attachments on a sub-agent send and refuses an unsupported mimeType', async () => {
+    const { app, amyTok, brain } = setup();
+    const ok = await app.request('/brain/subagent/send', post(amyTok, {
+      session: 'brain-ch-subagent-good', text: 'read this screenshot',
+      images: [{ data: 'aGk=', mimeType: 'image/png' }],
+    }));
+    expect(ok.status).toBe(200);
+    await Promise.resolve(); // detached route continuation
+    expect(brain.subagentSends).toEqual([{
+      id: 2, session: 'brain-ch-subagent-good', text: 'read this screenshot',
+      images: [{ data: 'aGk=', mimeType: 'image/png' }],
+    }]);
+
+    const rejected = await app.request('/brain/subagent/send', post(amyTok, {
+      session: 'brain-ch-subagent-good', text: 'x',
+      images: [{ data: 'aGk=', mimeType: 'image/heic' }],
+    }));
+    expect(rejected.status).toBe(400);
   });
 
   it('opt-in fixed-session stream starts with one durable + live snapshot frame', async () => {

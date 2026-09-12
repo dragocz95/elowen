@@ -1469,8 +1469,16 @@ export class BrainService {
 
   /** Stop the streaming turn (the Esc key in chat clients) — on the active conversation, or on the
    *  caller's explicit `session` (a bound CLI). The agent settles into agent_end → the idle event, so
-   *  subscribed clients wind down on their own. */
+   *  subscribed clients wind down on their own.
+   *
+   *  An explicit DELEGATED child session is resolved through the durable ancestry predicate and stopped
+   *  with the targeted teardown: stopping the child the user drilled into must never cascade into the
+   *  hidden parent conversation. */
   async abort(userId: number, session?: string): Promise<void> {
+    if (session && isSubagentSession(session)) {
+      await this.delegated.stopForOwner(userId, session);
+      return;
+    }
     return this.teardown.abort(userId, session);
   }
 
@@ -2106,10 +2114,19 @@ export class BrainService {
     this.delegated.preflightSubagentSend(userId, sessionId);
   }
 
-  /** The owner talking INTO a delegated sub-agent's session — see DelegatedSessionService.sendToSubagent. */
-  async sendToSubagent(userId: number, sessionId: string, text: string): Promise<void> {
+  /** The owner talking INTO a delegated sub-agent's session — see DelegatedSessionService.sendToSubagent.
+   *  Optional image attachments ride into the child turn as content; see the schema bound on
+   *  POST /brain/subagent/send for the allowed shapes and caps. */
+  async sendToSubagent(userId: number, sessionId: string, text: string,
+    images?: { data: string; mimeType: string }[]): Promise<void> {
     if (this.draining || this.reloadingPlugins) throw new Error('the daemon is temporarily not admitting new work');
-    return this.delegated.sendToSubagent(userId, sessionId, text);
+    return this.delegated.sendToSubagent(userId, sessionId, text, images);
+  }
+
+  /** The owner's STOP of a delegated child they drilled into — the durable-ancestry twin of
+   *  {@link stopSubagent} that needs only the CALLER, not the parent id. */
+  stopSubagentForOwner(userId: number, childSessionId: string): Promise<{ stopped: boolean }> {
+    return this.delegated.stopForOwner(userId, childSessionId);
   }
 
   /** A delegating turn reading the final stored reply of one of its own sub-agents — see
@@ -2320,7 +2337,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ detached: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('subagent');
     if (!control) return { detached: 0 };
@@ -2358,7 +2375,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ detached: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('terminal');
     if (!control) return { detached: 0 };
@@ -2377,7 +2394,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ killed: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('terminal');
     if (!control) return { killed: 0 };
@@ -2393,7 +2410,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ detached: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('workflow');
     if (!control) return { detached: 0 };
@@ -2458,6 +2475,18 @@ export class BrainService {
       throw new Error('client session has stopped');
     }
     return target;
+  }
+
+  /** The session a CLIENT CONTROL action (Ctrl+B detach, stop-escalation kill) names: the caller's
+   *  ordinary conversation as {@link preflightSend} resolves it — or, when the caller drilled into a
+   *  delegated child, that child through the SAME durable ancestry predicate the send seam uses
+   *  ({@link preflightSubagentSend}). One resolver, so every control route shares one authorization
+   *  story; a foreign or unknown child is refused exactly like a foreign conversation. The client
+   *  generation fence applies only to user conversations — a focused child has no CLI binding. */
+  private preflightControlTarget(userId: number, session?: string, client?: BoundClientRequest): string {
+    if (!session || !isSubagentSession(session)) return this.preflightSend(userId, session, client);
+    this.preflightSubagentSend(userId, session);
+    return session;
   }
 
   /** Whether the caller currently has a live conversation that a settings re-apply must wait for. */
