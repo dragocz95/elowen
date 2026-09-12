@@ -7,7 +7,8 @@ import { expect, it } from 'vitest';
 import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { createContainerSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
-import { cleanPodmanEnv, PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { serviceProcessEnv } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 
 /**
  * Podman 4.9.3 Phase 0 proof for a persistent, exploded Project root filesystem.
@@ -28,7 +29,7 @@ import { cleanPodmanEnv, PodmanClient } from '../../plugins/sandbox/lib/podman.m
  * because an exploded rootfs carries no image configuration into `podman create`.
  */
 
-const podmanEnv = cleanPodmanEnv();
+const podmanEnv = serviceProcessEnv();
 const availability = process.platform === 'linux'
   ? spawnSync('/usr/bin/podman', ['info', '--format', '{{.Host.Security.Rootless}}'], {
       encoding: 'utf8', env: podmanEnv, timeout: 10_000,

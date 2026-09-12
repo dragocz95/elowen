@@ -6,7 +6,8 @@ import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBoundSiteSpec, createContainerSpec, createEnvironmentDiskSpec, publicationUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
-import { cleanPodmanEnv, PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { serviceProcessEnv } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_MODE, envelopePaths,
   HELPER_PATH, NspawnClient, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
 import { RECEIPT_PATH } from './nspawnProofHost.mjs';
@@ -92,12 +93,12 @@ if (!blockers.length) {
   // The machine is built from the same image every environment is, so an unbuilt one is a reason to skip
   // rather than a fifteen-minute build inside a test. The store is the SERVICE account's rootless one,
   // reachable only with that account's own environment.
-  try { execFileSync('/usr/bin/podman', ['image', 'exists', PROJECT_BASE_IMAGE_TAG], { timeout: 60_000, env: cleanPodmanEnv() }); }
+  try { execFileSync('/usr/bin/podman', ['image', 'exists', PROJECT_BASE_IMAGE_TAG], { timeout: 60_000, env: serviceProcessEnv() }); }
   catch { blockers.push('the project base image is not built'); }
 }
 if (blockers.length) console.log(`nspawn machine proof skipped: ${blockers.join('; ')}`);
 
-const podmanEnv = () => cleanPodmanEnv();
+const podmanEnv = () => serviceProcessEnv();
 const systemctlShow = (unit: string, property: string) =>
   execFileSync('/usr/bin/systemctl', ['show', unit, '-p', property, '--value'], { encoding: 'utf8', timeout: 30_000 }).trim();
 const machineList = () => execFileSync('/usr/bin/machinectl', ['list', '--no-legend', '--no-pager'], { encoding: 'utf8', timeout: 30_000 });

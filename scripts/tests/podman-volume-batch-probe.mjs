@@ -15,7 +15,8 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
+import { PodmanClient, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
+import { SpawnExecutor } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 import { createContainerSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'ep-'));

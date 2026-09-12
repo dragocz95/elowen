@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bindContainerIdentity, createContainerSpec, createEnvironmentDiskSpec, executionUnit, publicationUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
-import { cleanPodmanEnv, PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
+import { PodmanClient, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
+import { SpawnExecutor, serviceProcessEnv } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 import { PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
@@ -204,17 +205,17 @@ describe('clean and confined Podman client', () => {
   it('launches bounded subprocesses with truncation reporting and stdin', async () => {
     const executor = new SpawnExecutor();
     const result = await executor.run(process.execPath, ['-e', 'process.stdin.on("data", data => process.stdout.write(data))'], {
-      env: cleanPodmanEnv(), input: 'abcdefghijklmnop', timeoutMs: 5000, outputLimitBytes: 8,
+      env: serviceProcessEnv(), input: 'abcdefghijklmnop', timeoutMs: 5000, outputLimitBytes: 8,
     });
     expect(result).toEqual({ code: 0, stdout: 'ijklmnop', stderr: '', truncated: true });
   });
   it('cleans timeout and spawn-error paths without an unhandled stdin error', async () => {
     const executor = new SpawnExecutor();
     await expect(executor.run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      env: cleanPodmanEnv(), timeoutMs: 25, outputLimitBytes: 32,
+      env: serviceProcessEnv(), timeoutMs: 25, outputLimitBytes: 32,
     })).rejects.toThrow(/timed out/);
     await expect(executor.run('/nonexistent/elowen-test-executable', [], {
-      env: cleanPodmanEnv(), input: 'test', timeoutMs: 1000, outputLimitBytes: 32,
+      env: serviceProcessEnv(), input: 'test', timeoutMs: 1000, outputLimitBytes: 32,
     })).rejects.toThrow(/ENOENT/);
   });
   it('updates an adopted running container while keeping its creation identity stable', async () => {
@@ -282,7 +283,7 @@ describe('clean and confined Podman client', () => {
     expect(executor.run.mock.calls.some(([, args]) => args.includes('show'))).toBe(true);
   });
   it('never inherits daemon credentials or remote Podman settings', () => {
-    const env = cleanPodmanEnv({ uid: 123, home: '/home/service', user: 'service' });
+    const env = serviceProcessEnv({ uid: 123, home: '/home/service', user: 'service' });
     expect(env).toEqual({ HOME: '/home/service', USER: 'service', LOGNAME: 'service', PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', XDG_RUNTIME_DIR: '/run/user/123', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/123/bus' });
   });
   it('pins every test store, runroot, runtime, temporary path and namespace', async () => {

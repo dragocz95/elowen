@@ -1,18 +1,13 @@
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { userInfo } from 'node:os';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, statfsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseImage.mjs';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
 import { COMPLETION_CWD_LIMIT, completionArtifact, completionPrelude, parseCompletionCwd } from './managedCompletion.mjs';
+import { OUTPUT_LIMIT, positive, serviceProcessEnv, SpawnExecutor, validateInput } from './runtimeProcess.mjs';
+import { GUEST_SYSTEM_BUS, unitProperties } from './nspawn.mjs';
 
-const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-const INPUT_LIMIT = 1024 * 1024;
-export const OUTPUT_LIMIT = 256 * 1024;
-/** The socket `systemd-run` connects to inside the guest; its presence is what makes an execution possible. */
-export const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
 const DISK_TREE_INVENTORY_PY = `def inventory(root):
  rows=[]; links={}
  for directory,names,files in os.walk(root,topdown=True,followlinks=False):
@@ -28,25 +23,6 @@ const DISK_TREE_INVENTORY_PY = `def inventory(root):
    rows.append([rel,stat.S_IFMT(st.st_mode),st.st_size if stat.S_ISREG(st.st_mode) else 0,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else ''])
  return rows`;
 const isolatedStores = new WeakSet();
-
-export function positive(value, max, name) {
-  if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new Error(`Invalid ${name} bound`);
-  return value;
-}
-export function validateInput(input) {
-  if (input !== undefined && typeof input !== 'string' && !Buffer.isBuffer(input)) throw new Error('Invalid command input');
-  if (input !== undefined && Buffer.byteLength(input) > INPUT_LIMIT) throw new Error('Command input exceeds limit');
-}
-
-export function cleanPodmanEnv(input = {}) {
-  const service = userInfo();
-  const uid = input.uid ?? process.getuid?.() ?? service.uid;
-  const user = input.user ?? service.username;
-  return {
-    HOME: input.home ?? service.homedir, USER: user, LOGNAME: user, PATH: SYSTEM_PATH,
-    XDG_RUNTIME_DIR: `/run/user/${uid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus`,
-  };
-}
 
 function validateUserSessionBus(expected = null) {
   const uid = process.getuid?.();
@@ -81,71 +57,6 @@ export function isolatedPodmanOptions(directory, namespace, options = {}) {
   return { isolation };
 }
 
-/** Only trusted module code chooses the host executable. Never expose this executor as a plugin control. */
-export class SpawnExecutor {
-  async run(file, args, options) {
-    validateInput(options.input);
-    positive(options.timeoutMs, 15 * 60_000, 'timeout');
-    positive(options.outputLimitBytes, 16 * 1024 * 1024, 'output');
-    options.signal?.throwIfAborted();
-    return await new Promise((resolve, reject) => {
-      const child = spawn(file, [...args], { env: options.env, shell: false, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
-      const buffers = { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
-      let truncated = false;
-      let failure;
-      let killTimer;
-      const signal = (name) => {
-        if (!child.pid) return;
-        try { process.kill(-child.pid, name); }
-        catch (error) { if (error.code !== 'ESRCH') failure ??= error; }
-      };
-      const terminate = (error) => {
-        failure ??= error;
-        signal('SIGTERM');
-        killTimer ??= setTimeout(() => signal('SIGKILL'), 250);
-      };
-      const onAbort = () => terminate(new Error('Podman command aborted'));
-      const timer = setTimeout(() => terminate(new Error(`Podman command timed out after ${options.timeoutMs}ms`)), options.timeoutMs);
-      options.signal?.addEventListener('abort', onAbort, { once: true });
-      // Abort can land between the initial check and listener registration.
-      if (options.signal?.aborted) onAbort();
-      // A long build is the one command whose output matters BEFORE it finishes, so `onOutput` sees each
-      // complete line as it is written. The buffers below are untouched by it: the returned result is
-      // still the bounded capture every other caller reads, and a throwing observer must not take the
-      // command down with it.
-      const partial = { stdout: '', stderr: '' };
-      const observe = (stream, chunk) => {
-        if (!options.onOutput) return;
-        const text = partial[stream] + chunk.toString('utf8');
-        const lines = text.split(/\r?\n|\r/);
-        partial[stream] = lines.pop() ?? '';
-        for (const line of lines) { if (line.trim()) { try { options.onOutput(line); } catch { /* an observer never fails the command */ } } }
-      };
-      for (const stream of ['stdout', 'stderr']) child[stream].on('data', (chunk) => {
-        const combined = Buffer.concat([buffers[stream], chunk]);
-        if (combined.length > options.outputLimitBytes) truncated = true;
-        buffers[stream] = combined.subarray(Math.max(0, combined.length - options.outputLimitBytes));
-        observe(stream, chunk);
-      });
-      child.once('error', (error) => { failure ??= error; });
-      child.stdin.on('error', (error) => {
-        // A command may exit without consuming stdin; its exit code still decides success.
-        if (error.code !== 'EPIPE' && error.code !== 'ERR_STREAM_DESTROYED') terminate(error);
-      });
-      child.once('close', (code) => {
-        // The launcher may exit before descendants that ignored TERM and closed their stdio.
-        if (failure) signal('SIGKILL');
-        clearTimeout(timer);
-        clearTimeout(killTimer);
-        options.signal?.removeEventListener('abort', onAbort);
-        if (failure) reject(failure);
-        else resolve({ code: code ?? 1, stdout: buffers.stdout.toString('utf8'), stderr: buffers.stderr.toString('utf8'), truncated });
-      });
-      child.stdin.end(options.input);
-    });
-  }
-}
-
 function labelsMatch(actual, expected) {
   return actual && Object.entries(expected).every(([key, value]) => actual[key] === value);
 }
@@ -157,13 +68,6 @@ function manyJson(result, count) {
 }
 function oneJson(result) {
   return manyJson(result, 1)[0];
-}
-/** `systemctl show --property=…` output as a plain record; an absent property reads as undefined. */
-export function unitProperties(stdout) {
-  return Object.fromEntries(String(stdout).trim().split('\n').map((line) => {
-    const at = line.indexOf('=');
-    return [line.slice(0, at), line.slice(at + 1)];
-  }));
 }
 function volumeFor(spec, component) {
   assertContainerSpec(spec);
@@ -186,7 +90,7 @@ export class PodmanClient {
   constructor(options = {}) {
     if (!options.executor && process.getuid?.() === 0) throw new Error('Rootless Podman service account is required');
     this.#executor = options.executor ?? new SpawnExecutor();
-    this.#env = cleanPodmanEnv(options);
+    this.#env = serviceProcessEnv(options);
     this.#timeoutMs = positive(options.timeoutMs ?? 120_000, 15 * 60_000, 'timeout');
     this.#outputLimit = positive(options.outputLimitBytes ?? OUTPUT_LIMIT, 16 * 1024 * 1024, 'output');
     if (options.isolation !== undefined) {

@@ -3,7 +3,7 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
-import { cleanPodmanEnv, GUEST_SYSTEM_BUS, OUTPUT_LIMIT, positive, SpawnExecutor, unitProperties, validateInput } from './podman.mjs';
+import { OUTPUT_LIMIT, positive, serviceProcessEnv, SpawnExecutor, validateInput } from './runtimeProcess.mjs';
 
 /** The one privileged executable, shared with the published-sites gateway: two typed domains behind one
  *  root-owned binary and one pinned sudoers line, because two executables reachable by the same service
@@ -15,6 +15,9 @@ export const HELPER_PATH = '/usr/local/libexec/elowen-site-gateway';
 const SUDO = '/usr/bin/sudo';
 const SYSTEMCTL = '/usr/bin/systemctl';
 const MACHINECTL = '/usr/bin/machinectl';
+/** The socket `systemd-run` connects to inside the guest; its presence is what makes an execution
+ *  possible, and waiting for it is how this runtime knows a machine has finished booting. */
+export const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
 /** Our own unit template, not the shipped `systemd-nspawn@.service`: that one hardcodes
  *  `/var/lib/machines/%i`, which the environment disk layout does not use. */
 export const UNIT_TEMPLATE_PATH = '/etc/systemd/system/elowen-machine@.service';
@@ -112,6 +115,14 @@ export function timespanMicroseconds(value) {
   return matched ? total : null;
 }
 
+/** `systemctl show --property=…` output as a plain record; an absent property reads as undefined. */
+export function unitProperties(stdout) {
+  return Object.fromEntries(String(stdout).trim().split('\n').map((line) => {
+    const at = line.indexOf('=');
+    return [line.slice(0, at), line.slice(at + 1)];
+  }));
+}
+
 /** `ActiveState`, `SubState` and `FreezerState` onto the runtime-neutral vocabulary of `inspect`.
  *  `activating` reads as running on purpose: it is an envelope whose boot is under way, and the one
  *  question every caller asks of a non-stopped state is whether it still has to be stopped first. */
@@ -190,7 +201,7 @@ export class NspawnClient {
     if (!options.images) throw new Error('An image builder client is required; nspawn has no image store');
     this.#executor = options.executor ?? new SpawnExecutor();
     this.#images = options.images;
-    this.#env = cleanPodmanEnv(options);
+    this.#env = serviceProcessEnv(options);
     this.#helperPath = options.helperPath ?? HELPER_PATH;
     this.#configRoot = options.configRoot === undefined ? '' : hostPath(options.configRoot);
     this.#timeoutMs = positive(options.timeoutMs ?? 120_000, 15 * 60_000, 'timeout');
