@@ -514,6 +514,13 @@ export class BrainClient {
     return (await res.json()) as { model: string };
   }
 
+  /** Switch a delegated child selected in the drill-in. The server verifies durable owner ancestry and
+   *  persists the model on that child's own row; the bound parent and its stream are untouched. */
+  async setSubagentModel(session: string, sel: { provider?: string; model?: string }): Promise<{ model: string }> {
+    const res = await this.post('/brain/subagent/model', { session, ...sel });
+    return (await res.json()) as { model: string };
+  }
+
   /** Set the bound conversation's reasoning effort live (the /think picker); resolves with the level. */
   async setThinkingLevel(level: string): Promise<{ thinkingLevel: string }> {
     const res = await this.post('/brain/think', { level, ...(this.bound ? { session: this.bound } : {}) });

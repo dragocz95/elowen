@@ -80,6 +80,27 @@ describe('drill-in routing — keyboard control follows the LOOKED-AT session', 
     composition.dispose();
   });
 
+  it('mode and queued-message shortcuts refuse instead of mutating hidden parent session state', async () => {
+    const h = compositionHarness({ columns: 100, rows: 24, turns: 6 });
+    focusChild(h);
+    h.rt.workMode = 'build';
+    h.rt.queued = [{ id: 'parent-q', text: 'hidden parent follow-up' }];
+    const queueRecall = vi.fn(async () => ({ text: 'hidden parent follow-up' }));
+    Object.assign(h.resources.client, { queueRecall });
+    const composition = makeComposition(h);
+
+    h.tui.emit('\x1b[Z'); // shift+tab: mode toggle
+    expect(h.rt.workMode).toBe('build');
+    expect(h.rt.notice).toContain('unavailable while viewing a sub-agent');
+
+    h.tui.emit('\x18'); // ctrl+x leader
+    h.tui.emit('x'); // queue remove
+    await Promise.resolve();
+    expect(queueRecall).not.toHaveBeenCalled();
+    expect(h.rt.queued).toEqual([{ id: 'parent-q', text: 'hidden parent follow-up' }]);
+    composition.dispose();
+  });
+
   it('Esc in a focused view navigates back one level (closeSubagent) and never stops a turn', () => {
     const h = compositionHarness({ columns: 100, rows: 24, turns: 6 });
     focusChild(h);

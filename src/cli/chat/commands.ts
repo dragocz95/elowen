@@ -5,7 +5,7 @@ import { localShellTurn, parseBangCommand, runLocalShell } from './localShell.js
 import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
 import { sessionItems, openPicker, openTextInput } from './picker.js';
-import { escalationPress, resolveInterruptConfirmMs } from './chatComposition.js';
+import { escalationPress, resolveInterruptConfirmMs } from './interruptLadder.js';
 import type { BrainClient } from './brainClient.js';
 import type { SlashCommandDef } from '../../shared/wireContract.js';
 import type { ChatState } from './chatState.js';
@@ -327,7 +327,7 @@ export function wireSubmit(
       render();
       runSession((signal) => runShell(localCmd, process.cwd(), signal), (result) => {
         shellContext.add(result);
-        rt.transcript.appendLocalTurn(localShellTurn(result));
+        (rt.childView?.transcript ?? rt.transcript).appendLocalTurn(localShellTurn(result));
         if (rt.notice.includes('running locally')) rt.notice = '';
         render();
       });
@@ -373,9 +373,23 @@ export function wireSubmit(
       sendChild([]);
       return;
     }
-    // `/stop` is the one slash that acts INSIDE the focused view: it stops the session the user is
-    // LOOKING at (the viewed child), not the hidden parent — so it must not snap back first.
-    if (rt.childView && command && command.cmd !== 'stop') stream.exitSubagent();
+    if (rt.childView && command) {
+      // A focused child is the active session surface. Commands that are purely terminal/account UI may
+      // remain available; navigation commands explicitly leave the drill-in. Every command whose current
+      // transport is bound to the parent is refused here, before any picker or route can leak the action.
+      const safeInChild = new Set<ParsedCommand['cmd']>([
+        'quit', 'stop', 'stats', 'context', 'model', 'fast', 'theme', 'maskot', 'cd', 'editor',
+        'keybinds', 'statusline', 'lsp', 'mcp', 'skills', 'tools', 'paste', 'help', 'restart',
+      ]);
+      const leavesDrillIn = new Set<ParsedCommand['cmd']>(['new', 'sessions', 'resume', 'delete']);
+      const reasoningDisplayOnly = command.cmd === 'reasoning' && command.arg?.trim() === 'show';
+      if (!safeInChild.has(command.cmd) && !leavesDrillIn.has(command.cmd) && !reasoningDisplayOnly) {
+        rt.notice = color.error(`/${command.cmd === 'plugin-picker' ? command.name : command.cmd} is unavailable while viewing a sub-agent because it would act on the parent conversation`);
+        render('state:child-command-disabled');
+        return;
+      }
+      if (leavesDrillIn.has(command.cmd)) stream.exitSubagent();
+    }
     if (command) {
       switch (command.cmd) {
         case 'quit': quit(); return;

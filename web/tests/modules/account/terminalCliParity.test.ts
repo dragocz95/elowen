@@ -16,7 +16,7 @@ const daemon = read('../../../../src/store/terminalSettings.ts');
 const web = read('../../../modules/account/TerminalSection.tsx');
 const webDefaults = read('../../../components/terminal/palettes.ts');
 const cliHistory = read('../../../../src/cli/chat/promptHistory.ts');
-const cliInterrupt = read('../../../../src/cli/chat/chatComposition.ts');
+const cliInterrupt = read('../../../../src/cli/chat/interruptLadder.ts');
 
 /** Numeric literals may carry `_` separators on the daemon/CLI side. */
 const num = (literal: string): number => Number(literal.replace(/_/g, ''));

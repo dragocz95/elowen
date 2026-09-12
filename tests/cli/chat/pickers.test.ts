@@ -110,6 +110,50 @@ describe('picker application lifetime', () => {
     await lifetime.stop();
   });
 
+  it('switches the focused child model through the delegated seam and leaves the parent stream untouched', async () => {
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    const restartStream = vi.fn();
+    let modal: { handleInput(data: string): void } | null = null;
+    const tui = {
+      terminal: { columns: 80, rows: 24 },
+      showOverlay: vi.fn((component: { handleInput(data: string): void }) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const setSubagentModel = vi.fn(async () => ({ model: 'next-model' }));
+    const state = new ChatState({ transcript: new TranscriptModel(), modelName: 'parent-model' });
+    state.childView = {
+      sessionId: 'brain-ch-subagent-child', model: 'old-child', provider: 'mock', providerLabel: 'Mock', usageProvider: 'mock',
+      transcript: new TranscriptModel(), processes: [], loading: false, usage: null, cards: [], artifacts: { apply() {}, replace() {} },
+    } as never;
+    const pickers = createPickers(
+      state,
+      {
+        client: {
+          models: async () => [{ provider: 'mock', providerLabel: 'Mock', model: 'next-model' }],
+          setModel: vi.fn(), setSubagentModel,
+        },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      { restartStream } as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+
+    pickers.openModelPicker();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(modal).not.toBeNull();
+    modal!.handleInput('\r');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(setSubagentModel).toHaveBeenCalledWith('brain-ch-subagent-child', { provider: 'mock', model: 'next-model' });
+    expect(restartStream).not.toHaveBeenCalled();
+    expect(state.childView).toMatchObject({ model: 'next-model', provider: 'mock' });
+    await lifetime.stop();
+  });
+
   it('opens the task actions straight from a task id and mirrors the change back through the shared card mapper', async () => {
     initTheme(); // the picker's SelectList paints through pi's theme
     const lifetime = new ChatApplicationLifetime<'metadata'>();

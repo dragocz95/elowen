@@ -103,7 +103,15 @@ export function createPickers(
     lifetime.runSession(operation, onFulfilled, onRejected);
   const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
 
+  const childReasoningUnavailable = (): boolean => {
+    if (!rt.childView) return false;
+    rt.notice = color.error('reasoning effort is unavailable while viewing a sub-agent because the current route would change the parent conversation');
+    render();
+    return true;
+  };
+
   const applyThinkingLevel = (level: string): void => {
+    if (childReasoningUnavailable()) return;
     runSession(() => client.setThinkingLevel(level), (r) => {
       rt.thinkingLevel = r.thinkingLevel;
       rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`);
@@ -112,6 +120,7 @@ export function createPickers(
   };
 
   const openThinkingPicker = (): void => {
+    if (childReasoningUnavailable()) return;
     if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
     openPicker({
       tui, editor, title: 'Reasoning effort',
@@ -129,6 +138,7 @@ export function createPickers(
   // OPTIMISTICALLY so rapid presses step through the levels instead of re-sending the same target
   // (the server reply is authoritative; an error rolls back).
   const cycleThinkingLevel = (): void => {
+    if (childReasoningUnavailable()) return;
     if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
     const previous = rt.thinkingLevel;
     const next = rt.thinkingLevels[(rt.thinkingLevels.indexOf(rt.thinkingLevel) + 1) % rt.thinkingLevels.length]!;
@@ -233,11 +243,24 @@ export function createPickers(
     }, fail);
   };
 
-  // Apply a concrete (provider, model) switch and reopen the event stream — the server rebuilt the
-  // session, so the old stream is dead. Shared by the picker and the `/model <name>` fast path.
+  // Apply a concrete model switch to the session on screen. A focused delegated child uses its dedicated
+  // ancestry-checked route and leaves the bound parent stream untouched; the parent path keeps its existing
+  // rebuild + stream restart contract.
   const applyModel = (sel: { provider: string; model: string }): void => {
+    const childSession = rt.childView?.sessionId;
     rt.notice = color.dim('switching model…');
     render();
+    if (childSession) {
+      runSession(() => client.setSubagentModel(childSession, sel), (r) => {
+        // The picker may settle after Ctrl+O or Back moved elsewhere. Never paint B's result onto C.
+        if (rt.childView?.sessionId !== childSession) return;
+        rt.childView.model = r.model;
+        rt.childView.provider = sel.provider;
+        rt.notice = '';
+        render();
+      }, fail);
+      return;
+    }
     runSession(() => client.setModel(sel), (r) => {
       rt.modelName = r.model;
       stream.restartStream();
@@ -296,7 +319,11 @@ export function createPickers(
     runApplication(() => client.models(), (models) => {
       if (models.length === 0) { rt.notice = color.dim('no models configured — ctrl+p in /model adds a provider'); render(); return; }
       openPicker({
-        tui, editor, title: 'Switch model', items: modelItems(models, rt.modelName, rt.provider),
+        tui, editor, title: 'Switch model', items: modelItems(
+          models,
+          rt.childView?.model ?? rt.modelName,
+          rt.childView?.provider ?? rt.provider,
+        ),
         footer: 'enter switch · type to search · ctrl+p providers · esc close',
         onInput: (data, _selected, close) => {
           if (isCtrlP(data)) { close(); openProviderModal(); return true; }

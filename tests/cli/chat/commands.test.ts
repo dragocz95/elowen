@@ -328,6 +328,54 @@ describe('sub-agent child submit echo', () => {
   });
 });
 
+describe('focused-child slash routing', () => {
+  function childCommandHarness(commandDefs: unknown[]) {
+    let onSubmit: ((text: string) => void) | undefined;
+    const editor = {
+      addToHistory: vi.fn(), setText: vi.fn(),
+      set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+    };
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    state.childView = { sessionId: 'brain-ch-subagent-child', transcript: new TranscriptModel(), loading: false } as never;
+    const render = vi.fn();
+    const exitSubagent = vi.fn();
+    const command = vi.fn(async () => ({ message: 'parent changed' }));
+    const pickers = { openThinkingPicker: vi.fn(), openTasksModal: vi.fn(), openModelPicker: vi.fn(), applyModelArg: vi.fn() };
+    wireSubmit(
+      state,
+      {
+        client: { command }, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        commandDefs, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(), termSettings: null,
+      } as never,
+      { render } as never,
+      { stream: { exitSubagent }, pickers } as never,
+    );
+    return { onSubmit, state, exitSubagent, command, pickers };
+  }
+
+  it('explicitly refuses parent-scoped session commands instead of exiting and mutating the hidden parent', async () => {
+    const h = childCommandHarness([{ name: 'clear' }, { name: 'reasoning' }, { name: 'tasks' }] as never);
+
+    h.onSubmit?.('/clear');
+    h.onSubmit?.('/reasoning high');
+    h.onSubmit?.('/tasks');
+    await Promise.resolve();
+
+    expect(h.exitSubagent).not.toHaveBeenCalled();
+    expect(h.command).not.toHaveBeenCalled();
+    expect(h.pickers.openThinkingPicker).not.toHaveBeenCalled();
+    expect(h.pickers.openTasksModal).not.toHaveBeenCalled();
+    expect(h.state.notice).toContain('unavailable while viewing a sub-agent');
+  });
+
+  it('keeps /model inside the child view and routes the picker without exiting', () => {
+    const h = childCommandHarness([{ name: 'model' }] as never);
+    h.onSubmit?.('/model next-model');
+    expect(h.pickers.applyModelArg).toHaveBeenCalledWith('next-model');
+    expect(h.exitSubagent).not.toHaveBeenCalled();
+  });
+});
+
 describe('/stop — targets the session the user is LOOKING at', () => {
   /** The catalog the daemon publishes for these tests must carry `/stop` — an unpublished name is
    *  treated as chat text, which is exactly the routing under test here. */
@@ -951,9 +999,9 @@ describe('/editor terminal handoff', () => {
   });
 });
 
-/** Drilled A→B→C, a slash must leave the WHOLE drill-in (Back would only reach B) and then act on the
- *  parent conversation — the user sees the parent again before anything parent-scoped happens. */
-describe('slash inside a deep drill-in — leaves the drill-in, acts on the parent', () => {
+/** Drilled A→B→C, explicit navigation commands may leave the whole drill-in. Session-local commands
+ *  either stay on C through a validated child route or are refused before touching the hidden parent. */
+describe('slash inside a deep drill-in', () => {
   function deepHarness(command: string, defs: unknown) {
     let onSubmit: ((text: string) => void) | undefined;
     const editor = {
@@ -985,12 +1033,12 @@ describe('slash inside a deep drill-in — leaves the drill-in, acts on the pare
 
   const DEEP_DEFS = [...TEST_COMMAND_DEFS, { name: 'model' }] as never;
 
-  it('/model exits the drill-in to the parent first, then applies the model to the PARENT', () => {
+  it('/model stays on the grandchild and lets the picker use the delegated model route', () => {
     const { onSubmit, state, stream, pickers } = deepHarness('/model gpt-9', DEEP_DEFS);
     onSubmit?.('/model gpt-9');
-    expect(stream.exitSubagent).toHaveBeenCalledOnce();
-    expect(stream.closeSubagent).not.toHaveBeenCalled(); // Back is navigation; a slash is a full exit
-    expect(state.childView).toBeNull(); // the view is the parent again
+    expect(stream.exitSubagent).not.toHaveBeenCalled();
+    expect(stream.closeSubagent).not.toHaveBeenCalled();
+    expect(state.childView?.sessionId).toBe('brain-ch-subagent-C');
     expect(pickers.applyModelArg).toHaveBeenCalledWith('gpt-9');
   });
 
