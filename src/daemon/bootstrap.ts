@@ -278,6 +278,9 @@ export async function buildApp(opts: BuildOpts) {
   // Runs in prod only (a :memory: test DB has no config dir + no units).
   // Late-bound: the handle exists only once startLoops installs the shutdown handler, which happens after
   // this closure is built but long before a user can invoke it.
+  // Boot opens the port before it wires the platform adapters, so `/health` has to be able to say which
+  // of the two has happened. Set by the maintenance loops once startPlatforms settles.
+  let platformsReady = false;
   let shutdown: ShutdownControl | undefined;
   const restartMarker = opts.dbPath !== ':memory:' ? join(dirname(opts.dbPath), '.restart-marker') : undefined;
   // Timestamp of the last boot announcement — the crash-loop debounce in announceBoot. Same state dir,
@@ -316,6 +319,7 @@ export async function buildApp(opts: BuildOpts) {
       return local.killed + remote;
     },
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
+    platformsReady: () => platformsReady,
   } satisfies ServerDeps;
   const app = createServer(serverDeps);
 
@@ -324,6 +328,7 @@ export async function buildApp(opts: BuildOpts) {
     memoryStore, users, usageOrigins, pluginReconcile, dbPath: opts.dbPath,
     restartMarker, bootMarker, version: ELOWEN_VERSION, log,
     onShutdownInstalled: (control) => { shutdown = control; },
+    onPlatformsStarted: () => { platformsReady = true; },
   });
   return { app, startLoops, serverDeps };
 }

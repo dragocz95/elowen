@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -859,7 +859,11 @@ describe('terminal plugin — the process registry is the single source of truth
   it('ProcessOutput returns only NEW output (the daemon panel reading the buffer never consumes it)', async () => {
     const session = 'brain-term-cursor';
     const id = await startBg(session, `node -e "process.stdout.write('one\\n'); setTimeout(() => process.stdout.write('two\\n'), 500)"`);
-    await new Promise((r) => setTimeout(r, 250)); // first write landed, the child is still alive
+    // Wait for the first write to be OBSERVABLE, not for a fixed pause to elapse: starting a node child
+    // takes longer than 250 ms on a loaded host, and the read below then correctly reported "(no new
+    // output)" against a test that had assumed otherwise. `output()` is the daemon's readAll, so waiting
+    // on it leaves the tool's cursor exactly where the assertions need it.
+    await vi.waitFor(() => expect(processRegistry.output(id)).toContain('one'));
 
     const first = await inSession(session, 'ProcessOutput', { id, block: false });
     expect(first.content[0].text).toContain('one');
@@ -868,7 +872,9 @@ describe('terminal plugin — the process registry is the single source of truth
     // The daemon's own read (web/CLI panel) uses readAll: the whole buffer, cursor untouched.
     expect(processRegistry.output(id)).toBe('one\n');
 
-    await new Promise((r) => setTimeout(r, 600)); // second write + exit
+    // Same again for the second write. The read itself blocks until the child exits, so this only has to
+    // establish that 'two' was produced — never that a chosen number of milliseconds passed.
+    await vi.waitFor(() => expect(processRegistry.output(id)).toContain('two'));
     const second = await inSession(session, 'ProcessOutput', { id });
     expect(second.content[0].text).toContain('two');
     expect(second.content[0].text).not.toContain('one'); // already consumed by the first read

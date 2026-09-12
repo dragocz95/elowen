@@ -81,6 +81,10 @@ interface MaintenanceDeps {
   version: string;
   log: { info: (m: string) => void; error: (m: string, e?: unknown) => void };
   onShutdownInstalled: (shutdown: ShutdownControl) => void;
+  /** Fired once the platform adapters are listening, which is what `/health.platformsReady` reports.
+   *  Also fired when startPlatforms throws, because a boot that failed there will not reach that state
+   *  on its own and a probe must not wait forever on a daemon that is as ready as it is going to get. */
+  onPlatformsStarted?: () => void;
 }
 
 export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void {
@@ -107,6 +111,9 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     // `/restart` asked for it.
     void deps.pluginReconcile
       .then(() => deps.brain?.startPlatforms(deps.log))
+      // Announced here rather than after the resume pass: the adapters are listening from this point, so
+      // every tool backed by a platform seam (delegation above all) can actually run.
+      .then(() => { deps.onPlatformsStarted?.(); })
       .then(() => announceBoot(deps.brain, deps.restartMarker, deps.bootMarker, deps.version))
       // Phase 2, the RESUME pass: respawn the interrupted sub-agents, hand each claimed DAG back to the
       // workflow engine, and continue every parked owner conversation — in that declared order, because a
@@ -121,7 +128,12 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
       .then(() => recovery?.resumeAll({
         onProviderResumed: (id) => { if (id === 'workflows') deps.brain?.publishResync('boot-recovered'); },
       }).catch((e) => deps.log.error('boot recovery failed', e)))
-      .catch((e) => deps.log.error('startPlatforms failed', e));
+      .catch((e) => {
+        // A boot that failed here will never reach the ready state on its own, and a probe blocking
+        // forever on it hides the failure instead of reporting it. Release the gate; the error is logged.
+        deps.onPlatformsStarted?.();
+        deps.log.error('startPlatforms failed', e);
+      });
     // Anthropic's refresh token can expire while its eight-hour access token is still usable. PI refreshes
     // only while resolving auth for a request, so an idle daemon can otherwise miss the rotation window.
     const stopOAuthCredentialRefresh = startOAuthCredentialRefreshLoop({

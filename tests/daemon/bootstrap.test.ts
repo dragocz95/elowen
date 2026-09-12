@@ -70,9 +70,17 @@ describe('buildApp', () => {
 
       stopLoops = built.startLoops();
       expect(startPlatforms).not.toHaveBeenCalled();
+      // The window a caller has to be able to observe: the port answers while the adapters are not
+      // listening, so every tool backed by a platform seam refuses. `Delegate` really did answer
+      // "delegation is not wired up on this server" to turns admitted here, which is what turned the
+      // delegation E2E jobs red on runners fast enough to send inside it.
+      expect(await (await built.app.request('/health')).json())
+        .toMatchObject({ ok: true, platformsReady: false });
 
       settleReconcile([]);
       await vi.waitFor(() => expect(startPlatforms).toHaveBeenCalledOnce());
+      await vi.waitFor(async () => expect(await (await built.app.request('/health')).json())
+        .toMatchObject({ ok: true, platformsReady: true }));
     } finally {
       settleReconcile([]);
       stopLoops?.();
