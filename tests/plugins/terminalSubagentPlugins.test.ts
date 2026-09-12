@@ -302,7 +302,7 @@ describe('subagent plugin', () => {
     resolveReply('done');
   });
 
-  it('delegate forwards the caller access, parent session + task and blocks by default', async () => {
+  it('delegate forwards the caller access, parent session + task on an explicit blocking call', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
     expect(reg.platforms.map((p) => p.name)).toEqual(['subagent']);
@@ -321,7 +321,7 @@ describe('subagent plugin', () => {
     let seen: { access?: { projectIds: number[]; admin: boolean; owner: boolean; parentSessionId?: string; toolPolicy?: { allow?: string[]; deny?: string[] } } } | null = null;
     reg.platforms[0]!.listen(async (src, text) => { seen = src; return `sub did: ${text}`; });
     await runWithPolicy(LIMITED, async () => {
-      const out = asText(await delegate.execute('t', { task: 'najdi bug' }, undefined as never, undefined as never));
+      const out = asText(await delegate.execute('t', { task: 'najdi bug', background: false }, undefined as never, undefined as never));
       expect(out).toBe('sub did: najdi bug');
     }, {
       sessionId: 'brain-parent-1',
@@ -341,7 +341,7 @@ describe('subagent plugin', () => {
     let seen: { access?: { admin: boolean; owner: boolean } } | null = null;
     reg.platforms[0]!.listen(async (src) => { seen = src; return 'ok'; });
     await runWithPolicy(ADMIN, async () => {
-      await delegate.execute('t', { task: 'cokoliv' }, undefined as never, undefined as never);
+      await delegate.execute('t', { task: 'cokoliv', background: false }, undefined as never, undefined as never);
     }, { identity: OWNER });
     expect(seen!.access).toMatchObject({ admin: true, owner: true });
   });

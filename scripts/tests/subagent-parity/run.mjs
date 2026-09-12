@@ -206,25 +206,20 @@ async function main() {
     }
 
     if (useMcp) {
-      // The operator's own path: PATCH the mcp plugin's config, which hot-reloads the plugin registry and
-      // connects the server before returning. No test-only back door, and no sleep — when this resolves,
-      // the bridged tools either exist or the status below says why.
-      const res = await fetch(`${daemon.baseUrl}/plugins/mcp/config`, {
-        method: 'PATCH',
+      // Use the same account-scoped management API as the MCP page and tools. Creating a server verifies
+      // the connection before returning, so no test-only back door or arbitrary sleep is needed.
+      const res = await fetch(`${daemon.baseUrl}/plugins/mcp/api/servers`, {
+        method: 'POST',
         headers: { authorization: `Bearer ${daemon.token}`, 'content-type': 'application/json' },
         body: JSON.stringify({
-          values: {
-            servers: [{
-              name: MCP_SERVER_NAME, enabled: true, transport: 'stdio',
-              command: process.execPath, args: MCP_SERVER_ARGS,
-            }],
-          },
+          scope: 'instance', name: MCP_SERVER_NAME, enabled: true, transport: 'stdio',
+          command: process.execPath, args: MCP_SERVER_ARGS,
         }),
       });
       if (!res.ok) throw new Error(`configuring the scripted MCP server failed: ${res.status} ${await res.text()}`);
-      const statusRes = await fetch(`${daemon.baseUrl}/plugins/mcp/servers`, { headers: { authorization: `Bearer ${daemon.token}` } });
-      const servers = statusRes.ok ? await statusRes.json() : [];
-      const scripted = (Array.isArray(servers) ? servers : servers?.servers ?? []).find((s) => s?.name === MCP_SERVER_NAME);
+      const statusRes = await fetch(`${daemon.baseUrl}/plugins/mcp/api/servers`, { headers: { authorization: `Bearer ${daemon.token}` } });
+      const servers = statusRes.ok ? await statusRes.json() : {};
+      const scripted = (servers?.instance ?? []).find((s) => s?.name === MCP_SERVER_NAME);
       if (scripted?.status !== 'connected') {
         throw new Error(`the scripted MCP server did not connect: ${JSON.stringify(scripted ?? servers)}`);
       }
