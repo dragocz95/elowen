@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { POST as login } from '../../../app/api/auth/login/route';
 import { POST as logout } from '../../../app/api/auth/logout/route';
+import { POST as impersonate } from '../../../app/api/auth/impersonate/route';
+import { POST as stopImpersonating } from '../../../app/api/auth/stop-impersonate/route';
 
 const fetchMock = vi.fn();
 beforeEach(() => { process.env.ELOWEN_DAEMON_URL = 'http://daemon.test'; vi.stubGlobal('fetch', fetchMock); fetchMock.mockReset(); });
@@ -101,10 +103,84 @@ describe('auth logout route', () => {
     expect(res.headers.get('set-cookie')).toMatch(/Max-Age=0/);
   });
 
+  it('cancels an impersonation proof before clearing cookies', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const req = new Request('https://web.test/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        origin: 'https://web.test',
+        cookie: 'elowen_session=target-token; elowen_return=opaque-return-proof; elowen_as=target',
+      },
+    });
+    const res = await logout(req);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://daemon.test/auth/impersonation/cancel');
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer target-token');
+    expect(JSON.parse(String(init.body))).toEqual({ returnCode: 'opaque-return-proof' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.headers.getSetCookie().filter((cookie) => /Max-Age=0/.test(cookie))).toHaveLength(3);
+  });
+
   it('rejects a cross-origin logout (logout CSRF)', async () => {
     const req = new Request('https://web.test/api/auth/logout', { method: 'POST', headers: { origin: 'https://evil.test', cookie: 'elowen_session=secret-tok' } });
     const res = await logout(req);
     expect(res.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('auth impersonation routes', () => {
+  it('stores only the daemon-issued opaque return proof in the browser', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      token: 'target-token',
+      returnCode: 'opaque-return-proof',
+      tokenTtlDays: 7,
+      user: { username: 'target' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const req = post('https://web.test/api/auth/impersonate', { userId: 2 });
+    req.headers.set('x-forwarded-proto', 'https');
+    req.headers.set('cookie', '__Host-elowen_session=admin-token');
+
+    const res = await impersonate(req);
+    const cookies = res.headers.getSetCookie();
+    expect(res.status).toBe(200);
+    expect(cookies).toHaveLength(3);
+    expect(cookies.find((cookie) => cookie.startsWith('__Host-elowen_session='))).toContain('target-token');
+    expect(cookies.find((cookie) => cookie.startsWith('__Host-elowen_return='))).toContain('opaque-return-proof');
+    expect(cookies.join('\n')).not.toContain('admin-token');
+    expect(cookies.every((cookie) => /SameSite=Lax/.test(cookie) && /Path=\//.test(cookie) && /Secure/.test(cookie))).toBe(true);
+  });
+
+  it('leaves the current session untouched when the daemon refuses the transition', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } }));
+    const req = post('https://web.test/api/auth/impersonate', { userId: 2 });
+    req.headers.set('cookie', 'elowen_session=admin-token');
+    const res = await impersonate(req);
+    expect(res.status).toBe(403);
+    expect(res.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('exchanges the active target session and opaque proof for a fresh admin session', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ token: 'fresh-admin-token', tokenTtlDays: 9, user: { username: 'admin' } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const req = new Request('https://web.test/api/auth/stop-impersonate', {
+      method: 'POST',
+      headers: {
+        origin: 'https://web.test',
+        cookie: 'elowen_session=target-token; elowen_return=opaque-return-proof; elowen_as=target',
+      },
+    });
+
+    const res = await stopImpersonating(req);
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://daemon.test/auth/impersonation/stop');
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer target-token');
+    expect(JSON.parse(String(init.body))).toEqual({ returnCode: 'opaque-return-proof' });
+    const cookies = res.headers.getSetCookie();
+    expect(cookies.find((cookie) => cookie.startsWith('elowen_session='))).toContain('fresh-admin-token');
+    expect(cookies.filter((cookie) => /Max-Age=0/.test(cookie))).toHaveLength(2);
   });
 });

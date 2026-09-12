@@ -7,7 +7,7 @@
 // Launched by Playwright's webServer as: node --experimental-strip-types tests/e2e/fake-daemon/server.ts
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
-import { ADMIN_TOKEN } from '../seed/fixtures.ts';
+import { ADMIN_TOKEN, TARGET_TOKEN } from '../seed/fixtures.ts';
 import { needsSetup } from './setup.ts';
 import { registerAuthRoutes } from './handlers/auth.ts';
 import { registerCoreRoutes } from './handlers/core.ts';
@@ -34,7 +34,7 @@ function isPublicPath(method: string, path: string): boolean {
 app.use('*', async (c, next) => {
   if (isPublicPath(c.req.method, c.req.path)) return next();
   if (needsSetup()) return next();
-  if (c.req.header('authorization') === `Bearer ${ADMIN_TOKEN}`) return next();
+  if ([ADMIN_TOKEN, TARGET_TOKEN].some((token) => c.req.header('authorization') === `Bearer ${token}`)) return next();
   return c.json({ error: 'unauthorized' }, 401);
 });
 

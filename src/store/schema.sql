@@ -50,6 +50,22 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   scope TEXT NOT NULL DEFAULT 'full',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- One bounded admin-to-user identity transition. The browser receives only `return_code`, which has no
+-- authority on its own: restoring requires the exact target token. A completed exchange retains its fresh
+-- admin token server-side for a short retry window so a lost HTTP response is recoverable.
+-- `actor_token` makes rapid duplicate starts idempotent without exposing admin authority in the browser.
+CREATE TABLE IF NOT EXISTS auth_impersonations (
+  return_code TEXT PRIMARY KEY,
+  actor_token TEXT NOT NULL UNIQUE,
+  target_token TEXT NOT NULL UNIQUE,
+  admin_user_id INTEGER NOT NULL,
+  target_user_id INTEGER NOT NULL,
+  restored_token TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_impersonations_admin ON auth_impersonations(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_impersonations_target ON auth_impersonations(target_user_id);
 CREATE TABLE IF NOT EXISTS user_projects (
   user_id INTEGER NOT NULL, project_id INTEGER NOT NULL,
   PRIMARY KEY (user_id, project_id)

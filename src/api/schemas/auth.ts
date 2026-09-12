@@ -59,6 +59,11 @@ export const projectAssignSchema = z.object({
   projectId: z.number(),
 });
 
+/** Opaque, single-use proof issued by the daemon when an administrator enters another account. */
+export const impersonationStopSchema = z.object({
+  returnCode: z.string().regex(/^[a-f0-9]{64}$/, 'invalid return proof'),
+});
+
 /** Save a user's prompt override. The content must be non-empty (after trim) — an empty override would
  *  spawn agents with a blank prompt; to revert to the default the client deletes the override instead.
  *  A generous ceiling guards the DB row without constraining real prompts. */

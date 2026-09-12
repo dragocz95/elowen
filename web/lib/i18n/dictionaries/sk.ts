@@ -926,6 +926,7 @@ export const sk = {
     impersonateError: 'Prihlásenie ako používateľ sa nezdarilo',
     impersonatingAs: 'Prezeráte aplikáciu ako {name}',
     stopImpersonating: 'Späť na svoj účet',
+    stopImpersonateError: 'Návrat na váš účet sa nepodaril',
     grantedPlugins: 'Povolené pluginy',
     grantedPluginsHint: 'Časti systému, ktoré sa povoľujú jednotlivo (automatizácia, zručnosti). Kým ich používateľovi nepovolíte, nedostane sa k nim; správcovia majú prístup vždy.',
     grantedPluginsCount: 'Povolené {n} z {total}',

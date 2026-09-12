@@ -1,15 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
-vi.mock('next/navigation', () => ({ usePathname: () => '/dash', useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
+vi.mock('next/navigation', () => ({ usePathname: () => '/dash', useRouter: () => ({ push: () => {}, replace: navigation.replace }), useSearchParams: () => new URLSearchParams() }));
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LanguageProvider } from '../../lib/i18n';
 import { ToastProvider } from '../../components/ui/Toast';
 import { LoginGate } from '../../components/auth/LoginGate';
 import { useMe } from '../../lib/queries';
-import { AUTH_CLEARED_EVENT } from '../../lib/token';
+import { AUTH_CLEARED_EVENT, AUTH_TRANSITION_EVENT } from '../../lib/token';
 
 function Wrap({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -24,14 +25,21 @@ function Wrap({ children }: { children: React.ReactNode }) {
 
 // EventBridge (rendered when the gate is open) opens an SSE stream; stub EventSource so jsdom doesn't choke.
 let openedEventSources = 0;
-class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) { openedEventSources += 1; } }
+class FakeES {
+  static instances: FakeES[] = [];
+  onmessage = null;
+  closed = false;
+  addEventListener() {}
+  close() { this.closed = true; }
+  constructor(public url: string) { openedEventSources += 1; FakeES.instances.push(this); }
+}
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
 const server = setupServer(
   http.get('*/api/auth/sso/providers', () => HttpResponse.json([])),
 );
 beforeAll(() => server.listen({ onUnhandledRequest }));
-afterEach(() => { server.resetHandlers(); openedEventSources = 0; });
+afterEach(() => { server.resetHandlers(); openedEventSources = 0; FakeES.instances.length = 0; navigation.replace.mockReset(); });
 afterAll(() => server.close());
 
 const passwordInput = () => document.querySelector('input[type="password"]');
@@ -126,9 +134,36 @@ describe('LoginGate', () => {
     await waitFor(() => expect(screen.getByText('secret-content')).toBeInTheDocument());
 
     // A later 401 elsewhere clears the session and dispatches the event; the gate must react.
-    window.dispatchEvent(new Event(AUTH_CLEARED_EVENT));
+    act(() => { window.dispatchEvent(new Event(AUTH_CLEARED_EVENT)); });
     await waitFor(() => expect(passwordInput()).toBeTruthy());
     expect(screen.queryByText('secret-content')).toBeNull();
+  });
+
+  it('atomically drops old account state and remounts once with the committed identity', async () => {
+    let username = 'admin';
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: username === 'admin' ? 1 : 2, username } })));
+
+    function Identity() {
+      const current = useMe();
+      return <span>{current.data?.user?.username ?? 'pending'}</span>;
+    }
+
+    render(<Wrap><LoginGate initiallyAuthenticated><Identity /></LoginGate></Wrap>);
+    await waitFor(() => expect(screen.getByText('admin')).toBeInTheDocument());
+    await waitFor(() => expect(FakeES.instances.filter((stream) => !stream.closed)).toHaveLength(2));
+    const activeBefore = FakeES.instances.filter((stream) => !stream.closed);
+
+    const id = 'transition-1';
+    act(() => { window.dispatchEvent(new CustomEvent(AUTH_TRANSITION_EVENT, { detail: { id, phase: 'start' } })); });
+    expect(screen.queryByText('admin')).toBeNull();
+    expect(activeBefore.every((stream) => stream.closed)).toBe(true);
+
+    username = 'target';
+    act(() => { window.dispatchEvent(new CustomEvent(AUTH_TRANSITION_EVENT, { detail: { id, phase: 'commit' } })); });
+    await waitFor(() => expect(screen.getByText('target')).toBeInTheDocument());
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+    expect(navigation.replace).toHaveBeenCalledWith('/dash');
+    await waitFor(() => expect(FakeES.instances.filter((stream) => !stream.closed)).toHaveLength(2));
   });
 
   it('renders the shell while the session probe is still in flight', async () => {

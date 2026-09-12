@@ -972,6 +972,7 @@ export const en = {
     impersonateError: 'Could not sign in as this user',
     impersonatingAs: 'Viewing the app as {name}',
     stopImpersonating: 'Back to your account',
+    stopImpersonateError: 'Could not return to your account',
     grantedPlugins: 'Granted plugins',
     grantedPluginsHint: 'Subsystems handed out per person (schedules, skills). A user reaches nothing here until you grant it; admins always have access.',
     grantedPluginsCount: '{n} of {total} granted',

@@ -24,6 +24,8 @@ export const ADMIN_PASSWORD = 'e2e-admin-password';
  *  echoes it back as `Authorization: Bearer …`. The fake daemon does not validate it (the web proxy is
  *  the auth boundary in this harness) — it only needs to be a stable non-empty string. */
 export const ADMIN_TOKEN = 'e2e-fake-daemon-token';
+export const TARGET_TOKEN = 'e2e-fake-target-token';
+export const IMPERSONATION_RETURN_CODE = 'a'.repeat(64);
 /** The daemon reports this as the token TTL so the web mints a long-lived cookie (not a session one). */
 export const TOKEN_TTL_DAYS = 30;
 
@@ -45,6 +47,17 @@ export const adminUser: User = {
   default_exec: 'elowen:oauth-anthropic/claude-sonnet-4',
   advisor_exec: 'elowen:oauth-anthropic/claude-sonnet-4',
   advisor_autostart: false,
+};
+
+export const targetUser: User = {
+  ...adminUser,
+  id: 2,
+  username: 'target',
+  is_admin: false,
+  allowed_tools: [],
+  granted_plugins: [],
+  name: 'E2E Target',
+  email: 'target@example.test',
 };
 
 export const config: ElowenConfig = {
