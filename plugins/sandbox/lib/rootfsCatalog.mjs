@@ -120,6 +120,14 @@ export function artifactReference(name) {
  *  It is recognised only so a refusal can say what the value actually is. Nothing converts it. */
 const LEGACY_IMAGE = /^(localhost|docker\.io|quay\.io|ghcr\.io)\//;
 
+/** Whether a reference is one of those tags. Stated once here, because two places now ask the question
+ *  for different reasons — materialization refuses such a disk, and the identity migration is the one
+ *  operation that moves a disk off one — and a second copy of the rule is how the two would come to
+ *  disagree about which environments still need migrating. */
+export function isLegacyImageReference(reference) {
+  return typeof reference === 'string' && LEGACY_IMAGE.test(reference);
+}
+
 export function parseArtifactReference(reference) {
   const match = typeof reference === 'string' ? REFERENCE.exec(reference) : null;
   if (match) return { name: match[1], version: Number(match[2]) };
@@ -127,7 +135,7 @@ export function parseArtifactReference(reference) {
   // materialized under this one: the image it names is not published anywhere as a root filesystem, and
   // there is no rule that turns a tag into an artifact. Recreating the environment is the repair, and
   // saying so is more use than a parse failure that reads like corruption.
-  if (typeof reference === 'string' && LEGACY_IMAGE.test(reference)) {
+  if (isLegacyImageReference(reference)) {
     throw Object.assign(new Error(`This environment names the container image ${reference}, which this release no longer runs; delete the environment and create it again to build it from a published root filesystem`), { code: 'unsupported_runtime', status: 409 });
   }
   throw Object.assign(new Error('Invalid root filesystem artifact reference'), { code: 'artifact_unknown' });

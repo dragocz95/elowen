@@ -29,10 +29,11 @@ export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: 
 export type EnvironmentAction =
   /** `recreate` rebuilds the container from the current specification without touching the storage
    *  volumes: the repair for an environment whose container this runtime can no longer verify. */
-  /** `migrate-disk` turns a legacy image-backed environment into a rootfs-backed persistent disk. It is
-   *  administrator-only, runs one environment at a time, and keeps the old container as a rollback
-   *  target until the switch to the candidate is durable. */
-  | { kind: 'start' | 'stop' | 'restart' | 'delete' | 'recreate' | 'migrate-disk' }
+  /** `migrate-identity` moves an environment created under the container runtime onto the canonical
+   *  published root filesystem identity. It is administrator-only and rewrites metadata only: the
+   *  persistent disk is authoritative and keeps every byte it has, so the packages and configuration
+   *  inside it survive. It takes a restore point first and rolls the reference back on any failure. */
+  | { kind: 'start' | 'stop' | 'restart' | 'delete' | 'recreate' | 'migrate-identity' }
   | { kind: 'snapshot'; note?: string; includeData?: boolean }
   | { kind: 'restore'; snapshotId: string; restoreData?: boolean }
   | { kind: 'limits'; limits: EnvironmentLimits };

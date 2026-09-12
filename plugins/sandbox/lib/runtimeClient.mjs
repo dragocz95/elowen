@@ -50,6 +50,9 @@
  *
  * Disk trees. Every path is host-derived and re-validated by the client against the trusted roots.
  * @property {(spec: object, pendingPath: string, options?: object) => Promise<string>} materializeRootfs
+ * @property {(spec: object) => Promise<{ uidBase: number, uidSize: number, entries: number }>} shiftOwnership
+ *   Re-stamps the disk's identity record from the specification and puts the tree on the machine's uid
+ *   range. Idempotent: a tree already in range is left alone, byte for byte.
  * @property {(spec: object, archivePath: string, targetPath: string) => Promise<void>} extractRootfsArchive
  * @property {(archivePath: string, targetPath: string) => Promise<{ members: number }>} verifyExtractedRootfs
  * @property {(sourcePath: string, targetPath: string) => Promise<void>} copyDiskTree

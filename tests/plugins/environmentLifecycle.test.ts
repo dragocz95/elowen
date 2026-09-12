@@ -1433,11 +1433,14 @@ describe('a new environment on a machine host', () => {
     expect(overview.runtime.name).toBeNull();
     expect(overview.runtime.readiness.ready).toBe(false);
     // The rows travel to the surface as the helper wrote them: nothing is keyed off an id, and every
-    // detail with its command survives the trip.
+    // detail with its command survives the trip. The instance's own row is appended after them, and it
+    // does NOT move `ready`: that stays the host's answer, because an unmigrated environment elsewhere
+    // says nothing about whether this host can hold a machine.
     expect(overview.runtime.readiness.items.map((item: any) => item.id))
-      .toEqual(['os:supported', 'package:systemd-container', 'unit:elowen-machine']);
+      .toEqual(['os:supported', 'package:systemd-container', 'unit:elowen-machine', 'runtime:legacy-references']);
     expect(overview.runtime.readiness.items.find((item: any) => item.id === 'unit:elowen-machine').detail)
       .toContain('systemctl daemon-reload');
+    expect(overview.runtime.readiness.items.at(-1)).toMatchObject({ id: 'runtime:legacy-references', ok: true });
 
     const ready = await machineProject();
     const decided = await ready.runtime.projectOverview(input);

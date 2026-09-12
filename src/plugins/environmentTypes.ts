@@ -155,6 +155,9 @@ export interface SiteImageRecipe {
 }
 export type SiteImageKind = 'base' | 'static' | 'node';
 export type SiteEnvironmentAction = EnvironmentAction
+  /** Which fixed recipe a Site runs on is this plugin's to know, so a Site's identity migration names the
+   *  kind and the runtime resolves it against the root filesystem catalogue. */
+  | { kind: 'migrate-identity'; imageKind: SiteImageKind }
   | { kind: 'provision-image'; imageKind: SiteImageKind }
   | { kind: 'prepare' | 'cleanup-stage' }
   | { kind: 'import-data' | 'export-data' | 'import-snapshot' | 'remove-artifact' | 'export-project'; artifactId: string };
