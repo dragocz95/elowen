@@ -1671,6 +1671,12 @@ export class BrainStore {
     return this.delegation.conversationSubagentBranches(rootIds, bounds);
   }
 
+  /** Owning account per session id, for the caller-relative drill-in eligibility the conversation-links
+   *  route marks — see {@link BrainDelegationStore.ownersOfSessions}. */
+  ownersOfSessions(sessionIds: readonly string[]): ReturnType<BrainDelegationStore['ownersOfSessions']> {
+    return this.delegation.ownersOfSessions(sessionIds);
+  }
+
   /** Child sessions with a delegated call still open on them, whichever boot or process owns it — see
    *  {@link BrainDelegationStore.activeDelegationChildIds}. */
   activeDelegationChildIds(parentSessionId: string): ReturnType<BrainDelegationStore['activeDelegationChildIds']> {

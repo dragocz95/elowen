@@ -56,6 +56,37 @@ function requestedConversationIds(raw?: string): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/** Every child transcript named by one branch read, depth-first and deduplicated — the batch the owner
+ *  lookup answers for the admin register's eligibility pass. */
+function childSessionIdsOf(byConversation: Record<string, import('../../store/brainDelegationStore.js').ConversationSubagentNode[]>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const walk = (nodes: import('../../store/brainDelegationStore.js').ConversationSubagentNode[]): void => {
+    for (const node of nodes) {
+      if (node.childSessionId && !seen.has(node.childSessionId)) {
+        seen.add(node.childSessionId);
+        out.push(node.childSessionId);
+      }
+      walk(node.children);
+    }
+  };
+  for (const nodes of Object.values(byConversation)) walk(nodes);
+  return out;
+}
+
+/** Depth-first over one branch read: mark every sub-agent node whose transcript the VIEWER may write
+ *  into. This is the one host pass that decides drill-in eligibility, so no client ever has to guess
+ *  it from session ids or owner labels — `continuable` stays absent (falsy) on everything else. */
+function setSubagentContinuables(
+  nodes: import('../../store/brainDelegationStore.js').ConversationSubagentNode[],
+  eligible: (childSessionId: string) => boolean,
+): void {
+  for (const node of nodes) {
+    if (node.childSessionId && eligible(node.childSessionId)) node.continuable = true;
+    setSubagentContinuables(node.children, eligible);
+  }
+}
+
 /** One navigation row of GET /brain/conversation-links. Mirrors ConversationJobLink in web/lib/types.ts. */
 interface ConversationJobLink {
   jobId: string;
@@ -302,6 +333,20 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (d.brainStore) {
       try {
         const branches = d.brainStore.conversationSubagentBranches(rootIds);
+        // Drill-in eligibility is caller-relative. In the personal listing every verified edge is
+        // same-owner from the caller's own roots, so each transcript is continuable; the admin register
+        // spans accounts, so each child is checked against ITS owner — an admin may READ another
+        // account's delegation, never write into it.
+        if (all) {
+          const owners = d.brainStore.ownersOfSessions(childSessionIdsOf(branches.byConversation));
+          for (const nodes of Object.values(branches.byConversation)) {
+            setSubagentContinuables(nodes, (id) => owners.get(id) === user.id);
+          }
+        } else {
+          for (const nodes of Object.values(branches.byConversation)) {
+            setSubagentContinuables(nodes, () => true);
+          }
+        }
         subagents = branches.byConversation;
         subagentStatus = 'available';
       } catch (e) {

@@ -30,6 +30,8 @@ function setup(opts: {
   managed?: { id: string }[];
   /** Session rows the run-target resolution may find, keyed by id. Absent = no store at all. */
   rows?: Record<string, { user_id: number }>;
+  /** Child-session owners the eligibility pass resolves in the admin register (id → user id). */
+  owners?: Record<string, number>;
   /** The sub-agent branch the core store answers with, or a thrower to simulate a failed read. */
   branches?: (rootIds: readonly string[]) => ConversationSubagentBranches;
 } = {}) {
@@ -73,9 +75,13 @@ function setup(opts: {
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     brain: brain as never, plugins,
-    ...(opts.rows || opts.branches ? {
+    ...(opts.rows || opts.branches || opts.owners ? {
       brainStore: {
         getSession: (id: string) => opts.rows?.[id],
+        ownersOfSessions: (ids: readonly string[]) => {
+          const owners = opts.owners ?? {};
+          return new Map(ids.filter((id) => id in owners).map((id) => [id, owners[id]!]));
+        },
         conversationSubagentBranches: (rootIds: readonly string[]) => {
           branchCalls.push([...rootIds]);
           return opts.branches ? opts.branches(rootIds) : { byConversation: {}, truncated: false };
@@ -296,7 +302,7 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
 
     expect(branchCalls).toEqual([['brain-2', 'brain-2-b']]);
     expect(body.subagentStatus).toBe('available');
-    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+    expect(body.subagents).toEqual({ 'brain-2': [node({ continuable: true })] });
     // The scheduled-job half is untouched by any of it.
     expect(body.status).toBe('available');
     expect(body.links.map((l) => l.jobId)).toEqual(['job-1']);
@@ -316,7 +322,7 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     expect(body.status).toBe('error');
     expect(body.links).toEqual([]);
     expect(body.subagentStatus).toBe('available');
-    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+    expect(body.subagents).toEqual({ 'brain-2': [node({ continuable: true })] });
   });
 
   it('keeps the sub-agent branch when the cron plugin is absent altogether', async () => {
@@ -328,7 +334,7 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     const { body } = await links(app, amyTok);
 
     expect(body.status).toBe('unavailable');
-    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+    expect(body.subagents).toEqual({ 'brain-2': [node({ continuable: true })] });
   });
 
   /** A failed core read is reported as a failure. Answering `available` with an empty map would tell the
@@ -419,5 +425,55 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     const { body } = await links(app, amyTok);
 
     expect(body.subagents['brain-2']![0]!.truncated).toBe(true);
+  });
+
+  /** Drill-in eligibility is a HOST statement, not a client guess. In the personal listing every
+   *  verified edge descends from the caller's own roots, so each child transcript is continuable —
+   *  nested ones included. */
+  it('marks every own child continuable in the personal listing, nested ones included', async () => {
+    const { app, amyTok } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      branches: () => ({
+        byConversation: {
+          'brain-2': [node({
+            children: [node({ key: 'sub:brain-ch-subagent-sub-c', childSessionId: 'brain-ch-subagent-sub-c' })],
+          })],
+        },
+        truncated: false,
+      }),
+    });
+
+    const { body } = await links(app, amyTok);
+    const root = body.subagents['brain-2']![0]!;
+
+    expect(root.continuable).toBe(true);
+    expect(root.children[0]!.continuable).toBe(true);
+  });
+
+  /** The admin register spans accounts: an admin may READ another account's delegation, but the child
+   *  transcript stays theirs — continuable only when the owner is the CALLING admin. */
+  it('marks continuable per owner in the admin register, leaving foreign children read-only', async () => {
+    const { app, adminTok } = setup({
+      cron: () => [],
+      managed: [{ id: 'brain-2' }],
+      // admin is the first account (id 1); amy owns the foreign child (id 2).
+      owners: { 'brain-ch-subagent-sub-a': 2, 'brain-ch-subagent-sub-own': 1 },
+      branches: () => ({
+        byConversation: {
+          'brain-2': [
+            node(),
+            node({ key: 'sub:brain-ch-subagent-sub-own', childSessionId: 'brain-ch-subagent-sub-own' }),
+          ],
+        },
+        truncated: false,
+      }),
+    });
+
+    const { body } = await links(app, adminTok, 'all');
+    const nodes = body.subagents['brain-2']!;
+
+    expect(nodes[0]!.continuable).toBeUndefined();
+    expect(nodes[1]!.continuable).toBe(true);
   });
 });
