@@ -12,7 +12,9 @@ afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
 const BYTES = Buffer.from('a root filesystem, as far as this test is concerned');
 const DIGEST = `sha256:${createHash('sha256').update(BYTES).digest('hex')}`;
 
-/** A published entry, which the shipped catalogue deliberately has none of until a release builds one. */
+/** A catalogue answering for `project-base@1` and nothing else, built here rather than read from the
+ *  shipped pins so that what these tests prove does not move when a release rebuilds an artifact.
+ *  `overrides` is how a case asks for a variant of the entry, an unpublished one included. */
 function published(overrides: Record<string, unknown> = {}) {
   return (reference: string) => (reference === 'project-base@1'
     ? { reference, digest: DIGEST, sizeBytes: BYTES.length, path: 'rootfs-project-base-v1/project-base-v1.tar.gz', ...overrides }
@@ -111,10 +113,12 @@ describe('root filesystem artifact store', () => {
   });
 
   it('refuses a declared but unpublished artifact instead of building one', async () => {
-    // This is the shipped catalogue's own state before a release builds the artifacts, so it is the
-    // first thing a fresh host meets. It has to name the reference and stop.
+    // A recipe this release declares and ships no copy of. That was the whole catalogue until a build
+    // produced the bytes, and it is still what any recipe looks like between being declared and being
+    // published, so the entry is injected rather than taken from the shipped pins. It has to name the
+    // reference and stop: nothing here falls back to building a root filesystem on the host.
     const fetchImpl = vi.fn();
-    const { store: subject } = store({ catalog: artifactEntry, fetchImpl });
+    const { store: subject } = store({ catalog: published({ digest: null, sizeBytes: null }), fetchImpl });
     await expect(subject.ensure('project-base@1')).rejects.toMatchObject({ code: 'artifact_unpublished' });
     await expect(subject.ensure('project-base@1')).rejects.toThrow(/project-base@1/);
     expect(fetchImpl).not.toHaveBeenCalled();

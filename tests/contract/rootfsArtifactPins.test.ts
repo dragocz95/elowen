@@ -89,11 +89,23 @@ describe('pinned digests', () => {
     }
   });
 
-  it('is unpublished across the board until a real build runs', () => {
-    // Not an aspiration: `ensure()` refuses these with `artifact_unpublished`, and that refusal is the
-    // correct behaviour until a build has produced the bytes and pinned what it measured. A digest
-    // invented to make this read better would be a pin nothing can fetch.
-    const published = Object.entries(pinFile.artifacts).filter(([, entry]) => entry.digest !== null);
-    expect(published.map(([reference]) => reference)).toEqual([]);
+  it('is published across the board, because a build has measured every recipe', () => {
+    // The inverse of what this asserted while the pins were null. Back then `ensure()` refused every
+    // reference with `artifact_unpublished` and no environment could be created at all, which was the
+    // correct answer to having no bytes. Now every recipe this release declares has bytes behind it, and
+    // a pin that returns to null — a hand edit, a half-finished publish, a version bump nobody rebuilt —
+    // is that outage again, on a fresh host, at the moment someone creates their first environment.
+    for (const name of Object.keys(ROOTFS_RECIPES)) {
+      const reference = artifactReference(name);
+      const entry = pinFile.artifacts[reference];
+      expect(entry, `${reference} has no pin entry`).toBeDefined();
+      // Lower-case hex only, which is what the catalogue's own `ARTIFACT_DIGEST` accepts; a pin the
+      // runtime would reject as malformed is no more fetchable than a null one.
+      expect(entry?.digest, reference).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(Number.isSafeInteger(entry?.sizeBytes), reference).toBe(true);
+      expect(entry?.sizeBytes as number, reference).toBeGreaterThan(0);
+      // Both or neither, asserted here too: half a pin is what a partial publish leaves behind.
+      expect(entry?.digest === null, reference).toBe(entry?.sizeBytes === null);
+    }
   });
 });
