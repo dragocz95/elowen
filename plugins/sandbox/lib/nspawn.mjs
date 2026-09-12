@@ -939,7 +939,13 @@ export class NspawnClient {
       checkedHostPath(dirname(archive), { create: true });
       if (!absent(archive)) throw new Error('Archive destination already exists');
     }
+    // `componentGeneration` is the disk record's own field and is sent whenever it carries one: it is the
+    // only thing that tells the helper whether this environment's `data` component lives in the disk
+    // directory or under `storage/<generation>`, and the helper accepts exactly the one path it derives
+    // from it rather than any directory under the storage root that happens to be called `data`.
     await this.#helper('site-data-archive', { kind: spec.resource.kind, resource: String(spec.resource.id),
-      diskId: spec.disk.id, operation, dataPath: data, archivePath: archive }, { timeoutMs: 15 * 60_000 });
+      diskId: spec.disk.id, operation, dataPath: data, archivePath: archive,
+      ...(spec.disk.componentGeneration === undefined ? {} : { componentGeneration: spec.disk.componentGeneration }) },
+    { timeoutMs: 15 * 60_000 });
   }
 }

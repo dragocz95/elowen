@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +36,8 @@ import {
   renderPolkitRule,
   safeGuestMountTarget,
   SITE_DATA_ARCHIVE_BYTES,
+  SITE_DATA_ARCHIVE_MEMBERS,
+  SITE_DATA_INDEX_PY,
   storageRootsFor,
   supportedEnvironmentOs,
   trustedPath,
@@ -1777,6 +1779,11 @@ os.utime(os.path.join(root,'uploads'),ns=(1687654321246813579,168765432124681357
         for (const [marker, answer] of Object.entries(intercept)) {
           if (args.some((argument) => String(argument).includes(marker))) return answer(args);
         }
+        // systemd is faked for the same reason the ownership pass is: the alternative is the REAL manager
+        // on whatever host this runs, which would answer about its own machines, differ between a
+        // developer's box and CI, and is not there at all in a container. "Nothing is up" is the state
+        // these tests are about; the ones that are about the check install their own answer above.
+        if (file === '/usr/bin/systemctl') return { ok: true, stdout: '' };
         return defaultCommandRunner(file, args, runOptions);
       },
     };
@@ -1955,6 +1962,209 @@ os.utime(os.path.join(root,'uploads'),ns=(1687654321246813579,168765432124681357
     await expect(applyRequest({ ...exportRequest(fixture, archive), dataPath: fixture.paths.rootfs }, undefined, fixture.options))
       .rejects.toThrow(/does not belong to the environment/);
     expect(existsSync(archive)).toBe(false);
+  }, 60_000);
+
+  it('refuses a SNAPSHOT data tree, which is the one thing the recovery depends on', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+
+    // A snapshot's data tree sits under the same storage root and is called `data`, so a check that
+    // accepted the name accepted this. Overwriting it destroys the restore the runtime documents as the
+    // recovery for a data tree that went missing — and an import is exactly how that recovery is asked for.
+    const snapshot = join(fixture.paths.storageRoot, 'snapshots', 'f'.repeat(32), 'data');
+    mkdirSync(snapshot, { recursive: true, mode: 0o700 });
+    writeFileSync(join(snapshot, 'kept.conf'), 'the snapshot the operator restores from\n', { mode: 0o600 });
+
+    await expect(applyRequest({ ...importRequest(fixture, archive), dataPath: snapshot }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('snap.tar')), dataPath: snapshot }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    // Untouched: not renamed aside, not staged over, not emptied.
+    expect(readdirSync(snapshot)).toEqual(['kept.conf']);
+    expect(readFileSync(join(snapshot, 'kept.conf'), 'utf8')).toBe('the snapshot the operator restores from\n');
+  }, 60_000);
+
+  it('accepts the migrated component tree only at the generation the request states', async () => {
+    // An environment migrated onto trees an earlier generation created keeps its data under
+    // `storage/<generation>`, which the helper derives from the number on the request rather than
+    // recognising by shape.
+    const fixture = dataFixture();
+    const migrated = join(fixture.paths.storageRoot, 'storage', '4', 'data');
+    mkdirSync(migrated, { recursive: true, mode: 0o700 });
+    seedDataTree(migrated);
+    const archive = fixture.archiveOf('migrated.tar');
+
+    await expect(applyRequest({ ...exportRequest(fixture, archive), dataPath: migrated, componentGeneration: 4 },
+      undefined, fixture.options)).resolves.toMatchObject({ ok: true, dataPath: migrated });
+    // The same tree named under a different generation is not this component.
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('wrong.tar')), dataPath: migrated, componentGeneration: 5 },
+      undefined, fixture.options)).rejects.toThrow(/does not belong to the environment/);
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('bad.tar')), dataPath: migrated, componentGeneration: 0 },
+      undefined, fixture.options)).rejects.toThrow(/component generation is invalid/);
+  }, 60_000);
+
+  it('captures the tree it verified when the data directory is swapped for a symlink underneath it', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+
+    // The host directory root would reach through a symlink, standing in for /root. The service account
+    // owns the directory the data tree sits in, so it can replace that entry at any moment — and the gap
+    // between the path check and the archiver was a gap it could spin an export against until it hit.
+    const elsewhere = join(scratch, 'not-under-the-storage-roots');
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(elsewhere, 'id_rsa'), 'a private key the caller must never receive\n', { mode: 0o600 });
+
+    // Swapped after every path check has passed and before a byte is archived, which is the whole window.
+    // A rename and a symlink, which is what the owner of the surrounding directory can actually do — the
+    // real tree is still there under another name, so what the archive holds says which one was read.
+    fixture.intercept['Insufficient free space'] = () => {
+      renameSync(fixture.data, `${fixture.data}.moved-aside`);
+      symlinkSync(elsewhere, fixture.data);
+      return { ok: true, stdout: JSON.stringify({ requiredBytes: 4096, marginBytes: 0, freeBytes: 2 ** 50 }) };
+    };
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    delete fixture.intercept['Insufficient free space'];
+
+    const members = execFileSync('/usr/bin/tar', ['--list', '--file', archive], { encoding: 'utf8' })
+      .split('\n').map((line) => line.replace(/^\.\//, '').replace(/\/$/, '')).filter(Boolean).sort();
+    expect(members, 'the export must not have followed the symlink').not.toContain('id_rsa');
+    expect(members).toEqual(['app.conf', 'app.conf.bak', 'uploads', 'uploads/config', 'uploads/photo.bin']);
+    expect(readFileSync(join(elsewhere, 'id_rsa'), 'utf8')).toBe('a private key the caller must never receive\n');
+  }, 60_000);
+
+  it('refuses to open a data directory that is already a symlink when it is asked for', async () => {
+    const fixture = dataFixture();
+    rmSync(fixture.data, { recursive: true, force: true });
+    symlinkSync(scratch, fixture.data);
+    await expect(applyRequest(exportRequest(fixture, fixture.archiveOf('linked.tar')), undefined, fixture.options))
+      .rejects.toThrow(/symlink|not a directory/i);
+  }, 60_000);
+
+  it('refuses an import while any generation of the environment machine is still up', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    const before = await fixture.fingerprint(fixture.data);
+
+    // The runtime asks the same question before it sends the request. This is the helper being asked to
+    // rename the tree a live guest has bind-mounted and then delete what it replaced, by a caller that
+    // did not ask or did not wait for the answer.
+    fixture.intercept['list-units'] = () => ({ ok: true,
+      stdout: 'elowen-machine@elowen-site-shop-g7.service loaded active running Elowen machine elowen-site-shop-g7\n' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/stop the environment before importing its data/i);
+    // Refused before anything moved: no staging tree, no retired tree, the same bytes.
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+    expect((await fixture.fingerprint(fixture.data)).digest).toBe(before.digest);
+
+    // A machine of ANOTHER environment whose unit happens to come back in the listing is not this one.
+    fixture.intercept['list-units'] = () => ({ ok: true,
+      stdout: 'elowen-machine@elowen-site-other-g1.service loaded active running Elowen machine elowen-site-other-g1\n' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options)).resolves.toMatchObject({ ok: true });
+
+    // And a manager that will not answer refuses the import rather than passing it: an unreadable state
+    // is not an absent machine, and the alternative to asking is destroying live data.
+    fixture.intercept['list-units'] = () => ({ ok: false, stderr: 'Failed to connect to bus' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/machine state could not be established/);
+    delete fixture.intercept['list-units'];
+
+    // An export is not gated on it: capturing a running Site's data reads the tree and changes nothing.
+    fixture.intercept['list-units'] = () => ({ ok: true,
+      stdout: 'elowen-machine@elowen-site-shop-g7.service loaded active running Elowen machine elowen-site-shop-g7\n' });
+    await expect(applyRequest(exportRequest(fixture, fixture.archiveOf('while-up.tar')), undefined, fixture.options))
+      .resolves.toMatchObject({ ok: true, operation: 'export' });
+    delete fixture.intercept['list-units'];
+  }, 120_000);
+
+  it('asks systemd about every generation of this environment and nothing else', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    fixture.calls.length = 0;
+    await applyRequest(importRequest(fixture, archive), undefined, fixture.options);
+
+    const asked = fixture.calls.find((call) => call.args[0] === 'list-units');
+    expect(asked?.file).toBe('/usr/bin/systemctl');
+    expect(asked?.args).toContain('elowen-machine@elowen-site-shop-g*.service');
+    expect(asked?.args).toContain('--state=activating,active,deactivating,reloading');
+  }, 60_000);
+
+  it('refuses an archive that names more members than it may, however little it weighs', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    expect(SITE_DATA_ARCHIVE_MEMBERS).toBe(2_000_000);
+
+    // Empty members cost a header each and nothing else, so a byte bound does not bound them at all: this
+    // archive is a few kilobytes and every entry it names becomes an inode that is created, verified,
+    // chowned and fsynced. The count is intercepted rather than actually written out, because producing
+    // two million real entries in a test costs more than the defect it demonstrates.
+    fixture.intercept['members>entries'] = (args: string[]) => {
+      const limit = Number(args[args.length - 1]);
+      expect(limit).toBe(SITE_DATA_ARCHIVE_MEMBERS);
+      return { ok: false, stderr: `the archive names more than ${limit} members` };
+    };
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/names more than 2000000 members/);
+    delete fixture.intercept['members>entries'];
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 60_000);
+
+  it('bounds the member count in the index script itself, on the member that crosses the line', async () => {
+    // The bound run for real against a real archive, at a size a test can produce: proof that the script
+    // refuses rather than that the constant exists.
+    const fixture = dataFixture();
+    const many = join(fixture.paths.storageRoot, 'many');
+    mkdirSync(many, { recursive: true });
+    for (let at = 0; at < 40; at += 1) writeFileSync(join(many, `entry-${at}`), '');
+    const archive = fixture.archiveOf('many.tar');
+    execFileSync('/usr/bin/tar', ['--create', '--file', archive, '-C', many, '--', '.']);
+    expect(statSync(archive).size).toBeLessThan(SITE_DATA_ARCHIVE_BYTES);
+
+    const indexed = defaultCommandRunner('/usr/bin/python3', ['-c', SITE_DATA_INDEX_PY, archive,
+      String(SITE_DATA_ARCHIVE_BYTES), '10']);
+    expect(indexed.ok).toBe(false);
+    expect(indexed.stderr).toMatch(/names more than 10 members/);
+    // And the same archive under a bound it fits inside is indexed rather than refused.
+    const allowed = defaultCommandRunner('/usr/bin/python3', ['-c', SITE_DATA_INDEX_PY, archive,
+      String(SITE_DATA_ARCHIVE_BYTES), String(SITE_DATA_ARCHIVE_MEMBERS)]);
+    expect(allowed.ok).toBe(true);
+    expect(JSON.parse(allowed.stdout).members).toBe(41);
+  }, 60_000);
+
+  it('refuses an import the filesystem has no room for, before it extracts anything', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    const before = await fixture.fingerprint(fixture.data);
+
+    // The export side has asked this since it was written; the import side wrote into the filesystem every
+    // other environment on the host runs from and never asked at all. The archive's headers already state
+    // what it unpacks to, so the preflight is given that figure rather than a tree to walk.
+    let asked: string[] | null = null;
+    fixture.intercept['Insufficient free space'] = (args: string[]) => {
+      // An empty source list is what identifies the import's call: it has no tree to walk and hands over
+      // the figure the archive's own headers stated instead.
+      if (args[2] !== '[]') return { ok: true, stdout: JSON.stringify({ requiredBytes: 4096, marginBytes: 0, freeBytes: 2 ** 50 }) };
+      asked = args;
+      return { ok: false, stderr: 'Insufficient free space for disk copy: need 8796093022208 bytes including margin, have 12' };
+    };
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/Insufficient free space/);
+    delete fixture.intercept['Insufficient free space'];
+
+    expect(asked, 'the import must run the preflight against the directory it stages into').not.toBeNull();
+    // Nothing extracted, nothing swapped, nothing left behind.
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+    expect((await fixture.fingerprint(fixture.data)).digest).toBe(before.digest);
   }, 60_000);
 
   it('refuses the operation for anything that is not a Site', async () => {
