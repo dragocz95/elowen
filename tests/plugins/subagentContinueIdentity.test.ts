@@ -13,6 +13,10 @@ import type { SubagentUpdate } from '../../src/brain/events.js';
 // A DelegateContinue that switches the child's model must publish the identity the child ACTUALLY runs
 // on as soon as the host has rebuilt the session — the `session` event fires exactly there, before any
 // generated text — not only on the first tool call, which a tool-less reply never produces.
+// The case below asks for `background: false`, the blocking continuation (see subagentBackgroundDefault):
+// on the asynchronous default the same event also flips the call to background delivery and republishes
+// the row for that reason alone, which would hide a dropped identity push. Blocking removes that second
+// reason, so the republish asserted here can only come from the session event carrying a session id.
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const log = { info() {}, warn() {}, error() {} };
@@ -74,15 +78,14 @@ describe('DelegateContinue publishes the rebuilt child identity before any gener
       emissionsAtSessionEvent = emitted.length;
       return { status: 'reply', reply: 'answered without touching a tool' };
     });
-    const res = await runContinue(reg, { id: CHILD, message: 'switch approach' });
+    const res = await runContinue(reg, { id: CHILD, message: 'switch approach', background: false });
     expect(res.content[0]?.text).toContain('answered without touching a tool');
-    // The initial pre-spawn push lands BEFORE the session event (that is the stale one); without the
-    // session-event push a tool-less continuation would stop there and never publish the identity the
-    // rebuilt child actually runs on.
+    // The call starts the continuation before it raises its own pre-spawn row, so the session event is
+    // handled first and its republish is what makes this count non-zero. Drop that push and the count is
+    // 0: a tool-less continuation would then never publish the identity the rebuilt child runs on.
     expect(emissionsAtSessionEvent).toBeGreaterThanOrEqual(1);
     expect(emitted.length).toBeGreaterThan(emissionsAtSessionEvent);
-    // The FIRST push after the session event is the re-published running row (the reply's terminal
-    // `done` push may follow it).
+    // The pre-spawn row follows it, and the reply's terminal `done` push after that.
     expect(emitted[emissionsAtSessionEvent]).toMatchObject({ status: 'running', sessionId: CHILD });
   });
 
