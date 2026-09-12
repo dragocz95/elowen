@@ -257,11 +257,23 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // the button must delete exactly the rows under it, or "delete all" quietly deletes some. Reaching
   // across accounts is admin-only, which this whole route already is; no second gate is added here,
   // because a second place to ask would be a second place to get it wrong.
-  app.delete('/brain/managed-sessions', withBrain(async (c, brain) =>
-    c.json({ deleted: await brain.deleteAllManagedSessions(c.get('user').id, c.req.query('scope') === 'all' ? 'any' : 'own') }), { admin: true }));
+  app.delete('/brain/managed-sessions', withBrain(async (c, brain) => {
+    try {
+      return c.json({ deleted: await brain.deleteAllManagedSessions(c.get('user').id, c.req.query('scope') === 'all' ? 'any' : 'own') });
+    } catch (e) {
+      logger('brain').warn(`managed session cleanup refused: ${e instanceof Error ? e.message : String(e)}`);
+      return c.json({ error: 'session processes are still active' }, 409);
+    }
+  }, { admin: true }));
   // The register spans every account, so its per-row delete does too ('any').
-  app.delete('/brain/managed-sessions/:id', withBrain(async (c, brain) =>
-    c.json({ deleted: await brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
+  app.delete('/brain/managed-sessions/:id', withBrain(async (c, brain) => {
+    try {
+      return c.json({ deleted: await brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') });
+    } catch (e) {
+      logger('brain').warn(`managed session cleanup refused: ${e instanceof Error ? e.message : String(e)}`);
+      return c.json({ error: 'session processes are still active' }, 409);
+    }
+  }, { admin: true }));
 
   /** The branches under a conversation listing: the schedules filed under each conversation, and the
    *  sub-agents that ran under it. ONE read per listing, never per row.

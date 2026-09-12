@@ -54,6 +54,13 @@ export interface ProcessHandle {
   kill: () => void;
 }
 
+/** Result of a destructive registry sweep: only confirmed stops count as killed; failed handles stay
+ * registered and their ids remain available for a retry. */
+export interface ProcessSweepResult {
+  killed: number;
+  failed: string[];
+}
+
 /** Serializable snapshot of one background process for the API / UI. */
 export interface ProcessInfo {
   id: string;
@@ -71,7 +78,7 @@ export interface ProcessInfo {
   /** NO `killToken` here, deliberately: this shape is serialized into `GET /brain/processes` and into the
    *  `process` event pushed to client streams, and the token is the secret the terminal plugin redacts out
    *  of command output for exactly that reason. It stays on {@link ProcessHandle}, which never leaves the
-   *  process that owns it; the post-mortem sweep reads it from the runner heartbeat instead. */
+   *  process that owns it; the runner reports a separate daemon-private containment snapshot instead. */
   workspaceId?: string | null;
   homeGeneration?: number | null;
   projectRef?: ProjectExecutionRef;
@@ -275,6 +282,9 @@ export class ProcessRegistry {
       this.notifySession(h.sessionId, processHandleAccount(h));
       throw e;
     }
+    // A different handle may have claimed the same id while this asynchronous kill was waiting. The
+    // original stop is confirmed, but deleting the replacement would orphan its still-running process.
+    if (this.handles.get(id) !== h) return true;
     this.handles.delete(id);
     this.exited.delete(id);
     this.settleExitWaiters(id);
@@ -294,27 +304,29 @@ export class ProcessRegistry {
       : false;
   }
 
-  /** Stop every process matching the predicate — running ones killed, exited ones dropped. The one
-   *  teardown primitive: the session, account and runner-shutdown sweeps must agree on semantics, so
+  /** Stop every process matching the predicate in parallel — running ones killed, exited ones dropped.
+   *  Parallel confirmation keeps the whole runner RPC within one local kill bound instead of multiplying
+   *  that bound by the number of handles. The session, account and runner-shutdown sweeps all use this, so
    *  they all route through here. A kill that cannot be CONFIRMED is reported in `failed` with its
    *  handle retained, never folded into a silent success count. */
-  async killWhere(predicate: (handle: ProcessHandle) => boolean): Promise<{ killed: number; failed: string[] }> {
+  async killWhere(predicate: (handle: ProcessHandle) => boolean): Promise<ProcessSweepResult> {
     const handles = [...this.handles.values()].filter(predicate);
-    let killed = 0;
-    const failed: string[] = [];
-    for (const handle of handles) {
-      if (!handle.running()) { this.remove(handle.id); continue; }
-      try { if (await this.kill(handle.id)) killed += 1; }
-      catch { failed.push(handle.id); }
-    }
-    return { killed, failed };
+    const outcomes = await Promise.all(handles.map(async (handle): Promise<'killed' | 'removed' | 'failed'> => {
+      if (!handle.running()) { this.remove(handle.id); return 'removed'; }
+      try { return await this.kill(handle.id) ? 'killed' : 'removed'; }
+      catch { return 'failed'; }
+    }));
+    return {
+      killed: outcomes.filter((outcome) => outcome === 'killed').length,
+      failed: handles.filter((_, index) => outcomes[index] === 'failed').map((handle) => handle.id),
+    };
   }
 
-  async killSession(sessionId: string): Promise<{ killed: number; failed: string[] }> {
+  async killSession(sessionId: string): Promise<ProcessSweepResult> {
     return this.killWhere((handle) => handle.sessionId === sessionId);
   }
 
-  async killAccount(accountUserId: number): Promise<{ killed: number; failed: string[] }> {
+  async killAccount(accountUserId: number): Promise<ProcessSweepResult> {
     return this.killWhere((handle) => processHandleAccount(handle) === accountUserId);
   }
 

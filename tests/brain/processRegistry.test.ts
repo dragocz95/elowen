@@ -357,6 +357,45 @@ describe('ProcessRegistry — teardown sweeps', () => {
     expect(reg.get('stubborn')).toBeUndefined();
   });
 
+  it('does not delete a replacement handle that took the id while the original kill was awaiting confirmation', async () => {
+    const reg = new ProcessRegistry();
+    const original = fakeHandle('same-id');
+    const replacement = fakeHandle('same-id');
+    replacement.handle.killToken = 'replacement-token';
+    let confirmOriginal!: () => void;
+    const originalStopped = new Promise<void>((resolve) => { confirmOriginal = resolve; });
+    original.handle.kill = () => originalStopped;
+    reg.register(original.handle);
+
+    const killing = reg.kill('same-id');
+    reg.register(replacement.handle);
+    confirmOriginal();
+
+    await expect(killing).resolves.toBe(true);
+    expect(reg.get('same-id')).toBe(replacement.handle);
+    expect(reg.killTokens()).toEqual(['replacement-token']);
+  });
+
+  it('starts every matched kill before awaiting confirmations so the bounded runner RPC can finish', async () => {
+    const reg = new ProcessRegistry();
+    const started: string[] = [];
+    const confirms = new Map<string, () => void>();
+    for (const id of ['a', 'b']) {
+      const process = fakeHandle(id);
+      process.handle.kill = () => new Promise<void>((resolve) => {
+        started.push(id);
+        confirms.set(id, resolve);
+      });
+      reg.register(process.handle);
+    }
+
+    const sweep = reg.killWhere(() => true);
+    await vi.waitFor(() => expect(started).toEqual(['a', 'b']));
+    confirms.get('a')!();
+    confirms.get('b')!();
+    await expect(sweep).resolves.toEqual({ killed: 2, failed: [] });
+  });
+
   it('never lets the per-run kill token reach the OUTWARD snapshot', async () => {
     // The token is a secret: the terminal plugin redacts it out of command output so that an `env` run
     // cannot publish it. Every shape produced by toInfo is serialized straight into GET /brain/processes

@@ -3,7 +3,7 @@ import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import type { ChannelSendOpts } from './channels.js';
 import type { BrainEvent, BrainUsage } from './events.js';
-import type { ProcessInfo } from './processRegistry.js';
+import type { ProcessInfo, ProcessSweepResult } from './processRegistry.js';
 import { delegatedToolPolicy, normalizeDelegatedExecutionScope, type DelegatedExecutionScope } from './delegatedScope.js';
 import type { HostRpcMethod } from '../subagent/hostRpc.js';
 import { parseSpawnOrigin, type SpawnOrigin } from './spawnOrigin.js';
@@ -140,7 +140,7 @@ export interface DelegatedTurnRunner {
   killProcess?(processId: string, sessionId: string): Promise<boolean>;
   /** Stop every background process ONE session owns across the runners — the remote half of the
    *  conversation-teardown sweep, fired before the session rows disappear. */
-  killSessionProcesses?(sessionId: string): Promise<number>;
+  killSessionProcesses?(sessionId: string): Promise<ProcessSweepResult>;
   /** Tear the runner down (plugin reload, shutdown). In-flight turns settle as interrupted. */
   reset(reason: string): void;
   /** Can this runner take work AT ALL right now? The pool answers false when the operator has sized it to

@@ -5,14 +5,17 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '../shared/logger.js';
 import type { BrainEvent } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
-import type { ProcessInfo } from '../brain/processRegistry.js';
+import type { ProcessInfo, ProcessSweepResult } from '../brain/processRegistry.js';
 import {
   SubagentRunnerUnavailable,
   fromDelegatedProgress,
   type DelegatedTurnRequest,
   type DelegatedTurnRunner,
 } from '../brain/delegatedTurn.js';
-import { RUNNER_ENTRY, parseRunnerMessage, subagentBuildId, type DaemonToRunner, type RunnerSteerOutcome } from './protocol.js';
+import {
+  RUNNER_ENTRY, parseRunnerMessage, subagentBuildId,
+  type DaemonToRunner, type RunnerProcessContainment, type RunnerSteerOutcome,
+} from './protocol.js';
 import type { McpBridgeSnapshot } from '../plugins/mcpSnapshot.js';
 import { channelSessionId } from '../brain/sessionId.js';
 import { delegatedToolPolicy } from '../brain/delegatedScope.js';
@@ -37,10 +40,12 @@ const BOOT_RETRY_COOLDOWN_MS = 60_000;
 /** An activity query is a reload safety check, not an excuse to hang reload forever on a wedged IPC peer.
  *  Timeout fails closed as active; the outer bounded reload drain decides when to give up safely. */
 const ACTIVITY_TIMEOUT_MS = 1_000;
-const ACCOUNT_PROCESS_KILL_TIMEOUT_MS = 2_000;
-/** One runner-local process RPC. Same bound as the account kill: a wedged child must degrade the process
- *  panel (a miss reads as "gone"), never hang an owner-facing HTTP route on it. */
+/** One runner-local process RPC. A wedged child must reject within a bound rather than hang an
+ * owner-facing route or let destructive teardown treat silence as an empty registry. */
 const PROCESS_REQUEST_TIMEOUT_MS = 2_000;
+/** A bulk sweep waits through the runner registry's own 2s per-handle confirmation bound plus IPC margin.
+ * Handles are killed in parallel, so this stays constant regardless of the number of processes. */
+const PROCESS_SWEEP_TIMEOUT_MS = 3_000;
 
 export interface SubagentRunnerHostDeps {
   dbPath: string;
@@ -69,9 +74,9 @@ export interface SubagentRunnerHostDeps {
    *  registry's rows for the session at change time; the pool forwards both to whoever projects live
    *  process panels, so a runner-local start reaches a drill-in that is open. */
   onProcessesChanged?: (sessionId: string, processes: ProcessInfo[]) => void;
-  /** THIS runner exited. `killTokens` are the per-run environment tokens of the children that were
-   *  RUNNING at the last heartbeat: a runner that died without a graceful sweep leaves them detached,
-   *  and the daemon can still stop those trees by token. */
+  /** THIS runner exited. `killTokens` are the latest daemon-private containment state, updated on every
+   * registry change with heartbeat fallback. A runner that dies without a graceful sweep leaves those
+   * children detached, and the daemon can still stop their trees by token. */
   onRunnerExited?: (killTokens: string[]) => void;
 }
 
@@ -94,9 +99,10 @@ interface PendingTurn {
 /** One daemon-issued process verb awaiting the runner's answer. The request id is the correlation key; the
  *  `kind` separates the three answer shapes that share one map. */
 interface PendingProcessRequest {
-  kind: 'list' | 'output' | 'kill' | 'killSession';
+  kind: 'list' | 'output' | 'kill' | 'killSession' | 'killAccount';
   timer: ReturnType<typeof setTimeout>;
-  resolve: (result: ProcessInfo[] | string | null | boolean | number) => void;
+  resolve: (result: ProcessInfo[] | string | null | boolean | ProcessSweepResult) => void;
+  reject: (error: Error) => void;
 }
 
 /** Supervises ONE forked sub-agent runner: boot handshake, turn correlation, abort/release verbs and the
@@ -112,8 +118,9 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
   private readonly pendingProcess = new Map<string, PendingProcessRequest>();
   /** The last thing the child said about itself, for `/health`. Undefined until the first beat. */
   private lastBeat: RunnerHeartbeat | undefined;
-  /** The kill tokens of the last heartbeat's running children — the pre-captured metadata a post-mortem
-   *  sweep needs once this process can no longer report or kill anything itself. */
+  /** Latest daemon-private containment snapshot. Process-change frames update it immediately; heartbeat
+   * fallback carries the same revision, and older revisions can never replace newer token state. */
+  private containmentRevision = -1;
   private lastKillTokens: string[] = [];
   /** Set once the exit path has run, so a dead host is never handed a turn or counted as live. */
   private dead = false;
@@ -142,6 +149,20 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
   /** The child's own last report. The pool deliberately does NOT admit or route from these numbers (they
    *  are up to one heartbeat stale); they are what the runner SEES, surfaced so a divergence is visible. */
   get heartbeat(): RunnerHeartbeat | undefined { return this.lastBeat; }
+
+  private applyContainment(state: RunnerProcessContainment): void {
+    if (state.revision <= this.containmentRevision) return;
+    this.containmentRevision = state.revision;
+    this.lastKillTokens = state.killTokens;
+  }
+
+  private rejectProcessRequest(requestId: string, message: string): void {
+    const pending = this.pendingProcess.get(requestId);
+    if (!pending) return;
+    this.pendingProcess.delete(requestId);
+    clearTimeout(pending.timer);
+    pending.reject(new Error(message));
+  }
 
   /** Fork + handshake now, rather than on the first turn. The pool grows explicitly, so it needs to know
    *  whether a new runner actually came up before it counts on the capacity. */
@@ -288,37 +309,19 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
     });
   }
 
-  async killAccountProcesses(userId: number): Promise<number> {
-    const child = this.child;
-    if (!child || !this.ready) return 0;
-    const requestId = randomUUID();
-    return new Promise<number>((resolve, reject) => {
-      let settled = false;
-      const finish = (error: Error | null, killed = 0): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        child.off('message', onMessage);
-        child.off('exit', onExit);
-        if (error) reject(error); else resolve(killed);
-      };
-      const onMessage = (raw: unknown): void => {
-        const msg = parseRunnerMessage(raw);
-        if (msg?.type === 'accountProcessesKilled' && msg.requestId === requestId) finish(null, msg.killed);
-      };
-      const onExit = (): void => finish(null, 0);
-      const timer = setTimeout(() => finish(new Error('sub-agent runner did not acknowledge account process teardown')), ACCOUNT_PROCESS_KILL_TIMEOUT_MS);
-      timer.unref();
-      child.on('message', onMessage);
-      child.once('exit', onExit);
-      if (!this.post(child, { type: 'killAccountProcesses', requestId, userId })) finish(new Error('sub-agent runner channel closed during account process teardown'));
-    });
+  async killAccountProcesses(userId: number): Promise<ProcessSweepResult> {
+    return this.request<ProcessSweepResult>(
+      'killAccount',
+      { killed: 0, failed: [] },
+      (requestId) => ({ type: 'killAccountProcesses', requestId, userId }),
+      { strict: true, timeoutMs: PROCESS_SWEEP_TIMEOUT_MS },
+    );
   }
 
   /** THIS runner's background-process registry. The process that spawned a child owns its lifetime —
    *  a runner-hosted delegation registers its `Bash(run_in_background:true)` handles in the runner's own
    *  ProcessRegistry, and these verbs are how the daemon's list/output/kill surfaces project from it. A
-   *  dead or unwired runner holds nothing by definition, so every verb settles empty rather than throwing. */
+   *  runner absent before a request holds nothing; one that dies during cancellation rejects as unconfirmed. */
   listProcesses(): Promise<ProcessInfo[]> {
     // A list is ONLY ever answered from a live runner; a wedged one rejects, because broadcasting an
     // empty snapshot would hide processes that are actually running.
@@ -333,20 +336,25 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
     return this.request<boolean>('kill', false, (requestId) => ({ type: 'killProcess', requestId, processId, sessionId }), { strict: true });
   }
 
-  async killSessionProcesses(sessionId: string): Promise<number> {
-    return this.request<number>('killSession', 0, (requestId) => ({ type: 'killSessionProcesses', requestId, sessionId }), { strict: true });
+  async killSessionProcesses(sessionId: string): Promise<ProcessSweepResult> {
+    return this.request<ProcessSweepResult>(
+      'killSession',
+      { killed: 0, failed: [] },
+      (requestId) => ({ type: 'killSessionProcesses', requestId, sessionId }),
+      { strict: true, timeoutMs: PROCESS_SWEEP_TIMEOUT_MS },
+    );
   }
 
-  /** One bounded runner-local process RPC. `fallback` is what a DEAD runner settles to (an empty list,
-   *  unknown output, an honest kill miss — its registry died with it, so "gone" is the truth). A WEDGED
-   *  runner is a different case: with `strict`, the timeout REJECTS instead, because a fake answer would
+  /** One bounded runner-local process RPC. `fallback` is what a runner absent BEFORE the request settles
+   *  to. A runner that dies after accepting cancellation rejects from the exit handler because the stop is
+   *  unconfirmed. A WEDGED runner likewise rejects with `strict`, because a fake answer would
    *  masquerade as a confirmed kill (a teardown would then delete rows it could not clean) or as an
    *  empty list (panels would hide live processes). */
   private request<R>(
     kind: PendingProcessRequest['kind'],
     fallback: R,
     frame: (requestId: string) => DaemonToRunner,
-    opts: { strict?: boolean } = {},
+    opts: { strict?: boolean; timeoutMs?: number } = {},
   ): Promise<R> {
     const child = this.child;
     if (!child || !this.ready) return Promise.resolve(fallback);
@@ -366,9 +374,13 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
         clearTimeout(pending.timer);
         if (opts.strict) reject(new Error('the sub-agent runner did not answer the process request in time'));
         else resolve(fallback);
-      }, PROCESS_REQUEST_TIMEOUT_MS);
+      }, opts.timeoutMs ?? PROCESS_REQUEST_TIMEOUT_MS);
       timer.unref();
-      this.pendingProcess.set(requestId, { kind, timer, resolve: settle as (result: unknown) => void });
+      this.pendingProcess.set(requestId, {
+        kind, timer,
+        resolve: settle as (result: unknown) => void,
+        reject,
+      });
       if (!this.post(child, frame(requestId))) {
         clearTimeout(timer);
         this.pendingProcess.delete(requestId);
@@ -524,10 +536,13 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
           case 'heartbeat': {
             const { loopP99Ms, activeTurns, sessions, rssBytes } = msg;
             this.lastBeat = { loopP99Ms, activeTurns, sessions, rssBytes };
-            if (msg.killTokens) this.lastKillTokens = msg.killTokens;
+            if (msg.containment) this.applyContainment(msg.containment);
             this.d.onHeartbeat?.(this.lastBeat);
             return;
           }
+          case 'processContainment':
+            this.applyContainment(msg);
+            return;
           case 'processListResult': {
             const pending = this.pendingProcess.get(msg.requestId);
             if (pending?.kind === 'list') (pending.resolve as (result: ProcessInfo[]) => void)(msg.processes);
@@ -540,12 +555,23 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
           }
           case 'processKilled': {
             const pending = this.pendingProcess.get(msg.requestId);
-            if (pending?.kind === 'kill') (pending.resolve as (result: boolean) => void)(msg.killed);
+            if (pending?.kind !== 'kill') return;
+            if (msg.error) this.rejectProcessRequest(msg.requestId, msg.error);
+            else (pending.resolve as (result: boolean) => void)(msg.killed);
             return;
           }
           case 'sessionProcessesKilled': {
             const pending = this.pendingProcess.get(msg.requestId);
-            if (pending?.kind === 'killSession') (pending.resolve as (result: number) => void)(msg.killed);
+            if (pending?.kind !== 'killSession') return;
+            if (msg.error) this.rejectProcessRequest(msg.requestId, `sub-agent runner session process teardown failed: ${msg.error}`);
+            else (pending.resolve as (result: ProcessSweepResult) => void)({ killed: msg.killed, failed: msg.failed });
+            return;
+          }
+          case 'accountProcessesKilled': {
+            const pending = this.pendingProcess.get(msg.requestId);
+            if (pending?.kind !== 'killAccount') return;
+            if (msg.error) this.rejectProcessRequest(msg.requestId, `sub-agent runner account process teardown failed: ${msg.error}`);
+            else (pending.resolve as (result: ProcessSweepResult) => void)({ killed: msg.killed, failed: msg.failed });
             return;
           }
           case 'processesChanged': {
@@ -570,15 +596,13 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
           this.pending.delete(turnId);
           turn.reject(interrupted);
         }
-        // …and release every process verb: a dead runner's registry died with it, so each reads as empty.
-        // Resolve WITHOUT removing the entry first — settle owns the removal, and it settles exactly once.
-        for (const pending of this.pendingProcess.values()) {
+        // Observational reads settle empty because the registry died. A cancellation in flight is different:
+        // death cannot confirm whether it landed, so reject it and keep the caller's ownership rows retryable.
+        // Resolve without pre-removing list/output entries because their settle callback owns that cleanup.
+        for (const [requestId, pending] of [...this.pendingProcess]) {
           if (pending.kind === 'list') (pending.resolve as (result: ProcessInfo[]) => void)([]);
           else if (pending.kind === 'output') (pending.resolve as (result: string | null) => void)(null);
-          else if (pending.kind === 'kill') (pending.resolve as (result: boolean) => void)(false);
-          // A session sweep answers with a COUNT: `false` here reached `killSessionProcesses`'s sum as a
-          // coerced zero and only looked right.
-          else (pending.resolve as (result: number) => void)(0);
+          else this.rejectProcessRequest(requestId, 'the sub-agent runner exited during process cancellation');
         }
         // …and retract every edge it had reported, or the daemon keeps believing that work is live.
         for (const key of [...this.mirroredEdges]) {
@@ -587,8 +611,8 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
           this.childEdgeSink?.(parentSessionId, childSessionId, false);
         }
         if (code !== 0 || signal) log.warn(`sub-agent runner exited (code ${code ?? '?'}, signal ${signal ?? 'none'})`);
-        // The last heartbeat's kill tokens are the only handle on children this process can no longer
-        // stop itself — hand them to the daemon's post-mortem sweep BEFORE it drops this host.
+        // The latest private containment state is the only handle on children this process can no longer
+        // stop itself — hand it to the daemon's post-mortem sweep BEFORE it drops this host.
         try { this.d.onRunnerExited?.([...this.lastKillTokens]); } catch { /* a sink of ours threw */ }
         // LAST: the owner drops this host and every route pointing at it. After the settling above, so a
         // pool that re-places work on hearing this can never race a turn that is still being rejected.

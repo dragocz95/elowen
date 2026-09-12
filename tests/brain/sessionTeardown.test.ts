@@ -175,6 +175,20 @@ describe('deleting a conversation releases everything it owns', () => {
     } finally { processRegistry.remove('bg-stubborn'); }
   });
 
+  it('REFUSES the delete when a runner reports an unconfirmed process id', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService({
+      ...d,
+      subagentRunner: {
+        killSessionProcesses: async () => ({ killed: 0, failed: ['runner-stubborn'] }),
+      },
+    } as never);
+    const created = await svc.start(1);
+
+    await expect(svc.deleteManagedSession(1, created.sessionId)).rejects.toThrow('unconfirmed runner process');
+    expect(d.store.getSession(created.sessionId)).not.toBeUndefined();
+  });
+
   it('clears the active pointer when the admin panel deletes the active conversation', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
@@ -249,7 +263,7 @@ describe('deleting a conversation releases everything it owns', () => {
     const d = fakeDeps();
     const swept: string[] = [];
     d.subagentRunner = {
-      killSessionProcesses: async (sessionId: string) => { swept.push(sessionId); return 1; },
+      killSessionProcesses: async (sessionId: string) => { swept.push(sessionId); return { killed: 1, failed: [] }; },
     };
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
@@ -260,6 +274,65 @@ describe('deleting a conversation releases everything it owns', () => {
     await svc.deleteSession(1, sessionId);
 
     expect(swept).toEqual(expect.arrayContaining([sessionId, child]));
+  });
+
+  it('quiesces delegated turns before the final process sweep so shutdown cannot spawn an orphan', async () => {
+    const d = fakeDeps();
+    const order: string[] = [];
+    d.subagentRunner = {
+      killSessionProcesses: async (sessionId: string) => {
+        order.push(`sweep:${sessionId}`);
+        return { killed: 0, failed: [] };
+      },
+    };
+    const svc = new BrainService(d as never);
+    const parent = 'brain-delete-parent';
+    const child = 'brain-ch-subagent-sub-dlg-late';
+    d.store.createSession({ id: parent, userId: 1, model: 'm' });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: parent });
+    await svc.channelSend({ channelId: 'subagent-sub-dlg-late', ownerUserId: 1, policy: POLICY }, 'dig');
+    internalsOf(svc).sessions.setChildRunning(parent, child, true);
+    d.store.upsertSubagentRun(parent, { id: 'call-late', sessionId: child, status: 'running', task: 'dig', tools: 0, seconds: 0 });
+    const late: ProcessHandle = {
+      id: 'late-child-process', command: 'sleep 30', cwd: '/w', startedAt: '2026-01-01T00:00:00.000Z',
+      sessionId: child, completionMode: 'job', running: () => true, exitCode: () => null, readAll: () => '',
+      kill: () => Promise.resolve(),
+    };
+    let spawnedDuringShutdown = false;
+    d.session.abort.mockImplementation(async () => {
+      order.push('child-aborted');
+      if (!spawnedDuringShutdown) {
+        spawnedDuringShutdown = true;
+        processRegistry.register(late);
+      }
+    });
+
+    try {
+      await expect(svc.deleteManagedSession(1, parent)).resolves.toBe(1);
+      expect(processRegistry.get(late.id)).toBeUndefined();
+      expect(order.indexOf('child-aborted')).toBeLessThan(order.indexOf(`sweep:${child}`));
+    } finally { processRegistry.remove(late.id); }
+  });
+
+  it('sweeps each session once when multiple call rows point at the same child', async () => {
+    const d = fakeDeps();
+    const swept: string[] = [];
+    d.subagentRunner = {
+      killSessionProcesses: async (sessionId: string) => {
+        swept.push(sessionId);
+        return { killed: 0, failed: [] };
+      },
+    };
+    const svc = new BrainService(d as never);
+    const parent = 'brain-dedup-parent';
+    const child = 'brain-ch-subagent-sub-dlg-dedup';
+    d.store.createSession({ id: parent, userId: 1, model: 'm' });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: parent });
+    d.store.upsertSubagentRun(parent, { id: 'call-a', sessionId: child, status: 'done', task: 'a', tools: 0, seconds: 0 });
+    d.store.upsertSubagentRun(parent, { id: 'call-b', sessionId: child, status: 'done', task: 'b', tools: 0, seconds: 0 });
+
+    await expect(svc.deleteManagedSession(1, parent)).resolves.toBe(1);
+    expect(swept.filter((sessionId) => sessionId === child)).toHaveLength(1);
   });
 
   it('does not race a turn that is already in flight on the deleted conversation', async () => {

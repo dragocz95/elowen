@@ -5,7 +5,7 @@ import { ELOWEN_VERSION } from '../api/version.js';
 import type { BrainEvent, BrainUsage } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
 import type { DelegatedProgressEvent, DelegatedTurnRequest } from '../brain/delegatedTurn.js';
-import type { ProcessInfo } from '../brain/processRegistry.js';
+import type { ProcessInfo, ProcessSweepResult } from '../brain/processRegistry.js';
 import { projectExecutionRefSchema } from '../shared/projectExecution.js';
 import { parseMcpBridgeSnapshot, type McpBridgeSnapshot } from '../plugins/mcpSnapshot.js';
 import { parseHostRpcRequest, parseHostRpcResult, type HostRpcRequest, type HostRpcResult } from './hostRpc.js';
@@ -104,6 +104,17 @@ export type RunnerSteerOutcome = 'delivered' | 'idle' | 'aborted';
 const isSteerOutcome = (v: unknown): v is RunnerSteerOutcome =>
   v === 'delivered' || v === 'idle' || v === 'aborted';
 
+/** A runner cleanup answer may carry an operational error that prevented even the per-handle sweep. The
+ * ordinary unconfirmed-handle path stays in `failed`, preserving every retryable process id. */
+export interface RunnerProcessSweepResult extends ProcessSweepResult {
+  error?: string;
+}
+
+export interface RunnerProcessContainment {
+  revision: number;
+  killTokens: string[];
+}
+
 export type RunnerToDaemon =
   | { type: 'ready'; buildId: string }
   /** The runner cannot serve turns at all (build skew, boot failure). It exits right after sending this. */
@@ -117,18 +128,21 @@ export type RunnerToDaemon =
   | { type: 'error'; turnId: string; message: string }
   | { type: 'released'; releaseId: string; busy: boolean }
   | { type: 'activity'; activityId: string; activeCount: number }
-  | { type: 'accountProcessesKilled'; requestId: string; killed: number }
+  | ({ type: 'accountProcessesKilled'; requestId: string } & RunnerProcessSweepResult)
   /** The answers to the daemon's process verbs. A list the runner cannot vouch for is dropped whole:
    *  the daemon would otherwise project handles it cannot authorize on. */
   | { type: 'processListResult'; requestId: string; processes: ProcessInfo[] }
   | { type: 'processOutputResult'; requestId: string; output: string | null }
-  | { type: 'processKilled'; requestId: string; killed: boolean }
-  | { type: 'sessionProcessesKilled'; requestId: string; killed: number }
+  | { type: 'processKilled'; requestId: string; killed: boolean; error?: string }
+  | ({ type: 'sessionProcessesKilled'; requestId: string } & RunnerProcessSweepResult)
   /** A background process of session `sessionId` spawned, exited, was killed or was dropped here. The
    *  snapshot of THIS registry's rows for the session rides the frame, so the daemon re-projects exactly
    *  what exists — without it the CLI drill-in, hydrated once, would never see a runner-local process
    *  start or go away, and a wedged re-query would read as a false empty. */
   | { type: 'processesChanged'; sessionId: string; processes: ProcessInfo[] }
+  /** Daemon-private post-mortem containment state. Sent immediately on every registry change; unlike the
+   * public process snapshot above it is consumed only by RunnerHost and never forwarded to a client. */
+  | ({ type: 'processContainment' } & RunnerProcessContainment)
   /** The answer to a `steer` frame. `delivered` only once the message is confirmed in the child's
    *  context; `idle` when no streaming turn holds this channel here (the daemon then delivers the text
    *  itself); `aborted` when the delegation's abort fences fired while the steer waited. */
@@ -145,9 +159,37 @@ export type RunnerToDaemon =
    *  turn and session counts are the runner's own view, reported so a divergence from what the daemon
    *  believes is VISIBLE in /health rather than silent; the pool routes and admits from its own exact
    *  bookkeeping, never from a value that is one beat stale. */
-  | { type: 'heartbeat'; loopP99Ms: number; activeTurns: number; sessions: number; rssBytes: number; killTokens?: string[] };
+  | { type: 'heartbeat'; loopP99Ms: number; activeTurns: number; sessions: number; rssBytes: number; containment?: RunnerProcessContainment };
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+const MAX_PRIVATE_PROCESS_ITEMS = 4_096;
+const MAX_PRIVATE_PROCESS_VALUE_LENGTH = 128;
+const MAX_PROCESS_ERROR_LENGTH = 1_000;
+
+const parsePrivateProcessStrings = (raw: unknown): string[] | undefined => {
+  if (!Array.isArray(raw) || raw.length > MAX_PRIVATE_PROCESS_ITEMS) return undefined;
+  return raw.every((value) => typeof value === 'string' && value.length > 0
+    && value.length <= MAX_PRIVATE_PROCESS_VALUE_LENGTH)
+    ? raw as string[]
+    : undefined;
+};
+
+const parseProcessContainment = (raw: unknown): RunnerProcessContainment | undefined => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  if (!Number.isSafeInteger(v.revision) || (v.revision as number) < 0) return undefined;
+  const killTokens = parsePrivateProcessStrings(v.killTokens);
+  return killTokens ? { revision: v.revision as number, killTokens } : undefined;
+};
+
+const parseProcessSweep = (v: Record<string, unknown>): RunnerProcessSweepResult | undefined => {
+  if (!Number.isSafeInteger(v.killed) || (v.killed as number) < 0) return undefined;
+  const failed = parsePrivateProcessStrings(v.failed);
+  if (!failed) return undefined;
+  const error = v.error === undefined ? undefined : str(v.error);
+  if (v.error !== undefined && (error === undefined || error.length === 0 || error.length > MAX_PROCESS_ERROR_LENGTH)) return undefined;
+  return { killed: v.killed as number, failed, ...(error ? { error } : {}) };
+};
 
 /** Validate ONE background-process snapshot crossing the runner boundary. Same reject-don't-coerce rule as
  *  the store's row normalizers: the daemon projects these into owner-facing panels and authorization checks
@@ -351,9 +393,8 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
     }
     case 'accountProcessesKilled': {
       const requestId = str(v.requestId);
-      return requestId && Number.isSafeInteger(v.killed) && (v.killed as number) >= 0
-        ? { type: 'accountProcessesKilled', requestId, killed: v.killed as number }
-        : undefined;
+      const sweep = parseProcessSweep(v);
+      return requestId && sweep ? { type: 'accountProcessesKilled', requestId, ...sweep } : undefined;
     }
     case 'processListResult': {
       const requestId = str(v.requestId);
@@ -372,9 +413,10 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
     }
     case 'processKilled': {
       const requestId = str(v.requestId);
-      return requestId && typeof v.killed === 'boolean'
-        ? { type: 'processKilled', requestId, killed: v.killed }
-        : undefined;
+      const error = v.error === undefined ? undefined : str(v.error);
+      if (!requestId || typeof v.killed !== 'boolean'
+        || (v.error !== undefined && (error === undefined || error.length === 0 || error.length > MAX_PROCESS_ERROR_LENGTH))) return undefined;
+      return { type: 'processKilled', requestId, killed: v.killed, ...(error ? { error } : {}) };
     }
     case 'processesChanged': {
       const sessionId = str(v.sessionId);
@@ -384,11 +426,14 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
         ? { type: 'processesChanged', sessionId, processes: processes as ProcessInfo[] }
         : undefined;
     }
+    case 'processContainment': {
+      const containment = parseProcessContainment(v);
+      return containment ? { type: 'processContainment', ...containment } : undefined;
+    }
     case 'sessionProcessesKilled': {
       const requestId = str(v.requestId);
-      return requestId && Number.isSafeInteger(v.killed) && (v.killed as number) >= 0
-        ? { type: 'sessionProcessesKilled', requestId, killed: v.killed as number }
-        : undefined;
+      const sweep = parseProcessSweep(v);
+      return requestId && sweep ? { type: 'sessionProcessesKilled', requestId, ...sweep } : undefined;
     }
     case 'steered': {
       const steerId = str(v.steerId);
@@ -425,10 +470,10 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
       // in would make every comparison false and quietly disable growth for the life of the daemon.
       const nums = [v.loopP99Ms, v.activeTurns, v.sessions, v.rssBytes];
       if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n) || n < 0)) return undefined;
-      let killTokens: string[] | undefined;
-      if (v.killTokens !== undefined) {
-        if (!Array.isArray(v.killTokens) || !v.killTokens.every((t) => typeof t === 'string' && t.length > 0)) return undefined;
-        killTokens = v.killTokens as string[];
+      let containment: RunnerProcessContainment | undefined;
+      if (v.containment !== undefined) {
+        containment = parseProcessContainment(v.containment);
+        if (!containment) return undefined;
       }
       return {
         type: 'heartbeat',
@@ -436,7 +481,7 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
         activeTurns: v.activeTurns as number,
         sessions: v.sessions as number,
         rssBytes: v.rssBytes as number,
-        ...(killTokens ? { killTokens } : {}),
+        ...(containment ? { containment } : {}),
       };
     }
     default: return undefined;

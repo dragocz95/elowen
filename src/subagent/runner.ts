@@ -121,6 +121,14 @@ const liveTaps = new Map<string, () => void>();
  *  whole "is this runner saturated" question is answered here or not at all. The window is a few
  *  heartbeats wide so each beat describes the recent past rather than the last minute (see sizing.ts). */
 const loopLag = startLoopLagMonitor(LAG_WINDOW_MS);
+let processContainmentRevision = 0;
+const processContainment = () => ({
+  revision: processContainmentRevision,
+  killTokens: processRegistry.killTokens(),
+});
+const publishProcessContainment = (): void => {
+  send({ type: 'processContainment', ...processContainment() });
+};
 
 const heartbeat = setInterval(() => {
   send({
@@ -129,10 +137,9 @@ const heartbeat = setInterval(() => {
     activeTurns: runningChannels.size,
     sessions: heldChannels.size,
     rssBytes: process.memoryUsage.rss(),
-    // Kill tokens of THIS registry's running children: if the process dies abruptly (SIGKILL, crash),
-    // these are what the daemon can still sweep by — the token lives in the child's own /proc environ,
-    // immune to PID reuse and covering escaped descendants.
-    killTokens: processRegistry.killTokens(),
+    // Fallback copy of the daemon-private containment state. Registry changes publish the same revision
+    // immediately; the host accepts only newer revisions, so a delayed heartbeat cannot erase a later token.
+    containment: processContainment(),
   });
 }, HEARTBEAT_INTERVAL_MS);
 // A metric must never be the reason this process outlives the work it was forked for.
@@ -187,10 +194,16 @@ async function boot(
   // hydrates once, then rides `process` events). Report the affected session; the daemon re-projects it.
   // The listener dies with this process — there is nothing to unregister.
   processRegistry.setChangeListener((sessionId) => {
-    // The snapshot rides the frame: the daemon re-projects exactly what this registry holds for the
-    // session at change time, instead of re-asking and mistaking a wedged round trip for "empty".
+    // Private containment is its own frame, never a field on the outward snapshot. Publish it first and
+    // synchronously on every mutation so a process started just before SIGKILL is discoverable by the host.
+    processContainmentRevision += 1;
+    publishProcessContainment();
+    // The public snapshot rides a separate frame: the daemon re-projects exactly what this registry holds
+    // for the session at change time, without any kill token crossing into a client-facing shape.
     if (sessionId) send({ type: 'processesChanged', sessionId, processes: processRegistry.listForSession(sessionId) });
   });
+  // Establish revision zero immediately. Heartbeats retain this as fallback, but are not the discovery path.
+  publishProcessContainment();
   // Report NESTED delegated edges upward. The daemon's LiveSessionRegistry is the authoritative abort
   // tree, so it has to see work happening over here — but never the edge of the dispatched turn itself,
   // which it registered on its own before forwarding.
@@ -345,10 +358,11 @@ process.on('message', (raw: unknown) => {
         const { killed, failed } = await processRegistry.killWhere((handle) =>
           processHandleOwnedByAccount(handle, msg.userId, (sessionId) => brainStore?.getSession(sessionId)?.user_id));
         if (failed.length) log.warn(`account ${msg.userId} teardown could not confirm ${failed.length} process(es): ${failed.join(', ')}`);
-        send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed });
+        send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed, failed });
       })().catch((e: unknown) => {
-        log.warn(`account process teardown failed: ${errorText(e)}`);
-        send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed: 0 });
+        const error = errorText(e);
+        log.warn(`account process teardown failed: ${error}`);
+        send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed: 0, failed: [], error });
       });
       return;
     // The daemon's process list/output/kill surfaces project from THIS registry for the children this
@@ -369,8 +383,9 @@ process.on('message', (raw: unknown) => {
       void (async (): Promise<void> => {
         try { send({ type: 'processKilled', requestId: msg.requestId, killed: await processRegistry.killForSession(msg.sessionId, msg.processId) }); }
         catch (e) {
-          log.warn(`process ${msg.processId} kill failed: ${errorText(e)}`);
-          send({ type: 'processKilled', requestId: msg.requestId, killed: false });
+          const error = errorText(e);
+          log.warn(`process ${msg.processId} kill failed: ${error}`);
+          send({ type: 'processKilled', requestId: msg.requestId, killed: false, error });
         }
       })();
       return;
@@ -379,10 +394,11 @@ process.on('message', (raw: unknown) => {
         try {
           const { killed, failed } = await processRegistry.killSession(msg.sessionId);
           if (failed.length) log.warn(`session ${msg.sessionId} sweep could not confirm ${failed.length} process(es): ${failed.join(', ')}`);
-          send({ type: 'sessionProcessesKilled', requestId: msg.requestId, killed });
+          send({ type: 'sessionProcessesKilled', requestId: msg.requestId, killed, failed });
         } catch (e) {
-          log.warn(`session ${msg.sessionId} process sweep failed: ${errorText(e)}`);
-          send({ type: 'sessionProcessesKilled', requestId: msg.requestId, killed: 0 });
+          const error = errorText(e);
+          log.warn(`session ${msg.sessionId} process sweep failed: ${error}`);
+          send({ type: 'sessionProcessesKilled', requestId: msg.requestId, killed: 0, failed: [], error });
         }
       })();
       return;

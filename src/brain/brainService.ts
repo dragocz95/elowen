@@ -572,12 +572,11 @@ export class BrainService {
       onConversationActivityChanged: d.onConversationActivityChanged,
       // A runner-hosted child's processes are invisible to the local sweep; the rows are about to go,
       // so this is the last moment ownership can still be resolved.
-      ...(d.subagentRunner ? {
+      ...(d.subagentRunner?.killSessionProcesses ? {
         // Awaitable and rejection-preserving: session teardown refuses to delete while the runner sweep
         // is unconfirmed, so a failed remote kill must REJECT here, not degrade to a log line.
-        killRunnerSessionProcesses: async (sessionId: string): Promise<void> => {
-          await d.subagentRunner?.killSessionProcesses?.(sessionId);
-        },
+        killRunnerSessionProcesses: (sessionId: string) =>
+          d.subagentRunner!.killSessionProcesses!(sessionId),
       } : {}),
     });
     this.processSvc = new SessionProcessService({
