@@ -1594,6 +1594,8 @@ export const sk = {
     dataPath: 'Umiestnenie',
     dataSize: 'Veľkosť',
     dataFiles: '{n} súborov',
+    dataPartial: 'Čiastočné meranie: prechod sa zastavil na svojom limite, súčty sú preto spodnou hranicou.',
+    dataUnreadable: '{n} položiek sa nedalo zmerať. Disk prostredia patrí jeho stroju a táto služba doň nevidí.',
     dataEmpty: 'Tento plugin zatiaľ neuložil žiadne dáta.',
     dataClear: 'Vymazať dáta',
     dataClearConfirm: 'Vymazať všetky uložené dáta tohto pluginu? Túto akciu nemožno vziať späť.',

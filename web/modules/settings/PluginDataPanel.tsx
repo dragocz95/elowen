@@ -22,12 +22,14 @@ function Meta({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** Data section body: the plugin's on-disk footprint plus a destructive "clear" behind a confirm. */
-function DataSection({ name, summary }: { name: string; summary: { path: string; exists: boolean; files: number; bytes: number } }) {
+function DataSection({ name, summary }: { name: string; summary: { path: string; exists: boolean; files: number; bytes: number; unreadable?: number; partial?: boolean } }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const clear = useClearPluginData();
   const [confirm, setConfirm] = useState(false);
-  if (!summary.exists || summary.files === 0) return <EmptyState title={t.pluginDetail.dataEmpty} icon={HardDrive} />;
+  // A tree that exists but measured nothing is still worth reporting when the reason is that it could
+  // not be read, otherwise the panel claims the plugin holds no data at all.
+  if (!summary.exists || (summary.files === 0 && !summary.unreadable)) return <EmptyState title={t.pluginDetail.dataEmpty} icon={HardDrive} />;
   const doClear = () => {
     setConfirm(false);
     clear.mutate(name, {
@@ -40,6 +42,12 @@ function DataSection({ name, summary }: { name: string; summary: { path: string;
       <div className="grid grid-cols-1 gap-4 @sm:grid-cols-3">
         <Meta label={t.pluginDetail.dataSize}>{formatBytes(summary.bytes)}</Meta>
         <Meta label={t.pluginDetail.dataFiles.replace('{n}', String(summary.files))}><span className="font-mono">{summary.files}</span></Meta>
+        {(summary.partial || !!summary.unreadable) && (
+          <div className="min-w-0 @sm:col-span-3 flex flex-col gap-1 text-xs text-muted-foreground">
+            {summary.partial && <p>{t.pluginDetail.dataPartial}</p>}
+            {!!summary.unreadable && <p>{t.pluginDetail.dataUnreadable.replace('{n}', String(summary.unreadable))}</p>}
+          </div>
+        )}
         <div className="min-w-0 @sm:col-span-3">
           <Meta label={t.pluginDetail.dataPath}><span className="block break-all font-mono text-xs text-muted-foreground">{summary.path}</span></Meta>
         </div>

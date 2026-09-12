@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventBus } from '../../src/api/sse.js';
@@ -37,9 +37,9 @@ function makePlugin(root: string, name: string, extra: Record<string, unknown> =
   writeFileSync(join(dir, 'index.mjs'), 'export function register(){}');
 }
 
-function setup() {
+function setup(overrides: { pluginDataRoot?: string } = {}) {
   const root = tmpDir('plugroutes');
-  const dataRoot = tmpDir('plugdata');
+  const dataRoot = overrides.pluginDataRoot ?? tmpDir('plugdata');
   makePlugin(root, 'skills');
   makePlugin(root, 'files');
   // A consumer and its provider, wired only through a control KEY - the daemon never learns that one is
@@ -471,7 +471,47 @@ describe('plugin routes', () => {
   it('GET /plugins/:name includes a data summary', async () => {
     const { app, adminTok } = setup();
     const body = await (await app.request('/plugins/discord', auth(adminTok))).json() as { data: { exists: boolean; files: number; bytes: number } };
-    expect(body.data).toEqual({ path: expect.any(String), exists: false, files: 0, bytes: 0 });
+    expect(body.data).toEqual({ path: expect.any(String), exists: false, files: 0, bytes: 0, unreadable: 0, partial: false });
+  });
+
+  it('answers rather than failing when part of a plugin data directory cannot be read', async () => {
+    // The live regression: a Sandbox environment's root filesystem lives under the plugin data root and
+    // is owned by the machine's own uid range, so the service account cannot read it. An unguarded
+    // recursive walk threw EACCES straight out of the handler, and every instance holding at least one
+    // machine environment answered 500 on GET /api/plugins/sandbox.
+    const dataRoot = tmpDir('unreadable-plugin-data');
+    const dir = join(dataRoot, 'discord');
+    mkdirSync(join(dir, 'readable'), { recursive: true });
+    writeFileSync(join(dir, 'readable', 'note.txt'), 'hello');
+    const sealed = join(dir, 'machine-owned');
+    mkdirSync(sealed);
+    writeFileSync(join(sealed, 'secret.txt'), 'unreachable');
+    chmodSync(sealed, 0o000);
+    try {
+      const { app, adminTok } = setup({ pluginDataRoot: dataRoot });
+      const res = await app.request('/plugins/discord', auth(adminTok));
+      expect(res.status).toBe(200);
+      const body = await res.json() as { data: { files: number; bytes: number; unreadable: number; partial: boolean } };
+      // What it could read is counted, what it could not is reported as a number rather than folded
+      // silently into a total that would then understate the footprint without saying so.
+      expect(body.data.files).toBe(1);
+      expect(body.data.bytes).toBe(5);
+      expect(body.data.unreadable).toBe(1);
+      expect(body.data.partial).toBe(false);
+    } finally { chmodSync(sealed, 0o700); }
+  });
+
+  it('stops a data summary at its bound instead of walking every environment disk on the host', async () => {
+    // Measured on a real host with two Sandbox projects: 596,255 files and 78,360 directories, 21.4
+    // seconds for one page load. A plugin detail page is a look, not a scan.
+    const dataRoot = tmpDir('bounded-plugin-data');
+    const dir = join(dataRoot, 'discord');
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 60_000; i += 1) writeFileSync(join(dir, `f${i}`), 'x');
+    const { app, adminTok } = setup({ pluginDataRoot: dataRoot });
+    const body = await (await app.request('/plugins/discord', auth(adminTok))).json() as { data: { files: number; partial: boolean } };
+    expect(body.data.partial).toBe(true);
+    expect(body.data.files).toBeLessThan(60_000);
   });
 
   it('does not expose the removed legacy MCP management endpoints', async () => {

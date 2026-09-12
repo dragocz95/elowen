@@ -1641,6 +1641,8 @@ export const en = {
     dataPath: 'Location',
     dataSize: 'Size',
     dataFiles: '{n} files',
+    dataPartial: 'Partial measurement: the scan stopped at its bound, so the totals are a floor.',
+    dataUnreadable: '{n} entries could not be measured. An environment disk belongs to its machine, and this service cannot read it.',
     dataEmpty: 'This plugin has not stored any data.',
     dataClear: 'Clear data',
     dataClearConfirm: 'Delete all stored data for this plugin? This cannot be undone.',

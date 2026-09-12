@@ -1599,6 +1599,8 @@ export const cs = {
     dataPath: 'Umístění',
     dataSize: 'Velikost',
     dataFiles: '{n} souborů',
+    dataPartial: 'Částečné měření: průchod se zastavil na svém limitu, součty jsou proto spodní hranicí.',
+    dataUnreadable: '{n} položek nešlo změřit. Disk prostředí patří jeho stroji a tato služba do něj nevidí.',
     dataEmpty: 'Tento plugin zatím neuložil žádná data.',
     dataClear: 'Vymazat data',
     dataClearConfirm: 'Smazat všechna uložená data tohoto pluginu? Tuto akci nelze vzít zpět.',
