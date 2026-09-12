@@ -3,9 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-// @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
 import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
-// @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
 import { ROOTFS_ARTIFACTS, ROOTFS_RECIPES, artifactEntry, artifactReference, blobName, knownReferences, parseArtifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'elowen-rootfs-artifacts-'));
@@ -17,7 +15,7 @@ const DIGEST = `sha256:${createHash('sha256').update(BYTES).digest('hex')}`;
 /** A published entry, which the shipped catalogue deliberately has none of until a release builds one. */
 function published(overrides: Record<string, unknown> = {}) {
   return (reference: string) => (reference === 'project-base@1'
-    ? { reference, digest: DIGEST, sizeBytes: BYTES.length, path: 'rootfs-project-base-v1/project-base-v1.tar.zst', ...overrides }
+    ? { reference, digest: DIGEST, sizeBytes: BYTES.length, path: 'rootfs-project-base-v1/project-base-v1.tar.gz', ...overrides }
     : null);
 }
 
@@ -71,8 +69,23 @@ describe('root filesystem artifact catalogue', () => {
     expect(artifactEntry('project-base@99')).toBeNull();
   });
 
+  it('names a leftover container image for what it is instead of failing as a parse error', () => {
+    // Every environment created before this runtime carries a tag like this in its disk record. One that
+    // was never materialized cannot be materialized now — the image is not published anywhere as a root
+    // filesystem and there is no rule that turns a tag into an artifact. The refusal has to say that, and
+    // it must not guess a conversion.
+    for (const legacy of ['localhost/elowen-project-base:9f2c1d', 'docker.io/library/debian:bookworm-slim', 'ghcr.io/x/y:1']) {
+      expect(() => parseArtifactReference(legacy), legacy).toThrow(/no longer runs; delete the environment and create it again/);
+      let code: string | undefined;
+      try { parseArtifactReference(legacy); } catch (cause) { code = (cause as { code?: string }).code; }
+      expect(code, legacy).toBe('unsupported_runtime');
+    }
+    // The value is quoted back, so an operator can tell which environment it was.
+    expect(() => parseArtifactReference('localhost/elowen-project-base:9f2c1d')).toThrow(/localhost\/elowen-project-base:9f2c1d/);
+  });
+
   it('derives the blob name from the digest alone and refuses anything else', () => {
-    expect(blobName(DIGEST)).toBe(`${DIGEST.replace(':', '-')}.tar.zst`);
+    expect(blobName(DIGEST)).toBe(`${DIGEST.replace(':', '-')}.tar.gz`);
     for (const bad of ['sha256:nothex', 'sha512:' + 'a'.repeat(64), '', null]) {
       expect(() => blobName(bad), String(bad)).toThrow(/Invalid artifact digest/);
     }
@@ -143,7 +156,7 @@ describe('root filesystem artifact store', () => {
 
   it('re-fetches a blob that was truncated underneath it', async () => {
     const fetchImpl = respond(BYTES);
-    const { dataDir, store: subject } = store({ fetchImpl });
+    const { store: subject } = store({ fetchImpl });
     const { path } = await subject.ensure('project-base@1');
     writeFileSync(path, BYTES.subarray(0, 3));
     const again = await subject.ensure('project-base@1');
@@ -174,6 +187,19 @@ describe('root filesystem artifact store', () => {
     // reclaims the whole cache.
     expect(subject.collect(new Set())).toEqual([blobName(DIGEST)]);
     expect(existsSync(path)).toBe(false);
+  });
+
+  it('touches no filesystem until something actually asks for an artifact', () => {
+    // The store is constructed when the plugin REGISTERS. A data directory that does not exist yet is an
+    // ordinary state on a fresh instance, and creating directories from a constructor took the whole
+    // Sandbox plugin down on registration before anything had asked for a root filesystem.
+    const absent = join(scratch, 'never-created', 'nested');
+    const subject = new RootfsArtifactStore({ dataDir: absent, catalog: published(), fetchImpl: vi.fn() });
+    expect(existsSync(absent)).toBe(false);
+    // And the read-only answers still work over a store that has no directory at all.
+    expect(subject.status('project-base@1')).toMatchObject({ published: true, present: false });
+    expect(subject.collect(new Set())).toEqual([]);
+    expect(existsSync(absent)).toBe(false);
   });
 
   it('will not be pointed at a mirror that is not plain https', () => {

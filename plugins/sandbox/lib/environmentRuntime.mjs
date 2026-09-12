@@ -15,10 +15,16 @@ import { PodmanClient } from './podman.mjs';
 import { NspawnClient } from './nspawn.mjs';
 import { selectRuntimeClient } from './runtimeClient.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
-import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
+import { RootfsArtifactStore } from './rootfsArtifacts.mjs';
+import { ARTIFACT_MIRROR_SETTING, PROJECT_ARTIFACT, artifactReference } from './rootfsCatalog.mjs';
 
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
+/** The published root filesystem every NEW managed Project is built from. An environment that already
+ *  exists keeps whatever its row was stamped with, exactly as it kept its image tag before: the value is
+ *  inside the specification hash and inside the machine's own identity record, so rewriting it under a
+ *  live environment would make it unownable. */
+const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512 };
 const LIMIT_KEYS = Object.keys(DEFAULT_LIMITS);
 /** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
@@ -47,14 +53,6 @@ const DEFAULT_STEPS = [['work', 1]];
  *  cancels leases and guest transfers. A Site takes neither, so declaring them to a Site's watcher
  *  would name work that is never going to happen. */
 const PROJECT_STEPS = ['ready', 'quiesce'];
-/** Podman prints `STEP 4/17: RUN …` while it builds and `Copying blob … 12MB / 40MB` while it pulls. The
- *  first is a real fraction of a known whole; the second is a byte count of one layer among several, so
- *  it is reported as indeterminate rather than turned into a percentage of nothing. */
-export function buildFraction(line) {
-  const step = /^STEP\s+(\d+)\/(\d+)\b/.exec(String(line).trim());
-  if (!step || Number(step[2]) <= 0) return null;
-  return Math.min(1, Number(step[1]) / Number(step[2]));
-}
 /** The file operations that CHANGE the tree. They need write authority and they serialize against each
  *  other; everything else observes and does neither. One list, because a kind that counted as a mutation
  *  for permissions but not for serialization — or the reverse — is exactly the sort of drift that turns
@@ -160,7 +158,8 @@ function fileOperation(op) {
 /** One underlying coordinator for projects and Sites. Forks only write durable intents and execute
  * already-running validated targets. Only daemon reconciliation performs container lifecycle changes. */
 export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen', podman = new PodmanClient({ outputLimitBytes: 16 * 1024 * 1024 }),
-  nspawn = new NspawnClient({ images: podman, namespace, outputLimitBytes: 16 * 1024 * 1024 }),
+  artifacts = new RootfsArtifactStore({ dataDir, logger: ctx.logger, ...(ctx.config?.[ARTIFACT_MIRROR_SETTING] ? { baseUrl: ctx.config[ARTIFACT_MIRROR_SETTING] } : {}) }),
+  nspawn = new NspawnClient({ artifacts, namespace, outputLimitBytes: 16 * 1024 * 1024 }),
   storage = new ContainerStorage(podman, { nspawn }), daemon = typeof process.send !== 'function' }) {
   const store = createEnvironmentStore(db, processIdentity);
   /** Which runtime drives THIS specification. The disk record is the only discriminator, so an
@@ -353,11 +352,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const effective = configuredDefaults(ctx.config);
       const paths = { sandboxDataDir: dataDir, namespace };
       const resource = { kind: 'project', id: Number(id) };
-      const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_BASE_IMAGE_TAG }, paths, randomUUID().replaceAll('-', ''));
+      const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_ROOTFS }, paths, randomUUID().replaceAll('-', ''));
       // Nothing is materialized yet, so the runtime is still open. `decideRuntime` closes it at the first
       // start; until then the disk record is the Podman one every existing row already carries, which is
       // what keeps the serialization of a row that never starts identical to the rows before this change.
-      const spec = { input: { resource, generation: 1, image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths, runtimePending: true };
+      const spec = { input: { resource, generation: 1, image: PROJECT_ROOTFS, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths, runtimePending: true };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
     return row;
@@ -901,26 +900,19 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
 
   async function startRow(row, op) {
     step(op, 'image');
-    if (row.kind === 'project' && row.spec.input.image === PROJECT_BASE_IMAGE_TAG && !op.checkpoint.imageReady) {
-      // A build is the one part of a start that can take minutes, so its output goes into the same ring
-      // buffer the log view reads and its own step counter drives the bar. A line that carries no
-      // fraction leaves the step indeterminate rather than freezing the bar at a stale figure.
-      row.spec.input.image = await podman.ensureProjectImage(dataDir, (line) => {
-        store.log(row.kind, row.resource_id, sanitize(line));
-        step(op, 'image', buildFraction(line), true);
-      });
-      if (row.spec.input.disk?.sourceImage === PROJECT_BASE_IMAGE_TAG) {
-        row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image, runtime: row.spec.input.disk.runtime }, row.spec.paths, row.spec.input.disk.id);
-      }
-      store.save(row); checkpoint(op, { imageReady: true });
-    }
     await rebuildMovedSiteContainer(row, op);
-    step(op, 'storage');
     if (!row.spec.containerId) {
       await decideRuntime(row);
-      await storage.prepare(specFor(row.spec));
+      // Fetching the published root filesystem is the one part of a start that can take minutes, and it
+      // happens inside `prepare` because that is the only place that knows whether this disk still needs
+      // it: a disk already materialized returns before any fetch, so restarting an existing environment
+      // never re-downloads an artifact that collection has since reclaimed.
+      await storage.prepare(specFor(row.spec), {
+        onProgress: (received, total) => step(op, 'image', total > 0 ? received / total : null, true),
+      });
+      step(op, 'storage');
       await adoptHostWorkspace(row);
-    }
+    } else step(op, 'storage');
     step(op, 'container');
     const current = await ensureInitialContainer(row, op);
     const spec = specFor(row.spec);
@@ -989,12 +981,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
   }
 
-  const siteImages = createSiteImageService({ podman, store, db, dataDir, account,
-    recipe: (kind) => sites?.imageRecipe?.(kind),
+  const siteImages = createSiteImageService({ artifacts, store, db, account,
     userExists: (id) => stores().usersRead.list().some((user) => user.id === id),
     isAdmin: (id) => stores().usersRead.isAdmin(id) && stores().usersRead.mayUsePlugin(id, 'sandbox'),
     authorizeSite: (id, userId) => authorize('site', id, userId, true),
-    siteSpec: (registration) => specFor(siteRecord(registration, 1)),
     resolveSnapshotImage: (input) => sites?.resolveSnapshotImage?.(input),
   });
   const siteCleanup = createSiteCleanupService({ store, siteRecord, normalizeLimits: limits,
@@ -1007,9 +997,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = specFor(row.spec);
     const kind = op.action.kind;
     if (kind === 'provision-image') {
-      if (spec.disk) throw error('legacy_only', 'Persistent rootfs Sites materialize directly from their registered image');
-      const image = await siteImages.provision(op.action.imageKind);
-      if (image !== row.spec.input.image) throw error('site_image_mismatch', 'The fixed recipe does not match the registered Site image');
+      // A fixed root filesystem is the HOST's, not one Site's: the artifact is identical for every Site
+      // on that recipe and is held once in the shared store. There is nothing per-Site left to compare,
+      // so this makes sure the host holds the verified bytes and stops.
+      await siteImages.provision(op.action.imageKind);
       return;
     }
     if (kind === 'prepare') {
@@ -1780,8 +1771,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           beginSteps(op);
           if (op.kind === 'image') {
             await siteImages.authorizeJob(op);
-            const imageReference = await siteImages.provision(op.action.imageKind);
-            checkpoint(op, { imageReference });
+            const provisioned = await siteImages.provision(op.action.imageKind);
+            checkpoint(op, provisioned);
             op.status = 'succeeded'; op.error = null; op.percent = 100; store.saveOperation(op); publishOperation(op);
             continue;
           }
@@ -2065,7 +2056,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
       }
       const record = row?.spec ?? {
-        input: { resource: { kind: 'project', id }, generation: 1, image: PROJECT_BASE_IMAGE_TAG,
+        input: { resource: { kind: 'project', id }, generation: 1, image: PROJECT_ROOTFS,
           previewBroker: true, workspaceTarget: managedGuestRoot(project.slug, id), limits: configuredDefaults(ctx.config) },
         paths: { sandboxDataDir: dataDir, namespace },
       };

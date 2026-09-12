@@ -99,10 +99,10 @@ export const PROJECT_ARTIFACT = 'project-base';
  *  falls back to building one on the host. The release script fills these in and the contract test holds
  *  the file to its own shape. */
 export const ROOTFS_ARTIFACTS = Object.freeze({
-  'project-base@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-project-base-v1/project-base-v1.tar.zst' }),
-  'site-base@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-base-v1/site-base-v1.tar.zst' }),
-  'site-static@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-static-v1/site-static-v1.tar.zst' }),
-  'site-node@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-node-v1/site-node-v1.tar.zst' }),
+  'project-base@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-project-base-v1/project-base-v1.tar.gz' }),
+  'site-base@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-base-v1/site-base-v1.tar.gz' }),
+  'site-static@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-static-v1/site-static-v1.tar.gz' }),
+  'site-node@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-node-v1/site-node-v1.tar.gz' }),
 });
 
 const REFERENCE = /^([a-z][a-z0-9-]{0,40})@([1-9][0-9]{0,8})$/;
@@ -116,10 +116,21 @@ export function artifactReference(name) {
   return `${name}@${recipe.version}`;
 }
 
+/** A container image tag, which is what every environment created before this runtime was stamped with.
+ *  It is recognised only so a refusal can say what the value actually is. Nothing converts it. */
+const LEGACY_IMAGE = /^(localhost|docker\.io|quay\.io|ghcr\.io)\//;
+
 export function parseArtifactReference(reference) {
   const match = typeof reference === 'string' ? REFERENCE.exec(reference) : null;
-  if (!match) throw Object.assign(new Error('Invalid root filesystem artifact reference'), { code: 'artifact_unknown' });
-  return { name: match[1], version: Number(match[2]) };
+  if (match) return { name: match[1], version: Number(match[2]) };
+  // Named rather than guessed. A disk that was never materialized under the container runtime cannot be
+  // materialized under this one: the image it names is not published anywhere as a root filesystem, and
+  // there is no rule that turns a tag into an artifact. Recreating the environment is the repair, and
+  // saying so is more use than a parse failure that reads like corruption.
+  if (typeof reference === 'string' && LEGACY_IMAGE.test(reference)) {
+    throw Object.assign(new Error(`This environment names the container image ${reference}, which this release no longer runs; delete the environment and create it again to build it from a published root filesystem`), { code: 'unsupported_runtime', status: 409 });
+  }
+  throw Object.assign(new Error('Invalid root filesystem artifact reference'), { code: 'artifact_unknown' });
 }
 
 /** The pinned entry for a reference, or null when this release does not carry one. A reference that
@@ -136,10 +147,15 @@ export function artifactEntry(reference) {
 export const knownReferences = () => Object.keys(ROOTFS_ARTIFACTS);
 
 /** The blob's file name in the content-addressed store. Derived from the digest alone, so two recipes
- *  that happen to produce identical bytes share one copy and neither owns it. */
+ *  that happen to produce identical bytes share one copy and neither owns it.
+ *
+ *  gzip rather than zstd, deliberately. `tar` detects both from the magic bytes, but zstd needs a binary
+ *  Debian does not install by default, and a root filesystem that cannot be unpacked until an operator
+ *  installs a compressor is a new host dependency bought for a smaller download. gzip is present
+ *  everywhere `tar` is. */
 export function blobName(digest) {
   if (!ARTIFACT_DIGEST.test(digest ?? '')) throw Object.assign(new Error('Invalid artifact digest'), { code: 'artifact_digest_invalid' });
-  return `${digest.replace(':', '-')}.tar.zst`;
+  return `${digest.replace(':', '-')}.tar.gz`;
 }
 
 /** A stable fingerprint of the recipe set, so the release script and the contract test can agree that a

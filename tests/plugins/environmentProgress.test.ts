@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
-import { buildFraction, createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
+import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
@@ -27,15 +27,13 @@ function setup() {
     config: {}, publishEvent: (event: unknown) => { published.push(event); }, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
   initSandboxDb(ctx);
   const containers = new Map<string, any>();
-  let buildLines: string[] = [];
   let busReady = false;
   let busFails = false;
   const podman = {
     containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
-    ensureProjectImage: vi.fn(async (_dir: string, onOutput?: (line: string) => void) => {
-      for (const line of buildLines) onOutput?.(line);
-      return 'localhost/elowen-project-base:test';
-    }),
+    // The legacy image-backed path still has this method; a start no longer reaches it, which is what the
+    // tests below hold it to.
+    ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
     // The real client verifies the container against the specification it is asked about, so one built
     // for a different mount layout fails ownership instead of being adopted or removed.
     inspect: vi.fn(async (spec: any) => {
@@ -70,8 +68,7 @@ function setup() {
     requestEnvironment: async (value: any) => { const result = await built.requestEnvironment(value); predate(); return result; },
     reconcile: async (...args: any[]) => { predate(); return await built.reconcile(...args); } };
   cleanup.push(() => { built.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, db, ctx, podman, containers, published, project, root,
-    setBuildOutput: (lines: string[]) => { buildLines = lines; },
+  return { runtime, db, ctx, podman, storage, containers, published, project, root,
     // A guest whose boot never finishes: the container runs, the bus never listens. That is what a host
     // out of inotify instances produced, and it must be reported as a boot that did not come up.
     failSystemBus: () => { busFails = true; } };
@@ -178,30 +175,33 @@ describe('environment operation progress', () => {
       .rejects.toThrow(/Invalid environment limits/);
   });
 
-  // A build is the one part that can take minutes. Its output has to reach the person watching, and the
-  // bar must say "indeterminate" rather than invent a figure for a line that carries no fraction.
-  it('streams the base image build into the log ring buffer and derives percent from its step counter', async () => {
-    const { runtime, published, setBuildOutput } = setup();
-    setBuildOutput(['STEP 1/4: FROM debian', 'Copying blob 12MB / 40MB', 'STEP 3/4: RUN apt-get install']);
-    const op = await runtime.requestEnvironment({ ...input, requestId: 'build', action: { kind: 'start' } });
+  // Downloading the published root filesystem is the one part of a start that can take minutes, so the
+  // bytes that arrive are what moves the bar. A transfer whose length the host does not know has to read
+  // as indeterminate rather than hold the bar at the last figure it happened to have.
+  it('derives the image step from the root filesystem download and goes indeterminate without a total', async () => {
+    const { runtime, db, published, podman, storage } = setup();
+    const live: (number | null)[] = [];
+    storage.prepare.mockImplementation(async (_spec: unknown, options: { onProgress: (received: number, total: number) => void }) => {
+      for (const [received, total] of [[1024, 4096], [2048, 0], [3072, 4096]]) {
+        options.onProgress(received, total);
+        live.push((db.prepare("SELECT percent FROM p_sandbox_runtime_operations WHERE kind='project'").get() as { percent: number | null }).percent);
+      }
+    });
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'fetch', action: { kind: 'start' } });
     await runtime.reconcile();
 
-    const logs = await runtime.environmentLogs({ ...input });
-    expect(logs.lifecycle).toContain('STEP 3/4: RUN apt-get install');
-    const tail = (await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))!.logTail;
-    expect(tail.join('\n')).toContain('Copying blob 12MB / 40MB');
-
-    // A line with no fraction leaves the bar indeterminate; the step counter produces a real figure.
+    // The durable row is what a watcher reads, and every callback has to land on it. The image step
+    // carries 10 of the start plan's 18 units, so a quarter of the bytes is 13.9% of the whole operation
+    // and three quarters is 41.7% — figures no other step could have produced.
+    expect(live).toEqual([13.9, null, 41.7]);
+    // A total of zero is a transfer of unknown length, not a transfer of nothing, and the frame after it
+    // proves the bar comes back to a real figure instead of staying indeterminate for the rest of the step.
     const imageFrames = operationEvents(published).map((event) => event.data.operation).filter((view: any) => view.stepLabel === 'image');
     expect(imageFrames.some((view: any) => view.percent === null)).toBe(true);
     expect(imageFrames.some((view: any) => typeof view.percent === 'number' && view.percent > 0)).toBe(true);
-  });
-
-  it('reads a build step counter as a fraction and everything else as indeterminate', () => {
-    expect(buildFraction('STEP 3/12: RUN apt-get update')).toBeCloseTo(0.25);
-    expect(buildFraction('STEP 12/12: COMMIT')).toBe(1);
-    expect(buildFraction('Copying blob sha256:abc 12.3MiB / 45.6MiB')).toBeNull();
-    expect(buildFraction('')).toBeNull();
+    // Nothing is built on the host any more: the long step is the fetch, and only the fetch.
+    expect(podman.ensureProjectImage).not.toHaveBeenCalled();
+    expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
   });
 
   // The idempotency key is what makes a retry after a lost response safe. It must survive the progress
@@ -344,8 +344,8 @@ describe('environment operation progress', () => {
   // execution path has always replaced it in command output; a lifecycle error is read by the same
   // people on the same screen.
   it('keeps the host storage root out of the failure it shows and the lines it logs', async () => {
-    const { runtime, podman, root } = setup();
-    podman.ensureProjectImage.mockRejectedValueOnce(new Error(`build failed in ${root}/build/context`));
+    const { runtime, storage, root } = setup();
+    storage.prepare.mockRejectedValueOnce(new Error(`root filesystem extraction failed under ${root}/projects/7/disks`));
     const op = await runtime.requestEnvironment({ ...input, requestId: 'leaky', action: { kind: 'start' } });
     await runtime.reconcile();
 

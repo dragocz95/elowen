@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream, lstatSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
+import { createWriteStream, lstatSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { checkedHostPath } from './containerPaths.mjs';
+import { hostPath } from './containerSpec.mjs';
 import {
   ARTIFACT_BASE_URL, ARTIFACT_DIGEST, MAX_ARTIFACT_BYTES, artifactEntry, blobName, parseArtifactReference,
 } from './rootfsCatalog.mjs';
@@ -42,8 +43,12 @@ export class RootfsArtifactStore {
 
   constructor(options = {}) {
     if (!options.dataDir) throw new Error('A sandbox data directory is required for the artifact store');
-    this.#root = checkedHostPath(join(options.dataDir, 'rootfs', 'blobs'), { create: true });
-    this.#incoming = checkedHostPath(join(options.dataDir, 'rootfs', 'incoming'), { create: true });
+    // Recorded, not created. This store is built when the plugin registers, and registering must not
+    // touch the filesystem: a data directory that does not exist yet is an ordinary state on a fresh
+    // instance, and failing there takes the whole plugin down before anything has asked for an artifact.
+    // The directories are established on the first operation that actually needs them.
+    this.#root = join(hostPath(options.dataDir), 'rootfs', 'blobs');
+    this.#incoming = join(hostPath(options.dataDir), 'rootfs', 'incoming');
     this.#catalog = options.catalog ?? artifactEntry;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
     this.#baseUrl = trustedBaseUrl(options.baseUrl ?? ARTIFACT_BASE_URL);
@@ -95,6 +100,8 @@ export class RootfsArtifactStore {
   }
 
   async #download(entry, path, options) {
+    checkedHostPath(this.#root, { create: true });
+    checkedHostPath(this.#incoming, { create: true });
     const url = `${this.#baseUrl}/${entry.path}`;
     const temporary = join(this.#incoming, `${randomUUID()}.part`);
     let response;
@@ -154,7 +161,7 @@ export class RootfsArtifactStore {
       if (ARTIFACT_DIGEST.test(digest ?? '')) keep.add(blobName(digest));
     }
     const removed = [];
-    for (const name of readdirSync(this.#root)) {
+    for (const name of listing(this.#root)) {
       if (keep.has(name)) continue;
       try { unlinkSync(join(this.#root, name)); removed.push(name); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
@@ -162,12 +169,18 @@ export class RootfsArtifactStore {
     // An incoming file is never a reference: it is either being written right now by a live download,
     // which will rename it, or it is the remains of one that failed. Both are safe to drop, because a
     // download that loses its temporary file fails and is retried rather than producing a short blob.
-    for (const name of readdirSync(this.#incoming)) {
+    for (const name of listing(this.#incoming)) {
       try { unlinkSync(join(this.#incoming, name)); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     }
     return removed;
   }
+}
+
+/** A directory that was never created holds nothing, which is the same answer as an empty one. */
+function listing(path) {
+  try { return readdirSync(path); }
+  catch (cause) { if (cause.code === 'ENOENT') return []; throw cause; }
 }
 
 function fail(code, message) {
@@ -188,16 +201,4 @@ function trustedBaseUrl(value) {
 function positiveBound(value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_ARTIFACT_BYTES) throw new Error('Invalid artifact size bound');
   return value;
-}
-
-/** The store's own directory, created on demand. Kept out of the constructor's return so the runtime can
- *  hand the same figure to readiness without building a store. */
-export function artifactStoreRoot(dataDir) {
-  return join(dataDir, 'rootfs', 'blobs');
-}
-
-export function ensureArtifactStoreRoot(dataDir) {
-  const root = artifactStoreRoot(dataDir);
-  mkdirSync(root, { recursive: true, mode: 0o750 });
-  return root;
 }

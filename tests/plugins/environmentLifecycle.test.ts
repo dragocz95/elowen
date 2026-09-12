@@ -3,10 +3,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:net';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
-import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
+import { PROJECT_ARTIFACT, ROOTFS_RECIPES, artifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
@@ -16,6 +15,9 @@ import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorag
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
+/** The published root filesystem a NEW managed project is stamped with, in both the envelope image and
+ *  the disk's source. Nothing on the host produces it: it is fetched by reference and verified by digest. */
+const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
 /** `machineHost` is which world this fixture is in.
  *
  *  `null`, the default, is a host whose environments PREDATE the machine runtime: rows that already have
@@ -216,7 +218,7 @@ describe('durable managed environment lifecycle', () => {
     await runtime.requestEnvironment({ ...input, requestId: 'disk-start', action: { kind: 'start' } });
     await runtime.reconcile();
     const initial = podman.create.mock.calls[0]![0];
-    expect(initial.disk).toMatchObject({ format: 2, sourceImage: 'localhost/elowen-project-base:test' });
+    expect(initial.disk).toMatchObject({ format: 2, sourceImage: PROJECT_ROOTFS });
     await podman.exec(initial, 'f'.repeat(32), ['/bin/bash', '-s'], { input: 'printf marker >/etc/elowen-rootfs-marker' });
     const diskId = initial.disk.id;
     containers.delete(initial.name);
@@ -301,27 +303,35 @@ describe('durable managed environment lifecycle', () => {
     expect(podman.stop.mock.invocationCallOrder.at(-1)).toBeLessThan(storage.restoreVolumes.mock.invocationCallOrder[0]!);
   });
 
-  it('keeps the immutable disk source image when rebuilding only the envelope image', async () => {
-    const { runtime, sql, podman, containers } = setup();
+  // The artifact reference a row carries is inside its specification hash and inside the machine's own
+  // identity record, so a start that moved an existing environment onto the release's current root
+  // filesystem would leave it unable to prove it owns anything it already has.
+  it('fetches an existing row from the artifact it carries and never restamps it with the current one', async () => {
+    const { runtime, sql, storage, containers } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'source-initial', action: { kind: 'start' } });
     await runtime.reconcile();
     const row = sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
     const stored = JSON.parse(row.spec_json);
-    const materializedFrom = 'localhost/elowen-project-base:materialized';
-    stored.input.image = PROJECT_BASE_IMAGE_TAG;
-    stored.input.disk.sourceImage = materializedFrom;
+    // A revision this release does not publish, which is what every existing row becomes as soon as a
+    // recipe is revised. The envelope is dropped too, so the start really does reach materialization.
+    const carried = 'project-base@7';
+    expect(carried).not.toBe(PROJECT_ROOTFS);
+    stored.input.image = carried;
+    stored.input.disk.sourceImage = carried;
     delete stored.containerId;
     sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=?, state='stopped' WHERE kind='project' AND resource_id='7'").run(JSON.stringify(stored));
     containers.clear();
-    podman.ensureProjectImage.mockResolvedValueOnce('localhost/elowen-project-base:rebuilt');
-    podman.create.mockClear();
+    storage.prepare.mockClear();
 
-    await runtime.requestEnvironment({ ...input, requestId: 'source-rebuild', action: { kind: 'start' } });
+    await runtime.requestEnvironment({ ...input, requestId: 'source-restart', action: { kind: 'start' } });
     await runtime.reconcile();
 
+    // What is fetched is the reference the ROW names, not the one this release ships.
+    expect(storage.prepare).toHaveBeenCalledWith(expect.objectContaining({ image: carried,
+      disk: expect.objectContaining({ sourceImage: carried }) }), expect.objectContaining({ onProgress: expect.any(Function) }));
     const updated = JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
-    expect(updated.input.image).toBe('localhost/elowen-project-base:rebuilt');
-    expect(updated.input.disk.sourceImage).toBe(materializedFrom);
+    expect(updated.input.image).toBe(carried);
+    expect(updated.input.disk.sourceImage).toBe(carried);
   });
 
   it('keeps a stored specification without disk on the legacy image-backed driver', async () => {
@@ -932,49 +942,51 @@ describe('durable managed environment lifecycle', () => {
   });
 });
 
-describe('project base image binding', () => {
-  // Adding a package to the recipe changes the tag, because the tag IS the hash of the recipe. That is how
-  // a NEW environment picks the package up without a version to bump — and it is also the moment an
-  // existing environment could be broken, if the runtime treated the new tag as the one it should be on.
-  it('names an image derived from the recipe, and the recipe carries the PDF tools Read advertises', () => {
-    expect(PROJECT_CONTAINERFILE).toMatch(/\bpoppler-utils\b/);
-    const digest = createHash('sha256').update(PROJECT_CONTAINERFILE).digest('hex').slice(0, 16);
-    expect(PROJECT_BASE_IMAGE_TAG).toBe(`localhost/elowen-project-base:${digest}`);
-
-    // The same recipe without the package hashes elsewhere, so no existing image is silently redefined:
-    // the older environments keep referring to a tag that still means what it always meant.
-    const previous = PROJECT_CONTAINERFILE.replace(' poppler-utils', '');
-    expect(previous).not.toBe(PROJECT_CONTAINERFILE);
-    expect(createHash('sha256').update(previous).digest('hex').slice(0, 16)).not.toBe(digest);
+describe('project root filesystem binding', () => {
+  // A recipe revision is a hand-set integer, not a hash of the recipe's own text: `project-base@1` names
+  // the same published bytes on every host, and the packages below are what an environment gets by being
+  // built from them rather than by anything the host installs afterwards.
+  it('names the published artifact a new environment is built from, and it carries the PDF tools Read advertises', () => {
+    expect(PROJECT_ROOTFS).toBe('project-base@1');
+    expect(ROOTFS_RECIPES['project-base'].packages).toContain('poppler-utils');
   });
 
-  it('stamps a NEW environment with the current recipe and builds it', async () => {
-    const { runtime, podman } = setup();
+  it('stamps a NEW environment with the artifact reference and fetches it instead of building anything', async () => {
+    const { runtime, podman, storage, sql } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'fresh', action: { kind: 'start' } });
     await runtime.reconcile();
-    // The build only runs for a row that names the CURRENT recipe, so reaching it is itself the proof that
-    // a project created now was stamped with the tag carrying the new package.
-    expect(podman.ensureProjectImage).toHaveBeenCalledTimes(1);
-    expect(podman.ensureProjectImage.mock.results[0]!.type).toBe('return');
+
+    // Both halves, because they are read by different things: the envelope names the image and the disk
+    // record names the bytes its root filesystem was unpacked from.
+    const stored = JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
+    expect(stored.input.image).toBe(PROJECT_ROOTFS);
+    expect(stored.input.disk.sourceImage).toBe(PROJECT_ROOTFS);
+    expect(podman.create.mock.calls[0]![0].disk.sourceImage).toBe(PROJECT_ROOTFS);
+
+    // Materialization is the artifact store's download, reached through `prepare`. Nothing on this host
+    // runs a package manager against a distribution mirror to produce a root filesystem any more.
+    expect(storage.prepare).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ sourceImage: PROJECT_ROOTFS }) }),
+      expect.objectContaining({ onProgress: expect.any(Function) }));
+    expect(podman.ensureProjectImage).not.toHaveBeenCalled();
   });
 
-  it('leaves an environment bound to an older recipe on the image it was built with', async () => {
-    const { runtime, podman, sql } = setup();
+  it('leaves an environment bound to an earlier artifact on the root filesystem it was built with', async () => {
+    const { runtime, podman, storage, sql } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'initial', action: { kind: 'start' } });
     await runtime.reconcile();
     expect((await runtime.environmentFor(input)).state).toBe('running');
 
-    // Put the row into the state every already-provisioned project is in the moment the recipe changes:
-    // its stored specification names the image the earlier recipe produced.
-    const stale = 'localhost/elowen-project-base:0000000000000000';
+    // Put the row into the state every already-provisioned project is in the moment the catalogue moves
+    // on: its stored specification names the revision it was actually built from.
+    const earlier = 'project-base@7';
     const row = sql.prepare('SELECT kind, resource_id, spec_json FROM p_sandbox_runtimes').get() as any;
     const spec = JSON.parse(row.spec_json);
-    spec.input.image = stale;
-    spec.input.disk.sourceImage = stale;
+    spec.input.image = earlier;
+    spec.input.disk.sourceImage = earlier;
     sql.prepare('UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind=? AND resource_id=?')
       .run(JSON.stringify(spec), row.kind, row.resource_id);
 
-    podman.ensureProjectImage.mockClear();
+    storage.prepare.mockClear();
     podman.create.mockClear();
     podman.remove.mockClear();
     await runtime.requestEnvironment({ ...input, requestId: 'cycle-stop', action: { kind: 'stop' } });
@@ -982,17 +994,18 @@ describe('project base image binding', () => {
     await runtime.requestEnvironment({ ...input, requestId: 'cycle-start', action: { kind: 'start' } });
     await runtime.reconcile();
 
-    // No build for the new recipe was attempted on this project's behalf, nothing was removed, and nothing
-    // was recreated: the container it had is the container it still has.
+    // Nothing was fetched on this project's behalf, nothing was removed, and nothing was recreated: the
+    // container it had is the container it still has, on the disk it already materialized.
+    expect(storage.prepare).not.toHaveBeenCalled();
     expect(podman.ensureProjectImage).not.toHaveBeenCalled();
     expect(podman.create).not.toHaveBeenCalled();
     expect(podman.remove).not.toHaveBeenCalled();
-    expect(podman.start.mock.calls.at(-1)![0].image).toBe(stale);
+    expect(podman.start.mock.calls.at(-1)![0].image).toBe(earlier);
     expect((await runtime.environmentFor(input)).state).toBe('running');
 
-    // And the stored specification still names the old image afterwards — nothing rewrote it in passing.
+    // And the stored specification still names the earlier artifact afterwards — nothing rewrote it.
     const after = JSON.parse((sql.prepare('SELECT spec_json FROM p_sandbox_runtimes').get() as any).spec_json);
-    expect(after.input.image).toBe(stale);
+    expect(after.input.image).toBe(earlier);
   });
 });
 

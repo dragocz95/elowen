@@ -2,11 +2,12 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBoundSiteSpec, createContainerSpec, createEnvironmentDiskSpec, publicationUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
-import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
-import { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
+import { PROJECT_ARTIFACT, artifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 import { serviceProcessEnv } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_MODE, envelopePaths,
   HELPER_PATH, NspawnClient, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
@@ -60,7 +61,7 @@ if (!blockers.length) {
   // so checking them from here would report every rule absent on a host where all five are installed —
   // and the readiness report is the answer that actually gates `write-envelope` anyway.
   try {
-    const probe = new NspawnClient({ images: new PodmanClient({ outputLimitBytes: 1024 * 1024 }), helperPath: PROOF_HELPER, namespace: 'elowen' });
+    const probe = new NspawnClient({ artifacts: new RootfsArtifactStore({ dataDir: tmpdir() }), helperPath: PROOF_HELPER, namespace: 'elowen' });
     const readiness = await probe.hostReadiness();
     // Absent rows count as unmet, not as nothing to check: a report that carries no firewall rows at all
     // would otherwise read as a clean bill of health.
@@ -89,12 +90,14 @@ if (!blockers.length) {
     }
   }
 }
-if (!blockers.length) {
-  // The machine is built from the same image every environment is, so an unbuilt one is a reason to skip
-  // rather than a fifteen-minute build inside a test. The store is the SERVICE account's rootless one,
-  // reachable only with that account's own environment.
-  try { execFileSync('/usr/bin/podman', ['image', 'exists', PROJECT_BASE_IMAGE_TAG], { timeout: 60_000, env: serviceProcessEnv() }); }
-  catch { blockers.push('the project base image is not built'); }
+const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
+if (!blockers.length && storageRoots) {
+  // The machine is materialized from the same root filesystem every environment is. This suite will not
+  // pull hundreds of megabytes over the network, so an artifact that is not on the host already is a
+  // reason to skip rather than a download inside a test.
+  const present = new RootfsArtifactStore({ dataDir: storageRoots.sandboxDataDir }).status(PROJECT_ROOTFS);
+  if (!present.published) blockers.push(`this release publishes no ${PROJECT_ROOTFS} artifact`);
+  else if (!present.present) blockers.push(`the ${PROJECT_ROOTFS} root filesystem is not on this host`);
 }
 if (blockers.length) console.log(`nspawn machine proof skipped: ${blockers.join('; ')}`);
 
@@ -112,17 +115,17 @@ const SITE_ID = `nsproof-${SUFFIX}`;
 describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a real host', () => {
   const paths = { sandboxDataDir: storageRoots?.sandboxDataDir ?? '/nonexistent', namespace: 'elowen' };
   const resource = { kind: 'project' as const, id: PROJECT_ID };
-  const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_BASE_IMAGE_TAG, runtime: 'nspawn' },
+  const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_ROOTFS, runtime: 'nspawn' },
     paths, randomBytes(16).toString('hex'));
   const spec: any = createContainerSpec({ resource, workspaceTarget: '/nsproof', generation: 1,
-    image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true,
+    image: PROJECT_ROOTFS, disk, previewBroker: true,
     limits: { cpus: 0.75, memoryMb: 384, pidsLimit: 300 } }, paths);
   const unit = unitFor(spec.name);
   const envelope = envelopePaths(spec.name);
   const diskDirectory = dirname(spec.disk.rootfsPath);
 
-  const images = new PodmanClient({ outputLimitBytes: 16 * 1024 * 1024 });
-  const client = new NspawnClient({ images, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
+  const artifacts = new RootfsArtifactStore({ dataDir: paths.sandboxDataDir });
+  const client = new NspawnClient({ artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
   /** The verdict shape the runtime client answers with. It is stated here because the client is JavaScript
    *  and its inferred return is optional, which would make every field below need a guard that says
    *  nothing about the machine. */
@@ -146,7 +149,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     mkdirSync(join(spec.storageRoot, 'broker'), { recursive: true, mode: 0o700 });
     const started = Date.now();
     const imageId = await client.materializeRootfs(spec, spec.disk.rootfsPath);
-    measured.push(`materialize from ${PROJECT_BASE_IMAGE_TAG}: ${((Date.now() - started) / 1000).toFixed(1)} s`);
+    measured.push(`materialize from ${PROJECT_ROOTFS}: ${((Date.now() - started) / 1000).toFixed(1)} s`);
     expect(imageId).toMatch(/^(sha256:)?[a-f0-9]{64}$/);
   }, 30 * 60_000);
 
@@ -518,9 +521,9 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     const sitesDataDir = storageRoots!.sitesDataDir;
     const sourcePath = join(sitesDataDir, SITE_ID, 'source');
     const brokerDir = join(sitesDataDir, SITE_ID, 'broker');
-    const siteDisk = createEnvironmentDiskSpec({ resource: siteResource, image: PROJECT_BASE_IMAGE_TAG, runtime: 'nspawn' },
+    const siteDisk = createEnvironmentDiskSpec({ resource: siteResource, image: PROJECT_ROOTFS, runtime: 'nspawn' },
       { sitesDataDir, namespace: 'elowen' }, randomBytes(16).toString('hex'));
-    const siteSpec: any = createBoundSiteSpec({ resource: siteResource, generation: 1, image: PROJECT_BASE_IMAGE_TAG,
+    const siteSpec: any = createBoundSiteSpec({ resource: siteResource, generation: 1, image: PROJECT_ROOTFS,
       disk: siteDisk, workspaceReadOnly: true, limits: { cpus: 0.5, memoryMb: 320, pidsLimit: 200 } },
     { namespace: 'elowen', sitesDataDir, sourcePath, brokerDir });
     const siteUnit = unitFor(siteSpec.name);

@@ -40,13 +40,16 @@ function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: 
 describe('UI projects/:id/environment API', () => {
   // The two per-environment READS a browser makes, and nothing else: every write goes through the
   // namespaced mount, and a route no surface calls is a surface nobody is defending.
-  it('registers the namespaced projects mount and only the two environment reads', () => {
+  it('registers the namespaced projects mount, the two environment reads and the host runtime control', () => {
     const { routes } = setup();
     expect(routes.get('projects')?.map((route) => route.method).sort()).toEqual(['GET', 'POST']);
-    expect([...routes.keys()].sort()).toEqual(['environments/operation', 'environments/status', 'projects']);
+    expect([...routes.keys()].sort()).toEqual(['environments/operation', 'environments/status', 'projects', 'runtime/host']);
     for (const path of ['environments/status', 'environments/operation']) {
       expect(routes.get(path)?.map((route) => route.method)).toEqual(['GET']);
     }
+    // The host runtime reads its readiness and provisions it: a look must stay a look, so the two are
+    // separate methods rather than one call that repairs whatever it finds.
+    expect(routes.get('runtime/host')?.map((route) => route.method).sort()).toEqual(['GET', 'POST']);
   });
 
   it('parses only an optional leading slash, a positive id and the /environment suffix', async () => {

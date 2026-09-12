@@ -173,7 +173,7 @@ function readIdentity(diskDirectory) {
 export class NspawnClient {
   #executor;
   #env;
-  #images;
+  #artifacts;
   #helperPath;
   #configRoot;
   #timeoutMs;
@@ -189,9 +189,9 @@ export class NspawnClient {
   #running = new Map();
 
   constructor(options = {}) {
-    if (!options.images) throw new Error('An image builder client is required; nspawn has no image store');
+    if (!options.artifacts) throw new Error('A root filesystem artifact store is required');
     this.#executor = options.executor ?? new SpawnExecutor();
-    this.#images = options.images;
+    this.#artifacts = options.artifacts;
     this.#env = serviceProcessEnv(options);
     this.#helperPath = options.helperPath ?? HELPER_PATH;
     this.#configRoot = options.configRoot === undefined ? '' : hostPath(options.configRoot);
@@ -801,30 +801,24 @@ export class NspawnClient {
     return receipt;
   }
 
-  /** A fresh disk for a new environment. The image is still the template and this client has no image
-   *  store, so the merged filesystem is exported by the client that has one and the privileged helper
-   *  extracts it. Only the helper can preserve the archive's ownership and then shift the whole tree into
-   *  the machine's uid range, which is the step that makes the tree a machine's rather than a container's.
+  /** A fresh disk for a new environment, unpacked from the published root filesystem its specification
+   *  names. `disk.sourceImage` is that name — an artifact reference such as `project-base@1` — and the
+   *  store resolves it to bytes it has already verified against the pinned digest.
    *
-   *  The archive is written beside the pending tree, inside the disk directory `containerStorage` removes
-   *  wholesale when materialization fails, so a crash between the export and the removal cannot strand it
-   *  anywhere the disk's own cleanup does not already reach. Removing it is the image client's job for the
-   *  same reason writing it was: it is a FILE the service account owns, not a tree in the machine's uid
-   *  range, and the privileged tree operations deliberately take directories only. */
-  async materializeRootfs(spec, pendingPath) {
+   *  The privileged helper does the extraction because only root can preserve the archive's ownership and
+   *  then shift the whole tree into the machine's uid range, which is the step that makes the tree a
+   *  machine's. What comes back is the artifact's digest, which the disk record keeps as provenance: it
+   *  says which bytes this filesystem came from, and nothing ever needs those bytes again. */
+  async materializeRootfs(spec, pendingPath, options = {}) {
     this.#assertScope(spec);
     const pending = checkedHostPath(pendingPath);
-    const archive = join(checkedHostPath(dirname(pending)), 'rootfs.tar.pending');
-    const imageId = await this.#images.exportImageRootfs(spec, archive);
-    try {
-      await this.extractRootfsArchive(spec, archive, pending);
-    } catch (cause) {
-      try { await this.#images.removeDiskPath(archive); }
-      catch (cleanup) { throw new AggregateError([cause, cleanup], `${cause.message}; export archive cleanup failed: ${cleanup.message}`); }
-      throw cause;
-    }
-    await this.#images.removeDiskPath(archive);
-    return imageId;
+    // The artifact store hands back a blob it has already verified against the pinned digest, so nothing
+    // here re-checks it and nothing here cleans it up: the blob is a shared cache entry owned by the
+    // store, not a per-environment temporary. Unpacking copies the bytes out, which is what lets the
+    // store reclaim it afterwards without touching this disk.
+    const artifact = await this.#artifacts.ensure(spec.disk.sourceImage, options);
+    await this.extractRootfsArchive(spec, artifact.path, pending);
+    return artifact.digest;
   }
 
   async extractRootfsArchive(spec, archivePath, targetPath) {
@@ -907,15 +901,11 @@ export class NspawnClient {
     await this.removeDiskPath(directory);
   }
 
-  /** The image is still the template a disk is materialized from, so every image operation is delegated
-   *  to a client that HAS an image store. nspawn has none and is not asked to pretend otherwise. */
-  ensureProjectImage(dataDir, onOutput) { return this.#images.ensureProjectImage(dataDir, onOutput); }
-  ensureSiteImage(dataDir, recipe) { return this.#images.ensureSiteImage(dataDir, recipe); }
-  imageStatus(reference) { return this.#images.imageStatus(reference); }
-  imageIdentity(reference) { return this.#images.imageIdentity(reference); }
-  discoverRetainedSiteImage(spec, reference) { return this.#images.discoverRetainedSiteImage(spec, reference); }
-  inspectRetainedSiteImage(spec, reference, imageId) { return this.#images.inspectRetainedSiteImage(spec, reference, imageId); }
-  removeRetainedSiteImage(spec, reference, imageId) { return this.#images.removeRetainedSiteImage(spec, reference, imageId); }
+  /** Whether this host already holds the bytes a reference names, and fetching them when it does not.
+   *  Both are the artifact store's, and both are answered without an image store existing anywhere. */
+  artifactStatus(reference) { return this.#artifacts.status(reference); }
+  ensureArtifact(reference, options) { return this.#artifacts.ensure(reference, options); }
+  collectArtifacts(referenced) { return this.#artifacts.collect(referenced); }
 
   /** Snapshots of a disk-backed environment are disk copies, format 2, and never a committed image.
    *  These three exist only for legacy image-backed rows, which are never this client's. */

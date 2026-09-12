@@ -1,9 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+/** The digest the fixture's store reports; an artifact's identity is its content, not a local image id. */
+const ARTIFACT_DIGEST = `sha256:${'d'.repeat(64)}`;
 import { bindContainerIdentity, createBoundSiteSpec, createContainerSpec, createEnvironmentDiskSpec, executionUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { selectRuntimeClient } from '../../plugins/sandbox/lib/runtimeClient.mjs';
 import { DROPPED_CAPABILITIES, envelopePaths, HELPER_PATH, helperFrame, machineState, MACHINE_PATTERN,
@@ -83,19 +86,20 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
       return { code: 0, stdout: '', stderr: '' };
     }),
   };
-  const images = { imageIdentity: vi.fn(async () => `sha256:${'d'.repeat(64)}`), ensureProjectImage: vi.fn(async () => image),
-    // The one image operation a fresh disk needs: the merged filesystem, written where the machine
-    // client asked for it. The file has to exist, because the client validates the archive path before
-    // it hands it to the helper.
-    exportImageRootfs: vi.fn(async (_spec: any, archivePath: string) => {
-      writeFileSync(archivePath, 'rootfs archive');
-      return `sha256:${'d'.repeat(64)}`;
-    }),
-    removeDiskPath: vi.fn(async (path: string) => { rmSync(path, { force: true }); }) };
-  const client = new NspawnClient({ executor, images, configRoot, namespace: spec.namespace,
+  // The store hands back a blob it has ALREADY verified against the pinned digest, so the fixture models
+  // exactly that: a file that exists, and a digest. Nothing here writes into the disk directory, which is
+  // the point — the blob is a shared cache entry and the disk never owns it.
+  const blob = join(root, 'blob.tar.gz');
+  writeFileSync(blob, 'rootfs archive');
+  const artifacts = {
+    status: vi.fn((reference: string) => ({ reference, published: true, present: true, digest: ARTIFACT_DIGEST, sizeBytes: 15 })),
+    ensure: vi.fn(async () => ({ path: blob, digest: ARTIFACT_DIGEST, sizeBytes: 15, fetched: false })),
+    collect: vi.fn(() => []),
+  };
+  const client = new NspawnClient({ executor, artifacts, configRoot, namespace: spec.namespace,
     ...(options.outputLimitBytes === undefined ? {} : { outputLimitBytes: options.outputLimitBytes }) });
   return { root, configRoot, paths, spec, disk: spec.disk, diskDirectory, identityPath, identity, writeIdentity,
-    envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, executor, images, client, rootfs };
+    envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, executor, artifacts, blob, client, rootfs };
 }
 
 /** The shape the systemd guest protocol answers with; the tombstone reads exactly these four fields. */
@@ -255,40 +259,48 @@ describe('nspawn privileged transport', () => {
     expect(shown.at(-1)!.args).toEqual(['show', spec.name, '-p', 'Unit', '-p', 'RootDirectory']);
   });
 
-  it('materializes a fresh disk by delegating the image and handing the archive to the privileged side', async () => {
-    const { client, spec, images, requests, diskDirectory } = fixture();
+  it('materializes a fresh disk from the published root filesystem its specification names', async () => {
+    const { client, spec, artifacts, blob, requests, diskDirectory } = fixture();
     const pending = join(diskDirectory, 'rootfs.pending');
     mkdirSync(pending, { recursive: true });
-    const archive = join(diskDirectory, 'rootfs.tar.pending');
 
-    const imageId = await client.materializeRootfs(spec, pending);
+    const digest = await client.materializeRootfs(spec, pending);
 
-    // The image half goes to the client that HAS an image store, written beside the tree it fills.
-    expect(imageId).toBe(`sha256:${'d'.repeat(64)}`);
-    expect(images.exportImageRootfs).toHaveBeenCalledWith(spec, archive);
+    // The disk's own record of where it came from is the artifact's digest: which bytes, not which local
+    // image id, so two hosts building the same environment record the same provenance.
+    expect(digest).toBe(ARTIFACT_DIGEST);
+    expect(artifacts.ensure).toHaveBeenCalledWith(spec.disk.sourceImage, {});
     // The extraction is privileged, because only the helper can preserve the archive's ownership and
     // then shift the whole tree into the machine's range. Both facts travel in one request.
     const materialize = requests.filter((request) => request.op === 'materialize');
     expect(materialize).toHaveLength(1);
     expect(materialize[0]).toMatchObject({ domain: 'nspawn', op: 'materialize', machine: spec.name,
       namespace: spec.namespace, kind: 'project', resource: '7', generation: spec.generation,
-      diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'], archivePath: archive, targetPath: pending });
-    // The archive is a file the service account owns, so it goes back to the client that wrote it. The
-    // privileged tree operations take directories, and handing one a file is how this was found.
-    expect(images.removeDiskPath).toHaveBeenCalledWith(archive);
-    expect(requests.some((request) => request.op === 'tree-remove')).toBe(false);
+      diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'], archivePath: blob, targetPath: pending });
   });
 
-  it('keeps the export archive out of the way when the privileged extraction fails', async () => {
-    const { client, spec, helperReply, images, diskDirectory } = fixture();
+  it('leaves the shared blob alone when the privileged extraction fails', async () => {
+    // The blob is a cache entry every environment on this recipe shares, not a per-environment
+    // temporary. A failed materialization that deleted it would make the next environment re-download
+    // gigabytes for a fault that had nothing to do with the bytes.
+    const { client, spec, helperReply, blob, requests, diskDirectory } = fixture();
     const pending = join(diskDirectory, 'rootfs.pending');
     mkdirSync(pending, { recursive: true });
     helperReply.materialize = { ok: false, detail: 'the extraction target is not empty' };
 
     await expect(client.materializeRootfs(spec, pending)).rejects.toThrow(/the extraction target is not empty/);
 
-    // The failure is the caller's to see, and the megabytes the export left behind are gone either way.
-    expect(images.removeDiskPath).toHaveBeenCalledTimes(1);
+    expect(existsSync(blob)).toBe(true);
+    expect(requests.some((request) => request.op === 'tree-remove')).toBe(false);
+  });
+
+  it('carries a fetch progress observer through to the store', async () => {
+    const { client, spec, artifacts, diskDirectory } = fixture();
+    const pending = join(diskDirectory, 'rootfs.pending');
+    mkdirSync(pending, { recursive: true });
+    const onProgress = vi.fn();
+    await client.materializeRootfs(spec, pending, { onProgress });
+    expect(artifacts.ensure).toHaveBeenCalledWith(spec.disk.sourceImage, { onProgress });
   });
 
   it('reports what the host still owes the machine runtime, in the rows the privileged side named', async () => {
@@ -636,13 +648,13 @@ describe('nspawn refusals', () => {
     const image = 'localhost/elowen-project-base:test';
     const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' }, paths, 'a'.repeat(32));
     const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 1, image, disk }, paths);
-    const client = new NspawnClient({ executor: { run: vi.fn() }, images: {}, namespace: 'other' });
+    const client = new NspawnClient({ executor: { run: vi.fn() }, artifacts: {}, namespace: 'other' });
     expect(MACHINE_PATTERN.test(spec.name)).toBe(false);
     await expect(client.inspect(spec)).rejects.toThrow(/outside the privileged runtime scope/);
   });
 
   it('refuses to construct a client with no image store to delegate to', () => {
-    expect(() => new NspawnClient({ executor: { run: vi.fn() } } as any)).toThrow(/image builder client is required/);
+    expect(() => new NspawnClient({ executor: { run: vi.fn() } } as any)).toThrow(/artifact store is required/);
   });
 });
 
@@ -697,8 +709,7 @@ describe('nspawn site envelope', () => {
       if (file === '/usr/bin/machinectl' && args[0] === 'list') return { code: 0, stdout: '', stderr: '' };
       return { code: 0, stdout: '', stderr: '' };
     }) };
-    const images = { imageIdentity: vi.fn(), exportImageRootfs: vi.fn() };
-    const client = new NspawnClient({ executor, images, configRoot, namespace: binding.namespace });
+    const client = new NspawnClient({ executor, artifacts: { status: vi.fn(), ensure: vi.fn(), collect: vi.fn() }, configRoot, namespace: binding.namespace });
     return { spec, binding, requests, client, root };
   }
 

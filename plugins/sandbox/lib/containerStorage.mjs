@@ -110,11 +110,11 @@ export class ContainerStorage {
    *  for a legacy environment; nspawn has no volume store and refuses the methods outright. */
   #hasNamedVolumes(spec) { return this.#driver(spec) === this.#clients.podman; }
 
-  async prepare(spec) {
+  async prepare(spec, options = {}) {
     assertContainerSpec(spec);
     checkedHostPath(spec.storageRoot, { create: true });
     if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
-    if (spec.disk) return await this.#prepareDisk(spec);
+    if (spec.disk) return await this.#prepareDisk(spec, null, options);
     for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
     // A named volume is a HANDLE over a host directory, and a disk-backed environment mounts those
     // directories directly. Creating handles for them would add a second owner of the same paths whose
@@ -127,7 +127,7 @@ export class ContainerStorage {
    *  the migration path extracts its own verified export archive. Everything after it — the inventory
    *  proof, the fsync, the atomic activation and the durable manifest — is one protocol for both, because
    *  a second copy of it is how the two would come to disagree about when a disk is complete. */
-  async #prepareDisk(spec, fill = null) {
+  async #prepareDisk(spec, fill = null, options = {}) {
     const directory = checkedHostPath(dirname(spec.disk.rootfsPath), { create: true });
     const manifestPath = join(directory, 'disk.json');
     const pendingManifestPath = join(directory, 'disk.pending');
@@ -190,7 +190,7 @@ export class ContainerStorage {
     for (const component of spec.disk.components) checkedHostPath(component.path, { create: true });
     let filled;
     try {
-      filled = fill ? await fill(pending) : { sourceImageId: await this.#driver(spec).materializeRootfs(spec, pending) };
+      filled = fill ? await fill(pending) : { sourceImageId: await this.#driver(spec).materializeRootfs(spec, pending, options) };
     } catch (cause) {
       // An incomplete tree is never activated — no manifest names it — so keeping it buys no recovery
       // evidence and holds a whole root filesystem of space that the retry, and every other environment
