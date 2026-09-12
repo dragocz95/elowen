@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { it, expect } from 'vitest';
-import { PodmanClient, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
+import { NspawnClient } from '../../plugins/sandbox/lib/nspawn.mjs';
 import { SpawnExecutor } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
+import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
+import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { buildBrainCore } from '../../src/daemon/brainCore.js';
@@ -20,6 +22,7 @@ import {
   startScriptedModel, contentText, MARKERS, NODE_ID, NODE_TASK, GUEST_MARKER, GUEST_MARKER_PATH, GUEST_NODES_PATH,
   GUEST_PROJECT_SLUG,
 } from '../helpers/managedWorkflowModel.mjs';
+import { announce, blockers, pinnedExecutor, PROOF_HELPER, storageRoots } from './nspawnRealGuest.mjs';
 
 /** The workflow engine inside a MANAGED project, end to end, against a real guest.
  *
@@ -31,62 +34,49 @@ import {
  *  Everything on the path under test is real: the production core (`buildBrainCore`, the same factory the
  *  daemon calls) with the REAL plugin loader, the real `files` and `subagent` plugins, a real BrainService
  *  turn driven by a scripted model, the real workflow engine, a real delegated child spawned through the
- *  host's own platform handler, and the real Sandbox environment runtime over a real Podman container.
+ *  host's own platform handler, and the real Sandbox environment runtime over a real systemd-nspawn
+ *  machine.
  *
- *  What is NOT the daemon's: the Podman store. The bundled `sandbox` plugin builds its client with the
- *  service account's defaults (`plugins/sandbox/index.mjs`), so it is deliberately NOT enabled here; the
- *  environment runtime is constructed in this test around a client pinned to a private, exclusive-create
- *  store, and registered as the `sandbox` control the loaded plugins resolve at call time. A guarding
- *  executor proves every Podman invocation this process makes carries that private prefix, so no path —
- *  the parent's Write, the engine's read, the child's Read, the teardown — can reach the account store.
+ *  The bundled `sandbox` plugin is deliberately NOT enabled: it would build its own client, and the
+ *  environment runtime here is constructed around one pinned to the proof helper and registered as the
+ *  `sandbox` control the loaded plugins resolve at call time. The pinned executor proves every host
+ *  program this process spawns for the runtime is one of the three the machine client owns.
+ *
+ *  A machine is registered with the host's own machine manager, so the project this suite creates is
+ *  moved to an id far outside the range a real project reaches before any environment exists — a machine
+ *  named after a small sequential id would collide with a real environment on a production host.
  *
  *  The forked sub-agent runner is excluded on purpose: no `subagentRunner` is handed to the core and the
- *  switch is pinned off, so the node runs in this process. A runner process would load its own sandbox
- *  plugin with the default store, which this harness must never allow. Runner dispatch is therefore not
- *  covered here. */
+ *  switch is pinned off, so the node runs in this process. Runner dispatch is therefore not covered. */
+
+announce('nspawn managed workflow');
 
 const ACTOR = 1;
 const TURN_DEADLINE_MS = 900_000;
 const ENVIRONMENT_DEADLINE_MS = 900_000;
+const SUFFIX = randomBytes(4).toString('hex');
+const SAFE_PROJECT_ID = 994_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
 
-it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflow from a guest definition through a real child', async () => {
+it.skipIf(blockers.length > 0)('runs a managed-project workflow from a guest definition through a real child', async () => {
+  const sandboxDataDir = storageRoots!.sandboxDataDir;
   const scratch = mkdtempSync(join(tmpdir(), 'wfm-'));
-  const isolation = isolatedPodmanOptions(join(scratch, 'pm'), `wfm-${randomBytes(6).toString('hex')}`, { useUserSessionBus: true });
-  const paths = isolation.isolation;
-  const expectedPrefix = ['--root', paths.storage, '--runroot', paths.runroot, '--tmpdir', paths.tmp, '--storage-driver', 'vfs'];
-  const native = new SpawnExecutor();
-  /** Every Podman call this process makes, checked BEFORE it runs: the private prefix and the private
-   *  environment, or the whole test fails on the spot. */
-  const podmanCalls: string[][] = [];
-  const guarded = { run: async (file: string, args: string[], options: any) => {
-    assert.equal(file, '/usr/bin/podman');
-    assert.deepEqual(args.slice(0, expectedPrefix.length), expectedPrefix);
-    assert.equal(options.env.HOME, paths.home);
-    assert.equal(options.env.XDG_RUNTIME_DIR, paths.runtime);
-    assert.equal(options.env.TMPDIR, paths.tmp);
-    for (const key of ['CONTAINER_HOST', 'CONTAINER_CONNECTION', 'CONTAINERS_STORAGE_CONF']) assert.equal(options.env[key], undefined);
-    podmanCalls.push(args.slice(expectedPrefix.length, expectedPrefix.length + 2));
-    return native.run(file, args, options);
-  } };
-  const client = new PodmanClient({ ...isolation, executor: guarded });
+  const client = new NspawnClient({ artifacts: new RootfsArtifactStore({ dataDir: sandboxDataDir }),
+    executor: pinnedExecutor(new SpawnExecutor()), helperPath: PROOF_HELPER, namespace: 'elowen',
+    outputLimitBytes: 16 * 1024 * 1024 });
 
   const began = Date.now();
-  let stage = 'engine';
+  let stage = 'host readiness';
   const enter = (next: string) => { stage = next; console.log(`[${String(Math.round((Date.now() - began) / 1000)).padStart(4)}s] ${next}`); };
 
-  let engineVerified = false;
   let model: Awaited<ReturnType<typeof startScriptedModel>> | undefined;
   let core: Awaited<ReturnType<typeof buildBrainCore>> | undefined;
   let runtime: ReturnType<typeof createEnvironmentRuntime> | undefined;
-  let projectId: number | undefined;
+  let storageRootOfProject: string | null = null;
   try {
-    // ISOLATION FIRST. Podman itself reports where this client's store lives, before a project, a model
-    // server or a core exists. Nothing below is allowed to start on a client whose roots are not private.
-    const info = await client.info();
-    assert.equal(info.graphRoot, paths.storage);
-    assert.equal(info.runRoot, paths.runroot);
-    engineVerified = true;
-    console.log('Isolated rootless engine:', JSON.stringify(info));
+    // ISOLATION FIRST, in the only form a shared runtime has: the host says it is provisioned for
+    // machines, and this suite already refused to run on one whose teardown is not armed.
+    const readiness = await client.hostReadiness();
+    assert.equal(readiness.ready, true, JSON.stringify(readiness.items.filter((item: any) => !item.ok)));
 
     enter('core');
     model = await startScriptedModel();
@@ -109,12 +99,12 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
     });
     const registry = await core.pluginProvider.get();
     // The bundled sandbox plugin must not exist in this process: it is the only thing that would build a
-    // default-store client.
+    // client of its own against the installed helper.
     expect([...registry.loadedNames].sort()).toEqual(['files', 'subagent']);
     expect(registry.control('sandbox')).toBeUndefined();
     expect(core.config.get().runtime.subagentRunnerEnabled).toBe(false);
 
-    enter('environment runtime over the private store');
+    enter('environment runtime over the machine client');
     const users = core.users;
     const sandboxDb = makePluginDb(core.db, 'sandbox', { canMigrate: true });
     /** The runtime's context reads the SAME ambient turn scope the daemon's sandbox plugin reads, and the
@@ -123,7 +113,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
      *  membership check can be asserted rather than inferred. */
     const membershipChecks: { userId: number; projectId: number }[] = [];
     const runtimeCtx: any = {
-      db: () => sandboxDb, config: {},
+      db: () => sandboxDb, config: {}, logger: { info() {}, warn() {}, error() {} },
       currentAccountUserId, currentAccess,
       host: { stores: () => ({
         projects: core!.projects,
@@ -142,7 +132,8 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
       }) },
     };
     initSandboxDb(runtimeCtx);
-    runtime = createEnvironmentRuntime({ ctx: runtimeCtx, db: sandboxDb, dataDir: join(scratch, 'sandbox'), namespace: paths.namespace, podman: client, daemon: true });
+    runtime = createEnvironmentRuntime({ ctx: runtimeCtx, db: sandboxDb, dataDir: sandboxDataDir, namespace: 'elowen',
+      nspawn: client, storage: new ContainerStorage(client), daemon: true });
 
     /** Every guest file operation that reached the provider, with the turn it came from. The scope proof
      *  below reads these: the CHILD session must be the one that read the marker, on the actor's account,
@@ -176,10 +167,19 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
     expect(registry.control('sandbox')).toBe(sandboxControl);
 
     enter('managed project and environment start');
-    const project = core.projects.createForUser(ACTOR, { slug: GUEST_PROJECT_SLUG });
-    projectId = project.id;
+    const created = core.projects.createForUser(ACTOR, { slug: GUEST_PROJECT_SLUG });
+    expect(created.executionKind).toBe('managed');
+    // The machine's name and its uid range both come from this id, and a small sequential one would name
+    // a machine a production host may already own. Moved here, in this suite's own throwaway database,
+    // before anything has been created for it.
+    core.db.prepare('UPDATE projects SET id=? WHERE id=?').run(SAFE_PROJECT_ID, created.id);
+    core.db.prepare('UPDATE user_projects SET project_id=? WHERE project_id=?').run(SAFE_PROJECT_ID, created.id);
+    const projectId = SAFE_PROJECT_ID;
     const projectRef = { kind: 'managed' as const, projectId };
-    expect(project.executionKind).toBe('managed');
+    expect(core.projects.get(projectId)?.slug).toBe(GUEST_PROJECT_SLUG);
+    expect(core.userProjects.canAccess(ACTOR, projectId)).toBe(true);
+    storageRootOfProject = join(sandboxDataDir, 'projects', String(projectId));
+
     const started = await runtime.requestEnvironment({ project: projectRef, accountUserId: ACTOR, action: { kind: 'start' } });
     const envUntil = Date.now() + ENVIRONMENT_DEADLINE_MS;
     let startOp = await runtime.environmentOperation({ accountUserId: ACTOR, operationId: started.id });
@@ -292,7 +292,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
       await runtime.reconcile();
       deleteOp = await runtime.environmentOperation({ accountUserId: ACTOR, operationId: deleted.id });
     }
-    console.log(`Podman calls, all under the private prefix: ${podmanCalls.length}`);
+    storageRootOfProject = null;
   } catch (error) {
     console.error(`Managed workflow stage failed: ${stage}`);
     throw error;
@@ -300,15 +300,11 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
     try { await runtime?.dispose(); } catch { /* best effort */ }
     try { await model?.close(); } catch { /* best effort */ }
     try { core?.db.close(); } catch { /* best effort */ }
-    if (engineVerified) {
-      // The private store, and only it: the same explicit prefix every call above carried.
-      const reset = await native.run('/usr/bin/podman',
-        [...expectedPrefix, 'system', 'reset', '--force'],
-        { env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: paths.home, XDG_RUNTIME_DIR: paths.runtime, TMPDIR: paths.tmp,
-          ...(paths.userBus ? { DBUS_SESSION_BUS_ADDRESS: `unix:path=${paths.userBus.path}` } : {}) },
-          timeoutMs: 180_000, outputLimitBytes: 1024 * 1024 });
-      if (reset.code !== 0) throw new Error(`private Podman cleanup failed; retained ${scratch}: ${reset.stderr}`);
+    // A machine left registered on the host is the failure mode a shared runtime has that a private store
+    // did not, so what this run created is taken away whether or not the teardown above completed.
+    if (storageRootOfProject && existsSync(storageRootOfProject)) {
+      try { await client.removeDiskPath(storageRootOfProject); } catch { /* gone */ }
     }
     rmSync(scratch, { recursive: true, force: true });
   }
-}, 1_800_000);
+}, 3_600_000);

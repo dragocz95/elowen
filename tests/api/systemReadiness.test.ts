@@ -104,8 +104,8 @@ describe('GET /system/readiness', () => {
   it('spreads a check that returns several rows, each attributed to the plugin, in order', async () => {
     const f = fixturePlugins([{
       name: 'widgets',
-      register: "ctx.registerReadinessCheck(() => [{ id: 'widgets.podman', label: 'Podman', ok: true, detail: 'installed' },"
-        + " { id: 'widgets.crun', label: 'crun', ok: false, detail: 'missing' }]);",
+      register: "ctx.registerReadinessCheck(() => [{ id: 'widgets.runtime', label: 'Runtime', ok: true, detail: 'installed' },"
+        + " { id: 'widgets.toolchain', label: 'Toolchain', ok: false, detail: 'missing' }]);",
     }]);
     fixtures.push(f);
     const db = openDb(':memory:');
@@ -118,9 +118,9 @@ describe('GET /system/readiness', () => {
     });
     const { body } = await getChecks(app);
     const rows = body.checks.filter((c) => c.plugin === 'widgets');
-    expect(rows.map((c) => [c.id, c.ok])).toEqual([['widgets.podman', true], ['widgets.crun', false]]);
-    const at = body.checks.findIndex((c) => c.id === 'widgets.podman');
-    expect(body.checks[at + 1]?.id).toBe('widgets.crun');
+    expect(rows.map((c) => [c.id, c.ok])).toEqual([['widgets.runtime', true], ['widgets.toolchain', false]]);
+    const at = body.checks.findIndex((c) => c.id === 'widgets.runtime');
+    expect(body.checks[at + 1]?.id).toBe('widgets.toolchain');
   });
 
   it('drops the contributed row when no plugin is loaded — the rest keeps its order', async () => {

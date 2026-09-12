@@ -101,7 +101,7 @@ if (!blockers.length && storageRoots) {
 }
 if (blockers.length) console.log(`nspawn machine proof skipped: ${blockers.join('; ')}`);
 
-const podmanEnv = () => serviceProcessEnv();
+const guestEnv = () => serviceProcessEnv();
 const systemctlShow = (unit: string, property: string) =>
   execFileSync('/usr/bin/systemctl', ['show', unit, '-p', property, '--value'], { encoding: 'utf8', timeout: 30_000 }).trim();
 const machineList = () => execFileSync('/usr/bin/machinectl', ['list', '--no-legend', '--no-pager'], { encoding: 'utf8', timeout: 30_000 });
@@ -218,7 +218,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     // Nothing of the host filesystem is reachable, and the service account's own tree least of all.
     expect((await guest(['/bin/sh', '-c', 'ls /var/www 2>&1; true'])).stdout).toContain('No such file');
 
-    // A bind maps the guest's root onto the HOST owner of the bind source, which is the rootless-Podman
+    // A bind maps the guest's root onto the HOST owner of the bind source, which is the rootless-container
     // semantics every existing environment already depends on.
     await guest(['/bin/sh', '-c', 'printf bound >/data/ownership-proof']);
     const dataPath = join(spec.disk.components.find((entry: any) => entry.component === 'data')!.path, 'ownership-proof');
@@ -320,8 +320,9 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     samples.sort((a, b) => a - b);
     const median = samples[Math.floor(samples.length / 2)]!;
     measured.push(`exec round trip: median ${median.toFixed(0)} ms, range ${samples[0]!.toFixed(0)}-${samples.at(-1)!.toFixed(0)} ms over ${samples.length} runs`);
-    // Podman's measured median on this shape is 856 ms with a 225-1187 ms spread. The point of this
-    // runtime is that it is not that, so the bound is the bottom of Podman's own range.
+    // The container runtime this replaced had a measured median of 856 ms on this shape, with a
+    // 225-1187 ms spread. The point of this runtime is that it is not that, so the bound is the bottom
+    // of that measured range.
     expect(median).toBeLessThan(500);
   }, 20 * 60_000);
 
@@ -478,29 +479,28 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(existsSync(snapshotPath)).toBe(false);
   }, 30 * 60_000);
 
-  it('reverses the ownership shift the way a failed runtime migration has to', async () => {
-    // The rollback half of `migrate-runtime`. Its failure is the one that leaves a tree neither runtime
-    // can read, so the reversal is proved on a real tree rather than argued from a receipt.
+  it('repeats the ownership shift over an already-shifted tree without moving a single id', async () => {
+    // Materialization shifts the whole tree into the machine's range, and that pass is not transactional:
+    // one interrupted part way leaves a tree the retry has to finish. There is no reverse pass to undo it
+    // with, so the forward pass has to be safe to run again — an id that already carries the destination
+    // scheme must be left exactly where it is, or a second run would shift it a second time and put the
+    // tree out of the machine's range entirely. Proved on a real tree, because the property belongs to the
+    // privileged side's id mapping rather than to anything a receipt asserts.
     await client.stop(spec);
     await client.remove(spec);
     const base = identity().uidBase;
     expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(base);
 
-    // What the reverse pass needs is the range the tree came FROM, which only the forward pass reports.
-    // `migrate-runtime` keeps it in its checkpoint as `previousUidBase` for exactly this reason; passing
-    // the machine's own base instead is refused by the privileged side.
-    const receipt = await client.shiftOwnership(spec, { target: 'nspawn' });
+    const receipt = await client.shiftOwnership(spec);
     expect(receipt.uidBase).toBe(base);
-    const reversed = await client.shiftOwnership(spec, { target: 'podman', uidBase: receipt.previousUidBase });
-    expect(reversed.uidBase).toEqual(expect.any(Number));
-    const afterReverse = lstatSync(join(spec.disk.rootfsPath, 'etc')).uid;
-    expect(afterReverse).not.toBe(base);
-    measured.push(`ownership reversal: uid ${base} -> ${afterReverse}`);
+    expect(receipt.uidSize).toBe(UID_RANGE_SIZE);
+    expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(base);
 
-    // And forward again, which is what a retry does, ending exactly where it started.
-    const forward = await client.shiftOwnership(spec, { target: 'nspawn' });
-    expect(forward.uidSize).toBe(UID_RANGE_SIZE);
-    expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(forward.uidBase);
+    // And a third time, which is what a retry of a retry does, still ending where it started.
+    const again = await client.shiftOwnership(spec);
+    expect(again.uidBase).toBe(base);
+    expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(base);
+    measured.push(`ownership shift repeated twice, uid held at ${base}`);
     await boot();
     expect((await guest(['/bin/cat', '/etc/elowen-proof.conf'])).stdout).toBe('tuned by the proof\n');
   }, 30 * 60_000);
@@ -603,6 +603,6 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     // And nothing that was not this suite's went with it.
     expect(existsSync(storageRoots!.sandboxDataDir)).toBe(true);
     expect(existsSync(storageRoots!.sitesDataDir)).toBe(true);
-    expect(podmanEnv().HOME).toBeTruthy();
+    expect(guestEnv().HOME).toBeTruthy();
   }, 15 * 60_000);
 });

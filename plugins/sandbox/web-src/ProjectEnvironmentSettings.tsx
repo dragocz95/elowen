@@ -14,7 +14,7 @@ export interface ProjectEnvironmentDetail {
   environment: ProjectEnvironment;
   /** Which runtime this environment runs on, and while that is still open, what the host is missing.
    *  `name` is null when the host cannot hold an environment at all, which is when `readiness` says why. */
-  runtime: { name: 'podman' | 'nspawn' | null; pending: boolean; readiness: EnvironmentRuntimeReadiness | null };
+  runtime: { name: 'nspawn' | null; pending: boolean; readiness: EnvironmentRuntimeReadiness | null };
   snapshots: { id: string; generation: number; createdAt: string; consistency: 'crash-consistent'; note: string; completeProject: boolean }[];
   operations: (EnvironmentOperation & { requestId: string })[];
 }

@@ -1,13 +1,13 @@
 {
   "purpose": "Per-tool acceptance for project-owned persistent environments. Each row states what was exercised and HOW STRONG the evidence is, so nothing reads as verified because a mock agreed with itself.",
   "evidenceLevels": {
-    "real-guest": "Exercised against a real rootless Podman container in an exclusively created private store.",
+    "real-guest": "Exercised against a real systemd-nspawn machine on a host prepared by tests/plugins/nspawnProofHost.mjs. There is no private engine to create and reset for a machine, so the suite refuses to run on a host whose teardown is not armed.",
     "unit": "Exercised against in-process fakes only. Proves the logic, not that the guest behaves this way.",
     "unverified": "No acceptance yet at any level, or only indirect coverage."
   },
   "realGuestSuites": [
-    "tests/plugins/containerRuntime.podman.test.ts",
-    "tests/plugins/managedToolCallers.podman.test.ts"
+    "tests/plugins/containerRuntime.nspawn.test.ts",
+    "tests/plugins/managedToolCallers.nspawn.test.ts"
   ],
   "registryRealGuestSuites": {
     "repository": "github.com/dragocz95/elowen-plugins",
@@ -24,29 +24,29 @@
       "area": "lifecycle",
       "capability": "create/start/inspect a project environment",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit",
-      "notes": "systemd guest, crun, slirp4netns without host loopback."
+      "notes": "systemd guest booted by systemd-nspawn under a machine-scoped unit, on a disk materialized from the published root filesystem its record names, with a virtual ethernet the host guard keeps off the host itself."
     },
     {
       "area": "lifecycle",
       "capability": "stop/start restart preserves rootfs, home, workspace, data",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit"
     },
     {
       "area": "lifecycle",
       "capability": "cgroup limits applied (cpu.max, memory.max, pids.max)",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit"
     },
     {
       "area": "lifecycle",
       "capability": "snapshot then restore into a fresh generation",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit",
       "notes": "Was the long-standing blocker; restore now rebuilds the volume and retains worktree metadata."
     },
@@ -54,21 +54,21 @@
       "area": "lifecycle",
       "capability": "delete environment and release its resources",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit"
     },
     {
       "area": "lifecycle",
       "capability": "generation mismatch refused",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "real-guest"
     },
     {
       "area": "lifecycle",
       "capability": "member revocation cancels that account's guest leases",
       "evidence": "real-guest",
-      "suite": "managedToolCallers.podman",
+      "suite": "managedToolCallers.nspawn",
       "negative": "real-guest",
       "notes": "Now exercised mid-flight against a real guest: a second member's command is running when the revocation lands, and the kill is judged by the command never reaching its own last statement and returning in seconds rather than its 300-second sleep, because systemd reports a unit stopped by SIGTERM as a clean stop. The revoked account is then refused while the project keeps serving its remaining member."
     },
@@ -76,7 +76,7 @@
       "area": "execution",
       "capability": "shell command through the bootstrap frame (duplex stdin preserved)",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit",
       "notes": "Two-write delayed echo confirmed later stdin frames are delivered."
     },
@@ -91,14 +91,14 @@
       "area": "execution",
       "capability": "cancellation kills the guest unit and its descendants",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit"
     },
     {
       "area": "execution",
       "capability": "execution uses the environment's whole pid budget",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit",
       "notes": "TasksMax=infinity; guest systemd otherwise capped a unit at 15% of the declared limit."
     },
@@ -108,13 +108,13 @@
       "evidence": "real-guest",
       "negative": "real-guest",
       "notes": "Real Bash tool: foreground in the guest cwd, guest filesystem, non-zero exit reported, oversized output truncated, background run tracked by ListProcesses and killed by KillProcess.",
-      "suite": "managedToolCallers.podman"
+      "suite": "managedToolCallers.nspawn"
     },
     {
       "area": "guest-files",
       "capability": "write, read, and version-conflict refusal",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "real-guest",
       "notes": "expectedVersion null means must-not-exist; stale version refused."
     },
@@ -130,9 +130,9 @@
       "area": "guest-files",
       "capability": "chunked upload protocol and completion metadata",
       "evidence": "unit",
-      "suite": "managedCompletion",
+      "suite": "environmentLifecycle",
       "negative": "unit",
-      "notes": "Covered by managedCompletion at protocol level. The chunked WRITE path is exercised against a real guest through the editor upload, so what stays unit here is the completion metadata contract itself, not the transfer."
+      "notes": "Covered by environmentLifecycle at protocol level: begin, chunked write, abort, commit, the actor and generation bounds on each, and the fixed answer a failing guest upload gets. The chunked WRITE path is also exercised against a real guest through the editor upload. The completion-metadata half of this row went with the container transport — a machine execution carries no completion-cwd capture and the client refuses to arm one, which nspawnRuntime pins."
     },
     {
       "area": "file-tools",
@@ -140,13 +140,13 @@
       "evidence": "real-guest",
       "negative": "real-guest",
       "notes": "The registered plugin tools' own execute() against a container: Write, Read, Edit, ListDir, FileInfo, Glob, Grep. The host path guard is asserted never to be consulted.",
-      "suite": "managedToolCallers.podman"
+      "suite": "managedToolCallers.nspawn"
     },
     {
       "area": "file-tools",
       "capability": "GitStatus and worktrees in a managed project",
       "evidence": "real-guest",
-      "suite": "managedToolCallers.podman",
+      "suite": "managedToolCallers.nspawn",
       "negative": "real-guest",
       "notes": "GitStatus tool and worktree lifecycle both exercised against a guest."
     },
@@ -154,7 +154,7 @@
       "area": "artifacts",
       "capability": "ShareFile resolves a managed guest path",
       "evidence": "real-guest",
-      "suite": "managedToolCallers.podman",
+      "suite": "managedToolCallers.nspawn",
       "negative": "real-guest",
       "notes": "ShareFile reads guest bytes through the provider; relative path and missing provider both refuse without a host read."
     },
@@ -163,14 +163,14 @@
       "capability": "the plan mirror under a managed project",
       "evidence": "real-guest",
       "negative": "real-guest",
-      "suite": "managedToolCallers.podman",
+      "suite": "managedToolCallers.nspawn",
       "notes": "Plan written through the central guest writer and submitted by ExitPlanMode; a write outside the artifact prefix is refused. Transcripts and share links are NOT covered here."
     },
     {
       "area": "preview",
       "capability": "project preview binding serves over a unix socket and releases",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "real-guest",
       "notes": "Real HTTP 200; socket gone after release."
     },
@@ -200,7 +200,7 @@
       "area": "browser",
       "capability": "headless Chromium renders in the guest",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit",
       "notes": "Engine level only: proves Chromium starts in the container. The browser plugin no longer runs a browser inside a project environment, so there is no tool surface here to cover."
     },
@@ -216,7 +216,7 @@
       "area": "sites",
       "capability": "container lifecycle handed to the environment provider",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit",
       "notes": "register/request/export-project/cleanup-stage exercised."
     },
@@ -224,7 +224,7 @@
       "area": "sites",
       "capability": "source publication preserves mode and relative symlinks",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "unit"
     },
     {
@@ -240,7 +240,7 @@
       "capability": "project MCP install, reconnect, schema visibility",
       "evidence": "real-guest",
       "negative": "real-guest",
-      "suite": "managedToolCallers.podman",
+      "suite": "managedToolCallers.nspawn",
       "notes": "Install, reconnect, call, remove and the wrong-project/no-member refusals run against a real guest. Schema VISIBILITY was a separate defect and is covered by mcpPlugin: a project-bound stdio server can be stored at instance scope, where its tool names, descriptions and input schemas were composed for every account on the instance. The declaration now carries its project id and the session composer drops it outside that project."
     },
     {
@@ -272,8 +272,8 @@
       "capability": "Git and publishing credential separation",
       "evidence": "real-guest",
       "negative": "real-guest",
-      "suite": "managedToolCallers.podman",
-      "notes": "Two halves, both verified. The guest exec unit carries only PATH, LANG and its own systemd bookkeeping, and daemon environment sentinels including GH_TOKEN are absent from it (managedToolCallers.podman). Authenticated publishing IS supported and is not a gap: publishManaged builds a git bundle inside the guest, reads it out through projectFiles, validates and stages it on the HOST, and pushes from there with the account's token, which githubStaging asserts never appears in the managed launch. What remains forbidden is injecting a token into the guest and pushing from it. LIMIT: no push to a real remote is exercised anywhere, because that would publish."
+      "suite": "managedToolCallers.nspawn",
+      "notes": "Two halves, both verified. The guest exec unit carries only PATH, LANG and its own systemd bookkeeping, daemon environment sentinels including GH_TOKEN are absent from it, and the pinned executor fails the run outright if such a credential ever appears in the environment of any process the machine client spawns (managedToolCallers.nspawn). Authenticated publishing IS supported and is not a gap: publishManaged builds a git bundle inside the guest, reads it out through projectFiles, validates and stages it on the HOST, and pushes from there with the account's token, which githubStaging asserts never appears in the managed launch. What remains forbidden is injecting a token into the guest and pushing from it. LIMIT: no push to a real remote is exercised anywhere, because that would publish."
     },
     {
       "area": "codebase",
@@ -295,7 +295,7 @@
       "area": "authority",
       "capability": "another project's identity cannot reach this environment",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "real-guest",
       "notes": "Denied at the project boundary, not by the file simply being absent."
     },
@@ -303,7 +303,7 @@
       "area": "authority",
       "capability": "a path the guest protocol cannot express safely is refused",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
+      "suite": "containerRuntime.nspawn",
       "negative": "real-guest",
       "notes": "The container is the boundary, so a guest path is not refused merely for sitting outside /workspace."
     },
@@ -320,7 +320,7 @@
       "capability": "ShareImage resolves a managed guest path",
       "evidence": "real-guest",
       "negative": "real-guest",
-      "suite": "managedToolCallers.podman",
+      "suite": "managedToolCallers.nspawn",
       "notes": "A real PNG written into the project comes back byte-identical in conversation storage, verified by its header and full contents, and a text file named .png is refused on its sniffed bytes. No longer claimed by association with ShareFile."
     },
     {
@@ -329,15 +329,15 @@
       "evidence": "real-guest",
       "negative": "unit",
       "notes": "The cold clearing pass runs with a real BrainStore and the real provider; the spill is read back OUT of the guest, the transcript row names the guest path, the newest turn stays intact and nothing lands in the host spill directory. Transcripts themselves are central storage with no guest side, so only the spill has a guest journey to verify.",
-      "suite": "managedToolCallers.podman"
+      "suite": "managedToolCallers.nspawn"
     },
     {
       "area": "performance",
       "capability": "cost of one guest file operation",
       "evidence": "unit",
       "negative": "unit",
-      "suite": "containerRuntime",
-      "notes": "Measured against a private engine: one 'stat' op cost 6689 ms across 57 Podman invocations, and 5681 ms across 41 after a duplicated ownership verification per release was removed. The rest is the mask/stop/mask/verify/unmask choreography plus the ownership check, which are correctness properties and were left in place. A guest operation is therefore seconds, not milliseconds, by design."
+      "suite": "managedFileOperationCost",
+      "notes": "What the count is: managedFileOperationCost pins one 'stat' at exactly four host subprocesses — the unit half of the ownership proof, the machine-manager half, the guest launcher and the release probe. The historical figures it replaced were measured on the container runtime, where the same operation cost 6689 ms across 57 invocations and 5681 ms across 41 after a duplicated ownership verification per release was removed; the machine runtime's own measured round trip is in environmentNspawnProof, whose bound is a median under 500 ms against that runtime's measured 856. The mask/stop/mask/verify/unmask choreography and the ownership check remain, because they are correctness properties."
     }
   ]
 }

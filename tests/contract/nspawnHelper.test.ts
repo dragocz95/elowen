@@ -36,6 +36,7 @@ import {
   renderPolkitRule,
   safeGuestMountTarget,
   storageRootsFor,
+  supportedEnvironmentOs,
   trustedPath,
   UID_RANGE_BASE,
 } from '../../scripts/elowen-site-gateway.mjs';
@@ -43,13 +44,14 @@ import {
 import { createBoundSiteSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 // @ts-expect-error the bundled machine runtime is plain ESM without declarations
 import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
+// @ts-expect-error the bundled Sandbox storage owner is plain ESM without declarations
+import { SNAPSHOT_TREE_FORMAT } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import {
   siteGatewayStorageRoots,
   encodeHelperRequest, HELPER_FRAME_HEADER_BYTES, SITE_GATEWAY_HELPER_ARGV, SITE_GATEWAY_HELPER_PATH,
 } from '../../src/shared/siteGateway.js';
 
 const HELPER_SOURCE = fileURLToPath(new URL('../../scripts/elowen-site-gateway.mjs', import.meta.url));
-const PODMAN_SOURCE = fileURLToPath(new URL('../../plugins/sandbox/lib/podman.mjs', import.meta.url));
 const PLUGIN_RUNTIME = fileURLToPath(new URL('../../plugins/sandbox/lib/nspawn.mjs', import.meta.url));
 
 const MACHINE = 'elowen-project-54-g3';
@@ -307,7 +309,7 @@ describe('privileged helper: execution', () => {
   it('passes the guest streams straight through in raw mode and never prints a verdict', () => {
     // The LAUNCHED path: the daemon spawns this helper itself and streams the result to a terminal, so a
     // JSON verdict is exactly what must not appear. The child's streams are inherited and its status
-    // becomes the helper's own exit code, which is how `podman exec` behaves today.
+    // becomes the helper's own exit code, which is how a guest exec has always behaved here.
     const captured: Record<string, unknown>[] = [];
     const response = applyNspawnRequest({
       domain: 'nspawn', op: 'exec', raw: true, machine: MACHINE, unit: UNIT,
@@ -488,11 +490,11 @@ describe('privileged helper: the four merge constraints', () => {
     for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'tree-copy', 'tree-sync', 'tree-remove', 'destroy']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
     }
-    // The Sites classification is unchanged: the same five read-only operations as before.
-    for (const op of ['status', 'environments-status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket']) {
+    // The Sites classification is unchanged for the operations that remain: a read never takes the lock.
+    for (const op of ['status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket']) {
       expect(helperRequestNeedsMutationLock({ op })).toBe(false);
     }
-    for (const op of ['sync-sites', 'ensure-site', 'remove-site', 'deny', 'environments-provision']) {
+    for (const op of ['sync-sites', 'ensure-site', 'remove-site', 'deny']) {
       expect(helperRequestNeedsMutationLock({ op })).toBe(true);
     }
   });
@@ -673,6 +675,55 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(fixture.writes).toHaveLength(before.writes);
     expect(reloads(fixture.calls)).toBe(2);
     expect(fixture.calls.slice(before.calls).some((call) => call.file === '/usr/bin/apt-get')).toBe(false);
+  });
+
+  it('provisions only on a distribution its apt commands are written for', async () => {
+    expect(supportedEnvironmentOs('ID=debian\n')).toEqual({ ok: true, detail: 'Debian is supported' });
+    expect(supportedEnvironmentOs('NAME="Ubuntu"\nID="ubuntu"\n')).toEqual({ ok: true, detail: 'Ubuntu is supported' });
+    expect(supportedEnvironmentOs('ID=fedora\n')).toEqual({ ok: false, detail: 'only Debian and Ubuntu are supported' });
+    expect(supportedEnvironmentOs('NAME Ubuntu\n')).toEqual({ ok: false, detail: 'operating system information is malformed' });
+    expect(supportedEnvironmentOs('')).toEqual({ ok: false, detail: 'operating system information is unavailable' });
+
+    // Status REPORTS an unsupported host; provisioning refuses before it reaches apt or writes anything.
+    for (const osRelease of ['ID=fedora\n', 'NAME Ubuntu\n']) {
+      const fixture = runnerFixture({ installed: false });
+      const readText = (path: string) => (path === '/etc/os-release' ? osRelease : fixture.readText(path));
+      const options = { ...fixture.options, readText };
+      const status = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, options) as Readiness;
+      expect(rowFor(status, 'os:supported').ok).toBe(false);
+      await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, options))
+        .rejects.toThrow(/supported|malformed/);
+      expect(fixture.calls.some(({ file }) => file === '/usr/bin/apt-get')).toBe(false);
+      expect(fixture.writes).toEqual([]);
+    }
+  });
+
+  it('refuses a sudo identity or a passwd record that does not hold together', async () => {
+    // Every storage root and the polkit grant are derived from this account, so a request whose sudo
+    // variables disagree with passwd is refused rather than resolved to whatever passwd happens to say.
+    const fixture = runnerFixture();
+    for (const [field, message] of [['SUDO_UID', /user id is invalid/], ['SUDO_GID', /group id is invalid/]] as const) {
+      for (const bad of ['1000oops', '-1', '01000', '4294967296', '']) {
+        await expect(applyRequest({ domain: 'nspawn', op: 'status' }, undefined,
+          { ...fixture.options, env: { ...environment, [field]: bad } })).rejects.toThrow(message);
+      }
+    }
+    await expect(applyRequest({ domain: 'nspawn', op: 'status' }, undefined,
+      { ...fixture.options, env: { ...environment, SUDO_UID: '1001' } })).rejects.toThrow(/does not match sudo/);
+
+    for (const passwd of [
+      'other:x:1000:1000:Other:/home/other:/bin/bash\n',
+      'azureuser:x:1000oops:1000:Azure:/home/azureuser:/bin/bash\n',
+      'azureuser:x:1000:1000:Azure:relative:/bin/bash\n',
+      'azureuser:x:1000:1000:Azure:/home/azureuser:/bin/bash\nextra:x:1001:1001::/home/extra:/bin/bash\n',
+    ]) {
+      const malformed = runnerFixture();
+      const runner = (file: string, args: string[]) => (file === '/usr/bin/getent'
+        ? { ok: true, stdout: passwd }
+        : malformed.runner(file, args));
+      await expect(applyRequest({ domain: 'nspawn', op: 'status' }, undefined, { ...malformed.options, runner }))
+        .rejects.toThrow(/record is invalid/);
+    }
   });
 
   it('provisions from an operator root shell for the account it is told, and from nowhere else', async () => {
@@ -1042,9 +1093,9 @@ describe('privileged helper: the disk identity record', () => {
     fixture.options.runner = (file: string, args: string[]) => {
       if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
       if (file === '/usr/bin/python3') {
-        // Exactly what the shipped ownership script does to an id in `offset` mode: g becomes base+g.
+        // Exactly what the shipped ownership script does to an id: guest id g becomes base+g.
         const shift = JSON.parse(args[2]!);
-        if (shift.mode === 'offset' && rootOwner < shift.size) rootOwner = shift.base + rootOwner;
+        if (rootOwner < shift.size) rootOwner = shift.base + rootOwner;
         return { ok: true, stdout: JSON.stringify({ entries: 4242 }) };
       }
       return { ok: true, stdout: '' };
@@ -1074,10 +1125,9 @@ describe('privileged helper: the disk identity record', () => {
   });
 
   it('materializes a fresh disk without a subordinate id range on the host', async () => {
-    // `offset` maps guest id g to base+g and reads no other mapping, so a fresh disk needs nothing from
-    // /etc/subuid. Asking for it anyway made creating ANY environment depend on provisioning that exists
-    // only to serve the container runtime, and failed outright on a host that had never run it — for two
-    // arguments the converter never reaches.
+    // The pass maps guest id g to base+g and reads no other mapping, so a disk needs nothing from
+    // /etc/subuid. Asking for it anyway made creating ANY environment depend on provisioning that existed
+    // only to serve the container runtime, and failed outright on a host that had never run it.
     const fixture = diskFixture();
     fixture.options.readText = (path: string) => (path === '/etc/subuid' ? '' : '');
     const archive = join(fixture.paths.directory, 'image.tar');
@@ -1094,22 +1144,24 @@ describe('privileged helper: the disk identity record', () => {
     const pass = fixture.calls.find((call) => call.file === '/usr/bin/python3'
       && String(call.args[1] ?? '').includes('to_machine'));
     const spec = JSON.parse(pass!.args[2]!);
-    expect(spec).toMatchObject({ mode: 'offset', target: 'nspawn' });
+    expect(spec).toMatchObject({ base: response.uidBase });
     expect(spec).not.toHaveProperty('serviceId');
     expect(spec).not.toHaveProperty('previousBase');
     rmSync(archive, { force: true });
   });
 
-  it('still refuses a subordinate-id pass on a host that has no subordinate range', async () => {
-    // The contrast with the test above is the point: a fresh disk needs no subordinate range, and a
-    // migration between the two ownership schemes cannot be done without one. `subordinateRangeFor`
-    // refuses before any id in the tree is touched.
+  it('shifts an existing disk on a host that has no subordinate range either', async () => {
+    // The standalone pass reads the same registry-held range the disk already carries, so it asks the
+    // host for nothing a container runtime would have had to provision.
     const fixture = diskFixture();
-    fixture.options.readText = (path: string) => (path === '/etc/subuid' ? '' : '');
-    await expect(applyRequest({
-      domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'nspawn',
-    }, undefined, fixture.options)).rejects.toThrow(/subordinate id range/);
-    expect(fixture.calls.some((call) => call.file === '/usr/bin/python3')).toBe(false);
+    fixture.options.readText = () => '';
+    const receipt = await applyRequest({
+      domain: 'nspawn', op: 'shift-ownership', ...diskRef,
+    }, undefined, fixture.options) as { ok: boolean; uidBase: number; entries: number };
+    expect(receipt).toMatchObject({ ok: true, entries: 4242 });
+    expect(receipt.uidBase).toBeGreaterThanOrEqual(UID_RANGE_BASE);
+    const spec = JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2]!);
+    expect(spec).toEqual({ base: receipt.uidBase, size: 65_536 });
   });
 
   it('refuses to write a veth envelope until the host can isolate the link', async () => {
@@ -1450,72 +1502,103 @@ describe('privileged helper: the disk identity record', () => {
     rmSync(join(fixture.paths.directory, '.elowen'), { force: true });
   });
 
-  it('shifts ownership in both directions and reports the receipt a rollback reverses with', async () => {
+  it('shifts an existing disk onto the range the registry already holds for it', async () => {
     const fixture = diskFixture();
-    const forward = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'nspawn', uidBase: null },
-      undefined, fixture.options) as { uidBase: number; uidSize: number; previousUidBase: number; entries: number };
-    // A candidate that will not boot has to go back up on Podman, and rootless Podman cannot read a tree
-    // chowned into the machine's range — so the forward pass has to say what to reverse to.
-    expect(forward).toMatchObject({ uidSize: 65_536, previousUidBase: 100_000, entries: 4242 });
-    expect(forward.uidBase).toBeGreaterThanOrEqual(1_073_741_824);
+    const receipt = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef },
+      undefined, fixture.options) as { uidBase: number; uidSize: number; entries: number };
+    expect(receipt).toMatchObject({ uidSize: 65_536, entries: 4242 });
+    expect(receipt.uidBase).toBeGreaterThanOrEqual(1_073_741_824);
 
-    const forwardSpec = JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2]);
-    expect(forwardSpec).toMatchObject({ target: 'nspawn', base: forward.uidBase, serviceId: 1000, previousBase: 100_000 });
+    const spec = JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2]);
+    expect(spec).toEqual({ base: receipt.uidBase, size: 65_536 });
 
+    // The range is the environment's, so asking twice is the same answer and not a second allocation.
     fixture.calls.length = 0;
-    const back = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'podman', uidBase: forward.previousUidBase },
-      undefined, fixture.options);
-    expect(back).toMatchObject({ ok: true, previousUidBase: 100_000 });
-    expect(JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2])).toMatchObject({ target: 'podman' });
-
-    await expect(applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'elsewhere', uidBase: null }, undefined, fixture.options))
-      .rejects.toThrow(/shift target is invalid/);
-    await expect(applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'podman', uidBase: null }, undefined, fixture.options))
-      .rejects.toThrow(/requires the recorded range/);
+    const again = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef },
+      undefined, fixture.options) as { uidBase: number };
+    expect(again.uidBase).toBe(receipt.uidBase);
   });
 
-  it('leaves an id that already carries the destination scheme alone, so an interrupted pass is re-run', () => {
-    // An interrupted shift produced no receipt and therefore cannot be reversed; it has to be safe to
-    // repeat. The mapping accepts both schemes on the way in and only writes what actually changes.
+  it('leaves an id that already carries the machine range alone, so an interrupted pass is re-run', () => {
+    // An interrupted shift left part of a tree converted and part of it not, so the pass has to be safe
+    // to repeat. The mapping accepts both schemes on the way in and only writes what actually changes.
     const script = readFileSync(HELPER_SOURCE, 'utf8');
     const body = script.slice(script.indexOf('const OWNERSHIP_SHIFT_PY'), script.indexOf('function shiftOwnership'));
     expect(body).toContain('if machine(uid): return uid');
-    expect(body).toContain('if podman(uid): return uid');
+    expect(body).toContain('if 0<=uid<size: return base+uid');
     expect(body).toContain('if uid!=st.st_uid or gid!=st.st_gid: os.lchown');
+    // No second direction and nothing it would need: a tree is only ever moved ONTO the machine range.
+    expect(body).not.toMatch(/to_podman|previousBase|serviceId/);
   });
 });
 
 describe('privileged helper: disk tree primitives', () => {
-  it('runs the container runtime\'s own Python implementations rather than new semantics', () => {
+  it('keeps one definition of what a tree IS, shared by the copy that checks itself', () => {
     const helper = readFileSync(HELPER_SOURCE, 'utf8');
-    const podman = readFileSync(PODMAN_SOURCE, 'utf8');
-    const slice = (source: string, anchor: string): string => {
-      const start = source.indexOf(anchor);
-      expect(start).toBeGreaterThan(-1);
-      return source.slice(start, source.indexOf('`', start));
-    };
-    const anchors = {
-      inventory: 'def inventory(root):',
-      fingerprint: 'import hashlib,json,os,stat,sys\nroot=sys.argv[1]',
-      preflight: 'import json,os,sys\nsources=json.loads',
-      sync: 'import os,stat,sys\nroot=sys.argv[1]\nfor directory,names,files in os.walk(root,topdown=False',
-    };
-    for (const [name, anchor] of Object.entries(anchors)) {
-      expect(slice(helper, anchor), `${name} drifted from the container runtime`).toBe(slice(podman, anchor));
-    }
-    // The copy primitive differs only in how the interpreter path is spelled, so compare the behaviour.
+    // A copy is only trustworthy if it is compared with the same metadata the fingerprint hashes, so the
+    // inventory is defined once and embedded into the copy script rather than restated beside it.
     expect(DISK_TREE_SCRIPTS.inventory).toContain('os.getxattr');
+    expect(DISK_TREE_SCRIPTS.inventory).toContain('st.st_uid,st.st_gid');
     expect(helper).toContain('cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/');
-    expect(podman).toContain('cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/');
+    expect(helper.indexOf(DISK_TREE_SCRIPTS.inventory), 'the copy script must embed the one inventory')
+      .toBeGreaterThan(-1);
+    expect(helper.split(DISK_TREE_SCRIPTS.inventory).length - 1,
+      'the inventory is defined once and referenced, never copied').toBe(1);
 
-    // The archive verification carries ONE deliberate difference: the tree has been shifted onto the
+    // The archive verification carries ONE deliberate omission: the tree has been shifted onto the
     // machine's uid range since it was extracted, so comparing ownership against the archive would fail
     // on every file. Everything else — types, modes, sizes, symlinks, hardlinks, xattrs and unexpected
-    // entries — is the container runtime's own check, byte for byte.
-    const verifyAnchor = 'import json,os,stat,sys,tarfile';
-    const ownerCheck = '   if st.st_uid!=member.uid or st.st_gid!=member.gid: failures.append(\'owner \'+rel)\n';
-    expect(slice(podman, verifyAnchor)).toContain(ownerCheck);
-    expect(slice(helper, verifyAnchor)).toBe(slice(podman, verifyAnchor).replace(ownerCheck, ''));
+    // entries — is still checked.
+    expect(DISK_TREE_SCRIPTS.verify).not.toContain('st.st_uid!=member.uid');
+    for (const check of ['missing', 'type', 'mode', 'size', 'symlink target', 'hardlink', 'xattr',
+      'unsupported member type', 'unexpected entries']) {
+      expect(DISK_TREE_SCRIPTS.verify, `the archive verification must still report ${check}`)
+        .toContain(`failures.append('${check} `);
+    }
+  });
+
+  /** The helper produces the inventory; `containerStorage.mjs` writes what that inventory WAS into every
+   *  snapshot manifest as `treeFormat`, and refuses a manifest whose format it does not recognise. That
+   *  string is therefore the manifest's own claim about which metadata its digests were taken over, and
+   *  the two live in different processes with root in between — the helper cannot import plugin code.
+   *  Holding them in step here is what stops a field being added, reordered or dropped on one side only,
+   *  which would silently change what an already-stored fingerprint means without invalidating it. */
+  it('emits exactly the fields, in the order, that a snapshot manifest says it was fingerprinted over', () => {
+    const [version, fields] = String(SNAPSHOT_TREE_FORMAT).split(':');
+    expect(version).toBe('inventory-v1');
+    const declared = fields.split(',');
+    expect(declared).toEqual(['path', 'type', 'size', 'uid', 'gid', 'mode', 'mtimeNs', 'hardlink', 'xattrs', 'linkTarget']);
+
+    // The Python expression that builds one row, taken from the helper's single inventory definition.
+    const row = DISK_TREE_SCRIPTS.inventory.slice(DISK_TREE_SCRIPTS.inventory.indexOf('rows.append(['));
+    /** Which fragment of that expression produces each declared field. */
+    const producedBy: Record<string, string> = {
+      path: 'rel', type: 'stat.S_IFMT(st.st_mode)', size: 'st.st_size', uid: 'st.st_uid', gid: 'st.st_gid',
+      mode: 'stat.S_IMODE(st.st_mode)', mtimeNs: 'st.st_mtime_ns', hardlink: 'hardlink', xattrs: 'attrs',
+      linkTarget: 'os.readlink(path)',
+    };
+    expect(Object.keys(producedBy)).toEqual(declared);
+    let previous = -1;
+    for (const field of declared) {
+      const at = row.indexOf(producedBy[field]);
+      expect(at, `the inventory does not produce the declared field ${field}`).toBeGreaterThan(-1);
+      expect(at, `the inventory produces ${field} out of the order the manifest declares`).toBeGreaterThan(previous);
+      previous = at;
+    }
+    // Arity, so a field appended to the row without being declared is caught too. The split is depth
+    // aware: an element is free to contain a call with its own commas.
+    const elements: string[] = [];
+    let depth = 0;
+    let current = '';
+    for (const character of row.slice(row.indexOf('[') + 1)) {
+      if (character === ']' && depth === 0) break;
+      if ('([{'.includes(character)) depth += 1;
+      if (')]}'.includes(character)) depth -= 1;
+      if (character === ',' && depth === 0) { elements.push(current); current = ''; continue; }
+      current += character;
+    }
+    elements.push(current);
+    expect(elements).toHaveLength(declared.length);
   });
 
   it('copies between two paths it re-validates, without a second full size walk', async () => {
@@ -1610,6 +1693,15 @@ describe('privileged helper: disk tree primitives', () => {
     expect(commandOptionsFor('/usr/bin/python3', ['-c', ''], DISK_TREE_TIMEOUT_MS).timeout).toBe(DISK_TREE_TIMEOUT_MS);
     // Everything that is not tree work keeps the short bound that catches a command which has hung.
     expect(commandOptionsFor('/usr/bin/systemctl', ['daemon-reload']).timeout).toBe(30_000);
+
+    // apt is the one command that may take minutes and the one that may try to restart services. It gets
+    // its own budget and an environment that keeps it non-interactive and stops needrestart acting.
+    const install = commandOptionsFor('/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', 'systemd-container']);
+    expect(commandOptionsFor('/usr/bin/apt-get', ['update']).timeout).toBe(5 * 60_000);
+    expect(install.env).toEqual({
+      PATH: '/usr/sbin:/usr/bin:/sbin:/bin', DEBIAN_FRONTEND: 'noninteractive', NEEDRESTART_MODE: 'l',
+    });
+    expect(commandOptionsFor('/usr/bin/systemctl', ['daemon-reload']).env).toEqual({ PATH: '/usr/sbin:/usr/bin:/sbin:/bin' });
   });
 
   it('carries the cause of a command that printed nothing, instead of a message ending in a colon', () => {

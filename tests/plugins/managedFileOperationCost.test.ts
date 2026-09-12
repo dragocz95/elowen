@@ -6,54 +6,41 @@ import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
-import { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { NspawnClient, UID_RANGE_SIZE, envelopePaths, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
-/** What one managed file operation COSTS, measured in Podman subprocesses.
+/** What one managed file operation COSTS, measured in host subprocesses.
  *
- *  The audit measured a trivial guest file operation issuing about 33 Podman invocations, each one a
- *  process spawn of its own. At the 100-400 ms a rootless `podman` start-up actually took on the measured
- *  host, that fixed transport — not the file, not the model — is what made an empty directory listing
- *  cost seconds. Every invocation counted here is a real process, so the count IS the latency budget, and
- *  asserting it is how a change that reintroduces a redundant inspect or a second release gets caught by
- *  a test rather than by someone waiting on an editor.
+ *  The audit measured a trivial guest file operation issuing about 33 container-runtime invocations, each
+ *  one a process spawn of its own. At the 100-400 ms a rootless runtime start-up actually took on the
+ *  measured host, that fixed transport — not the file, not the model — is what made an empty directory
+ *  listing cost seconds. Every invocation counted here is a real process, so the count IS the latency
+ *  budget, and asserting it is how a change that reintroduces a redundant ownership proof or a second
+ *  release gets caught by a test rather than by someone waiting on an editor.
  *
- *  Only the executor is faked. The real PodmanClient, ContainerStorage and environment runtime sit above
+ *  Only the executor is faked. The real NspawnClient, ContainerStorage and environment runtime sit above
  *  it, so the ownership, generation, lease and cleanup invariants under test are the shipped ones. The
- *  fake models the container/volume store from the arguments it is given rather than replaying a fixed
- *  answer, so a spec the client never actually created cannot inspect successfully. */
+ *  fake models the host side of a machine — the two envelope files, the disk identity record and what
+ *  `systemctl show` says about the unit — from the privileged requests it is actually given, so a
+ *  specification the client never wrote an envelope for cannot inspect successfully. */
 
-const CONTAINER_ID = 'a'.repeat(64);
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 
-interface Call { args: string[]; input?: string }
+interface Call { file: string; args: string[]; request?: any; input?: string }
 
-/** `--flag=value` / repeated `--label k=v` argv as a record, which is all the fake needs to answer an
- *  inspect with the shape the client demands. A disk-backed envelope ends in `<rootfs> /sbin/init` rather
- *  than an image, so what the trailing argument means depends on `--rootfs`. */
-function parseCreate(args: string[]) {
-  const labels: Record<string, string> = {};
-  const mounts: { type: string; source: string; target: string; readOnly: boolean }[] = [];
-  const flags: Record<string, string> = {};
-  let name = '';
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
-    if (arg === '--name') { name = args[++index]!; continue; }
-    if (arg === '--label') { const [key, ...rest] = args[++index]!.split('='); labels[key!] = rest.join('='); continue; }
-    if (arg === '--mount') {
-      const parts = Object.fromEntries(args[++index]!.split(',').map((part) => part.split('=') as [string, string]));
-      mounts.push({ type: parts.type!, source: parts.src!, target: parts.dst!, readOnly: 'ro' in parts });
-      continue;
-    }
-    if (arg.startsWith('--') && arg.includes('=')) { const [key, ...rest] = arg.split('='); flags[key!] = rest.join('='); }
-  }
-  const rootfs = args.includes('--rootfs') ? args.at(-2)! : null;
-  return { labels, mounts, flags, name, rootfs, image: rootfs ? '' : args.at(-1)! };
-}
+const UID_BASE = 1073741824;
+/** The guest verdict shape the privileged helper answers an `exec` with. */
+const verdict = (stdout = '', exitCode = 0) => ({ ok: true, exitCode, signal: null, timedOut: false,
+  truncated: false, stdout: Buffer.from(stdout).toString('base64'), stderr: '' });
+/** What `systemctl show` inside the guest says about a unit that settled and was collected, which is the
+ *  cheap release path: proven absence, and no mask or unmask round trip behind it. */
+const COLLECTED = 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n';
+const MASKED = 'LoadState=masked\nActiveState=inactive\nSubState=dead\nControlGroup=\n';
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'managed-cost-'));
+  const configRoot = join(root, 'config');
   const sql = openDb(':memory:');
   const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
   const project: any = { id: 7, executionKind: 'managed', lifecycle: 'active', path: '/not-a-host-path' };
@@ -65,14 +52,16 @@ function setup() {
     userProjects: { canAccess: () => { authorizeHook?.(); return true; }, canManage: () => true },
     projects: { get: (id: number) => (id === 7 ? project : null), list: () => [project], beginDeletion: () => true, finishDeletion: vi.fn(() => true) },
   };
-  const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {} };
+  const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }),
+    config: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
   initSandboxDb(ctx);
 
   const masked = new Set<string>();
-  const containers = new Map<string, ReturnType<typeof parseCreate>>();
-  const volumes = new Map<string, Record<string, unknown>>();
   const calls: Call[] = [];
-  let state = 'created';
+  /** The unit as the manager reports it, written by the privileged `write-envelope` and moved by the
+   *  lifecycle commands below — never by the test, so a machine this client did not create cannot pass
+   *  its own ownership proof. */
+  let unit: Record<string, string> | null = null;
 
   // A small filesystem of its own, so a write is observable by a later read and the compare-and-swap has
   // something real to swap against. `hook` lets a test hold an operation open inside the guest, which is
@@ -105,91 +94,105 @@ function setup() {
     return { ok: false, error: { code: 'unsupported', message: `unexpected ${op.kind}` } };
   };
 
-  const containerRow = (name: string) => {
-    const created = containers.get(name)!;
-    const memory = Number(created.flags['--memory']!.replace(/m$/, '')) * 1024 * 1024;
-    // A disk-backed envelope carries no image at all: the client holds `Image`/`ImageName` empty, the
-    // root filesystem path and the systemd entry point against the specification, and refuses the row
-    // when any of them drifts.
-    return {
-      Id: CONTAINER_ID, Name: name, Image: created.rootfs ? '' : created.image, ImageName: created.rootfs ? '' : created.image,
-      ...(created.rootfs ? { Rootfs: realpathSync(created.rootfs), Path: '/sbin/init' } : {}),
-      Config: { Labels: created.labels, ...(created.rootfs ? { SystemdMode: true, StopSignal: 37 } : {}) }, State: { Status: state },
-      HostConfig: {
-        Privileged: false, NetworkMode: created.flags['--network'], Memory: memory, MemorySwap: memory,
-        NanoCpus: Number(created.flags['--cpus']) * 1e9, PidsLimit: Number(created.flags['--pids-limit']),
-        PidMode: 'private', IpcMode: created.flags['--ipc'], ReadonlyRootfs: false, PortBindings: {},
-      },
-      Mounts: created.mounts.map((mount) => ({
-        Type: mount.type, Destination: mount.target, Source: mount.source,
-        Name: mount.type === 'volume' ? mount.source : undefined, RW: !mount.readOnly,
-      })),
-    };
-  };
-
-  const executor = {
-    run: vi.fn(async (_file: string, argv: string[], options: any) => {
-      const args = argv.slice();
-      calls.push({ args, input: options?.input === undefined ? undefined : String(options.input) });
-      const reply = (code: number, stdout = '') => ({ code, stdout, stderr: '', truncated: false });
-      if (args[0] === 'info') return reply(0, args[2] === '{{.Host.Security.Rootless}}' ? 'true' : JSON.stringify({ host: { security: { rootless: true } }, version: {}, store: {} }));
-      if (args[0] === 'image' && args[1] === 'exists') return reply(0);
-      if (args[0] === 'container' && args[1] === 'exists') return reply(containers.has(args[2]!) ? 0 : 1);
-      if (args[0] === 'volume' && args[1] === 'exists') return reply(volumes.has(args[2]!) ? 0 : 1);
-      if (args[0] === 'volume' && args[1] === 'inspect') {
-        const names = args.slice(2);
-        const rows = names.map((name) => volumes.get(name)).filter(Boolean);
-        if (rows.length !== names.length) return reply(125, '[]');
-        return reply(0, JSON.stringify(rows));
+  /** The privileged side, answering the operations the client actually sends it. `write-envelope` is
+   *  where a machine comes into existence on this host: it writes the two root-owned configuration files
+   *  and the disk's identity record from the request's OWN fields, which is what makes the ownership
+   *  proof below meaningful — every field it compares came from the specification, not from the test. */
+  const helper = async (request: any, input?: Buffer) => {
+    if (request.op === 'status') {
+      return { ok: true, ready: true, items: [{ id: 'unit:elowen-machine', label: 'Machine unit template', ok: true, detail: 'installed and loaded' }] };
+    }
+    if (request.op === 'write-envelope') {
+      const envelope = envelopePaths(request.machine, configRoot);
+      for (const path of Object.values(envelope)) mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(envelope.nspawn, '[Exec]\nBoot=on\n', { mode: 0o644 });
+      writeFileSync(envelope.dropIn, `[Service]\nCPUQuota=${request.limits.cpus * 100}%\n`, { mode: 0o644 });
+      const rootfs = realpathSync(diskRootfs!);
+      mkdirSync(join(dirname(diskRootfs!), '.elowen'), { recursive: true });
+      writeFileSync(join(dirname(diskRootfs!), '.elowen', 'identity.json'), JSON.stringify({
+        namespace: request.namespace, kind: request.kind, resource: request.resource, generation: request.generation,
+        diskId: request.diskId, machine: request.machine, runtime: 'nspawn', specHash: request.specHash,
+        uidBase: UID_BASE, uidSize: UID_RANGE_SIZE }), { mode: 0o640 });
+      unit = {
+        LoadState: 'loaded',
+        FragmentPath: join(configRoot, '/etc/systemd/system/elowen-machine@.service'),
+        DropInPaths: envelope.dropIn,
+        Environment: `ELOWEN_MACHINE_DIRECTORY=${rootfs}`,
+        ActiveState: 'inactive', SubState: 'dead', FreezerState: 'running',
+        MemoryMax: String(request.limits.memoryMb * 1024 * 1024), TasksMax: String(request.limits.pidsLimit),
+        CPUQuotaPerSecUSec: request.limits.cpus === 1 ? '1s' : `${request.limits.cpus * 1000}ms`, Slice: 'machine.slice',
+      };
+      return { ok: true };
+    }
+    if (request.op === 'exec') {
+      const argv: string[] = request.argv;
+      if (argv[0] === '/usr/bin/python3') {
+        // The hook runs INSIDE the guest execution, while the lease that operation holds is held.
+        const body = input === undefined ? '{}' : input.toString('utf8');
+        if (hook) await hook(JSON.parse(body));
+        return verdict(JSON.stringify(guestReply(body)));
       }
-      if (args[0] === 'volume' && args[1] === 'create') {
-        const created = parseCreate(args);
-        const name = args.at(-1)!;
-        // `--opt` repeats, so the device comes from the raw pairs rather than the flag record.
-        const device = args.filter((_, index) => args[index - 1] === '--opt').find((value) => value.startsWith('device='))!;
-        volumes.set(name, { Name: name, Labels: created.labels, Driver: 'local', Options: { type: 'none', o: 'bind', device: device.slice('device='.length) } });
-        return reply(0);
-      }
-      if (args[0] === 'create') { const created = parseCreate(args); containers.set(created.name, created); return reply(0); }
-      if (args[0] === 'start') { state = 'running'; return reply(0); }
-      if (args[0] === 'inspect') {
-        const name = args.at(-1)!;
-        if (!containers.has(name)) return reply(125, '[]');
-        return reply(0, JSON.stringify([containerRow(name)]));
-      }
-      if (args[0] === 'exec') {
-        // The launcher: `exec --interactive <id> systemd-run … -- <argv>`.
-        if (args[1] === '--interactive') {
-          if (args.includes('/usr/bin/python3')) {
-            // The hook runs INSIDE the guest execution, while the lease that operation holds is held.
-            if (hook) await hook(JSON.parse(String(options?.input ?? '{}')));
-            return reply(0, JSON.stringify(guestReply(options?.input)));
-          }
-          return reply(0);
-        }
+      if (argv[0] === '/usr/bin/systemctl') {
         // Masking a unit changes what `show` says about it afterwards, and a cancellation VERIFIES that
         // change before it calls the guest terminated. A fake that always answered "no such unit" would
         // let a cancellation look impossible on a path that works.
-        const unit = args.at(-1)!;
-        if (args.includes('mask') && !args.includes('unmask')) masked.add(unit);
-        if (args.includes('unmask')) masked.delete(unit);
-        if (args.includes('show')) {
-          return masked.has(unit)
-            ? reply(0, 'LoadState=masked\nActiveState=inactive\nSubState=dead\nControlGroup=\n')
-            // A launcher that settled normally leaves no unit behind; that is the cheap release path.
-            : reply(0, 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n');
-        }
+        const guestUnit = argv.at(-1)!;
+        if (argv.includes('mask')) masked.add(guestUnit);
+        if (argv.includes('unmask')) masked.delete(guestUnit);
+        if (argv.includes('show')) return verdict(guestShow(guestUnit));
+        return verdict();
+      }
+      return verdict();
+    }
+    return { ok: true };
+  };
+  /** Overridable so a test can break exactly one fact: what the guest reports about a leased unit. */
+  let guestShow = (guestUnit: string) => (masked.has(guestUnit) ? MASKED : COLLECTED);
+
+  let diskRootfs: string | null = null;
+
+  const executor = {
+    run: vi.fn(async (file: string, argv: string[], options: any) => {
+      const args = argv.slice();
+      const call: Call = { file, args };
+      calls.push(call);
+      const reply = (code: number, stdout = '') => ({ code, stdout, stderr: '', truncated: false });
+      const render = (record: Record<string, string>) => Object.entries(record).map(([key, value]) => `${key}=${value}`).join('\n');
+      if (file === '/usr/bin/systemctl') {
+        if (args[0] === 'show') return reply(0, unit ? render(unit) : '');
+        if (args[0] === 'start') { unit!.ActiveState = 'active'; unit!.SubState = 'running'; return reply(0); }
+        if (args[0] === 'stop') { unit!.ActiveState = 'inactive'; unit!.SubState = 'dead'; return reply(0); }
         return reply(0);
+      }
+      if (file === '/usr/bin/machinectl') {
+        if (args[0] === 'show') {
+          if (!unit || unit.ActiveState !== 'active') return reply(1, '');
+          return reply(0, render({ Unit: unitFor(args[1]!), RootDirectory: realpathSync(diskRootfs!) }));
+        }
+        if (args[0] === 'list') return reply(0, unit?.ActiveState === 'active' ? `${machineName} container systemd-nspawn\n` : '');
+        return reply(0);
+      }
+      if (file === '/usr/bin/sudo') {
+        const frame: Buffer = Buffer.isBuffer(options?.input) ? options.input : Buffer.from(String(options?.input ?? ''));
+        const length = Number(frame.subarray(0, 8).toString('latin1'));
+        const request = JSON.parse(frame.subarray(9, 9 + length).toString('utf8'));
+        call.request = request;
+        call.input = frame.subarray(9 + length).toString('utf8');
+        return reply(0, JSON.stringify(await helper(request, frame.subarray(9 + length))));
       }
       return reply(0);
     }),
   };
 
-  const podman = new PodmanClient({ executor: executor as never });
-  const storage = new ContainerStorage(podman);
-  const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, podman, storage, daemon: true });
+  let machineName = '';
+  const artifacts = { status: vi.fn(() => ({ published: true, present: true })), ensure: vi.fn(), collect: vi.fn(() => []) };
+  const nspawn = new NspawnClient({ executor: executor as never, artifacts, configRoot, namespace: 'elowen' });
+  const storage = new ContainerStorage(nspawn);
+  const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, nspawn, storage, daemon: true });
   cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
   return { runtime, db, calls, executor, root, files, versionOf,
+    setDisk: (rootfsPath: string, name: string) => { diskRootfs = rootfsPath; machineName = name; },
+    setGuestShow: (fn: (guestUnit: string) => string) => { guestShow = fn; },
     setAuthorizeHook: (fn: (() => void) | null) => { authorizeHook = fn; },
     setHook: (fn: ((op: any) => Promise<void>) | null) => { hook = fn; } };
 }
@@ -199,29 +202,26 @@ const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 } a
 interface DiskRecord { id: string; rootfsPath: string; sourceImage: string; components: { component: string; path: string }[] }
 
 /** An environment that already exists, which is what every measurement below is about: the cost of ONE
- *  file operation, not of the first start that built the environment. Two things separate that state from
- *  a row the runtime has only just inserted, and both are reached the way the product reaches them.
- *
- *  The marker `runtimePending` is what sends a NEW environment to systemd-nspawn (`decideRuntime`);
- *  clearing it is how the sibling environment suites express an environment that predates the machine
- *  runtime, and a Podman environment is the subject here — it is what every environment created before
- *  `migrate-runtime` still runs on.
+ *  file operation, not of the first start that built the environment.
  *
  *  The disk manifest is the durable record that says this disk is materialized. Writing it (and the
  *  directories it names) makes `ContainerStorage` adopt the disk by its record, exactly as it does on
- *  every start after the first, instead of building a root filesystem out of the base image — which is
- *  real filesystem work no faked executor can perform. */
+ *  every start after the first, instead of unpacking a published root filesystem into it — which is real
+ *  privileged filesystem work no faked executor can perform. Everything else the start does is the
+ *  product's own path: the runtime is decided against the host readiness answer, the envelope is written
+ *  by the privileged side, and the machine is started and proved through the shipped ownership check. */
 function existing(state: ReturnType<typeof setup>) {
-  state.db.prepare("UPDATE p_sandbox_runtimes SET spec_json=json_remove(spec_json,'$.runtimePending')").run();
   const row = state.db.prepare('SELECT spec_json FROM p_sandbox_runtimes').get() as { spec_json: string };
-  const spec = JSON.parse(row.spec_json).input as { resource: { kind: string; id: number }; disk: DiskRecord };
-  mkdirSync(spec.disk.rootfsPath, { recursive: true });
+  const stored = JSON.parse(row.spec_json);
+  const spec = stored.input as { resource: { kind: string; id: number }; disk: DiskRecord };
+  mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
   for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
   writeFileSync(join(dirname(spec.disk.rootfsPath), 'disk.json'), JSON.stringify({
     resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
     rootfsPath: spec.disk.rootfsPath, components: spec.disk.components,
     createdAt: '2026-01-01T00:00:00.000Z', materialized: true,
   }));
+  state.setDisk(spec.disk.rootfsPath, `elowen-project-7-g${stored.input.generation}`);
 }
 
 async function provisioned() {
@@ -238,24 +238,29 @@ const operationFor = (kind: 'stat' | 'list' | 'read') => kind === 'read'
   ? { kind, path: '/workspace/tiny.txt', offset: 0, length: 64, maxBytes: 64 }
   : kind === 'list' ? { kind, path: '/workspace', limit: 100 } : { kind, path: '/workspace/tiny.txt' };
 
-describe('managed file operation Podman cost', () => {
-  it.each(['stat', 'list', 'read'] as const)('issues a bounded number of Podman subprocesses for one %s', async (kind) => {
+/** How a call reads in the count below: the control tool and its verb, or the privileged operation and
+ *  the guest verb it carries, because every privileged round trip is one `sudo` process whatever it is. */
+const shape = (call: { file: string; args: string[]; request?: any }) => (call.request
+  ? `privileged ${call.request.op}${call.request.argv ? ` ${call.request.argv[0]}` : ''}`
+  : `${call.file.split('/').at(-1)} ${call.args[0]}`);
+
+describe('managed file operation host cost', () => {
+  it.each(['stat', 'list', 'read'] as const)('issues a bounded number of host subprocesses for one %s', async (kind) => {
     const state = await provisioned();
     await state.runtime.projectFiles({ ...input, operation: operationFor(kind) });
 
-    // Four, and which four: container existence, container inspection, the guest launcher, and the
-    // release probe. The pre-repair path issued 33 for the same work. The fifth this suite once counted —
-    // one batched inspection of all three project volumes — went away with the volumes themselves: a
-    // disk-backed envelope bind mounts the disk's own directories and holds no named volume handles, so
-    // ownership has nothing to inspect beyond the container. This is an exact figure on purpose — a fifth
-    // invocation is a regression worth a conversation, not something to absorb into a bound with room in
-    // it.
-    expect(state.calls.map((call) => call.args.slice(0, 2).join(' '))).toEqual([
-      'container exists', 'inspect --type', 'exec --interactive', `exec ${CONTAINER_ID}`,
+    // Four, and which four: the unit half of the ownership proof, the machine-manager half, the guest
+    // launcher, and the release probe. The pre-repair container path issued 33 for the same work. What is
+    // NOT here is as much the point as what is: the envelope's own presence is two `lstat` calls rather
+    // than a process, and a machine holds no named volume handles to inspect. This is an exact figure on
+    // purpose — a fifth invocation is a regression worth a conversation, not something to absorb into a
+    // bound with room in it.
+    expect(state.calls.map(shape)).toEqual([
+      'systemctl show', 'machinectl show', 'privileged exec /usr/bin/python3', 'privileged exec /usr/bin/systemctl',
     ]);
 
-    // Exactly one guest execution.
-    expect(state.calls.filter((call) => call.args[1] === '--interactive')).toHaveLength(1);
+    // Exactly one guest execution of the file helper.
+    expect(state.calls.filter((call) => call.request?.argv?.[0] === '/usr/bin/python3')).toHaveLength(1);
 
     // One durable lease, deleted exactly once — no row may survive a successful operation.
     expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
@@ -264,15 +269,18 @@ describe('managed file operation Podman cost', () => {
   it('never repeats the execution release after the client already cleaned the unit', async () => {
     const state = await provisioned();
     await state.runtime.projectFiles({ ...input, operation: operationFor('stat') });
-    // `systemctl show` is the release probe. Two of them means the release ran twice.
-    expect(state.calls.filter((call) => call.args.includes('show'))).toHaveLength(1);
-    expect(state.calls.filter((call) => call.args.includes('mask') || call.args.includes('unmask'))).toHaveLength(0);
+    const guest = state.calls.filter((call) => call.request?.op === 'exec').map((call) => call.request.argv);
+    // The guest `systemctl show` is the release probe. Two of them means the release ran twice.
+    expect(guest.filter((argv: string[]) => argv.includes('show'))).toHaveLength(1);
+    expect(guest.filter((argv: string[]) => argv.includes('mask') || argv.includes('unmask'))).toHaveLength(0);
   });
 
   it('runs no completion-artifact cleanup for a file helper that never armed capture', async () => {
     const state = await provisioned();
     await state.runtime.projectFiles({ ...input, operation: operationFor('stat') });
-    expect(state.calls.filter((call) => call.args.includes('/usr/bin/rm'))).toHaveLength(0);
+    // The nspawn transport carries no completion capture at all, so there is never an artifact to remove;
+    // the cleanup that used to be paid on every managed file operation cannot come back through this path.
+    expect(state.calls.filter((call) => call.request?.argv?.includes('/usr/bin/rm'))).toHaveLength(0);
   });
 
   // Retiring the durable lease without a full release is safe ONLY because the client settles the guest
@@ -280,12 +288,8 @@ describe('managed file operation Podman cost', () => {
   // lifecycle change while an execution may be live, so it must survive rather than be tidied away.
   it('keeps the durable lease when the client could not settle the guest', async () => {
     const state = await provisioned();
-    const original = state.executor.run.getMockImplementation()!;
-    state.executor.run.mockImplementation(async (file, args, options) => {
-      // Break termination verification: the unit reports neither retired nor cleanly masked.
-      if (args[0] === 'exec' && args.includes('show')) return { code: 0, stdout: 'LoadState=loaded\nActiveState=active\nSubState=running\nControlGroup=/live\n', stderr: '', truncated: false };
-      return original(file, args, options);
-    });
+    // Break termination verification: the unit reports neither retired nor cleanly masked.
+    state.setGuestShow(() => 'LoadState=loaded\nActiveState=active\nSubState=running\nControlGroup=/live\n');
 
     await expect(state.runtime.projectFiles({ ...input, operation: operationFor('stat') })).rejects.toThrow(/termination could not be verified/i);
     expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 1 });
@@ -294,11 +298,11 @@ describe('managed file operation Podman cost', () => {
   it('verifies ownership once for the whole fenced execution', async () => {
     const state = await provisioned();
     await state.runtime.projectFiles({ ...input, operation: operationFor('stat') });
-    // One container inspection for the whole execution, and no volume inspection at all: the disk's
-    // component directories are bind mounts held against the specification by that same inspection, so a
-    // per-component volume round trip would be a new cost with nothing left to verify.
-    expect(state.calls.filter((call) => call.args[0] === 'inspect')).toHaveLength(1);
-    expect(state.calls.filter((call) => call.args[0] === 'volume' && call.args[1] === 'inspect')).toHaveLength(0);
+    // One ownership proof for the whole execution, and it is one round trip per host fact rather than per
+    // disk component: the disk's component directories are binds recorded in the envelope the unit
+    // already names, so a per-component round trip would be a new cost with nothing left to verify.
+    expect(state.calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args[0] === 'show')).toHaveLength(1);
+    expect(state.calls.filter((call) => call.file === '/usr/bin/machinectl' && call.args[0] === 'show')).toHaveLength(1);
   });
 });
 

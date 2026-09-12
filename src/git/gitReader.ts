@@ -26,8 +26,9 @@ const EMPTY_SNAPSHOT: ProjectGitSnapshot = { isRepo: false, status: null, remote
 const EMPTY: ProjectGit = { ...EMPTY_SNAPSHOT, branches: [], commits: [] };
 
 /** Failures git itself attests on stderr. Strict managed recovery swallows only these; a launcher/runtime
- * failure (podman 125, exec 126/127) or a provider-shaped exit (403) is a broken environment, never a
- * repository verdict, so it rethrows instead of degrading into a successful empty result. */
+ * failure (a guest command that never started, exec 126/127) or a provider-shaped exit (403) is a broken
+ * environment, never a repository verdict, so it rethrows instead of degrading into a successful empty
+ * result. */
 const NOT_A_REPOSITORY = /fatal: not a git repository/i;
 const UNBORN_HEAD = /does not have any commits yet/i;
 

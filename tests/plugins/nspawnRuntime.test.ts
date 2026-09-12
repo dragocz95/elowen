@@ -452,7 +452,7 @@ describe('nspawn guest execution', () => {
   it('hands the daemon a launch descriptor whose stdin carries the request ahead of the guest bytes', async () => {
     const state = fixture();
     const prepared = await state.client.prepareExecution(state.spec, EXECUTION_ID, ['/bin/bash', '-s'], { input: 'echo hi' });
-    // The same descriptor shape the daemon spawns for Podman: an argv launch with an explicit file, its
+    // The descriptor shape the daemon spawns: an argv launch with an explicit file, its
     // arguments and a clean environment, so nothing downstream has to know which runtime produced it.
     expect(prepared.launch).toEqual({ type: 'argv', file: '/usr/bin/sudo', args: ['-n', HELPER_PATH, ''],
       env: expect.objectContaining({ PATH: expect.any(String), HOME: expect.any(String) }) });
@@ -612,11 +612,26 @@ describe('nspawn freeze and thaw', () => {
 });
 
 describe('nspawn refusals', () => {
-  it('refuses every named volume method instead of emulating a volume store', async () => {
-    const { client, spec } = fixture();
-    for (const method of ['ensureVolume', 'inspectVolume', 'removeVolume', 'exportVolume', 'importSnapshotVolume', 'siteDataArchive'] as const) {
-      await expect((client as any)[method](spec, 'data')).rejects.toThrow(/no named volumes/);
+  /** Named volumes and image-to-disk migration are not refused by this client, they are ABSENT from it.
+   *  A method that stayed on the surface only to throw is a method a caller can still reach and a stub
+   *  someone can still fill in; the machine runtime keeps its state on one disk per environment, and the
+   *  only migration path off an image-backed environment is deleting it. The refusals that do exist are
+   *  further down: a specification without an nspawn disk never gets a client at all. */
+  it('exposes no named-volume or image-migration surface at all', () => {
+    const { client } = fixture();
+    for (const method of ['ensureVolume', 'inspectVolume', 'removeVolume', 'exportVolume', 'importSnapshotVolume',
+      'preflightRootfsMigration', 'exportContainerRootfs', 'snapshotImage', 'removeSnapshotImage',
+      'ensureProjectImage', 'buildProjectImage'] as const) {
+      expect((client as any)[method], method).toBeUndefined();
     }
+  });
+
+  /** The one member of that family that is still called: Sites `import-data` and `export-data` route
+   *  through it. It is a declared gap rather than a removal, and it has to SAY it is missing — a caller
+   *  told "no named volumes" would go looking for the wrong thing. */
+  it('names the missing Site data archive instead of blaming an absent volume store', async () => {
+    const { client } = fixture();
+    await expect((client as any).siteDataArchive()).rejects.toThrow(/not implemented for the machine runtime/);
   });
 
   it('refuses a legacy image-backed specification and a disk that belongs to another runtime', async () => {
@@ -628,15 +643,6 @@ describe('nspawn refusals', () => {
     const podmanDisk = createEnvironmentDiskSpec({ resource, image, runtime: undefined }, paths, 'a'.repeat(32));
     const podmanSpec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk: podmanDisk }, paths);
     await expect(client.inspect(podmanSpec)).rejects.toThrow(/not an nspawn environment/);
-  });
-
-  it('refuses the legacy migration sources a disk-backed environment can never be', async () => {
-    const { client, spec } = fixture();
-    // Called the way the interface names them: these refuse a disk-backed specification whatever they
-    // are handed, so the arguments are the real ones and the methods read none of them.
-    await expect((client as any).preflightRootfsMigration(spec, '/tmp')).rejects.toThrow(/legacy image-backed/);
-    await expect((client as any).exportContainerRootfs(spec, '/tmp/x.tar')).rejects.toThrow(/legacy image-backed/);
-    await expect((client as any).snapshotImage(spec, 'snap')).rejects.toThrow(/snapshots its disk/);
   });
 
   it('refuses a machine name outside the privileged runtime scope', async () => {
@@ -659,17 +665,34 @@ describe('nspawn refusals', () => {
 });
 
 describe('runtime client selection', () => {
-  it('sends a disk without a runtime to Podman and an nspawn disk to the machine client', () => {
-    const { spec, paths, client } = fixture();
-    const podman = { name: 'podman' } as any;
-    const legacy = createContainerSpec({ resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2, image: 'localhost/elowen-project-base:test' }, paths);
-    expect(selectRuntimeClient(legacy, { podman, nspawn: client as any })).toBe(podman);
-    expect(selectRuntimeClient(spec, { podman, nspawn: client as any })).toBe(client);
+  it('sends an nspawn disk to the machine client', () => {
+    const { spec, client } = fixture();
+    expect(selectRuntimeClient(spec, { nspawn: client as any })).toBe(client);
+  });
+
+  // There is one runtime now, and `disk.runtime` is the persisted proof a row belongs to it. A row
+  // written by a release that ran containers cannot be adopted — its root filesystem was never
+  // materialized from a published artifact — so it is NAMED and refused, with the remedy in the message,
+  // rather than quietly driven by the machine client.
+  it.each([
+    ['a specification with no disk at all', (paths: any) =>
+      createContainerSpec({ resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2, image: 'localhost/elowen-project-base:test' }, paths)],
+    ['a disk a container runtime materialized', (paths: any) => createContainerSpec({
+      resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2, image: 'localhost/elowen-project-base:test',
+      disk: createEnvironmentDiskSpec({ resource: { kind: 'project', id: 7 }, image: 'localhost/elowen-project-base:test', runtime: undefined }, paths, 'a'.repeat(32)),
+    }, paths)],
+  ])('refuses %s instead of adopting it', (_label, build) => {
+    const { paths, client } = fixture();
+    let raised: any;
+    try { selectRuntimeClient(build(paths), { nspawn: client as any }); }
+    catch (cause) { raised = cause; }
+    expect(raised).toMatchObject({ code: 'unsupported_runtime', status: 409 });
+    expect(raised.message).toMatch(/delete the environment and create it again to build it from a published root filesystem/);
   });
 
   it('refuses an nspawn row on a runtime that has no machine client rather than falling back', () => {
     const { spec } = fixture();
-    expect(() => selectRuntimeClient(spec, { podman: {} as any, nspawn: null })).toThrow(/systemd-nspawn, which is unavailable/);
+    expect(() => selectRuntimeClient(spec, { nspawn: null })).toThrow(/systemd-nspawn, which is unavailable/);
   });
 });
 

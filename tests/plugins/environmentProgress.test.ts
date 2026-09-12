@@ -6,7 +6,7 @@ import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
-import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import type { NspawnClient } from '../../plugins/sandbox/lib/nspawn.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
 const cleanup: (() => void)[] = [];
@@ -29,46 +29,49 @@ function setup() {
   const containers = new Map<string, any>();
   let busReady = false;
   let busFails = false;
-  const podman = {
+  const nspawn = {
     containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
-    // The legacy image-backed path still has this method; a start no longer reaches it, which is what the
-    // tests below hold it to.
-    ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
-    // The real client verifies the container against the specification it is asked about, so one built
+    // No runtime this release ships builds an image on the host. The spy is kept so a start that ever
+    // reached for one again would be caught here rather than by whoever waited on the build.
+    ensureProjectImage: vi.fn(async () => { throw new Error('nothing builds a root filesystem on the host'); }),
+    // The real client verifies the machine against the specification it is asked about, so one written
     // for a different mount layout fails ownership instead of being adopted or removed.
     inspect: vi.fn(async (spec: any) => {
       const row = containers.get(spec.name);
       if (!row) return null;
-      if (row.workdir !== spec.workdir) throw new Error('Container ownership or runtime specification mismatch');
+      if (row.workdir !== spec.workdir) throw new Error('Machine ownership or runtime specification mismatch');
       return row;
     }),
-    create: vi.fn(async (spec: any) => { const row = { id: 'a'.repeat(64), state: 'created', workdir: spec.workdir }; containers.set(spec.name, row); return row; }),
+    create: vi.fn(async (spec: any) => {
+      if (spec.disk?.runtime !== 'nspawn') throw new Error('systemd-nspawn runs only rootfs-backed environments');
+      const row = { id: 'a'.repeat(64), state: 'created', workdir: spec.workdir }; containers.set(spec.name, row); return row;
+    }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     stop: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'stopped'; }),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     removeByName: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
+    pause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'paused'; }),
+    unpause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
+    update: vi.fn(async () => {}),
     // The real guest: every execution goes through `systemd-run`, so until the system bus is listening a
-    // command does not run at all. This is the shape the container on the live host produced — the bus
+    // command does not run at all. This is the shape the machine on the live host produced — the bus
     // socket absent while PID 1 was already up, and dbus refused with exactly this message.
     exec: vi.fn(async () => busReady
       ? { code: 0, stdout: '', stderr: '', truncated: false }
       : { code: 1, stdout: '', stderr: 'Failed to connect to bus: No such file or directory', truncated: false }),
     waitForSystemBus: vi.fn(async () => { if (busFails) throw new Error('Guest system bus did not become available within 120s (systemd reports initializing)'); busReady = true; }),
+    systemRunning: vi.fn(async () => 'running'),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
-    removeVolume: vi.fn(), removeStorage: vi.fn(), removeSnapshotStorage: vi.fn(), inspectVolume: vi.fn(),
+    startPublication: vi.fn(), stopPublication: vi.fn(), activePublications: vi.fn(async () => []),
+    removeStorage: vi.fn(), removeGenerationStorage: vi.fn(), removeSnapshotStorage: vi.fn(), removeDiskPath: vi.fn(), syncDiskTree: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
+    hostReadiness: vi.fn(async () => ({ ready: true, items: [{ id: 'unit:elowen-machine', label: 'Machine unit template', ok: true, detail: 'installed and loaded' }] })),
   };
   const storage = { prepare: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), removeDisk: vi.fn() };
-  const built = createEnvironmentRuntime({ ctx, db, dataDir: root, podman: podman as unknown as PodmanClient,
+  const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, nspawn: nspawn as unknown as NspawnClient,
     storage: storage as unknown as ContainerStorage, daemon: true });
-  // Every environment here predates the machine runtime, which is what makes it a Podman row: this suite
-  // is about the step list an operation publishes, and the runtime it publishes it for is not the subject.
-  const predate = () => db.prepare("UPDATE p_sandbox_runtimes SET spec_json=json_remove(spec_json,'$.runtimePending')").run();
-  const runtime = { ...built,
-    requestEnvironment: async (value: any) => { const result = await built.requestEnvironment(value); predate(); return result; },
-    reconcile: async (...args: any[]) => { predate(); return await built.reconcile(...args); } };
-  cleanup.push(() => { built.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, db, ctx, podman, storage, containers, published, project, root,
+  cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
+  return { runtime, db, ctx, nspawn, storage, containers, published, project, root,
     // A guest whose boot never finishes: the container runs, the bus never listens. That is what a host
     // out of inotify instances produced, and it must be reported as a boot that did not come up.
     failSystemBus: () => { busFails = true; } };
@@ -100,25 +103,25 @@ describe('environment operation progress', () => {
     expect(percents).toEqual([...percents].sort((a, b) => a - b));
   });
 
-  // A container Podman calls "running" is not yet a guest that can run anything: `systemd-run`, which
+  // A machine systemd calls "running" is not yet a guest that can run anything: `systemd-run`, which
   // carries every execution including project initialization, needs the guest system bus, and that is
   // activated some way into the boot. Waiting for it is the fix for a start that reported
   // `Failed to connect to bus: No such file or directory` at 94%.
   it('waits for the guest system bus before it initializes the project', async () => {
-    const { runtime, podman } = setup();
+    const { runtime, nspawn } = setup();
     const op = await runtime.requestEnvironment({ ...input, requestId: 'bus', action: { kind: 'start' } });
     await runtime.reconcile();
 
     const done = await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 });
     expect([done?.status, done?.error]).toEqual(['succeeded', null]);
-    expect(podman.waitForSystemBus).toHaveBeenCalledTimes(1);
+    expect(nspawn.waitForSystemBus).toHaveBeenCalledTimes(1);
     // Order, not merely presence: initialization must not be the thing that discovers the bus is missing.
-    expect(podman.waitForSystemBus.mock.invocationCallOrder[0]!).toBeLessThan(podman.exec.mock.invocationCallOrder[0]!);
+    expect(nspawn.waitForSystemBus.mock.invocationCallOrder[0]!).toBeLessThan(nspawn.exec.mock.invocationCallOrder[0]!);
   });
 
   // A guest that never finishes booting is a boot failure and has to read as one, on its own step.
   it('fails on the readiness step when the guest system never comes up', async () => {
-    const { runtime, podman, failSystemBus } = setup();
+    const { runtime, nspawn, failSystemBus } = setup();
     failSystemBus();
     const op = await runtime.requestEnvironment({ ...input, requestId: 'stalled', action: { kind: 'start' } });
     await runtime.reconcile();
@@ -127,7 +130,7 @@ describe('environment operation progress', () => {
     expect(failed?.status).toBe('failed');
     expect(failed?.error).toContain('Guest system bus did not become available');
     expect(failed?.stepLabel).toBe('ready');
-    expect(podman.exec).not.toHaveBeenCalled();
+    expect(nspawn.exec).not.toHaveBeenCalled();
   });
 
   it('declares a different step list per action, and each one completes', async () => {
@@ -149,8 +152,8 @@ describe('environment operation progress', () => {
   });
 
   it('reports admin limits and project deletion with their own steps', async () => {
-    const { runtime, podman } = setup();
-    (podman as any).update = vi.fn();
+    const { runtime, nspawn } = setup();
+    (nspawn as any).update = vi.fn();
     await runtime.requestEnvironment({ ...input, requestId: 'up', action: { kind: 'start' } });
     await runtime.reconcile();
 
@@ -161,7 +164,9 @@ describe('environment operation progress', () => {
     expect((await runtime.environmentOperation({ operationId: limits.id, accountUserId: 3 }))?.percent).toBe(100);
 
     const removal = await runtime.requestEnvironment({ ...input, requestId: 'delete', action: { kind: 'delete' } });
-    expect(removal.steps).toEqual(['stop', 'containers', 'images', 'volumes', 'storage', 'records']);
+    // A machine environment owns no image and no named volume handles, so the two steps that removed
+    // them are gone from the plan rather than declared and skipped.
+    expect(removal.steps).toEqual(['stop', 'containers', 'storage', 'records']);
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: removal.id, accountUserId: 1 }))?.status).toBe('succeeded');
   });
@@ -179,7 +184,7 @@ describe('environment operation progress', () => {
   // bytes that arrive are what moves the bar. A transfer whose length the host does not know has to read
   // as indeterminate rather than hold the bar at the last figure it happened to have.
   it('derives the image step from the root filesystem download and goes indeterminate without a total', async () => {
-    const { runtime, db, published, podman, storage } = setup();
+    const { runtime, db, published, nspawn, storage } = setup();
     const live: (number | null)[] = [];
     storage.prepare.mockImplementation(async (_spec: unknown, options: { onProgress: (received: number, total: number) => void }) => {
       for (const [received, total] of [[1024, 4096], [2048, 0], [3072, 4096]]) {
@@ -200,7 +205,7 @@ describe('environment operation progress', () => {
     expect(imageFrames.some((view: any) => view.percent === null)).toBe(true);
     expect(imageFrames.some((view: any) => typeof view.percent === 'number' && view.percent > 0)).toBe(true);
     // Nothing is built on the host any more: the long step is the fetch, and only the fetch.
-    expect(podman.ensureProjectImage).not.toHaveBeenCalled();
+    expect(nspawn.ensureProjectImage).not.toHaveBeenCalled();
     expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
   });
 
@@ -230,63 +235,34 @@ describe('environment operation progress', () => {
     expect(Array.isArray(last.logTail)).toBe(true);
   });
 
-  // The stale-container case: the failure names the repair, and the repair is an operation of its own
-  // that rebuilds the container while the storage volumes — and so the project's files — stay put.
-  it('fails a stale environment with the recreate wording and repairs it through the recreate action', async () => {
-    const { runtime, db, podman, published, containers } = setup();
+  // A row built against `/workspace` predates the named project mount, and therefore predates the only
+  // runtime this release has: its envelope was hashed from a specification no longer produced and its
+  // root filesystem was never materialized from a published artifact. Every action on it is refused by
+  // name, at the request, so nothing is enqueued that could not be carried out — including the deletion,
+  // which is what the remedy in the message asks the operator to do to the environment instead.
+  it.each(['start', 'recreate', 'delete'] as const)('refuses %s on a row that predates the named project mount', async (kind) => {
+    const { runtime, db, nspawn, containers } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'first', action: { kind: 'start' } });
     await runtime.reconcile();
 
-    // Rewind the row to the pre-mount layout while its container survives, which is exactly the shape
-    // that reached the owner: a container built against `/workspace` that this runtime can no longer
-    // verify, because the specification that would prove ownership is the one that changed.
     const row = db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
     const spec = JSON.parse(row.spec_json);
     delete spec.input.workspaceTarget;
     db.prepare("UPDATE p_sandbox_runtimes SET spec_json=?, state='stopped' WHERE kind='project' AND resource_id='7'").run(JSON.stringify(spec));
     for (const container of containers.values()) container.workdir = '/workspace';
 
-    const failing = await runtime.requestEnvironment({ ...input, requestId: 'stale', action: { kind: 'start' } });
-    await runtime.reconcile();
-    const failed = await runtime.environmentOperation({ operationId: failing.id, accountUserId: 1 });
-    expect(failed?.status).toBe('failed');
-    expect(failed?.error).toMatch(/predates the named project mount/);
-    expect(failed?.error).toMatch(/Recreate it/);
-    expect(operationEvents(published).at(-1)!.data.operation.status).toBe('failed');
-
-    podman.remove.mockClear();
-    podman.removeVolume.mockClear();
-    const repair = await runtime.requestEnvironment({ ...input, requestId: 'repair', action: { kind: 'recreate' } });
-    await runtime.reconcile();
-    expect((await runtime.environmentOperation({ operationId: repair.id, accountUserId: 1 }))?.status).toBe('succeeded');
-    expect((await runtime.environmentFor(input)).state).toBe('running');
-    // The verified removal cannot touch that container, so the repair removes it by name — which is the
-    // whole reason `recreate` exists — and builds a new one at the named mount.
-    expect(podman.removeByName).toHaveBeenCalledOnce();
-    expect(podman.create.mock.calls.at(-1)![0].workdir).toBe('/sales-dashboard');
-    // The files live in the volumes, so a repair that removed one would be a data loss dressed as a fix.
-    expect(podman.removeVolume).not.toHaveBeenCalled();
-  });
-
-  // A project whose container predates the named mount could not be deleted either: the deletion opens
-  // by stopping that container, the inspection refuses it, and the Project stayed in `deleting` forever.
-  it('deletes a project whose container predates the named project mount', async () => {
-    const { runtime, db, containers, podman } = setup();
-    await runtime.requestEnvironment({ ...input, requestId: 'first', action: { kind: 'start' } });
-    await runtime.reconcile();
-
-    const row = db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
-    const spec = JSON.parse(row.spec_json);
-    delete spec.input.workspaceTarget;
-    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(spec));
-    for (const container of containers.values()) container.workdir = '/workspace';
-
-    const removal = await runtime.requestEnvironment({ ...input, requestId: 'remove', action: { kind: 'delete' } });
-    await runtime.reconcile();
-    const done = await runtime.environmentOperation({ operationId: removal.id, accountUserId: 1 });
-    expect([done?.status, done?.error]).toEqual(['succeeded', null]);
-    expect(podman.removeByName).toHaveBeenCalledOnce();
-    expect(containers.size).toBe(0);
+    nspawn.create.mockClear();
+    nspawn.remove.mockClear();
+    nspawn.removeByName.mockClear();
+    await expect(runtime.requestEnvironment({ ...input, requestId: `stale-${kind}`, action: { kind } }))
+      .rejects.toMatchObject({ code: 'unsupported_runtime', status: 409 });
+    await expect(runtime.requestEnvironment({ ...input, requestId: `stale-again-${kind}`, action: { kind } }))
+      .rejects.toThrow(/predates the named project mount.*delete the environment and create it again/s);
+    // Refused before anything durable is enqueued, and nothing on the host was touched on the way.
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key LIKE 'stale-%'").get()).toEqual({ n: 0 });
+    expect(nspawn.create).not.toHaveBeenCalled();
+    expect(nspawn.remove).not.toHaveBeenCalled();
+    expect(nspawn.removeByName).not.toHaveBeenCalled();
   });
 
   // The operation rows only ever grew: one start, stop, restart or limits change left a row behind for
@@ -376,7 +352,7 @@ describe('environment operation progress', () => {
   it('declares only the steps a Site actually takes', async () => {
     const { runtime, root } = setup();
     const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared',
-      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
+      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
     runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
@@ -384,7 +360,8 @@ describe('environment operation progress', () => {
     const started = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
     expect(started.steps).toEqual(['image', 'storage', 'container', 'boot', 'initialize']);
     await runtime.reconcile();
-    expect((await runtime.siteEnvironmentOperation({ operationId: started.id, accountUserId: 1 }))?.status).toBe('succeeded');
+    const siteStart = await runtime.siteEnvironmentOperation({ operationId: started.id, accountUserId: 1 });
+    expect(siteStart?.status, siteStart?.error ?? '').toBe('succeeded');
 
     const stopped = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-stop', action: { kind: 'stop' } });
     expect(stopped.steps).toEqual(['stop']);

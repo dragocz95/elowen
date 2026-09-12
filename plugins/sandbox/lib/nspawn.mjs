@@ -27,8 +27,8 @@ export const MACHINE_PATTERN = /^elowen-(project|site)-[a-z0-9-]{1,64}-g[0-9]{1,
 /** Where the disk records which environment, generation and uid range it belongs to. Outside the rootfs
  *  on purpose: a marker inside the tree proves nothing, because the guest is root over that tree. */
 const IDENTITY_RELATIVE = join('.elowen', 'identity.json');
-/** Capabilities dropped from nspawn's default bound. Every one of them is also denied by rootless
- *  Podman's default set; what remains is what systemd needs to boot a container, and those are
+/** Capabilities dropped from nspawn's default bound. Every one of them is also denied by the default set
+ *  of an ordinary rootless container; what remains is what systemd needs to boot the guest, and those are
  *  namespaced. */
 export const DROPPED_CAPABILITIES = Object.freeze(['CAP_AUDIT_CONTROL', 'CAP_AUDIT_READ', 'CAP_SYS_PTRACE',
   'CAP_SYS_TTY_CONFIG', 'CAP_LEASE', 'CAP_LINUX_IMMUTABLE', 'CAP_IPC_LOCK', 'CAP_IPC_OWNER', 'CAP_BLOCK_SUSPEND',
@@ -160,7 +160,7 @@ function readIdentity(diskDirectory) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-/** Concrete internal driver for systemd-nspawn machines, behind the same interface as `PodmanClient`.
+/** Concrete internal driver for systemd-nspawn machines, behind the runtime-neutral client interface.
  *
  *  Two transports and no third. The machine LIFECYCLE runs as the service account over a unit-scoped
  *  polkit rule with no sudo at all: start, stop, set-property, show, list. Everything that needs root —
@@ -169,7 +169,7 @@ function readIdentity(diskDirectory) {
  *
  *  The guest side of that line is intended capability: what runs inside a managed environment is the
  *  environment's purpose, so `argv` is carried through untouched and only its transport hygiene is
- *  bounded, exactly as `podman.mjs` bounds it today. */
+ *  bounded. */
 export class NspawnClient {
   #executor;
   #env;
@@ -362,8 +362,8 @@ export class NspawnClient {
     return inventory;
   }
 
-  /** The three independent host-side facts that replace `podman inspect`'s twenty-one fields. All of them
-   *  have to match or every destructive operation refuses. */
+  /** The three independent host-side facts an environment is identified by. All of them have to match or
+   *  every destructive operation refuses. */
   async inspect(spec) {
     const machine = this.#machine(spec);
     if (!await this.containerExists(spec)) return null;
@@ -421,8 +421,7 @@ export class NspawnClient {
   }
 
   /** Bind mounts as the envelope declares them. `:rootidmap` maps the guest's root onto the host owner of
-   *  the source directory, which is the rootless-Podman semantics every existing environment already
-   *  depends on: a file the guest writes belongs to the service account on the host. */
+   *  the source directory, so a file the guest writes belongs to the service account on the host. */
   #binds(spec) {
     return spec.mounts.filter((mount) => mount.type === 'bind')
       .map((mount) => ({ source: checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' }), target: mount.target, readOnly: mount.readOnly === true }));
@@ -480,8 +479,8 @@ export class NspawnClient {
   }
 
   /** The unit's own `TimeoutStopSec` governs how long the guest gets; nspawn translates the unit's
-   *  SIGTERM into the guest's SIGRTMIN+3, which is the signal a disk-backed Podman envelope is stopped
-   *  with today. The argument is validated for parity with that interface and carries no second deadline. */
+   *  SIGTERM into the guest's SIGRTMIN+3, which is how a systemd guest is asked to shut down. The
+   *  argument is validated for parity with the client interface and carries no second deadline. */
   async stop(spec, timeoutSeconds = 8) {
     positive(timeoutSeconds, 120, 'stop timeout');
     const machine = this.#machine(spec);
@@ -634,8 +633,8 @@ export class NspawnClient {
     return await this.#tombstone(spec, executionId, row, persistent);
   }
 
-  /** The termination tombstone, against a row this call stack has already verified. The guest stays
-   *  systemd-based under nspawn, so this is the Podman protocol verbatim with the transport changed. */
+  /** The termination tombstone, against a row this call stack has already verified. The guest is
+   *  systemd-based, so termination is proven through the unit rather than through a host process. */
   async #tombstone(spec, executionId, row, persistent) {
     const unit = executionUnit(spec, executionId);
     if (row.state !== 'running') throw new Error('Guest termination cannot be verified in this container state');
@@ -720,7 +719,7 @@ export class NspawnClient {
    *  `raw` is what makes this a launch rather than a call. The daemon spawns the helper itself and streams
    *  its stdout and stderr to a terminal, so a base64 verdict on stdout is not the answer anyone here
    *  wants: in raw mode the helper inherits the child's streams and exits with the child's own status,
-   *  which is exactly how `podman exec` behaves for the same descriptor. */
+   *  which is what any ordinary remote-execution command does for the same descriptor. */
   async prepareExecution(spec, executionId, argv, options = {}) {
     if (options.completionCwd === true) throw new Error('Completion cwd capture is not carried by the nspawn transport');
     const prepared = await this.#prepareGuest(spec, executionId, argv, options, { raw: true });
@@ -785,19 +784,17 @@ export class NspawnClient {
     return publicationIds.filter((_id, index) => states[index] === 'active');
   }
 
-  /** The one-time ownership pass that turns a disk extracted inside `podman unshare` into a tree the
-   *  machine's own fixed uid range owns. Nothing is copied, and the range is recorded in the disk
-   *  identity so it happens once for the life of the disk. */
-  async shiftOwnership(spec, { target = 'nspawn', uidBase = null } = {}) {
-    if (target !== 'nspawn' && target !== 'podman') throw new Error('Invalid ownership shift target');
-    if (target === 'podman' && (!Number.isSafeInteger(uidBase) || uidBase < 0)) throw new Error('Reversing an ownership shift requires the recorded range');
+  /** The one-time ownership pass that puts an existing disk tree onto the machine's own fixed uid range.
+   *  Nothing is copied, and the range is recorded in the disk identity so it happens once for the life of
+   *  the disk. */
+  async shiftOwnership(spec) {
     const machine = this.#machine(spec);
     checkedHostPath(spec.disk.rootfsPath);
     const receipt = await this.#helper('shift-ownership', { machine, namespace: spec.namespace, kind: spec.resource.kind,
       resource: String(spec.resource.id), generation: spec.generation, diskId: spec.disk.id,
-      specHash: spec.labels['io.elowen.spec'], target, uidBase }, { timeoutMs: 15 * 60_000 });
-    if (target === 'nspawn' && (!Number.isSafeInteger(receipt?.uidBase) || receipt.uidBase < 1
-      || receipt.uidSize !== UID_RANGE_SIZE || !Number.isSafeInteger(receipt?.previousUidBase))) throw new Error('Invalid ownership shift receipt');
+      specHash: spec.labels['io.elowen.spec'] }, { timeoutMs: 15 * 60_000 });
+    if (!Number.isSafeInteger(receipt?.uidBase) || receipt.uidBase < 1
+      || receipt.uidSize !== UID_RANGE_SIZE) throw new Error('Invalid ownership shift receipt');
     return receipt;
   }
 
@@ -907,24 +904,12 @@ export class NspawnClient {
   ensureArtifact(reference, options) { return this.#artifacts.ensure(reference, options); }
   collectArtifacts(referenced) { return this.#artifacts.collect(referenced); }
 
-  /** Snapshots of a disk-backed environment are disk copies, format 2, and never a committed image.
-   *  These three exist only for legacy image-backed rows, which are never this client's. */
-  async snapshotImage() { throw new Error('A disk-backed environment snapshots its disk, not an image'); }
-  async inspectSnapshotImage() { throw new Error('A disk-backed environment snapshots its disk, not an image'); }
-  async removeSnapshotImage() { throw new Error('A disk-backed environment snapshots its disk, not an image'); }
-
-  /** Migration SOURCES. Only a legacy image-backed environment is exported, and this client never holds
-   *  one; a Podman row migrates to nspawn through `migrate-runtime`, which copies nothing. */
-  async preflightRootfsMigration() { throw new Error('Only a legacy image-backed environment is migrated'); }
-  async exportContainerRootfs() { throw new Error('Only a legacy image-backed container is exported for migration'); }
-
-  /** Named volumes are a Podman handle over a host directory. A disk-backed environment mounts the disk's
-   *  own directories, so there is no handle to create, inspect or remove — and emulating one would add a
-   *  second owner of paths the disk record already owns. */
-  async ensureVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async inspectVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async removeVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async exportVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async importSnapshotVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async siteDataArchive() { throw new Error('An nspawn environment has no named volumes'); }
+  /** Seeding or exporting a Site's `data` directory as one archive. The container runtime did it by
+   *  streaming a named volume, and a machine has no such handle: the data directory is a plain tree on the
+   *  disk, so the archive has to be taken through the privileged helper that owns the tree's uid range.
+   *  That operation does not exist yet, so the Sites `import-data` and `export-data` actions fail here and
+   *  say what is missing rather than reporting an unrelated absence of volumes. */
+  async siteDataArchive() {
+    throw new Error('Archiving a Site data directory is not implemented for the machine runtime; the disk tree has no named-volume stream to take');
+  }
 }

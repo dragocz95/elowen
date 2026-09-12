@@ -188,7 +188,7 @@ export interface SiteRuntimeAuthority {
   beforeCreate?(siteId: string): Promise<void>;
   /** Return a fresh bootstrap-only archive for every new container rootfs; Sandbox imports it before create. */
   containerSeed?(siteId: string): Promise<Extract<SiteRuntimeArtifact, { kind: 'data' }> | null>;
-  /** Sites owns privileged ingress preparation and application readiness, never the Podman lifecycle. */
+  /** Sites owns privileged ingress preparation and application readiness, never the machine lifecycle. */
   beforeStart(siteId: string): Promise<void>;
   /** Confirm the application answers through its own ingress. Sandbox calls it where a container that
    *  merely runs is not enough — the disk migration proves the candidate envelope before switching the

@@ -10,7 +10,7 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
 import { createEnvironmentRuntime, publicationSocketName } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
-import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import type { NspawnClient } from '../../plugins/sandbox/lib/nspawn.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
 const cleanup: (() => void)[] = [];
@@ -18,16 +18,11 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 /** The published root filesystem a NEW managed project is stamped with, in both the envelope image and
  *  the disk's source. Nothing on the host produces it: it is fetched by reference and verified by digest. */
 const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
-/** `machineHost` is which world this fixture is in.
- *
- *  `null`, the default, is a host whose environments PREDATE the machine runtime: rows that already have
- *  a materialized Podman disk, which is the population the runtime has to keep driving byte for byte and
- *  what almost every test below is about. Rows are inserted lazily by the first request, so the marker
- *  saying the runtime is still open is cleared as soon as one appears.
- *
- *  `'ready'` and `'unready'` leave the decision where production makes it, and answer the readiness probe
- *  the way a provisioned or an unprovisioned host answers it. */
-function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unready' | null = null) {
+/** `machineHost` answers the readiness probe the way a provisioned or an unprovisioned host answers it,
+ *  which is where production makes the decision. There is no third world any more: every environment is a
+ *  machine on a disk materialized from a published artifact, so `'ready'` is what almost every test below
+ *  needs and a host that answers `'unready'` refuses the creation rather than building something else. */
+function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unready' = 'ready') {
   const root = mkdtempSync(join(tmpdir(), 'env-test-'));
   const sql = openDb(':memory:');
   const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
@@ -56,12 +51,20 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     forwarders.clear();
     await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   };
-  const podman = { ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
+  /** The machine runtime, and the only one there is. Its refusals are the real client's refusals: an
+   *  nspawn environment holds no image and no named volume handle, so those methods reject rather than
+   *  quietly agreeing — a fake that accepted them would hide every caller still routing work to a
+   *  capability this release does not have. */
+  const nspawn = {
+    ensureProjectImage: vi.fn(async () => { throw new Error('Nothing builds a root filesystem on the host'); }),
     containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
     create: vi.fn(async (spec: any) => {
       if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
-      if (spec.disk) diskFiles.set(spec.disk.id, diskFiles.get(spec.disk.id) ?? new Map());
+      if (!spec.disk || spec.disk.runtime !== 'nspawn') throw new Error('systemd-nspawn runs only rootfs-backed environments');
+      // The disk outlives the envelope, so an envelope written over one that already exists finds
+      // everything the last one left there.
+      diskFiles.set(spec.disk.id, diskFiles.get(spec.disk.id) ?? new Map());
       const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row;
     }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
@@ -88,99 +91,39 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     update: vi.fn(async () => {}),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     removeByName: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
-    removeSnapshotImage: vi.fn(), removeSnapshotStorage: vi.fn(), removeRetainedSiteImage: vi.fn(),
+    removeStorage: vi.fn(), removeGenerationStorage: vi.fn(), removeSnapshotStorage: vi.fn(),
+    removeDiskPath: vi.fn(), syncDiskTree: vi.fn(),
+    // Keyed by disk id: what a guest writes lands on the DISK, which is the whole reason an envelope can
+    // be thrown away and rebuilt without the environment losing anything.
     exec: vi.fn(async (spec: any, _executionId: string, _argv: string[], options: any = {}) => {
-      if (spec.disk && options.input?.includes('/etc/elowen-rootfs-marker')) diskFiles.get(spec.disk.id)?.set('/etc/elowen-rootfs-marker', 'marker');
+      const input = String(options.input ?? '');
+      if (spec.disk && input.includes('/etc/elowen-rootfs-marker')) diskFiles.get(spec.disk.id)?.set('/etc/elowen-rootfs-marker', 'marker');
+      const write = /elowen-guest-write:([^\s]+):([^\s]+)/.exec(input);
+      if (write && spec.disk) diskFiles.get(spec.disk.id)?.set(write[1], write[2]);
+      const read = /elowen-guest-read:([^\s]+)/.exec(input);
+      if (read && spec.disk) return { code: 0, stdout: diskFiles.get(spec.disk.id)?.get(read[1]) ?? '', stderr: '', truncated: false };
       return { code: 0, stdout: '', stderr: '', truncated: false };
     }),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
     waitForSystemBus: vi.fn(async () => {}),
     systemRunning: vi.fn(async () => 'running'),
-    preflightRootfsMigration: vi.fn(async () => ({ requiredBytes: 1024, freeBytes: 1024 * 1024 })),
+    pause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'paused'; }),
     unpause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
-    cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
-    // The real client owns what goes on the launcher's stdin and hands it back: for Podman that is the
-    // caller's own bytes, for a transport whose privileged request precedes them it is both. A fake that
-    // dropped the field would let the runtime stop forwarding it without a test noticing.
-    prepareExecution: vi.fn(async (_spec: any, _executionId: string, _argv: string[], options: any = {}) => ({
-      launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } }, stdin: options.input })),
-    removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(), importSnapshotVolume: vi.fn(), siteDataArchive: vi.fn(),
-    containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
-  };
-  // What a legacy container's root filesystem holds before it is migrated. The capture below is the one
-  // place those bytes become a host archive, and the materialization is the one place they become the
-  // disk — so a marker written here has to come out of `diskFiles` on the other side.
-  const legacyRootfs = new Map<string, string>();
-  // Which migration export archives are still on the host. `complete` is the point they stop having a reader.
-  const archives = new Set<string>();
-  const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn(),
-    removeDisk: vi.fn(async (spec: any) => { diskFiles.delete(spec.disk.id); }),
-    discardRootfsExport: vi.fn(async (_spec: any, migrationId: string) => archives.delete(migrationId)),
-    captureRootfsExport: vi.fn(async (spec: any, migrationId: string) => (archives.add(migrationId), {
-      migrationId, resource: spec.resource, generation: spec.generation,
-      specHash: spec.specHash, archivePath: join(root, 'migrations', migrationId, 'rootfs.tar'),
-      containerId: containers.get(spec.name).id, sizeBytes: 4096, sha256: 'e'.repeat(64) })),
-    materializeMigratedDisk: vi.fn(async (spec: any) => { diskFiles.set(spec.disk.id, new Map(legacyRootfs)); }) };
-  /** The machine runtime the same environment can be handed over to. It keeps its own envelope table:
-   *  a runtime change holds a Podman container and an nspawn machine for the same environment at once,
-   *  and a fake that shared one map could not tell which of them a step actually addressed. */
-  const machines = new Map<string, any>();
-  const ownership: string[] = [];
-  /** Who the root filesystem's ids actually belong to right now, which is the state that decides whether
-   *  anything can read the disk at all. `mixed` is the tree an ownership pass left half converted: the
-   *  outcome neither runtime can boot, and the one a failed rollback must never be able to strand. */
-  const disk = { owner: 'podman', failReverse: false };
-  const nspawn = {
-    containerInventory: vi.fn(async () => new Map([...machines].map(([name, row]) => [name, row.state]))),
-    containerExists: vi.fn(async (spec: any) => machines.has(spec.name)),
-    inspect: vi.fn(async (spec: any) => machines.get(spec.name) ?? null),
-    create: vi.fn(async (spec: any) => {
-      if (!spec.disk || spec.disk.runtime !== 'nspawn') throw new Error('systemd-nspawn runs only rootfs-backed environments');
-      // The disk outlives the envelope, so an envelope written over one that already exists finds
-      // everything the last one left there.
-      diskFiles.set(spec.disk.id, diskFiles.get(spec.disk.id) ?? new Map());
-      const row = { id: 'c'.repeat(64), state: 'stopped' };
-      machines.set(spec.name, row);
-      return row;
-    }),
-    start: vi.fn(async (spec: any) => { machines.get(spec.name).state = 'running'; }),
-    stop: vi.fn(async (spec: any) => { machines.get(spec.name).state = 'stopped'; }),
-    remove: vi.fn(async (spec: any) => { machines.delete(spec.name); }),
-    unpause: vi.fn(async (spec: any) => { machines.get(spec.name).state = 'running'; }),
-    waitForSystemBus: vi.fn(async () => {}),
-    systemRunning: vi.fn(async () => 'running'),
-    // The ownership pass is the only step that touches the disk, so the fake records its direction:
-    // a rollback has to put the tree back where the Podman envelope can read it.
-    shiftOwnership: vi.fn(async (_spec: any, options: any = {}) => {
-      const target = options.target ?? 'nspawn';
-      ownership.push(target);
-      // A pass that dies part way has already rewritten some of the tree, so it leaves neither scheme
-      // whole. Modelling that is the only way a test can tell a rollback that recovered the disk from one
-      // that merely stopped touching it.
-      if (target === 'podman' && disk.failReverse) { disk.owner = 'mixed'; throw new Error('ownership reversal interrupted'); }
-      disk.owner = target;
-      return target === 'nspawn' ? { uidBase: 1073741824, uidSize: 65536, previousUidBase: 100000 } : { uidBase: options.uidBase };
-    }),
-    // Keyed by disk id, like the container fake: what a guest writes lands on the DISK, which is the
-    // whole reason an envelope can be thrown away and rebuilt without the environment losing anything.
-    exec: vi.fn(async (spec: any, _executionId: string, _argv: string[], options: any = {}) => {
-      const write = /elowen-guest-write:([^\s]+):([^\s]+)/.exec(String(options.input ?? ''));
-      if (write && spec.disk) diskFiles.get(spec.disk.id)?.set(write[1], write[2]);
-      const read = /elowen-guest-read:([^\s]+)/.exec(String(options.input ?? ''));
-      if (read && spec.disk) return { code: 0, stdout: diskFiles.get(spec.disk.id)?.get(read[1]) ?? '', stderr: '', truncated: false };
-      return { code: 0, stdout: '', stderr: '', truncated: false };
-    }),
-    startPublication: vi.fn(), stopPublication: vi.fn(), activePublications: vi.fn(async () => []),
-    update: vi.fn(async () => {}), pause: vi.fn(async (spec: any) => { machines.get(spec.name).state = 'paused'; }),
-    cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
-    removeByName: vi.fn(async (spec: any) => { machines.delete(spec.name); }),
-    removeStorage: vi.fn(), removeSnapshotStorage: vi.fn(),
-    // Exactly what the real client answers: nspawn keeps no named volume handles and refuses the method
-    // rather than emulating one. A fake that silently accepted the call would hide every caller that
-    // still routes a handle removal to the runtime holding the envelope.
-    removeVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
+    cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(), startPreview: vi.fn(),
+    // The real client owns what goes on the launcher's stdin and hands it back: the privileged request
+    // travels ahead of the caller's own bytes in the same pipe. A fake that dropped the field would let
+    // the runtime stop forwarding it without a test noticing.
     prepareExecution: vi.fn(async (_spec: any, _executionId: string, _argv: string[], options: any = {}) => ({
       launch: { type: 'argv', file: '/usr/bin/sudo', args: ['-n', '/usr/local/libexec/elowen-site-gateway', ''], env: { HOME: '/host-service' } }, stdin: options.input })),
+    // Every capability a machine environment does NOT have, refused the way the real client refuses it.
+    // Silently accepting one would hide a caller that still routes work to an image store or a named
+    // volume handle, which is exactly the drift these refusals exist to catch.
+    removeVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
+    inspectVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
+    importSnapshotVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
+    siteDataArchive: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
+    removeSnapshotImage: vi.fn(async () => { throw new Error('A disk-backed environment snapshots its disk, not an image'); }),
+    containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
     // The rows the helper reports, in the helper's own shape. `unready` carries the details a real host
     // returns, because what the runtime does with them — quoting them back in its refusal — is the thing
     // worth proving, and an empty detail would prove nothing.
@@ -195,43 +138,37 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
         { id: 'unit:elowen-machine', label: 'Machine unit template', ok: false, detail: 'on disk but the manager has not read it — run: systemctl daemon-reload' },
       ] })),
   };
-  const dependencies = { ctx, db, dataDir: root, podman: podman as unknown as PodmanClient,
-    nspawn: nspawn as unknown as PodmanClient, storage: storage as unknown as ContainerStorage };
-  // Clearing the marker on the row rather than never writing it: the row has to be inserted by the
-  // runtime's own path, so this is the state a pre-existing environment is in, reached the way it is
-  // actually reached.
-  const predate = () => { if (!machineHost) db.prepare("UPDATE p_sandbox_runtimes SET spec_json=json_remove(spec_json,'$.runtimePending')").run(); };
-  const existing = (target: any) => (machineHost ? target : { ...target,
-    requestEnvironment: async (value: any) => { const result = await target.requestEnvironment(value); predate(); return result; },
-    registerSiteEnvironment: async (value: any) => { const result = await target.registerSiteEnvironment(value); predate(); return result; },
-    reconcile: async (...args: any[]) => { predate(); return await target.reconcile(...args); } });
-  const runtime = existing(createEnvironmentRuntime({ ...dependencies, daemon: true }));
-  const fork = existing(createEnvironmentRuntime({ ...dependencies, daemon: false }));
+  const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn(),
+    removeDisk: vi.fn(async (spec: any) => { diskFiles.delete(spec.disk.id); }) };
+  const dependencies = { ctx, db, dataDir: root, nspawn: nspawn as unknown as NspawnClient,
+    storage: storage as unknown as ContainerStorage };
+  const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
+  const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, nspawn, machines, ownership, disk, storage, members, users, project, stores, root, containers, diskFiles, legacyRootfs, archives, warn, forwarders, publicationSocket, staleSocket, endForwarders };
+  return { runtime, fork, db, sql, ctx, nspawn, storage, members, users, project, stores, root, containers, diskFiles, warn, forwarders, publicationSocket, staleSocket, endForwarders };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
 describe('durable managed environment lifecycle', () => {
   it('keeps one rootfs disk across envelope recreation and limit changes, then deletes it after handles', async () => {
-    const { runtime, podman, storage, containers, diskFiles } = setup();
+    const { runtime, nspawn, storage, containers, diskFiles } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'disk-start', action: { kind: 'start' } });
     await runtime.reconcile();
-    const initial = podman.create.mock.calls[0]![0];
+    const initial = nspawn.create.mock.calls[0]![0];
     expect(initial.disk).toMatchObject({ format: 2, sourceImage: PROJECT_ROOTFS });
-    await podman.exec(initial, 'f'.repeat(32), ['/bin/bash', '-s'], { input: 'printf marker >/etc/elowen-rootfs-marker' });
+    await nspawn.exec(initial, 'f'.repeat(32), ['/bin/bash', '-s'], { input: 'printf marker >/etc/elowen-rootfs-marker' });
     const diskId = initial.disk.id;
     containers.delete(initial.name);
 
     await runtime.requestEnvironment({ ...input, requestId: 'disk-recreate', action: { kind: 'recreate' } });
     await runtime.reconcile();
-    const recreated = podman.create.mock.calls.at(-1)![0];
+    const recreated = nspawn.create.mock.calls.at(-1)![0];
     expect(recreated.disk.id).toBe(diskId);
     expect(diskFiles.get(diskId)?.get('/etc/elowen-rootfs-marker')).toBe('marker');
 
     await runtime.requestEnvironment({ ...input, accountUserId: 3, requestId: 'disk-limits', action: { kind: 'limits', limits: { cpus: 2, memoryMb: 2048, pidsLimit: 1024 } } });
     await runtime.reconcile();
-    expect((podman.update.mock.calls.at(-1) as any[])[0].disk.id).toBe(diskId);
+    expect((nspawn.update.mock.calls.at(-1) as any[])[0].disk.id).toBe(diskId);
 
     await runtime.requestEnvironment({ ...input, requestId: 'disk-delete', action: { kind: 'delete' } });
     await runtime.reconcile();
@@ -240,10 +177,10 @@ describe('durable managed environment lifecycle', () => {
   });
 
   it('restores a format 2 snapshot into new disks and retains prior disks for rollback', async () => {
-    const { runtime, podman, storage, diskFiles } = setup();
+    const { runtime, nspawn, storage, diskFiles } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'snapshot-start', action: { kind: 'start' } });
     await runtime.reconcile();
-    const first = podman.create.mock.calls.at(-1)![0];
+    const first = nspawn.create.mock.calls.at(-1)![0];
     storage.snapshot.mockImplementation(async (_spec: any, snapshotId: string) => ({ version: 2, snapshotId,
       sourceImage: { reference: first.image, id: 'sha256:' + 'd'.repeat(64) }, trees: [], worktrees: [] }));
     const capture = await runtime.requestEnvironment({ ...input, requestId: 'snapshot-v2', action: { kind: 'snapshot' } });
@@ -254,7 +191,7 @@ describe('durable managed environment lifecycle', () => {
 
     await runtime.requestEnvironment({ ...input, requestId: 'restore-v2', action: { kind: 'restore', snapshotId: saved.snapshotId } });
     await runtime.reconcile();
-    const second = podman.create.mock.calls.at(-1)![0];
+    const second = nspawn.create.mock.calls.at(-1)![0];
     expect(second.disk.id).not.toBe(first.disk.id);
     expect(storage.restoreVolumes).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ id: first.disk.id }) }), saved.snapshotId,
       expect.objectContaining({ disk: expect.objectContaining({ id: second.disk.id }) }));
@@ -262,13 +199,13 @@ describe('durable managed environment lifecycle', () => {
 
     await runtime.requestEnvironment({ ...input, requestId: 'rollback-v2', action: { kind: 'restore', snapshotId: saved.snapshotId } });
     await runtime.reconcile();
-    const third = podman.create.mock.calls.at(-1)![0];
+    const third = nspawn.create.mock.calls.at(-1)![0];
     expect(third.disk.id).not.toBe(second.disk.id);
     expect(diskFiles.has(second.disk.id)).toBe(true);
   });
 
   it('restores a rootfs-backed Site without snapshot data through disk restore while stopped', async () => {
-    const { runtime, root, podman, storage, containers } = setup();
+    const { runtime, root, nspawn, storage, containers } = setup();
     const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
       workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
@@ -278,7 +215,7 @@ describe('durable managed environment lifecycle', () => {
     expect(registered.state).toBe('unprovisioned');
     await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
     await runtime.reconcile();
-    const first = podman.create.mock.calls.at(-1)![0];
+    const first = nspawn.create.mock.calls.at(-1)![0];
     expect(first.disk).toMatchObject({ format: 2, sourceImage: registration.image });
     storage.snapshot.mockImplementation(async (_spec: any, snapshotId: string) => ({ version: 2, snapshotId,
       sourceImage: { reference: first.disk.sourceImage, id: 'sha256:' + 'd'.repeat(64) }, trees: [{ component: 'rootfs' }] }));
@@ -290,7 +227,7 @@ describe('durable managed environment lifecycle', () => {
       sourceImage: { reference: first.disk.sourceImage, id: 'sha256:' + 'd'.repeat(64) }, trees: [{ component: 'rootfs' }] });
     storage.restoreVolumes.mockImplementation(async () => { expect(containers.get(first.name)?.state).toBe('stopped'); });
     storage.restoreVolumes.mockClear();
-    podman.importSnapshotVolume.mockClear();
+    nspawn.importSnapshotVolume.mockClear();
 
     const restore = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-restore-no-data',
       action: { kind: 'restore', snapshotId: saved!.snapshotId, restoreData: false } });
@@ -299,8 +236,8 @@ describe('durable managed environment lifecycle', () => {
     expect(completed, JSON.stringify(completed)).toMatchObject({ status: 'succeeded' });
 
     expect(storage.restoreVolumes).toHaveBeenCalledOnce();
-    expect(podman.importSnapshotVolume).not.toHaveBeenCalled();
-    expect(podman.stop.mock.invocationCallOrder.at(-1)).toBeLessThan(storage.restoreVolumes.mock.invocationCallOrder[0]!);
+    expect(nspawn.importSnapshotVolume).not.toHaveBeenCalled();
+    expect(nspawn.stop.mock.invocationCallOrder.at(-1)).toBeLessThan(storage.restoreVolumes.mock.invocationCallOrder[0]!);
   });
 
   // The artifact reference a row carries is inside its specification hash and inside the machine's own
@@ -334,47 +271,28 @@ describe('durable managed environment lifecycle', () => {
     expect(updated.input.disk.sourceImage).toBe(carried);
   });
 
-  it('keeps a stored specification without disk on the legacy image-backed driver', async () => {
-    const { runtime, sql, podman } = setup();
-    await runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } });
-    const row = sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
-    const legacy = JSON.parse(row.spec_json);
-    delete legacy.input.disk;
-    sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(legacy));
-    await runtime.reconcile();
-    expect(podman.create.mock.calls.at(-1)![0].disk).toBeUndefined();
-  });
-
-  // The project is mounted under its own name, and a container created before that must never be adopted:
-  // its specification identity changed, so adopting it would run the turn against an unverified container.
-  it('mounts the project at its own name and refuses to adopt a container from the previous layout', async () => {
-    const { runtime, podman, db, containers, warn } = setup();
+  // The project is mounted under its own name, and an envelope written before that must never be adopted:
+  // its specification identity changed, so adopting it would run the turn against an unverified machine.
+  it('mounts the project at its own name and refuses a row from the previous layout by name', async () => {
+    const { runtime, nspawn, db } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'named-start', action: { kind: 'start' } });
     await runtime.reconcile();
-    expect(podman.create.mock.calls[0]![0].workdir).toBe('/sales-dashboard');
-    expect(podman.create.mock.calls[0]![0].mounts.map((mount: any) => mount.target)).toEqual(['/sales-dashboard', '/root', '/data', '/run/elowen']);
+    expect(nspawn.create.mock.calls[0]![0].workdir).toBe('/sales-dashboard');
+    expect(nspawn.create.mock.calls[0]![0].mounts.map((mount: any) => mount.target)).toEqual(['/sales-dashboard', '/root', '/data', '/run/elowen']);
 
-    // Rewind the row to what it looked like before this change: no mount point, container already bound.
+    // Rewind the row to what it looked like before this change: no mount point, envelope already bound.
     const row = db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
     const spec = JSON.parse(row.spec_json);
     delete spec.input.workspaceTarget;
     db.prepare("UPDATE p_sandbox_runtimes SET spec_json=?, state='stopped' WHERE kind='project' AND resource_id='7'").run(JSON.stringify(spec));
 
-    await runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-    const failed = await runtime.environmentFor(input);
-    expect(failed.lastError).toMatch(/predates the named project mount/);
-    expect(warn.mock.calls.flat().join(' ')).toMatch(/must be recreated at \/sales-dashboard/);
-
-    // Once the operator has removed that container, the environment is recreated at the new mount point
-    // from the same storage volumes, so the project's files survive.
-    containers.clear();
-    podman.create.mockClear();
-    await runtime.requestEnvironment({ ...input, requestId: 'recreate-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-    expect(podman.create).toHaveBeenCalledOnce();
-    expect(podman.create.mock.calls[0]![0].workdir).toBe('/sales-dashboard');
-    expect((await runtime.environmentFor(input)).state).toBe('running');
+    // Such a row predates the machine runtime entirely: its root filesystem was never materialized from a
+    // published artifact, so filling the mount point in would silently rewrite an identity nothing can
+    // prove. It is named and refused, with its remedy, rather than adopted or repaired in place.
+    await expect(runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } }))
+      .rejects.toMatchObject({ code: 'unsupported_runtime', status: 409 });
+    await expect(runtime.requestEnvironment({ ...input, requestId: 'legacy-start-2', action: { kind: 'start' } }))
+      .rejects.toThrow(/predates the named project mount[\s\S]*delete the environment and create it again/);
   });
 
   // Reconcile sweeps publications of every running project without going through `rowFor`, so a running
@@ -394,7 +312,7 @@ describe('durable managed environment lifecycle', () => {
   // A new project environment used to be pinned to the figures compiled into the plugin, with nowhere to
   // change them; the administrator's settings now decide what it is provisioned with.
   it('provisions a project environment with the administrator resource defaults', async () => {
-    const { runtime, podman } = setup({ defaultCpus: 2.5, defaultMemoryMb: 4096, defaultPidsLimit: 1024 });
+    const { runtime, nspawn } = setup({ defaultCpus: 2.5, defaultMemoryMb: 4096, defaultPidsLimit: 1024 });
     const expected = { cpus: 2.5, memoryMb: 4096, pidsLimit: 1024 };
     // Reported before the environment exists, so the figures shown are the ones it would be created with.
     expect((await runtime.environmentFor(input)).limits).toEqual(expected);
@@ -402,7 +320,7 @@ describe('durable managed environment lifecycle', () => {
     await runtime.reconcile();
     expect((await runtime.environmentFor(input)).limits).toEqual(expected);
     // And they reach the container, not just the record.
-    expect(podman.create.mock.calls[0]![0].limits).toEqual({ cpus: 2.5, memoryMb: 4096, pidsLimit: 1024 });
+    expect(nspawn.create.mock.calls[0]![0].limits).toEqual({ cpus: 2.5, memoryMb: 4096, pidsLimit: 1024 });
   });
 
   it('keeps the built-in figure for a setting that is missing or unusable', async () => {
@@ -425,26 +343,26 @@ describe('durable managed environment lifecycle', () => {
   });
 
   it('uses one container inventory and skips full inspection for healthy environments', async () => {
-    const { runtime, podman } = setup();
+    const { runtime, nspawn } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
-    podman.containerInventory.mockClear();
-    podman.inspect.mockClear();
+    nspawn.containerInventory.mockClear();
+    nspawn.inspect.mockClear();
 
     await runtime.reconcile();
 
-    expect(podman.containerInventory).toHaveBeenCalledOnce();
-    expect(podman.inspect).not.toHaveBeenCalled();
+    expect(nspawn.containerInventory).toHaveBeenCalledOnce();
+    expect(nspawn.inspect).not.toHaveBeenCalled();
   });
 
   it('recovers a desired running environment whose container was left created after a host reboot', async () => {
-    const { runtime, containers, podman, db } = setup();
+    const { runtime, containers, nspawn, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     containers.values().next().value.state = 'created';
-    podman.start.mockClear();
+    nspawn.start.mockClear();
 
     await runtime.reconcile();
 
-    expect(podman.start).toHaveBeenCalledOnce();
+    expect(nspawn.start).toHaveBeenCalledOnce();
     expect((await runtime.environmentFor(input)).state).toBe('running');
     expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
       .map((entry: any) => entry.message).join('\n')).toMatch(/container not running \(created\)/);
@@ -453,8 +371,8 @@ describe('durable managed environment lifecycle', () => {
   it('names what the sweep observed when a start failed, instead of claiming a host reboot', async () => {
     // The sweep runs on a timer and cannot tell why an envelope is down. Here nothing rebooted: the first
     // start failed, so the retry has to say what it saw rather than name a cause it never established.
-    const { runtime, podman, db } = setup();
-    podman.create.mockRejectedValueOnce(new Error('the disk tree sync failed'));
+    const { runtime, nspawn, db } = setup();
+    nspawn.create.mockRejectedValueOnce(new Error('the disk tree sync failed'));
     await runtime.requestEnvironment({ ...input, requestId: 'failed-start', action: { kind: 'start' } });
     await runtime.reconcile();
     expect((await runtime.environmentFor(input)).state).toBe('failed');
@@ -470,38 +388,24 @@ describe('durable managed environment lifecycle', () => {
   // A container that fails the ownership check (a pre-batch site container, say) is not ours to restart,
   // and one such row must not end the sweep before the environments behind it are looked at.
   it('skips an environment whose container cannot be verified and keeps sweeping the rest', async () => {
-    const { runtime, containers, podman, db } = setup();
+    const { runtime, containers, nspawn, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     containers.values().next().value.state = 'created';
-    podman.inspect.mockImplementationOnce(async () => { throw new Error('Container ownership or runtime specification mismatch: labels, mounts'); });
-    podman.start.mockClear();
+    nspawn.inspect.mockImplementationOnce(async () => { throw new Error('Container ownership or runtime specification mismatch: labels, mounts'); });
+    nspawn.start.mockClear();
 
     await expect(runtime.reconcile()).resolves.toBeUndefined();
 
-    expect(podman.start).not.toHaveBeenCalled();
+    expect(nspawn.start).not.toHaveBeenCalled();
     expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
       .map((entry: any) => entry.message).join('\n')).toMatch(/Automatic recovery skipped: .*mismatch: labels, mounts/);
 
     await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledOnce();
-  });
-
-  it('never inspects or recovers an environment that still carries the pre-mount layout', async () => {
-    const { runtime, containers, podman, db } = setup();
-    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
-    containers.values().next().value.state = 'created';
-    const row = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
-    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify({ ...JSON.parse(row.spec_json), legacyWorkspaceLayout: true }));
-    podman.inspect.mockClear(); podman.start.mockClear();
-
-    await runtime.reconcile();
-
-    expect(podman.inspect).not.toHaveBeenCalled();
-    expect(podman.start).not.toHaveBeenCalled();
+    expect(nspawn.start).toHaveBeenCalledOnce();
   });
 
   it('recreates a missing limited container from its volumes and restores publications', async () => {
-    const { runtime, containers, podman, root, endForwarders, staleSocket } = setup();
+    const { runtime, containers, nspawn, root, endForwarders, staleSocket } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const changed = { cpus: 2, memoryMb: 2048, pidsLimit: 1024 };
     await runtime.requestEnvironment({ ...input, accountUserId: 3, action: { kind: 'limits', limits: changed } }); await runtime.reconcile();
@@ -513,32 +417,32 @@ describe('durable managed environment lifecycle', () => {
     containers.clear();
     await endForwarders();
     staleSocket(publication.socketPath);
-    podman.create.mockClear();
-    podman.startPublication.mockClear();
+    nspawn.create.mockClear();
+    nspawn.startPublication.mockClear();
 
     await runtime.reconcile();
 
-    expect(podman.create).toHaveBeenCalledOnce();
-    const recreated = podman.create.mock.calls[0]![0];
+    expect(nspawn.create).toHaveBeenCalledOnce();
+    const recreated = nspawn.create.mock.calls[0]![0];
     expect(recreated.expectedId).toBeUndefined();
     expect(recreated.limits).toEqual(changed);
     expect(recreated.creationLimits ?? recreated.limits).toEqual(changed);
     expect(readFileSync(marker, 'utf8')).toBe('still here');
-    expect(podman.startPublication).toHaveBeenCalledWith(expect.anything(), 'shop', expect.anything());
+    expect(nspawn.startPublication).toHaveBeenCalledWith(expect.anything(), 'shop', expect.anything());
     expect((await runtime.environmentFor(input)).state).toBe('running');
   });
 
   it('recreates a limited container with the changed limits as its new creation baseline', async () => {
-    const { runtime, podman } = setup();
+    const { runtime, nspawn } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'lim-start', action: { kind: 'start' } }); await runtime.reconcile();
     const changed = { cpus: 2, memoryMb: 2048, pidsLimit: 1024 };
     await runtime.requestEnvironment({ ...input, accountUserId: 3, requestId: 'lim-limits', action: { kind: 'limits', limits: changed } }); await runtime.reconcile();
-    podman.create.mockClear();
+    nspawn.create.mockClear();
 
     await runtime.requestEnvironment({ ...input, requestId: 'lim-recreate', action: { kind: 'recreate' } }); await runtime.reconcile();
 
-    expect(podman.create).toHaveBeenCalledOnce();
-    const recreated = podman.create.mock.calls[0]![0];
+    expect(nspawn.create).toHaveBeenCalledOnce();
+    const recreated = nspawn.create.mock.calls[0]![0];
     expect(recreated.limits).toEqual(changed);
     expect(recreated.creationLimits ?? recreated.limits).toEqual(changed);
     expect((await runtime.environmentFor(input)).state).toBe('running');
@@ -550,9 +454,9 @@ describe('durable managed environment lifecycle', () => {
   it('reaches recovery attempts one through four after short successful restarts and manual start resets them', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
-    const { runtime, containers, podman, db } = setup();
+    const { runtime, containers, nspawn, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
-    podman.start.mockClear();
+    nspawn.start.mockClear();
     const stopAgain = () => { containers.values().next().value.state = 'created'; };
 
     stopAgain(); await runtime.reconcile();
@@ -562,7 +466,7 @@ describe('durable managed environment lifecycle', () => {
 
     expect(db.prepare("SELECT json_extract(checkpoint_json,'$.autoRecovery.attempt') AS attempt FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%' ORDER BY rowid").all())
       .toEqual([{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }, { attempt: 4 }]);
-    expect(podman.start).toHaveBeenCalledTimes(4);
+    expect(nspawn.start).toHaveBeenCalledTimes(4);
 
     stopAgain(); await runtime.reconcile();
     expect((await runtime.environmentFor(input))).toMatchObject({ state: 'failed', lastError: expect.stringMatching(/automatic recovery failed after 4 attempts/i) });
@@ -577,29 +481,29 @@ describe('durable managed environment lifecycle', () => {
   it('backs off repeated automatic recovery failures and eventually marks the environment failed', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
-    const { runtime, containers, podman, db } = setup();
+    const { runtime, containers, nspawn, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     containers.values().next().value.state = 'created';
-    podman.start.mockRejectedValue(new Error('container exited during boot'));
-    podman.start.mockClear();
+    nspawn.start.mockRejectedValue(new Error('container exited during boot'));
+    nspawn.start.mockClear();
 
     await runtime.reconcile();
     await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(1);
+    expect(nspawn.start).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(29_999); await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(1);
+    expect(nspawn.start).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1); await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(2);
+    expect(nspawn.start).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(119_999); await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(2);
+    expect(nspawn.start).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1); await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(3);
+    expect(nspawn.start).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(599_999); await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(3);
+    expect(nspawn.start).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(1); await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(4);
+    expect(nspawn.start).toHaveBeenCalledTimes(4);
     await vi.advanceTimersByTimeAsync(3_600_000); await runtime.reconcile();
-    expect(podman.start).toHaveBeenCalledTimes(4);
+    expect(nspawn.start).toHaveBeenCalledTimes(4);
     expect(db.prepare("SELECT state,error FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toMatchObject({
       state: 'failed', error: expect.stringMatching(/automatic recovery failed after 4 attempts/i),
     });
@@ -608,33 +512,33 @@ describe('durable managed environment lifecycle', () => {
   it('resets automatic recovery attempts after the stability window', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
-    const { runtime, containers, podman, db } = setup();
+    const { runtime, containers, nspawn, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     containers.values().next().value.state = 'created';
     await runtime.reconcile();
     await vi.advanceTimersByTimeAsync(900_000);
     containers.values().next().value.state = 'created';
-    podman.start.mockClear();
+    nspawn.start.mockClear();
 
     await runtime.reconcile();
 
-    expect(podman.start).toHaveBeenCalledOnce();
+    expect(nspawn.start).toHaveBeenCalledOnce();
     expect(db.prepare("SELECT json_extract(checkpoint_json,'$.autoRecovery.attempt') AS attempt FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%' ORDER BY rowid").all())
       .toEqual([{ attempt: 1 }, { attempt: 1 }]);
   });
 
   it('leaves explicit stopped and deleted intents untouched during runtime recovery', async () => {
-    const { runtime, containers, podman, db } = setup();
+    const { runtime, containers, nspawn, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     containers.values().next().value.state = 'created';
-    podman.start.mockClear();
+    nspawn.start.mockClear();
 
     db.prepare("UPDATE p_sandbox_runtimes SET desired_state='stopped',state='stopped' WHERE kind='project' AND resource_id='7'").run();
     await runtime.reconcile();
     db.prepare("UPDATE p_sandbox_runtimes SET desired_state='deleted',state='deleting' WHERE kind='project' AND resource_id='7'").run();
     await runtime.reconcile();
 
-    expect(podman.start).not.toHaveBeenCalled();
+    expect(nspawn.start).not.toHaveBeenCalled();
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%'").get()).toEqual({ n: 0 });
   });
 
@@ -671,51 +575,51 @@ describe('durable managed environment lifecycle', () => {
   });
 
   it('only the daemon executes a fork-recorded idempotent start', async () => {
-    const { runtime, fork, podman } = setup();
+    const { runtime, fork, nspawn } = setup();
     const op = await fork.requestEnvironment({ ...input, requestId: 'start-one', action: { kind: 'start' } });
     expect(op.status).toBe('pending');
     expect(await fork.requestEnvironment({ ...input, requestId: 'start-one', action: { kind: 'start' } })).toEqual(op);
     await fork.reconcile();
-    expect(podman.create).not.toHaveBeenCalled();
+    expect(nspawn.create).not.toHaveBeenCalled();
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
     expect((await runtime.environmentFor(input)).state).toBe('running');
-    expect(podman.create).toHaveBeenCalledOnce();
+    expect(nspawn.create).toHaveBeenCalledOnce();
     await runtime.reconcile();
-    expect(podman.create).toHaveBeenCalledOnce();
+    expect(nspawn.create).toHaveBeenCalledOnce();
   });
   it('rechecks membership and generation before dispatching durable work', async () => {
-    const { runtime, fork, members, podman } = setup();
+    const { runtime, fork, members, nspawn } = setup();
     const op = await fork.requestEnvironment({ ...input, action: { kind: 'start' } });
     members.delete(1);
     await runtime.reconcile();
-    expect(podman.create).not.toHaveBeenCalled();
+    expect(nspawn.create).not.toHaveBeenCalled();
     expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 3 }))?.status).toBe('failed');
     await expect(runtime.environmentFor(input)).rejects.toThrow(/access/i);
   });
   it('preserves the same container across explicit stop/start and refuses implicit restart', async () => {
-    const { runtime, podman } = setup();
+    const { runtime, nspawn } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     await runtime.requestEnvironment({ ...input, action: { kind: 'stop' } }); await runtime.reconcile();
     await expect(runtime.prepareExecution({ command: { type: 'shell', command: 'true' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1)).rejects.toThrow(/stopped/i);
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
-    expect(podman.create).toHaveBeenCalledOnce();
-    expect(podman.stop).toHaveBeenCalledOnce();
+    expect(nspawn.create).toHaveBeenCalledOnce();
+    expect(nspawn.stop).toHaveBeenCalledOnce();
   });
   it('revokes tracked actor work without stopping shared project services', async () => {
-    const { runtime, members, podman, sql } = setup();
+    const { runtime, members, nspawn, sql } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
     expect(prepared.mode).toBe('managed');
     // The shell script is the bootstrap's declared prefix, written once, so anything the caller sends
     // after it stays on stdin for the program rather than being swallowed by the shell.
     expect(prepared.stdin.equals(Buffer.from('sleep 5'))).toBe(true);
-    expect(podman.prepareExecution).toHaveBeenCalledWith(expect.anything(), expect.any(String),
+    expect(nspawn.prepareExecution).toHaveBeenCalledWith(expect.anything(), expect.any(String),
       ['/usr/bin/python3', '-c', expect.stringContaining('memfd_create'), '7'], expect.anything());
     members.delete(1);
     await runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 });
-    expect(podman.cancelExecution).toHaveBeenCalled();
-    expect(podman.stop).not.toHaveBeenCalled();
+    expect(nspawn.cancelExecution).toHaveBeenCalled();
+    expect(nspawn.stop).not.toHaveBeenCalled();
     // 2 records a cancellation whose termination was PROVEN, which is what the release below reads.
     expect(sql.prepare('SELECT cancel_requested FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toMatchObject({ cancel_requested: 2 });
 
@@ -723,14 +627,14 @@ describe('durable managed environment lifecycle', () => {
     // must retire the lease and nothing else: a normal release ends in an unmask, and unmasking the
     // cancellation's tombstone would reopen the late-launch race that cancelling had just closed.
     await prepared.lease.release();
-    expect(podman.releaseExecution).not.toHaveBeenCalled();
-    expect(podman.cancelExecution).toHaveBeenCalledOnce();
+    expect(nspawn.releaseExecution).not.toHaveBeenCalled();
+    expect(nspawn.cancelExecution).toHaveBeenCalledOnce();
     expect(sql.prepare('SELECT 1 FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toBeUndefined();
   });
   // Cancelling and releasing the same execution race in practice: the terminal cancels a running command
   // and then releases the lease in its `finally`, and a user closing the tab can do both at once.
   it('serializes a concurrent cancel and release into one cancellation and one lease deletion', async () => {
-    const { runtime, podman, sql } = setup();
+    const { runtime, nspawn, sql } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
 
@@ -738,32 +642,32 @@ describe('durable managed environment lifecycle', () => {
 
     // Whichever order they settle in, the guest is cancelled once and never un-cancelled, and the lease
     // is retired exactly once.
-    expect(podman.cancelExecution).toHaveBeenCalledOnce();
-    expect(podman.releaseExecution).not.toHaveBeenCalled();
+    expect(nspawn.cancelExecution).toHaveBeenCalledOnce();
+    expect(nspawn.releaseExecution).not.toHaveBeenCalled();
     expect(sql.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toEqual({ n: 0 });
   });
 
   it('cancels once however many times it is asked', async () => {
-    const { runtime, podman } = setup();
+    const { runtime, nspawn } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
 
     await prepared.lease.cancel();
     await prepared.lease.cancel();
     await Promise.all([prepared.lease.cancel(), prepared.lease.cancel()]);
-    expect(podman.cancelExecution).toHaveBeenCalledOnce();
+    expect(nspawn.cancelExecution).toHaveBeenCalledOnce();
   });
 
   // A cancellation that could not be PROVEN is not a cancellation. It must not record itself as one, and
   // the release behind it has to fall back to the fully verified path so recovery still has its footing.
   it('keeps the verified fallback when a cancellation cannot be proven', async () => {
-    const { runtime, podman, sql } = setup();
+    const { runtime, nspawn, sql } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
-    podman.inspect.mockResolvedValue({ id: 'a'.repeat(64), state: 'paused' });
+    nspawn.inspect.mockResolvedValue({ id: 'a'.repeat(64), state: 'paused' });
 
     await expect(prepared.lease.cancel()).rejects.toThrow(/cannot be verified/i);
-    expect(podman.cancelExecution).not.toHaveBeenCalled();
+    expect(nspawn.cancelExecution).not.toHaveBeenCalled();
     // Requested, never proven — so the lease still fences the environment.
     expect(sql.prepare('SELECT cancel_requested FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toMatchObject({ cancel_requested: 1 });
 
@@ -794,7 +698,7 @@ describe('durable managed environment lifecycle', () => {
     expect(sql.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE request_key='stale-delete'").get()).toBeUndefined();
   });
   it('answers a failed guest upload from a fixed table rather than forwarding guest text', async () => {
-    const { runtime, podman, root } = setup();
+    const { runtime, nspawn, root } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const real = async (...args: any[]) => {
       const argv = args[2]; const options = args[3];
@@ -802,7 +706,7 @@ describe('durable managed environment lifecycle', () => {
         env: { ...process.env, ELOWEN_UPLOAD_ROOT: join(root, 'uploads') } });
       return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr, truncated: false };
     };
-    podman.exec.mockImplementation(real);
+    nspawn.exec.mockImplementation(real);
     const path = join(root, 'uploaded');
     const files = (operation: any) => runtime.projectFiles({ ...input, accountUserId: 1, operation });
     const { uploadId } = await files({ kind: 'write-begin', path, expectedVersion: null, size: 4 });
@@ -810,7 +714,7 @@ describe('durable managed environment lifecycle', () => {
     // A guest failure carries whatever the operating system put in it: the staging directory, the candidate
     // file, an errno. The guest's failures are raised from inside the transfer, so its text is a running
     // commentary on a private staging area — none of which the caller can act on or should be shown.
-    const guestSays = (error: unknown) => { podman.exec.mockImplementation(async () =>
+    const guestSays = (error: unknown) => { nspawn.exec.mockImplementation(async () =>
       ({ code: 1, stdout: JSON.stringify({ ok: false, error }), stderr: '', truncated: false })); };
     const rejection = async (operation: any) => {
       try { await files(operation); } catch (raised) { return raised as { code?: string; status?: number; message: string }; }
@@ -858,20 +762,20 @@ describe('durable managed environment lifecycle', () => {
 
     // A reply that is not a reply is the guest breaking the response contract — also internal, never a
     // conflict, because nothing the caller sent explains it and repeating the request will not help.
-    podman.exec.mockImplementation(async () => ({ code: 0, stdout: 'not json at all', stderr: '', truncated: false }));
+    nspawn.exec.mockImplementation(async () => ({ code: 0, stdout: 'not json at all', stderr: '', truncated: false }));
     expect(await rejection(chunk)).toMatchObject({ code: 'guest_protocol', status: 500 });
-    podman.exec.mockImplementation(async () => ({ code: 0, stdout: JSON.stringify({ ok: true, result: { kind: 'write-commit' } }), stderr: '', truncated: false }));
+    nspawn.exec.mockImplementation(async () => ({ code: 0, stdout: JSON.stringify({ ok: true, result: { kind: 'write-commit' } }), stderr: '', truncated: false }));
     expect(await rejection(chunk)).toMatchObject({ code: 'guest_protocol', status: 500 });
-    podman.exec.mockImplementation(async () => ({ code: 0, stdout: '{}', stderr: '', truncated: true }));
+    nspawn.exec.mockImplementation(async () => ({ code: 0, stdout: '{}', stderr: '', truncated: true }));
     expect(await rejection(chunk)).toMatchObject({ code: 'guest_protocol', status: 500 });
 
-    podman.exec.mockImplementation(real);
+    nspawn.exec.mockImplementation(real);
   });
 
   it('routes chunk uploads through the canonical actor and generation bound file control', async () => {
-    const { runtime, podman, root, sql, ctx } = setup();
+    const { runtime, nspawn, root, sql, ctx } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
-    podman.exec.mockImplementation(async (...args: any[]) => {
+    nspawn.exec.mockImplementation(async (...args: any[]) => {
       const argv = args[2]; const options = args[3];
       const result = spawnSync(argv[0], argv.slice(1), { input: options.input, encoding: 'utf8', maxBuffer: 2 ** 21,
         env: { ...process.env, ELOWEN_UPLOAD_ROOT: join(root, 'uploads') } });
@@ -883,9 +787,9 @@ describe('durable managed environment lifecycle', () => {
     const begin = await files({ kind: 'write-begin', path, expectedVersion: null, size: 524289 });
     expect(begin.kind).toBe('write-begin');
     const uploadId = begin.uploadId;
-    const calls = podman.exec.mock.calls.length;
+    const calls = nspawn.exec.mock.calls.length;
     await expect(files({ kind: 'write-abort', path, uploadId }, 2)).rejects.toThrow(/another account/);
-    expect(podman.exec.mock.calls.length).toBe(calls);
+    expect(nspawn.exec.mock.calls.length).toBe(calls);
     await expect(files({ kind: 'write-chunk', path, uploadId, offset: 1, base64: 'YQ==' })).rejects.toThrow(/offset/);
     ctx.currentAccess = () => ({ readOnly: true });
     await expect(files({ kind: 'write-abort', path, uploadId })).rejects.toThrow(/read.only/);
@@ -904,21 +808,24 @@ describe('durable managed environment lifecycle', () => {
     await runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 });
     expect(sql.prepare('SELECT id FROM p_sandbox_file_uploads').all()).toEqual([]);
   });
-  it('deletes a recreated environment with a snapshot from the legacy workspace layout', async () => {
-    const { runtime, podman, stores, db, containers, project } = setup();
-    await runtime.requestEnvironment({ ...input, requestId: 'legacy-snapshot-start', action: { kind: 'start' } }); await runtime.reconcile();
+  // A project that has been snapshotted is still deletable, and the deletion reaches for no image and no
+  // named volume handle on the way: a machine environment owns neither, and the runtime client refuses
+  // both, so a delete that still asked for one would fail on its own snapshot rather than complete.
+  it('deletes an environment with a snapshot without reaching for an image or a volume handle', async () => {
+    const { runtime, nspawn, stores, db, containers, project } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'snapshot-start', action: { kind: 'start' } }); await runtime.reconcile();
     const row = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
-    const legacySpec = JSON.parse(row.spec_json);
-    delete legacySpec.input.workspaceTarget;
-    db.prepare("INSERT INTO p_sandbox_runtime_snapshots(id,kind,resource_id,generation,spec_json,manifest_json) VALUES('snapshot-legacy','project','7',1,?,?)")
-      .run(JSON.stringify(legacySpec), JSON.stringify({ snapshotId: 'snapshot-legacy', retained: false }));
+    db.prepare("INSERT INTO p_sandbox_runtime_snapshots(id,kind,resource_id,generation,spec_json,manifest_json) VALUES('snapshot-kept','project','7',1,?,?)")
+      .run(row.spec_json, JSON.stringify({ version: 2, snapshotId: 'snapshot-kept', trees: [] }));
 
-    await runtime.requestEnvironment({ ...input, requestId: 'legacy-snapshot-recreate', action: { kind: 'recreate' } }); await runtime.reconcile();
-    const op = await runtime.requestEnvironment({ ...input, requestId: 'legacy-snapshot-delete', action: { kind: 'delete' } }); await runtime.reconcile();
+    await runtime.requestEnvironment({ ...input, requestId: 'snapshot-recreate', action: { kind: 'recreate' } }); await runtime.reconcile();
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'snapshot-delete', action: { kind: 'delete' } }); await runtime.reconcile();
 
-    expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
-    expect(podman.removeSnapshotImage).toHaveBeenCalledWith(expect.objectContaining({ workdir: '/workspace' }), 'snapshot-legacy');
-    expect(podman.removeVolume).toHaveBeenCalledTimes(3);
+    const done = await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 });
+    expect(done?.status, done?.error ?? '').toBe('succeeded');
+    expect(nspawn.removeSnapshotStorage).toHaveBeenCalledWith(expect.anything(), 'snapshot-kept');
+    expect(nspawn.removeSnapshotImage).not.toHaveBeenCalled();
+    expect(nspawn.removeVolume).not.toHaveBeenCalled();
     expect(containers.size).toBe(0);
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toEqual({ n: 0 });
     expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
@@ -926,9 +833,9 @@ describe('durable managed environment lifecycle', () => {
   });
 
   it('keeps a failed delete checkpoint and converges when the same delete is requested again', async () => {
-    const { runtime, podman, stores, db } = setup();
+    const { runtime, nspawn, stores, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
-    podman.removeStorage.mockRejectedValueOnce(new Error('disk busy'));
+    nspawn.removeStorage.mockRejectedValueOnce(new Error('disk busy'));
     const op = await runtime.requestEnvironment({ ...input, requestId: 'retry-delete', action: { kind: 'delete' } }); await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('failed');
     expect(stores.projects.finishDeletion).not.toHaveBeenCalled();
@@ -952,7 +859,7 @@ describe('project root filesystem binding', () => {
   });
 
   it('stamps a NEW environment with the artifact reference and fetches it instead of building anything', async () => {
-    const { runtime, podman, storage, sql } = setup();
+    const { runtime, nspawn, storage, sql } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'fresh', action: { kind: 'start' } });
     await runtime.reconcile();
 
@@ -961,17 +868,17 @@ describe('project root filesystem binding', () => {
     const stored = JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
     expect(stored.input.image).toBe(PROJECT_ROOTFS);
     expect(stored.input.disk.sourceImage).toBe(PROJECT_ROOTFS);
-    expect(podman.create.mock.calls[0]![0].disk.sourceImage).toBe(PROJECT_ROOTFS);
+    expect(nspawn.create.mock.calls[0]![0].disk.sourceImage).toBe(PROJECT_ROOTFS);
 
     // Materialization is the artifact store's download, reached through `prepare`. Nothing on this host
     // runs a package manager against a distribution mirror to produce a root filesystem any more.
     expect(storage.prepare).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ sourceImage: PROJECT_ROOTFS }) }),
       expect.objectContaining({ onProgress: expect.any(Function) }));
-    expect(podman.ensureProjectImage).not.toHaveBeenCalled();
+    expect(nspawn.ensureProjectImage).not.toHaveBeenCalled();
   });
 
   it('leaves an environment bound to an earlier artifact on the root filesystem it was built with', async () => {
-    const { runtime, podman, storage, sql } = setup();
+    const { runtime, nspawn, storage, sql } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'initial', action: { kind: 'start' } });
     await runtime.reconcile();
     expect((await runtime.environmentFor(input)).state).toBe('running');
@@ -987,8 +894,8 @@ describe('project root filesystem binding', () => {
       .run(JSON.stringify(spec), row.kind, row.resource_id);
 
     storage.prepare.mockClear();
-    podman.create.mockClear();
-    podman.remove.mockClear();
+    nspawn.create.mockClear();
+    nspawn.remove.mockClear();
     await runtime.requestEnvironment({ ...input, requestId: 'cycle-stop', action: { kind: 'stop' } });
     await runtime.reconcile();
     await runtime.requestEnvironment({ ...input, requestId: 'cycle-start', action: { kind: 'start' } });
@@ -997,10 +904,10 @@ describe('project root filesystem binding', () => {
     // Nothing was fetched on this project's behalf, nothing was removed, and nothing was recreated: the
     // container it had is the container it still has, on the disk it already materialized.
     expect(storage.prepare).not.toHaveBeenCalled();
-    expect(podman.ensureProjectImage).not.toHaveBeenCalled();
-    expect(podman.create).not.toHaveBeenCalled();
-    expect(podman.remove).not.toHaveBeenCalled();
-    expect(podman.start.mock.calls.at(-1)![0].image).toBe(earlier);
+    expect(nspawn.ensureProjectImage).not.toHaveBeenCalled();
+    expect(nspawn.create).not.toHaveBeenCalled();
+    expect(nspawn.remove).not.toHaveBeenCalled();
+    expect(nspawn.start.mock.calls.at(-1)![0].image).toBe(earlier);
     expect((await runtime.environmentFor(input)).state).toBe('running');
 
     // And the stored specification still names the earlier artifact afterwards — nothing rewrote it.
@@ -1034,33 +941,33 @@ describe('adopted workspace rollback', () => {
   });
 
   it('removes the provisioned environment and moves its workspace back through storage', async () => {
-    const { runtime, podman, storage, project, sql, root } = setup();
+    const { runtime, nspawn, storage, project, sql, root } = setup();
     project.adoptedPath = join(root, 'host-project');
     await runtime.requestEnvironment({ ...input, requestId: 'adopted-start', action: { kind: 'start' } });
     await runtime.reconcile();
 
     await runtime.releaseAdoptedWorkspace(input);
 
-    expect(podman.stop).toHaveBeenCalledOnce();
-    expect(podman.remove).toHaveBeenCalledOnce();
-    expect(podman.removeVolume).toHaveBeenCalledTimes(3);
+    expect(nspawn.stop).toHaveBeenCalledOnce();
+    expect(nspawn.remove).toHaveBeenCalledOnce();
+    // A machine environment holds no named volume handles, and the runtime client refuses the method,
+    // so a release that still asked for one would fail rather than hand the directory back.
+    expect(nspawn.removeVolume).not.toHaveBeenCalled();
     expect(storage.releaseWorkspace).toHaveBeenCalledWith(expect.anything(), project.adoptedPath);
-    expect(podman.removeStorage).toHaveBeenCalledOnce();
+    expect(nspawn.removeStorage).toHaveBeenCalledOnce();
     expect(sql.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toBeUndefined();
   });
 
   it('rebuilds a Site container when project adoption moves its source path', async () => {
-    const { runtime, podman, project, root, ctx } = setup();
+    const { runtime, nspawn, project, root, ctx } = setup();
     const host = join(root, 'host-project');
     const sourceRel = 'sites/shop';
     mkdirSync(join(host, sourceRel), { recursive: true });
     project.executionKind = 'host'; project.path = host;
-    let seed = 0;
     runtime.connectSitesRuntime({
       resolve: async () => ({ siteId: 'shop', projectId: 7, sourceRel, image: 'localhost/elowen/site:fixed', network: 'shared',
         workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel),
         brokerDir: join(root, 'brokers'), limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true }),
-      containerSeed: async () => ({ kind: 'data', archivePath: join(root, `seed-${++seed}.tar`) }),
       beforeStart: async () => {}, afterStop: async () => {},
     });
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
@@ -1077,17 +984,17 @@ describe('adopted workspace rollback', () => {
     await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-moved-start', action: { kind: 'start' } });
     await runtime.reconcile();
 
-    const siteCreates = podman.create.mock.calls.map(([spec]: any[]) => spec).filter((spec: any) => spec.mounts.some((mount: any) => mount.target === '/workspace'));
+    const siteCreates = nspawn.create.mock.calls.map(([spec]: any[]) => spec).filter((spec: any) => spec.mounts.some((mount: any) => mount.target === '/workspace'));
     expect(siteCreates).toHaveLength(2);
     expect(siteCreates[0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(join(host, sourceRel));
     expect(siteCreates[1].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(movedSource);
     expect(siteCreates[1].disk.id).toBe(siteCreates[0].disk.id);
     expect(siteCreates[1].disk.rootfsPath).toBe(siteCreates[0].disk.rootfsPath);
-    expect(podman.siteDataArchive.mock.calls.map(([, mode, archive]: any[]) => [mode, archive])).toEqual([
-      ['import', join(root, 'seed-1.tar')],
-    ]);
-    expect(podman.siteDataArchive.mock.invocationCallOrder[0]).toBeLessThan(podman.create.mock.invocationCallOrder[0]!);
-    expect(podman.removeVolume).not.toHaveBeenCalled();
+    // The rebuild replaces the envelope and nothing else: the disk carries the Site's installed
+    // application across it, so nothing is re-seeded from a data archive and no handle is released.
+    // Both methods refuse on the real machine client, so calling either would fail this rebuild outright.
+    expect(nspawn.siteDataArchive).not.toHaveBeenCalled();
+    expect(nspawn.removeVolume).not.toHaveBeenCalled();
     expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 1 });
     expect(ctx.logger.info).toHaveBeenCalledWith(`site shop: source path moved from ${join(host, sourceRel)} to ${movedSource}, rebuilding container`);
   });
@@ -1095,9 +1002,9 @@ describe('adopted workspace rollback', () => {
 
 describe('site environment tombstones', () => {
   it('re-registers a deleted Site at a new generation and rejects lifecycle actions on its tombstone', async () => {
-    const { runtime, root, db, podman } = setup();
+    const { runtime, root, db, nspawn } = setup();
     const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
-      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'host-project', 'sites', 'shop'), brokerDir: join(root, 'brokers'),
+      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'host-project', 'sites', 'shop'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
     mkdirSync(registration.sourcePath, { recursive: true });
     runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
@@ -1112,7 +1019,7 @@ describe('site environment tombstones', () => {
       { kind: 'start' }, { kind: 'stop' }, { kind: 'restart' }, { kind: 'delete' }, { kind: 'snapshot', includeData: false },
       { kind: 'restore', snapshotId: 'snap', restoreData: false }, { kind: 'prepare' }, { kind: 'cleanup-stage' },
       { kind: 'provision-image', imageKind: 'base' }, { kind: 'import-data', artifactId: 'artifact' },
-      { kind: 'export-data', artifactId: 'artifact' }, { kind: 'import-snapshot', artifactId: 'artifact' },
+      { kind: 'export-data', artifactId: 'artifact' },
       { kind: 'remove-artifact', artifactId: 'artifact' }, { kind: 'export-project', artifactId: 'artifact' },
     ];
     for (const [index, action] of actions.entries()) {
@@ -1130,14 +1037,14 @@ describe('site environment tombstones', () => {
     await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-recreated-start',
       expectedGeneration: 2, action: { kind: 'start' } });
     await runtime.reconcile();
-    expect(podman.create.mock.calls.at(-1)![0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(registration.sourcePath);
+    expect(nspawn.create.mock.calls.at(-1)![0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(registration.sourcePath);
     expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 2 });
   });
 
   function mismatchedSite() {
     const state = setup();
     const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared' as const,
-      workspaceReadOnly: false, sitesDataDir: join(state.root, 'sites'), sourcePath: join(state.root, 'sources'), brokerDir: join(state.root, 'brokers'),
+      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(state.root, 'sites'), sourcePath: join(state.root, 'sources'), brokerDir: join(state.root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
     let current = registration;
     mkdirSync(registration.sourcePath, { recursive: true });
@@ -1171,6 +1078,12 @@ describe('site environment tombstones', () => {
   it('completes a Site delete handover after its trusted binding changed', async () => {
     const { runtime, db, changeBinding } = mismatchedSite();
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    // Provisioned first, which is the handover a person actually performs: the Site is serving, its
+    // binding moves under it, and the deletion still has to reach the end. It is also the only shape the
+    // deletion can take at all now — an environment whose disk was never materialized carries no runtime
+    // on its disk record, and every lifecycle step resolves its client from exactly that field.
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-boot', action: { kind: 'start' } });
+    await runtime.reconcile();
     changeBinding();
 
     const requested = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-delete',
@@ -1234,10 +1147,10 @@ describe('durable project publications', () => {
   const records = (sql: any) => sql.prepare("SELECT kind,resource_id,project_id FROM p_sandbox_runtimes WHERE kind='publication'").all();
 
   it('records a publication by project and publication and puts it back after a container restart', async () => {
-    const { runtime, podman, sql, publicationSocket } = setup();
+    const { runtime, nspawn, sql, publicationSocket } = setup();
     await starting(runtime);
     const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    const socketPath = publicationSocket(podman.create.mock.calls[0]![0], 'shop');
+    const socketPath = publicationSocket(nspawn.create.mock.calls[0]![0], 'shop');
     expect(binding).toEqual({ generation: 1, socketPath });
     expect(lstatSync(socketPath).isSocket()).toBe(true);
     // Keyed by the project and the publication: no account is named in the record, and none can be.
@@ -1249,7 +1162,7 @@ describe('durable project publications', () => {
     await runtime.reconcile();
     await runtime.requestEnvironment({ ...input, requestId: 'publication-restart', action: { kind: 'start' } });
     await runtime.reconcile();
-    expect(podman.startPublication).toHaveBeenCalledTimes(2);
+    expect(nspawn.startPublication).toHaveBeenCalledTimes(2);
     expect(lstatSync(socketPath).isSocket()).toBe(true);
     // The same publication, established again: one forwarder, one record.
     expect(records(sql)).toHaveLength(1);
@@ -1258,7 +1171,7 @@ describe('durable project publications', () => {
   it('logs publication recovery transitions once instead of retrying every reconciliation tick', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
-    const { runtime, podman, containers, db, endForwarders, staleSocket } = setup();
+    const { runtime, nspawn, containers, db, endForwarders, staleSocket } = setup();
     await starting(runtime);
     const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
     await endForwarders();
@@ -1271,7 +1184,7 @@ describe('durable project publications', () => {
     await endForwarders();
     staleSocket(binding.socketPath);
     containers.values().next().value.state = 'created';
-    podman.startPublication.mockClear();
+    nspawn.startPublication.mockClear();
     await runtime.reconcile();
     for (let tick = 0; tick < 5; tick += 1) await runtime.reconcile();
 
@@ -1279,25 +1192,25 @@ describe('durable project publications', () => {
       .map((entry: any) => entry.message as string);
     expect(messages().filter((message: string) => message.includes('Publication reconciliation skipped'))).toHaveLength(1);
     expect(messages().filter((message: string) => message.includes('forwarder could not be established'))).toHaveLength(0);
-    expect(podman.startPublication).not.toHaveBeenCalled();
+    expect(nspawn.startPublication).not.toHaveBeenCalled();
 
     containers.values().next().value.state = 'running';
     await runtime.reconcile();
     await runtime.reconcile();
 
     expect(messages().filter((message: string) => message.includes('Publication reconciliation resumed'))).toHaveLength(1);
-    expect(podman.startPublication).toHaveBeenCalledOnce();
+    expect(nspawn.startPublication).toHaveBeenCalledOnce();
   });
 
   it('restores only publications that belong to the project being started', async () => {
-    const { runtime, podman, sql } = setup();
+    const { runtime, nspawn, sql } = setup();
     await starting(runtime);
     sql.prepare("INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,state,desired_state,spec_json,limits_json) VALUES('publication','foreign',8,'running','running','{\"port\":9090}','{}')").run();
     await runtime.requestEnvironment({ ...input, requestId: 'scoped-stop', action: { kind: 'stop' } });
     await runtime.reconcile();
     await runtime.requestEnvironment({ ...input, requestId: 'scoped-start', action: { kind: 'start' } });
     await runtime.reconcile();
-    expect(podman.startPublication.mock.calls.map((call: any[]) => call[1])).not.toContain('foreign');
+    expect(nspawn.startPublication.mock.calls.map((call: any[]) => call[1])).not.toContain('foreign');
   });
 
   it('keeps UUID publication transports within host limits and matches liveness by publication id', async () => {
@@ -1305,52 +1218,52 @@ describe('durable project publications', () => {
     const realisticStorageRoot = '/var/www/.config/elowen/plugins-data/sandbox/projects/123456789/storage';
     expect(Buffer.byteLength(join(realisticStorageRoot, 'broker', publicationSocketName(publicationId)))).toBeLessThanOrEqual(107);
 
-    const { runtime, podman } = setup();
+    const { runtime, nspawn } = setup();
     await starting(runtime);
     const binding = await runtime.projectPublicationBinding({ ...input, publicationId, port: 8080 });
     expect(Buffer.byteLength(binding.socketPath)).toBeLessThanOrEqual(107);
-    podman.activePublications.mockClear();
+    nspawn.activePublications.mockClear();
 
     await runtime.reconcile();
 
-    expect(podman.activePublications).toHaveBeenCalledWith(expect.anything(), [publicationId]);
+    expect(nspawn.activePublications).toHaveBeenCalledWith(expect.anything(), [publicationId]);
   });
 
   it('shares one in-flight publication establishment between a request and reconciliation', async () => {
-    const { runtime, podman } = setup();
+    const { runtime, nspawn } = setup();
     await starting(runtime);
-    const startPublication = podman.startPublication.getMockImplementation()!;
+    const startPublication = nspawn.startPublication.getMockImplementation()!;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let first = true;
-    podman.startPublication.mockImplementation(async (spec: any, publicationId: string, argv: string[]) => {
+    nspawn.startPublication.mockImplementation(async (spec: any, publicationId: string, argv: string[]) => {
       if (first) { first = false; await gate; }
       return await (startPublication as any)(spec, publicationId, argv);
     });
 
     const binding = runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    await vi.waitFor(() => expect(podman.startPublication).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(nspawn.startPublication).toHaveBeenCalledTimes(1));
     const reconciling = runtime.reconcile();
     await new Promise((resolve) => setTimeout(resolve, 25));
-    const callsWhileBlocked = podman.startPublication.mock.calls.length;
+    const callsWhileBlocked = nspawn.startPublication.mock.calls.length;
     release();
     const results = await Promise.allSettled([binding, reconciling]);
 
     expect(callsWhileBlocked).toBe(1);
     expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
-    expect(podman.startPublication).toHaveBeenCalledTimes(1);
+    expect(nspawn.startPublication).toHaveBeenCalledTimes(1);
   });
 
   it('restores a lost forwarder on reconciliation and keeps serving for an account that lost access', async () => {
-    const { runtime, podman, members, forwarders, staleSocket, publicationSocket } = setup();
+    const { runtime, nspawn, members, forwarders, staleSocket, publicationSocket } = setup();
     await starting(runtime);
     await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    const socketPath = publicationSocket(podman.create.mock.calls[0]![0], 'shop');
-    expect(podman.startPublication).toHaveBeenCalledTimes(1);
+    const socketPath = publicationSocket(nspawn.create.mock.calls[0]![0], 'shop');
+    expect(nspawn.startPublication).toHaveBeenCalledTimes(1);
 
     // A cycle with nothing to do costs no guest round trip: the socket file is the whole test.
     await runtime.reconcile();
-    expect(podman.startPublication).toHaveBeenCalledTimes(1);
+    expect(nspawn.startPublication).toHaveBeenCalledTimes(1);
 
     // The forwarder is gone, but an unclean exit can leave a socket inode behind with nobody listening.
     const dying = forwarders.get('shop')!;
@@ -1359,18 +1272,18 @@ describe('durable project publications', () => {
     staleSocket(socketPath);
     expect(lstatSync(socketPath).isSocket()).toBe(true);
     await runtime.reconcile();
-    expect(podman.startPublication).toHaveBeenCalledTimes(2);
+    expect(nspawn.startPublication).toHaveBeenCalledTimes(2);
     expect(lstatSync(socketPath).isSocket()).toBe(true);
 
     // Nobody's account owns it: the visitor it answers is not a member of anything.
     members.delete(1);
     await runtime.reconcile();
     expect(lstatSync(socketPath).isSocket()).toBe(true);
-    expect(podman.stopPublication).not.toHaveBeenCalled();
+    expect(nspawn.stopPublication).not.toHaveBeenCalled();
   });
 
   it('refuses an unusable publication and releases it after its owner account is removed', async () => {
-    const { runtime, podman, sql, containers, users } = setup();
+    const { runtime, nspawn, sql, containers, users } = setup();
     await starting(runtime);
     await expect(runtime.projectPublicationBinding({ ...input, publicationId: 'Shop 1', port: 8080 })).rejects.toThrow(/token/i);
     await expect(runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 0 })).rejects.toThrow(/port/i);
@@ -1379,10 +1292,10 @@ describe('durable project publications', () => {
     users.delete(1);
     await expect(runtime.projectPublicationBinding({ project: input.project, publicationId: 'shop', port: 8080 })).resolves.toEqual(binding);
     await runtime.projectPublicationRelease({ project: input.project, publicationId: 'shop' });
-    expect(podman.stopPublication).toHaveBeenCalledWith(expect.anything(), 'shop');
+    expect(nspawn.stopPublication).toHaveBeenCalledWith(expect.anything(), 'shop');
     expect(records(sql)).toEqual([]);
     expect(() => lstatSync(binding.socketPath)).toThrow();
-    expect(podman.startPublication.mock.calls.at(-1)![1]).toBe('shop');
+    expect(nspawn.startPublication.mock.calls.at(-1)![1]).toBe('shop');
 
     // Deleting the environment takes every publication of the project with it, so no dead record is left
     // behind for reconciliation to chase.
@@ -1392,408 +1305,6 @@ describe('durable project publications', () => {
     await runtime.reconcile();
     expect(records(sql)).toEqual([]);
     expect(containers.size).toBe(0);
-  });
-});
-
-/** The nine durable receipts of a disk migration, in the order the operation writes them. */
-const MIGRATION_CHECKPOINTS = ['claimed', 'quiesced', 'exported', 'materialized', 'candidate-created',
-  'candidate-booted', 'switched', 'legacy-removed', 'complete'];
-const admin = { project: { kind: 'managed', projectId: 7 } as const, accountUserId: 3 };
-
-describe('legacy environment disk migration', () => {
-  /** Bring a project up and then take its disk off the stored specification, which is exactly the shape
-   *  of an environment created before persistent disks existed: an image-backed container this runtime
-   *  still owns, with its workspace, HOME and data in the generation's storage directories. */
-  async function legacyProject(config: Record<string, unknown> = {}) {
-    const context = setup(config);
-    await context.runtime.requestEnvironment({ ...input, requestId: 'legacy-boot', action: { kind: 'start' } });
-    await context.runtime.reconcile();
-    const stored = JSON.parse((context.sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
-    delete stored.input.disk;
-    context.sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(stored));
-    context.legacyRootfs.set('/etc/elowen-legacy-marker', 'before');
-    context.podman.create.mockClear();
-    context.diskFiles.clear();
-    return context;
-  }
-  const migrationOf = (sql: any) => JSON.parse((sql.prepare("SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE json_extract(action_json,'$.kind')='migrate-disk'").get() as any).checkpoint_json).migration;
-  const specOf = (sql: any, kind: string, id: string) => JSON.parse((sql.prepare('SELECT spec_json FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').get(kind, id) as any).spec_json);
-
-  it('migrates a running legacy project through every checkpoint and keeps its rootfs in the disk', async () => {
-    const { runtime, sql, podman, storage, containers, diskFiles, archives } = await legacyProject();
-    const legacyName = 'elowen-project-7-g1';
-    expect(containers.get(legacyName)?.state).toBe('running');
-
-    await runtime.requestEnvironment({ ...admin, requestId: 'migrate', action: { kind: 'migrate-disk' } });
-    await runtime.reconcile();
-
-    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
-    // The free-space refusal has to happen while the environment is still up, not after it is quiesced.
-    expect(podman.preflightRootfsMigration.mock.invocationCallOrder[0]).toBeLessThan(podman.stop.mock.invocationCallOrder.at(-1)!);
-    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
-    expect(storage.materializeMigratedDisk).toHaveBeenCalledOnce();
-
-    const candidate = podman.create.mock.calls.at(-1)![0];
-    expect(candidate.name).toBe('elowen-project-7-g2');
-    expect(candidate.disk).toMatchObject({ format: 2, componentGeneration: 1 });
-    // The workspace, HOME and data directories are not moved: the disk records where they already are.
-    expect(candidate.disk.components.map((entry: any) => entry.path)).toEqual(candidate.volumes.map((volume: any) => volume.path));
-    for (const component of candidate.disk.components) expect(component.path).toContain('/storage/1/');
-    expect(diskFiles.get(candidate.disk.id)?.get('/etc/elowen-legacy-marker')).toBe('before');
-
-    const row = specOf(sql, 'project', '7');
-    expect(row.input.disk.id).toBe(candidate.disk.id);
-    expect(row.input.generation).toBe(2);
-    expect(containers.has(legacyName)).toBe(false);
-    expect(containers.get(candidate.name)?.state).toBe('running');
-    expect((await runtime.environmentFor({ project: input.project, accountUserId: 1 })).generation).toBe(2);
-    // A disk-backed envelope mounts the disk's own directories, so no named handle is created over them.
-    expect(candidate.mounts.filter((mount: any) => mount.type === 'volume')).toEqual([]);
-    // The export archive has no reader left once the migration is complete.
-    expect(archives.size).toBe(0);
-  });
-
-  it('migrates a stopped legacy project without booting the candidate', async () => {
-    const { runtime, sql, podman, containers } = await legacyProject();
-    await runtime.requestEnvironment({ ...input, requestId: 'legacy-stop', action: { kind: 'stop' } });
-    await runtime.reconcile();
-    podman.start.mockClear();
-
-    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-stopped', action: { kind: 'migrate-disk' } });
-    await runtime.reconcile();
-
-    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
-    expect(podman.start).not.toHaveBeenCalled();
-    expect(podman.systemRunning).not.toHaveBeenCalled();
-    const candidate = podman.create.mock.calls.at(-1)![0];
-    expect(containers.get(candidate.name)?.state).toBe('created');
-    expect(specOf(sql, 'project', '7').input.disk.id).toBe(candidate.disk.id);
-  });
-
-  it('refuses migration for a non-administrator and leaves an already migrated row untouched', async () => {
-    const { runtime, sql, storage } = await legacyProject();
-    await expect(runtime.requestEnvironment({ ...input, requestId: 'migrate-denied', action: { kind: 'migrate-disk' } }))
-      .rejects.toMatchObject({ code: 'admin_required' });
-    expect(specOf(sql, 'project', '7').input.disk).toBeUndefined();
-
-    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-once', action: { kind: 'migrate-disk' } });
-    await runtime.reconcile();
-    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
-
-    await expect(runtime.requestEnvironment({ ...admin, requestId: 'migrate-again', action: { kind: 'migrate-disk' } }))
-      .rejects.toMatchObject({ code: 'already_rootfs_backed' });
-    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
-  });
-
-  it('leaves a legacy row entirely alone when nothing migrates it', async () => {
-    const { runtime, sql, podman, storage, diskFiles } = await legacyProject();
-    await runtime.requestEnvironment({ ...input, requestId: 'legacy-restart', action: { kind: 'restart' } });
-    await runtime.reconcile();
-    expect(podman.stop.mock.calls.at(-1)![0].disk).toBeUndefined();
-    expect(podman.start.mock.calls.at(-1)![0].disk).toBeUndefined();
-    expect(specOf(sql, 'project', '7').input.disk).toBeUndefined();
-    expect(specOf(sql, 'project', '7').input.generation).toBe(1);
-    expect(storage.captureRootfsExport).not.toHaveBeenCalled();
-    expect(diskFiles.size).toBe(0);
-  });
-
-  it('rolls back to the legacy container when the candidate will not boot, then completes on retry', async () => {
-    const { runtime, sql, podman, storage, containers, diskFiles, archives } = await legacyProject();
-    podman.start.mockImplementationOnce(async () => { throw new Error('candidate init refused to start'); });
-
-    const queued = await runtime.requestEnvironment({ ...admin, requestId: 'migrate-rollback', action: { kind: 'migrate-disk' } });
-    await runtime.reconcile();
-
-    const failed = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
-    expect(failed!.status).toBe('failed');
-    expect(failed!.error).toContain('candidate init refused to start');
-    const rolledBack = migrationOf(sql);
-    // The candidate is gone; the disk and the export archive stay for diagnosis.
-    expect(rolledBack.done).toEqual(['claimed', 'quiesced', 'exported', 'materialized']);
-    expect(containers.has('elowen-project-7-g2')).toBe(false);
-    expect(diskFiles.has(rolledBack.diskId)).toBe(true);
-    expect(rolledBack.export.archivePath).toContain('rootfs.tar');
-    expect(archives.has(rolledBack.migrationId)).toBe(true);
-    expect(storage.discardRootfsExport).not.toHaveBeenCalled();
-    // The row is still the legacy container's, and it is running again.
-    expect(specOf(sql, 'project', '7').input.disk).toBeUndefined();
-    expect(specOf(sql, 'project', '7').containerId).toBe('a'.repeat(64));
-    expect(containers.get('elowen-project-7-g1')?.state).toBe('running');
-
-    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-rollback', action: { kind: 'migrate-disk' } });
-    await runtime.reconcile();
-    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
-    expect(storage.captureRootfsExport).toHaveBeenCalledOnce();
-    expect(storage.materializeMigratedDisk).toHaveBeenCalledOnce();
-    expect(specOf(sql, 'project', '7').input.disk.id).toBe(rolledBack.diskId);
-    expect(containers.has('elowen-project-7-g1')).toBe(false);
-  });
-
-  // Every step of the migration is interrupted in turn — which is what a daemon restart or a host failure
-  // looks like from the durable row — and the same intent is re-queued each time. The whole point of the
-  // receipts is that the destructive work happens once however often the operation is resumed.
-  it('resumes from the first incomplete checkpoint after a failure at every step', async () => {
-    const { runtime, sql, podman, storage, containers } = await legacyProject();
-    const refuse = (message: string) => async () => { throw new Error(message); };
-    const interruptions: (() => void)[] = [
-      () => podman.preflightRootfsMigration.mockImplementationOnce(refuse('preflight interrupted')),
-      () => podman.stop.mockImplementationOnce(refuse('stop interrupted')),
-      () => storage.captureRootfsExport.mockImplementationOnce(refuse('export interrupted')),
-      () => storage.materializeMigratedDisk.mockImplementationOnce(refuse('materialization interrupted')),
-      () => storage.prepare.mockImplementationOnce(refuse('disk preparation interrupted')),
-      () => podman.create.mockImplementationOnce(refuse('candidate creation interrupted')),
-      () => podman.start.mockImplementationOnce(refuse('candidate boot interrupted')),
-      () => podman.systemRunning.mockImplementationOnce(refuse('candidate systemd interrupted')),
-      () => podman.remove.mockImplementationOnce(refuse('legacy removal interrupted')),
-    ];
-    const reached: string[][] = [];
-    const receipts = new Set<string>();
-    for (const interrupt of interruptions) {
-      interrupt();
-      const queued = await runtime.requestEnvironment({ ...admin, requestId: 'migrate-resume', action: { kind: 'migrate-disk' } });
-      await runtime.reconcile();
-      const operation = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
-      expect(operation!.status, JSON.stringify(operation)).toBe('failed');
-      const migration = migrationOf(sql);
-      reached.push(migration.done ?? []);
-      if (migration.export) receipts.add(JSON.stringify(migration.export));
-    }
-    await runtime.requestEnvironment({ ...admin, requestId: 'migrate-resume', action: { kind: 'migrate-disk' } });
-    await runtime.reconcile();
-
-    expect(migrationOf(sql).done).toEqual(MIGRATION_CHECKPOINTS);
-    // One export archive and one materialized disk across all ten attempts: every interrupted attempt
-    // was retried, and not one of them repeated a step whose receipt was already durable. Both capture
-    // primitives were entered exactly twice — the attempt that was interrupted, and the one that
-    // produced the receipt — where an operation without checkpoints would have run them nine times.
-    expect([...receipts]).toHaveLength(1);
-    expect(storage.captureRootfsExport).toHaveBeenCalledTimes(2);
-    expect(storage.materializeMigratedDisk).toHaveBeenCalledTimes(2);
-    expect(reached.map((done) => done.length)).toEqual([1, 1, 2, 3, 4, 4, 4, 4, 7]);
-    expect(specOf(sql, 'project', '7').input.generation).toBe(2);
-    expect(containers.has('elowen-project-7-g1')).toBe(false);
-  });
-
-  it('migrates a legacy Site without replaying its bootstrap seed and verifies ingress readiness', async () => {
-    const { runtime, sql, root, podman, storage, containers, diskFiles, legacyRootfs, staleSocket } = setup();
-    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
-      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers', 'shop'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
-    mkdirSync(registration.sourcePath, { recursive: true });
-    mkdirSync(registration.brokerDir, { recursive: true });
-    const verifyReady = vi.fn(async () => {});
-    const containerSeed = vi.fn(async () => ({ kind: 'data' as const, archivePath: join(root, 'seed.tar') }));
-    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {},
-      beforeCreate: async () => {}, containerSeed, verifyReady });
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-boot', action: { kind: 'start' } });
-    await runtime.reconcile();
-    const legacy = podman.create.mock.calls.at(-1)![0];
-    expect(legacy.disk).toBeUndefined();
-    expect(containerSeed).toHaveBeenCalledOnce();
-    legacyRootfs.set('/etc/elowen-site-marker', 'installed');
-    staleSocket(join(registration.brokerDir, 'app.sock'));
-    containerSeed.mockClear();
-    podman.siteDataArchive.mockClear();
-    podman.create.mockClear();
-
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 3, requestId: 'site-migrate', action: { kind: 'migrate-disk' } });
-    await runtime.reconcile();
-
-    const migration = JSON.parse((sql.prepare("SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE kind='site'").all() as any[])
-      .map((entry: any) => entry.checkpoint_json).find((value: string) => value.includes('migration'))!).migration;
-    expect(migration.done).toEqual(MIGRATION_CHECKPOINTS);
-    const candidate = podman.create.mock.calls.at(-1)![0];
-    expect(candidate.disk).toMatchObject({ format: 2, componentGeneration: 1, sourceImage: registration.image });
-    expect(candidate.disk.components).toEqual([{ component: 'data', path: join(registration.sitesDataDir, 'shop', 'environment', 'storage', '1', 'data') }]);
-    // The exported rootfs and the existing data directory already carry the bootstrap.
-    expect(containerSeed).not.toHaveBeenCalled();
-    expect(podman.siteDataArchive).not.toHaveBeenCalled();
-    expect(verifyReady).toHaveBeenCalledWith('shop');
-    expect(diskFiles.get(candidate.disk.id)?.get('/etc/elowen-site-marker')).toBe('installed');
-    expect(containers.has(legacy.name)).toBe(false);
-    expect(specOf(sql, 'site', 'shop').input.disk.id).toBe(candidate.disk.id);
-    expect(storage.materializeMigratedDisk).toHaveBeenCalledOnce();
-  });
-});
-
-/** The eight durable receipts of a runtime change, in the order the operation writes them. */
-const RUNTIME_CHECKPOINTS = ['claimed', 'quiesced', 'shifted', 'envelope-written', 'candidate-booted',
-  'switched', 'legacy-removed', 'complete'];
-
-describe('environment runtime migration', () => {
-  const migrationOf = (sql: any) => JSON.parse((sql.prepare("SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE json_extract(action_json,'$.kind')='migrate-runtime'").get() as any).checkpoint_json).migration;
-  const specOf = (sql: any) => JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
-  async function diskBackedProject() {
-    const context = setup();
-    await context.runtime.requestEnvironment({ ...input, requestId: 'runtime-boot', action: { kind: 'start' } });
-    await context.runtime.reconcile();
-    context.podman.create.mockClear();
-    return context;
-  }
-
-  it('hands a disk-backed project to the machine runtime without copying its root filesystem', async () => {
-    const { runtime, sql, podman, nspawn, storage, containers, machines, ownership, diskFiles } = await diskBackedProject();
-    const before = specOf(sql);
-    expect(containers.get('elowen-project-7-g1')?.state).toBe('running');
-
-    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-migrate', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-
-    expect(migrationOf(sql).done).toEqual(RUNTIME_CHECKPOINTS);
-    const candidate = nspawn.create.mock.calls.at(-1)![0] as any;
-    expect(candidate.name).toBe('elowen-project-7-g2');
-    expect(candidate.disk.runtime).toBe('nspawn');
-    // The SAME disk: same id, same rootfs path, same component paths, and nothing extracted or copied.
-    expect(candidate.disk.id).toBe(before.input.disk.id);
-    expect(candidate.disk.rootfsPath).toBe(before.input.disk.rootfsPath);
-    expect(candidate.disk.components).toEqual(before.input.disk.components);
-    expect(storage.captureRootfsExport).not.toHaveBeenCalled();
-    expect(storage.materializeMigratedDisk).not.toHaveBeenCalled();
-    expect(podman.create).not.toHaveBeenCalled();
-    expect(diskFiles.size).toBe(1);
-
-    expect(ownership).toEqual(['nspawn']);
-    const row = specOf(sql);
-    expect(row.input.disk.runtime).toBe('nspawn');
-    expect(row.input.generation).toBe(2);
-    expect(row.containerId).toBe('c'.repeat(64));
-    expect(containers.has('elowen-project-7-g1')).toBe(false);
-    expect(machines.get('elowen-project-7-g2')?.state).toBe('running');
-    expect((await runtime.environmentFor({ project: input.project, accountUserId: 1 })).generation).toBe(2);
-  });
-
-  it('deletes a machine-runtime project and still removes the handles its Podman generations left', async () => {
-    const { runtime, sql, podman, nspawn, storage, machines, diskFiles, project, stores } = await diskBackedProject();
-    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-migrate-delete', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-    const diskId = specOf(sql).input.disk.id;
-    podman.removeVolume.mockClear();
-
-    const op = await runtime.requestEnvironment({ ...input, requestId: 'nspawn-delete', action: { kind: 'delete' } });
-    await runtime.reconcile();
-
-    expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
-    // A named volume is a Podman handle, so the removal goes to the runtime that can hold one — for the
-    // machine generation too, whose components a Podman generation of the same project may still own.
-    expect(nspawn.removeVolume).not.toHaveBeenCalled();
-    expect(podman.removeVolume.mock.calls.map((call: any[]) => call[1])).toEqual(
-      ['workspace', 'home', 'data', 'workspace', 'home', 'data']);
-    expect(podman.removeVolume.mock.calls.some((call: any[]) => call[0].disk?.runtime === 'nspawn')).toBe(true);
-    expect(machines.size).toBe(0);
-    expect(storage.removeDisk).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ id: diskId }) }), expect.any(Array));
-    expect(diskFiles.has(diskId)).toBe(false);
-    expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
-    expect(project.lifecycle).toBe('deleted');
-  });
-
-  it('refuses a runtime change from a non-administrator and refuses to repeat a completed one', async () => {
-    const { runtime, sql } = await diskBackedProject();
-    await expect(runtime.requestEnvironment({ ...input, requestId: 'runtime-denied', action: { kind: 'migrate-runtime' } }))
-      .rejects.toMatchObject({ code: 'admin_required' });
-    expect(specOf(sql).input.disk.runtime).toBeUndefined();
-
-    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-once', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-    await expect(runtime.requestEnvironment({ ...admin, requestId: 'runtime-again', action: { kind: 'migrate-runtime' } }))
-      .rejects.toMatchObject({ code: 'already_nspawn' });
-  });
-
-  it('puts the disk ownership back and restarts the Podman envelope when the machine will not boot', async () => {
-    const { runtime, sql, nspawn, containers, machines, ownership, diskFiles } = await diskBackedProject();
-    nspawn.start.mockImplementationOnce(async () => { throw new Error('machine init refused to start'); });
-
-    const queued = await runtime.requestEnvironment({ ...admin, requestId: 'runtime-rollback', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-
-    const failed = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
-    expect(failed!.status).toBe('failed');
-    expect(failed!.error).toContain('machine init refused to start');
-    // The machine envelope is gone and the tree belongs to the service account again, which is the only
-    // state in which the Podman envelope can read its own root filesystem.
-    expect(migrationOf(sql).done).toEqual(['claimed']);
-    expect(ownership).toEqual(['nspawn', 'podman']);
-    expect(machines.has('elowen-project-7-g2')).toBe(false);
-    expect(containers.get('elowen-project-7-g1')?.state).toBe('running');
-    expect(specOf(sql).input.disk.runtime).toBeUndefined();
-    expect(specOf(sql).input.generation).toBe(1);
-    // Nothing was copied, so nothing was lost: the disk is the same one throughout.
-    expect(diskFiles.size).toBe(1);
-
-    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-rollback', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-    expect(migrationOf(sql).done).toEqual(RUNTIME_CHECKPOINTS);
-    expect(ownership).toEqual(['nspawn', 'podman', 'nspawn']);
-    expect(specOf(sql).input.disk.runtime).toBe('nspawn');
-  });
-
-  it('never leaves a half-converted disk behind a rollback whose own ownership pass fails', async () => {
-    const { runtime, sql, nspawn, disk, ownership, containers, machines } = await diskBackedProject();
-    nspawn.start.mockImplementationOnce(async () => { throw new Error('machine init refused to start'); });
-    disk.failReverse = true;
-
-    const queued = await runtime.requestEnvironment({ ...admin, requestId: 'runtime-reverse', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-
-    const failed = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
-    expect(failed!.status).toBe('failed');
-    expect(failed!.error).toContain('ownership reversal interrupted');
-    // The tree is now split between the two schemes, so nothing can boot it. What must NOT have survived
-    // that failure is the receipt saying the forward pass is already done: with it, the retry skips the
-    // shift step and boots the machine against a disk neither runtime can read.
-    expect(disk.owner).toBe('mixed');
-    expect(migrationOf(sql).done).not.toContain('shifted');
-    expect(migrationOf(sql).done).toEqual(['claimed']);
-
-    disk.failReverse = false;
-    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-reverse', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-
-    // The retry ran the forward pass again over the split tree, so the disk belongs to one scheme again
-    // and the machine the row now names can read it.
-    expect(ownership).toEqual(['nspawn', 'podman', 'nspawn']);
-    expect(disk.owner).toBe('nspawn');
-    expect(migrationOf(sql).done).toEqual(RUNTIME_CHECKPOINTS);
-    expect(specOf(sql).input.disk.runtime).toBe('nspawn');
-    expect(containers.has('elowen-project-7-g1')).toBe(false);
-    expect(machines.get('elowen-project-7-g2')?.state).toBe('running');
-  });
-
-  // Every step is interrupted in turn, which is what a daemon restart looks like from the durable row,
-  // and the same intent is re-queued each time. The receipts are what make the work happen once.
-  it('resumes a runtime change from the first incomplete checkpoint after a failure at every step', async () => {
-    const { runtime, sql, podman, nspawn, containers, machines } = await diskBackedProject();
-    const refuse = (message: string) => async () => { throw new Error(message); };
-    const interruptions: (() => void)[] = [
-      () => podman.stop.mockImplementationOnce(refuse('stop interrupted')),
-      () => nspawn.shiftOwnership.mockImplementationOnce(refuse('ownership pass interrupted')),
-      () => nspawn.create.mockImplementationOnce(refuse('envelope write interrupted')),
-      () => nspawn.start.mockImplementationOnce(refuse('machine boot interrupted')),
-      () => nspawn.systemRunning.mockImplementationOnce(refuse('guest systemd interrupted')),
-      () => podman.remove.mockImplementationOnce(refuse('legacy removal interrupted')),
-    ];
-    const reached: string[][] = [];
-    for (const interrupt of interruptions) {
-      interrupt();
-      const queued = await runtime.requestEnvironment({ ...admin, requestId: 'runtime-resume', action: { kind: 'migrate-runtime' } });
-      await runtime.reconcile();
-      const operation = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
-      expect(operation!.status, JSON.stringify(operation)).toBe('failed');
-      reached.push(migrationOf(sql).done ?? []);
-    }
-    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-resume', action: { kind: 'migrate-runtime' } });
-    await runtime.reconcile();
-
-    expect(migrationOf(sql).done).toEqual(RUNTIME_CHECKPOINTS);
-    // An interrupted shift holds no receipt and is simply run again; a boot failure rolls the completed
-    // one back, which is why the counts below are the only two shapes this operation produces.
-    expect(reached.map((done) => done.join(','))).toEqual([
-      'claimed', 'claimed,quiesced', 'claimed', 'claimed', 'claimed',
-      'claimed,quiesced,shifted,envelope-written,candidate-booted,switched',
-    ]);
-    expect(specOf(sql).input.generation).toBe(2);
-    expect(containers.has('elowen-project-7-g1')).toBe(false);
-    expect(machines.get('elowen-project-7-g2')?.state).toBe('running');
   });
 });
 
@@ -1813,14 +1324,15 @@ describe('a new environment on a machine host', () => {
   }
 
   it('builds a new environment on the machine runtime and records the choice on its disk', async () => {
-    const { runtime, sql, podman, nspawn, machines } = await machineProject();
+    const { runtime, sql, nspawn, containers } = await machineProject();
     const created = nspawn.create.mock.calls.at(-1)![0] as any;
 
     expect(created.name).toBe('elowen-project-7-g1');
     expect(created.disk.runtime).toBe('nspawn');
-    expect(machines.get('elowen-project-7-g1')?.state).toBe('running');
-    // The container runtime is not a fallback and was never asked to build anything.
-    expect(podman.create).not.toHaveBeenCalled();
+    expect(containers.get('elowen-project-7-g1')?.state).toBe('running');
+    // Its root filesystem came from the published artifact its disk record names; nothing on the host was
+    // asked to build one, because nothing on this host can.
+    expect(nspawn.ensureProjectImage).not.toHaveBeenCalled();
     // The choice is durable: it is on the disk record, which is the only discriminator the runtime reads.
     expect(specOf(sql).input.disk.runtime).toBe('nspawn');
     expect(specOf(sql).runtimePending).toBeUndefined();
@@ -1829,7 +1341,7 @@ describe('a new environment on a machine host', () => {
   });
 
   it('refuses to create anything on a host that is not ready and says what the host is missing', async () => {
-    const { runtime, podman, nspawn } = setup({}, 'unready');
+    const { runtime, nspawn, storage } = setup({}, 'unready');
 
     const queued = await runtime.requestEnvironment({ ...input, requestId: 'machine-refused', action: { kind: 'start' } });
     await runtime.reconcile();
@@ -1843,13 +1355,14 @@ describe('a new environment on a machine host', () => {
     expect(failed!.error).toContain('systemctl daemon-reload');
     // A satisfied row is not noise the refusal has to carry.
     expect(failed!.error).not.toContain('Supported operating system');
-    // Nothing was built on either runtime, and no disk was materialized behind the refusal.
+    // Nothing was built, and no disk was materialized behind the refusal: the decision is taken before
+    // the artifact is fetched, so an unready host costs no download either.
     expect(nspawn.create).not.toHaveBeenCalled();
-    expect(podman.create).not.toHaveBeenCalled();
+    expect(storage.prepare).not.toHaveBeenCalled();
   });
 
   it('carries an installed package and an /etc change across envelope recreation', async () => {
-    const { runtime, nspawn, machines, diskFiles } = await machineProject();
+    const { runtime, nspawn, containers, diskFiles } = await machineProject();
     const first = nspawn.create.mock.calls.at(-1)![0] as any;
     // What a guest actually leaves behind: a package's files under the root filesystem, and an edited
     // configuration file. Both are disk state, and the envelope holds neither.
@@ -1861,7 +1374,7 @@ describe('a new environment on a machine host', () => {
 
     const second = nspawn.create.mock.calls.at(-1)![0] as any;
     expect(nspawn.create).toHaveBeenCalledTimes(2);
-    expect(machines.get('elowen-project-7-g1')?.state).toBe('running');
+    expect(containers.get('elowen-project-7-g1')?.state).toBe('running');
     // The SAME disk, and both writes still on it, read back through the rebuilt envelope.
     expect(second.disk.id).toBe(first.disk.id);
     expect((await nspawn.exec(second, 'c'.repeat(32), ['/bin/bash', '-s'], { input: guestRead('/usr/bin/ripgrep') })).stdout).toBe('installed');

@@ -21,8 +21,9 @@ export type ProjectExecutionRef =
   | { kind: 'host'; projectId?: number }
   | { kind: 'managed'; projectId: number };
 
-/** The ceilings a managed environment's container is created with. Each one is a flag Podman is given:
- *  a figure that no container setting carries is not a limit and does not belong here. */
+/** The ceilings a managed environment's machine is created with. Each one is a resource property the
+ *  runtime applies to the machine: a figure no runtime setting carries is not a limit and does not
+ *  belong here. */
 export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number }
 
 export type EnvironmentAction =

@@ -26,22 +26,7 @@ const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
 const SAFE_USER = /^[a-z_][a-z0-9_-]{0,31}$/i;
-export const ENVIRONMENT_PACKAGES = Object.freeze([
-  'podman', 'crun', 'uidmap', 'dbus-user-session', 'passt', 'slirp4netns',
-]);
-const OPTIONAL_OVERLAY_PACKAGE = 'fuse-overlayfs';
-export const ENVIRONMENT_DELEGATION_DROP_IN = '/etc/systemd/system/user@.service.d/elowen-sites-environments.conf';
-export const ENVIRONMENT_DELEGATION_CONTENT = '[Service]\nDelegate=cpu memory pids\n';
 const SYSTEM_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
-const PACKAGE_LABELS = Object.freeze({
-  podman: 'Podman',
-  crun: 'crun',
-  uidmap: 'UID mapping tools',
-  'dbus-user-session': 'D-Bus user session',
-  passt: 'passt network backend',
-  slirp4netns: 'slirp4netns network backend',
-  'fuse-overlayfs': 'FUSE overlay storage',
-});
 
 function fail(message) {
   throw new Error(message);
@@ -415,18 +400,6 @@ export function defaultCommandRunner(file, args, { timeoutMs } = {}) {
   }
 }
 
-export function helperRequestFields(request) {
-  if (!request || typeof request !== 'object' || Array.isArray(request)) fail('request is invalid');
-  // `domain` is the transport discriminator, not an operation argument: the daemon sends it on every
-  // request, and it has already been validated before dispatch.
-  const fields = Object.keys(request).filter((field) => field !== 'domain');
-  if (request.op !== 'environments-status' && request.op !== 'environments-provision') {
-    fail('environment operation is invalid');
-  }
-  if (fields.length !== 1 || fields[0] !== 'op') fail('environment request has extra fields');
-  return fields;
-}
-
 function sudoId(raw, label) {
   if (typeof raw !== 'string' || !/^(?:0|[1-9]\d*)$/.test(raw)) fail(`the invoking service ${label} is invalid`);
   const value = Number(raw);
@@ -496,19 +469,6 @@ function machineServiceUser(runner, env, request) {
   return passwdUser(runner, named);
 }
 
-function runAsServiceUser(runner, user, command, args) {
-  return runner('/usr/sbin/runuser', [
-    '-u', user.name, '--', '/usr/bin/env', '-i',
-    `HOME=${user.home}`,
-    `USER=${user.name}`,
-    `LOGNAME=${user.name}`,
-    `PATH=${SYSTEM_PATH}`,
-    `XDG_RUNTIME_DIR=/run/user/${user.uid}`,
-    `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${user.uid}/bus`,
-    command, ...args,
-  ]);
-}
-
 function packageInstalled(runner, name) {
   const result = runner('/usr/bin/dpkg-query', ['-W', '-f=${Status}', name]);
   return result.ok && String(result.stdout || '').trim() === 'install ok installed';
@@ -560,199 +520,9 @@ export function supportedEnvironmentOs(raw) {
   return { ok: false, detail: 'only Debian and Ubuntu are supported' };
 }
 
-function subidEntries(readText, path) {
-  const entries = [];
-  for (const sourceLine of String(readText(path) || '').split('\n')) {
-    const line = sourceLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const parts = line.split(':');
-    if (parts.length !== 3 || !/^[^\s:\0]+$/.test(parts[0]) || !/^\d+$/.test(parts[1]) || !/^\d+$/.test(parts[2])) {
-      fail(`${path} contains an invalid subordinate id entry`);
-    }
-    const start = Number(parts[1]);
-    const count = Number(parts[2]);
-    const end = start + count - 1;
-    if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(count) || count <= 0
-      || !Number.isSafeInteger(end) || end > 0xffff_ffff) {
-      fail(`${path} contains an invalid subordinate id entry`);
-    }
-    entries.push({ name: parts[0], start, end });
-  }
-  return entries;
-}
-
-function subidPresent(readText, path, user) {
-  return subidEntries(readText, path).some((entry) => entry.name === user.name);
-}
-
-function nextSubidRange(readText) {
-  const used = [
-    ...subidEntries(readText, '/etc/subuid'),
-    ...subidEntries(readText, '/etc/subgid'),
-  ];
-  for (let start = 100000; start <= 2_000_000_000; start += 65536) {
-    const end = start + 65535;
-    if (used.every((entry) => end < entry.start || start > entry.end)) return `${start}-${end}`;
-  }
-  fail('no subordinate id range is available');
-}
-
-function lingerEnabled(runner, user) {
-  const result = runner('/usr/bin/loginctl', ['show-user', user.name, '--property=Linger', '--value']);
-  return result.ok && String(result.stdout || '').trim() === 'yes';
-}
-
-function userDelegation(runner, user) {
-  const result = runner('/usr/bin/systemctl', [
-    'show', `user@${user.uid}.service`, '--property=Delegate', '--property=DelegateControllers', '--value',
-  ]);
-  const lines = String(result.stdout || '').trim().split('\n');
-  return {
-    enabled: result.ok && lines[0] === 'yes',
-    controllers: new Set((lines[1] || '').trim().split(/\s+/).filter(Boolean)),
-  };
-}
-
-function ensureDelegationDropIn(runner, readText, writeAtomic) {
-  if (readText(ENVIRONMENT_DELEGATION_DROP_IN) !== ENVIRONMENT_DELEGATION_CONTENT) {
-    writeAtomic(ENVIRONMENT_DELEGATION_DROP_IN, Buffer.from(ENVIRONMENT_DELEGATION_CONTENT), 0o644);
-  }
-  // Repeat daemon-reload while the live user manager still lacks delegation. It is idempotent, and this
-  // also recovers when a previous call wrote the file but daemon-reload itself failed.
-  runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
-}
-
-function podmanInfo(runner, user) {
-  const result = runAsServiceUser(runner, user, '/usr/bin/podman', ['info', '--format', 'json']);
-  if (!result.ok) {
-    const stderr = String(result.stderr || '');
-    return {
-      ok: false,
-      detail: /overlay|fuse-overlayfs|mount_program/i.test(stderr)
-        ? 'rootless overlay storage is unavailable'
-        : 'rootless podman info failed',
-    };
-  }
-  try {
-    const info = JSON.parse(String(result.stdout || ''));
-    const rootless = info?.host?.security?.rootless === true;
-    const manager = typeof info?.host?.cgroupManager === 'string' ? info.host.cgroupManager : 'unknown';
-    const version = typeof info?.host?.cgroupVersion === 'string' ? info.host.cgroupVersion : String(info?.host?.cgroupVersion ?? 'unknown');
-    const storage = typeof info?.store?.graphDriverName === 'string' ? info.store.graphDriverName : 'unknown';
-    const compatible = rootless && manager === 'systemd' && (version === 'v2' || version === '2');
-    return {
-      ok: compatible,
-      detail: rootless
-        ? `rootless; storage ${storage}; cgroup manager ${manager}; cgroup ${version}`
-        : 'podman info did not report rootless mode',
-    };
-  } catch {
-    return { ok: false, detail: 'podman info returned invalid JSON' };
-  }
-}
-
-function environmentStatus(options = {}) {
-  const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
-  const env = options.env ?? process.env;
-  const os = supportedEnvironmentOs(readText('/etc/os-release'));
-  const user = serviceUser(runner, env);
-  const packageState = new Map(ENVIRONMENT_PACKAGES.map((name) => [name, packageInstalled(runner, name)]));
-  const podman = packageState.get('podman') ? podmanInfo(runner, user) : { ok: false, detail: 'podman is not installed' };
-  const fuseInstalled = packageInstalled(runner, OPTIONAL_OVERLAY_PACKAGE);
-  const overlayRequired = !podman.ok && /overlay|fuse-overlayfs|mount_program/i.test(podman.detail);
-  const delegation = userDelegation(runner, user);
-  const bus = runAsServiceUser(runner, user, '/usr/bin/systemctl', ['--user', 'show-environment']);
-  const items = [{ id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail }];
-  items.push(...ENVIRONMENT_PACKAGES.map((name) => ({
-    id: `package:${name}`,
-    label: PACKAGE_LABELS[name],
-    ok: packageState.get(name) === true,
-    detail: packageState.get(name) ? 'installed' : 'not installed',
-  })));
-  items.push({
-    id: `package:${OPTIONAL_OVERLAY_PACKAGE}`,
-    label: PACKAGE_LABELS[OPTIONAL_OVERLAY_PACKAGE],
-    ok: fuseInstalled || !overlayRequired,
-    detail: fuseInstalled ? 'installed' : overlayRequired ? 'required by rootless overlay storage' : 'not required',
-  });
-  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
-  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
-  items.push(
-    { id: 'subuid', label: 'Subordinate user IDs', ok: hasSubuid, detail: hasSubuid ? `configured for ${user.name}` : 'not configured' },
-    { id: 'subgid', label: 'Subordinate group IDs', ok: hasSubgid, detail: hasSubgid ? `configured for ${user.name}` : 'not configured' },
-    { id: 'linger', label: 'Persistent user manager', ok: lingerEnabled(runner, user), detail: 'systemd linger' },
-    { id: 'user-bus', label: 'User D-Bus', ok: bus.ok, detail: bus.ok ? 'reachable' : 'not reachable' },
-  );
-  for (const controller of ['cpu', 'memory', 'pids']) {
-    const ok = delegation.enabled && delegation.controllers.has(controller);
-    items.push({
-      id: `cgroup:${controller}`,
-      label: `${controller} cgroup delegation`,
-      ok,
-      detail: ok ? 'delegated through cgroup v2' : 'not delegated to the user manager',
-    });
-  }
-  items.push({ id: 'podman-rootless', label: 'Rootless Podman', ok: podman.ok, detail: podman.detail });
-  return { ok: true, ready: items.every((item) => item.ok), items };
-}
-
 function runRequired(runner, file, args, failure) {
   const result = runner(file, args);
   if (!result.ok) fail(failure);
-}
-
-function provisionEnvironments(options = {}) {
-  const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
-  const writeAtomic = options.writeAtomic ?? atomicWrite;
-  const env = options.env ?? process.env;
-  const os = supportedEnvironmentOs(readText('/etc/os-release'));
-  if (!os.ok) fail(os.detail);
-  const user = serviceUser(runner, env);
-  const missing = ENVIRONMENT_PACKAGES.filter((name) => !packageInstalled(runner, name));
-  let aptUpdated = false;
-  if (missing.length > 0) {
-    runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
-    aptUpdated = true;
-    runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', ...missing], 'environment package installation failed');
-  }
-  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
-  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
-  const range = hasSubuid && hasSubgid ? null : nextSubidRange(readText);
-  if (!hasSubuid) {
-    runRequired(runner, '/usr/sbin/usermod', ['--add-subuids', range, user.name], 'subordinate user id configuration failed');
-  }
-  if (!hasSubgid) {
-    runRequired(runner, '/usr/sbin/usermod', ['--add-subgids', range, user.name], 'subordinate group id configuration failed');
-  }
-  if (!lingerEnabled(runner, user)) {
-    runRequired(runner, '/usr/bin/loginctl', ['enable-linger', user.name], 'systemd linger enablement failed');
-  }
-  let status = environmentStatus({ runner, readText, env });
-  const delegationMissing = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok);
-  if (delegationMissing) ensureDelegationDropIn(runner, readText, writeAtomic);
-  const fuse = status.items.find((item) => item.id === `package:${OPTIONAL_OVERLAY_PACKAGE}`);
-  if (fuse && !fuse.ok && fuse.detail === 'required by rootless overlay storage') {
-    if (!aptUpdated) runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
-    runRequired(
-      runner,
-      '/usr/bin/apt-get',
-      ['install', '--yes', '--no-install-recommends', OPTIONAL_OVERLAY_PACKAGE],
-      'rootless overlay storage package installation failed',
-    );
-    status = environmentStatus({ runner, readText, env });
-  }
-  const delegationPending = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok)
-    && readText(ENVIRONMENT_DELEGATION_DROP_IN) === ENVIRONMENT_DELEGATION_CONTENT;
-  return {
-    ...status,
-    ...(status.ready ? {} : {
-      detail: delegationPending
-        ? 'systemd delegation is configured; a reboot or user-manager restart is required'
-        : 'environment support remains incomplete',
-    }),
-  };
 }
 
 const SAFE_SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -846,17 +616,17 @@ const EXEC_MAX_SECONDS = 15 * 60;
  *  execution; this backstop only covers a `systemd-run` that never returns at all. */
 const EXEC_GRACE_SECONDS = 10;
 
-/** Denied to the guest on top of nspawn's default bound. Every one of these is also denied by rootless
- *  Podman's default set, so this is the capability parity the Podman runtime already provides.
+/** Denied to the guest on top of nspawn's default bound. Every one of these is also denied by the default
+ *  capability set of an ordinary rootless container, which is the bar this set is measured against.
  *
  *  This set, `DevicePolicy=closed` in the unit template, `PrivateUsers` shifting and the read-only binds
- *  are what stands in for Podman's `containers-default` AppArmor profile, and no profile ships alongside
+ *  are what stands in for the `containers-default` AppArmor profile, and no profile ships alongside
  *  them. That is a deliberate, measured gap rather than an oversight:
  *
  *    - systemd-nspawn 255.4 has no AppArmor integration at all. It exposes `-Z` and `-L` for SELinux
  *      contexts and nothing equivalent for AppArmor, and `systemd.nspawn(5)` has no AppArmor setting, so
- *      there is no hook through which a profile could be applied to the guest payload the way Podman
- *      applies `containers-default` to a container process.
+ *      there is no hook through which a profile could be applied to the guest payload the way a container
+ *      runtime applies `containers-default` to a container process.
  *    - AppArmor 4.0.1 ships no nspawn profile to start from. The profiles present for comparable tools
  *      are either LXC's, which confine a different supervisor, or the Ubuntu 24.04 `flags=(unconfined)`
  *      shells around `crun` and `bwrap`, which grant `userns` and confine nothing.
@@ -930,8 +700,8 @@ polkit.addRule(function(action, subject) {
  *  a per-machine rule is not expressible and every rule below is written against the whole family. */
 const MACHINE_INTERFACE = 've-+';
 
-/** veth is off by default: a veth machine can address the host directly, which the Podman runtime's
- *  `allow_host_loopback=false` does not expose. These rules are the condition for enabling it. They are
+/** veth is off by default: a veth machine can address the host directly, which a slirp-style user-mode
+ *  network with `allow_host_loopback=false` does not expose. These rules are the condition for enabling it. They are
  *  reported and never applied — the daemon does not mutate the firewall, it refuses until they exist.
  *
  *  The guard rules sit in INPUT rather than FORWARD, which is where the plan first placed them. A packet
@@ -1164,7 +934,7 @@ export function nspawnDiskPaths(storage, request) {
 /** The `systemd-run` command line, built here and never taken from the request. The guest argv is opaque
  *  payload: it is placed after `--`, where it can no longer be read as an option, and passed through
  *  untouched. The bounds below are transport hygiene — they protect the command line and the pipe, not
- *  the guest — and are the same ones the Podman runtime applies today.
+ *  the guest.
  *
  *  `--expand-environment=no` is what makes "untouched" true. A transient unit's command line is a systemd
  *  command line, and by default the manager substitutes `${VAR}` and `$VAR` in it at exec time. Measured
@@ -1214,7 +984,7 @@ export function nspawnExecArgs(request) {
  *  `raw` is the LAUNCHED path, where the daemon spawns this helper itself and streams the result to a
  *  terminal. There the verdict is not what the caller wants, so nothing is encoded and nothing is
  *  printed: the child's streams are inherited straight through and the helper exits with the child's own
- *  status, which is exactly how `podman exec` behaves today.
+ *  status, which is what any ordinary remote-execution command does.
  *
  *  `detached` starts a unit and returns as soon as it is up, with the confirmation that it IS up — a
  *  caller that got a bare acknowledgement would have no way to tell a started server from one that
@@ -1305,36 +1075,21 @@ function uidRangeFor(paths, readText, writeAtomic) {
   return fail('no machine uid range is available');
 }
 
-/** Move a tree between the two ownership schemes, in place and in either direction.
+/** Move a tree onto the machine's own fixed uid range, in place: guest id g appears on the host as
+ *  base+g, and the mapping reads nothing else — no subordinate range, no service account.
  *
- *  `nspawn` is the machine's own fixed range: guest id g appears on the host as base+g. `podman` is what
- *  a tree extracted inside `podman unshare` carries: guest root is the service account itself and guest
- *  id g>0 is subStart+g-1. The reverse direction is not optional — a migration candidate that will not
- *  boot has to go back up on Podman, and rootless Podman cannot read a tree that has been chowned into
- *  the machine's range.
- *
- *  Every mode also ACCEPTS an id that already carries the destination scheme and leaves it alone, so an
- *  interrupted pass, which has no receipt and therefore cannot be reversed, is simply re-run. */
+ *  It ACCEPTS an id that already carries the machine range and leaves it alone, so a pass interrupted
+ *  part-way through a tree is simply re-run rather than repaired. */
 const OWNERSHIP_SHIFT_PY = `import json,os,sys
 spec=json.loads(sys.argv[1]); root=sys.argv[2]
-base=spec['base']; size=spec['size']; service=spec.get('serviceId'); previous=spec.get('previousBase')
+base=spec['base']; size=spec['size']
 def machine(uid):
  return base<=uid<base+size
-def podman(uid):
- return uid==service or previous<=uid<previous+size-1
 def to_machine(uid):
  if machine(uid): return uid
- if spec['mode']=='offset':
-  if 0<=uid<size: return base+uid
- elif podman(uid): return base+(0 if uid==service else uid-previous+1)
+ if 0<=uid<size: return base+uid
  raise SystemExit('id %d belongs to no known mapping' % uid)
-def to_podman(uid):
- if podman(uid): return uid
- if machine(uid):
-  guest=uid-base
-  return service if guest==0 else previous+guest-1
- raise SystemExit('id %d belongs to no known mapping' % uid)
-convert=to_podman if spec['target']=='podman' else to_machine
+convert=to_machine
 shifted=0
 for directory,names,files in os.walk(root,topdown=True,followlinks=False):
  for name in [os.curdir]+names+files:
@@ -1343,29 +1098,12 @@ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
   if uid!=st.st_uid or gid!=st.st_gid: os.lchown(path,uid,gid); shifted+=1
 print(json.dumps({'entries':shifted}))`;
 
-/** `offset` maps guest id g to base+g and consults no other mapping, so it carries no subordinate range.
- *  `subid` translates between the machine range and the service account's subordinate range and carries
- *  both ends, which `subordinateRangeFor` has already refused to produce when the host has neither. */
+/** The pass maps guest id g to base+g and consults no other mapping, so the spec carries the range and
+ *  nothing about the host's accounts. */
 function shiftOwnership(runner, root, spec) {
   const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root], { timeoutMs: DISK_TREE_TIMEOUT_MS });
   if (!result.ok) fail(`the machine ownership pass failed: ${String(result.stderr || '').slice(-400)}`);
   return JSON.parse(String(result.stdout || '{}'));
-}
-
-/** The service user's own mapping, which a tree extracted inside `podman unshare` carries. */
-function subordinateRangeFor(readText, user) {
-  const entry = subidEntries(readText, '/etc/subuid').find((row) => row.name === user.name);
-  if (!entry) fail('the service user has no subordinate id range');
-  return { serviceId: user.uid, subStart: entry.start };
-}
-
-function nspawnIdentity(paths, storage) {
-  try {
-    const value = JSON.parse(readFileSync(trustedPath(storage, paths.identity, { file: true }), 'utf8'));
-    return value && typeof value === 'object' ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 /** The group the daemon runs as, so it can READ what only root may write. */
@@ -1531,53 +1269,29 @@ function nspawnMaterialize(request, storage, options) {
     if (existsSync(machineIdPath)) writeFileSync(machineIdPath, '');
   }
   const base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
-  // `offset` translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
-  // needs nothing from /etc/subuid. It used to ask for it anyway and fail outright when the service
-  // account had no subordinate range, which made creating any environment depend on provisioning that
-  // exists only to serve the container runtime — for two arguments the converter never reaches.
-  const shifted = shiftOwnership(runner, target, { mode: 'offset', target: 'nspawn', base, size: UID_RANGE_SIZE });
+  // The pass translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
+  // needs nothing from /etc/subuid and nothing about the service account.
+  const shifted = shiftOwnership(runner, target, { base, size: UID_RANGE_SIZE });
   const identity = writeIdentity(paths, storage, identityFields(request, paths, base), options);
   return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity };
 }
 
-/** The ownership pass, in whichever direction the caller names, with the receipt a rollback needs. It is
- *  idempotent by construction: ids already carrying the destination scheme are left alone, so an
- *  interrupted pass — which produced no receipt and therefore cannot be reversed — is re-run instead. */
+/** The ownership pass over a disk that already exists, onto the range the registry holds for the
+ *  environment. It is idempotent by construction: ids already carrying the machine range are left alone,
+ *  so a pass interrupted part-way through a tree is re-run rather than repaired. */
 function nspawnShiftOwnership(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
-  const env = options.env ?? process.env;
-  const target = request.target;
-  if (target !== 'nspawn' && target !== 'podman') fail('the ownership shift target is invalid');
   const paths = nspawnDiskPaths(storage, request);
   const rootfs = trustedPath(storage, paths.rootfs);
-  const user = serviceUser(runner, env);
-  const podman = subordinateRangeFor(readText, user);
-  const recorded = nspawnIdentity(paths, storage);
-  let base;
-  if (target === 'podman') {
-    // Reversing is only ever asked for with the range the forward pass reported, and it must be the range
-    // this disk actually holds: a reversal against the wrong base would rewrite every id in the tree.
-    if (!Number.isSafeInteger(request.uidBase) || request.uidBase < 1) fail('reversing an ownership shift requires the recorded range');
-    base = Number.isSafeInteger(recorded?.uidBase) ? recorded.uidBase : fail('the disk has no recorded uid range to reverse');
-    if (request.uidBase !== podman.subStart) fail('the ownership shift receipt does not name this host\'s subordinate range');
-  } else {
-    base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
-  }
-  const shifted = shiftOwnership(runner, rootfs, {
-    mode: 'subid', target, base, size: UID_RANGE_SIZE, serviceId: podman.serviceId, previousBase: podman.subStart,
-  });
-  writeIdentity(paths, storage, {
-    ...identityFields(request, paths, base),
-    ownershipTarget: target,
-    previousUidBase: podman.subStart,
-  }, options);
+  const base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
+  const shifted = shiftOwnership(runner, rootfs, { base, size: UID_RANGE_SIZE });
+  writeIdentity(paths, storage, identityFields(request, paths, base), options);
   return {
     ok: true,
     rootfsPath: rootfs,
     uidBase: base,
     uidSize: UID_RANGE_SIZE,
-    previousUidBase: podman.subStart,
     entries: shifted.entries,
   };
 }
@@ -1681,9 +1395,9 @@ function nspawnDropCapabilities(raw) {
   return [...new Set([...NSPAWN_DROP_CAPABILITIES, ...requested])];
 }
 
-/** `:rootidmap` gives the guest's root the identity of the directory's host owner, which is the same
- *  semantics rootless Podman provides today: a file the guest writes appears on the host as the service
- *  user, and a service-user file appears inside the machine as root. */
+/** `:rootidmap` gives the guest's root the identity of the directory's host owner: a file the guest
+ *  writes appears on the host as the service user, and a service-user file appears inside the machine as
+ *  root. */
 export function renderMachineSettings(binds, { privateNetwork = true, uidBase, dropCapabilities = NSPAWN_DROP_CAPABILITIES }) {
   if (!Number.isSafeInteger(uidBase) || uidBase < UID_RANGE_BASE) fail('the machine uid range is invalid');
   const lines = [
@@ -1762,10 +1476,10 @@ function nspawnWriteEnvelope(request, storage, options) {
   return { ok: true, machine, unit: machineUnitFor(machine), settingsPath, dropInPath, uidBase, uidSize: UID_RANGE_SIZE };
 }
 
-/* The tree primitives keep the Python implementations the Podman runtime already uses; only the process
- * that runs them moves from `podman unshare` to this helper, because the rootfs is owned by the
- * machine's uid range and the service user cannot read it. `tests/contract/nspawnHelper.test.ts`
- * compares the inventory source with the runtime's own copy so the two cannot drift apart. */
+/* The tree primitives run here rather than as the service account, because the rootfs is owned by the
+ * machine's uid range and the service user cannot read it. They are metadata-exact on purpose: a copy, a
+ * fingerprint and a verification all have to agree about what a tree IS, so `tests/contract/nspawnHelper.test.ts`
+ * holds the shared inventory to the one definition below and the runtime to the same shape. */
 const DISK_TREE_INVENTORY_PY = `def inventory(root):
  rows=[]; links={}
  for directory,names,files in os.walk(root,topdown=True,followlinks=False):
@@ -2122,7 +1836,7 @@ function vethReadiness(runner, readText) {
   return items;
 }
 
-/** The one accepted regression against the Podman runtime's `containers-default`, said out loud where the
+/** The one accepted regression against the `containers-default` AppArmor profile, said out loud where the
  *  person deploying will see it rather than only in a plan document. It is reported as met because there
  *  is nothing to install and nothing an operator can do about it, and the detail says plainly that the
  *  profile is absent and what stands in its place. See the comment on the dropped capability set for the
@@ -2137,7 +1851,8 @@ function apparmorRow(readText) {
   };
 }
 
-/** The same readiness shape the Podman environment rows use, reported through the same item contract.
+/** Host readiness for the machine runtime, one row per requirement, through the item contract every
+ *  readiness surface reads.
  *  The veth rows appear only when veth is requested, and they are only ever REPORTED: the daemon never
  *  mutates the firewall, it names the rule and refuses. */
 function nspawnStatus(request, options = {}) {
@@ -2279,10 +1994,6 @@ export async function applyRequest(request, deployment, options = {}) {
   // older daemon can ask for.
   if (request.domain !== undefined && request.domain !== 'sites' && request.domain !== 'nspawn') fail('request domain is invalid');
   if (request.domain === 'nspawn') return applyNspawnRequest(request, options);
-  if (request.op === 'environments-status' || request.op === 'environments-provision') {
-    helperRequestFields(request);
-    return request.op === 'environments-status' ? environmentStatus(options) : provisionEnvironments(options);
-  }
   if (request.op === 'prepare-runtime-socket' || request.op === 'seal-runtime-socket' || request.op === 'remove-runtime-socket') {
     return runtimeSocketRequest(request);
   }
@@ -2412,7 +2123,7 @@ export function helperRequestNeedsDeployment(request) {
  *  the status-shaped operations must NOT take it: they are on the hot path of every command run in every
  *  environment, and blocking them behind a certbot renewal would stall the whole instance. */
 const SITES_LOCK_FREE_OPERATIONS = Object.freeze([
-  'environments-status', 'status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket',
+  'status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket',
 ]);
 const NSPAWN_LOCK_FREE_OPERATIONS = Object.freeze([
   'status', 'exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-verify',

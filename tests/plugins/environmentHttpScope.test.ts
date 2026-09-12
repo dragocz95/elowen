@@ -26,14 +26,15 @@ const scratch = (prefix: string): string => {
   return path;
 };
 const libUrl = (file: string) => pathToFileURL(resolve('plugins/sandbox/lib', file)).href;
-const never = () => { throw new Error('the fixture never reaches a container'); };
-const podman = { inspect: async () => null, ensureProjectImage: never, create: never, start: never, stop: never, remove: never, exec: never };
+const never = () => { throw new Error('the fixture never reaches a machine'); };
+const nspawn = { inspect: async () => null, create: never, start: never, stop: never, remove: never, exec: never, hostReadiness: never };
 const storage = { prepare: never, snapshot: never, readSnapshot: never, restoreVolumes: never };
 
 /** An on-disk plugin that mounts the REAL sandbox environment API over the REAL environment runtime, so a
  *  request travels the production path end to end: bearer auth → the core plugin API dispatcher →
  *  `runWithIdentity` → `registerEnvironmentApi`'s accessibleProjects gate → `authorize` → the real
- *  UserProjectStore. Only Podman is a stub; every authorization decision on the way is the shipped one. */
+ *  UserProjectStore. Only the machine runtime is a stub; every authorization decision on the way is the
+ *  shipped one. */
 function sandboxFixture(dataDir: string): string {
   const root = scratch('env-http-plugin-');
   const dir = join(root, 'sandbox');
@@ -47,12 +48,12 @@ function sandboxFixture(dataDir: string): string {
     import { initSandboxDb } from ${JSON.stringify(libUrl('db.mjs'))};
     import { createEnvironmentRuntime } from ${JSON.stringify(libUrl('environmentRuntime.mjs'))};
     import { registerEnvironmentApi } from ${JSON.stringify(libUrl('environmentApi.mjs'))};
-    const never = () => { throw new Error('the fixture never reaches a container'); };
+    const never = () => { throw new Error('the fixture never reaches a machine'); };
     export function register(ctx) {
       initSandboxDb(ctx);
       const runtime = createEnvironmentRuntime({
         ctx, db: ctx.db(), dataDir: ${JSON.stringify(dataDir)}, daemon: true,
-        podman: { inspect: async () => null, ensureProjectImage: never, create: never, start: never, stop: never, remove: never, exec: never },
+        nspawn: { inspect: async () => null, create: never, start: never, stop: never, remove: never, exec: never, hostReadiness: never },
         storage: { prepare: never, snapshot: never, readSnapshot: never, restoreVolumes: never },
       });
       ctx.registerHook({ name: 'plugin.reload.before', run: () => runtime.dispose() });
@@ -125,7 +126,7 @@ function turnRuntime(app: App) {
     db: () => db, host: { stores: () => app.wiring.host!.stores }, currentAccess, currentAccountUserId, config: {},
   } as unknown as PluginContext;
   initSandboxDb(ctx);
-  const runtime = createEnvironmentRuntime({ ctx, db, dataDir: scratch('env-turn-data-'), podman, storage, daemon: true });
+  const runtime = createEnvironmentRuntime({ ctx, db, dataDir: scratch('env-turn-data-'), nspawn, storage, daemon: true });
   return runtime.control ?? runtime;
 }
 

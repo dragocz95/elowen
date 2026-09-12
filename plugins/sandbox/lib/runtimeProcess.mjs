@@ -4,10 +4,9 @@ import { userInfo } from 'node:os';
 /** Host process transport for the machine runtime: how a control tool or the privileged helper is
  *  launched, what environment it is given, and the bounds its input and output are held to.
  *
- *  This lived in `podman.mjs` for as long as Podman was the only runtime, and the nspawn client imported
- *  it from there. None of it is about containers: it is a bounded launcher for trusted host executables.
- *  It sits in its own module so the runtime does not import its transport from a sibling runtime — and so
- *  deleting one runtime does not take the launcher with it. */
+ *  None of it is about machines: it is a bounded launcher for trusted host executables. It sits in its
+ *  own module rather than inside the runtime client, so the transport has one owner and outlives whichever
+ *  client uses it. */
 
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const INPUT_LIMIT = 1024 * 1024;

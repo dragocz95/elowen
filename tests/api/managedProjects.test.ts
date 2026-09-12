@@ -108,7 +108,7 @@ describe('managed project API', () => {
     expect(projects.get(p.id)?.lifecycle).toBe('active');
   });
   it('keeps a genuine provider failure a 500', async () => {
-    const sandbox = { requestEnvironment: () => { throw new Error('podman socket closed'); } };
+    const sandbox = { requestEnvironment: () => { throw new Error('machine manager is not reachable'); } };
     const { app, projects, member, token } = setup(sandbox); const p = projects.ensureDefault(member.id);
     expect((await app.request(`/projects/${p.id}`, request(token, 'DELETE'))).status).toBe(500);
   });
