@@ -9,6 +9,7 @@ import {
   BUILD_TOOLS, ensureBuildTools, installHint, inspectPack, assertPack, installedPackages,
   missingBuildTools, onPath, readTar, releasePathFor, resolveRecipe, snapshotEpoch, verifyArtifacts,
 } from '../../scripts/build-rootfs-artifact.mjs';
+import { ROOTFS_RECIPES } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'elowen-rootfs-build-'));
 afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
@@ -330,13 +331,40 @@ describe('rebuild verification', () => {
     expect((await verifyArtifacts({ names: ['project-base'], pins, build })).ok).toBe(false);
   });
 
-  it('skips an unpublished pin instead of failing, and never builds one', async () => {
-    // This is the shipped catalogue's own state before the first release. Failing here would mean
-    // --verify could not pass until something was published, which is exactly backwards.
+  it('skips an unpublished pin rather than comparing one, and never builds it', async () => {
+    // An unpublished recipe has no recorded digest to differ from, so there is nothing to rebuild it
+    // against and the run does not try. Skipped is reported as skipped, next to what was verified.
+    const build = vi.fn(async () => ({ digest: pins['project-base@1'].digest, sizeBytes: 1024 }));
+    const result = await verifyArtifacts({ names: ['project-base', 'site-base', 'site-node'], pins, build });
+    expect(result.ok).toBe(true);
+    expect(result.verified).toBe(1);
+    expect(result.unpublished.map((item: { reference: string }) => item.reference)).toEqual(['site-base@1', 'site-node@1']);
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails a run that verified nothing, because a check that cannot fail is not a check', async () => {
+    // Every pin this release ships is unpublished, so this is the shipped state and not an edge case:
+    // `npm run rootfs:verify` rebuilt nothing, compared nothing, never reached the build tools and exited
+    // 0. CI then reported a verification that had not happened, which is worse than no gate at all —
+    // a missing gate is visible and a green one is believed.
     const build = vi.fn(async () => ({ digest: `sha256:${'e'.repeat(64)}`, sizeBytes: 1 }));
     const result = await verifyArtifacts({ names: ['site-base', 'site-node'], pins, build });
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.verified).toBe(0);
+    expect(result.matched).toEqual([]);
+    expect(result.differing).toEqual([]);
+    expect(result.missing).toEqual([]);
     expect(result.unpublished.map((item: { reference: string }) => item.reference)).toEqual(['site-base@1', 'site-node@1']);
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it('refuses the whole shipped catalogue as unverifiable rather than reporting it green', async () => {
+    // Against the pins actually checked in, not a fixture: this is exactly what `--all --verify` does on
+    // this commit, and the answer has to be a non-zero one.
+    const build = vi.fn(async () => ({ digest: `sha256:${'e'.repeat(64)}`, sizeBytes: 1 }));
+    const result = await verifyArtifacts({ names: Object.keys(ROOTFS_RECIPES), build });
+    expect(result.verified).toBe(0);
+    expect(result.ok).toBe(false);
     expect(build).not.toHaveBeenCalled();
   });
 

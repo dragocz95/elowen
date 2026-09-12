@@ -811,10 +811,14 @@ export function pinsFrom(manifest, existing = ROOTFS_ARTIFACTS) {
  *  that has to be right, and it is the part that a real build makes expensive to test. It needs no
  *  credential of any kind, which is why CI can run it.
  *
- *  An unpublished pin is reported and skipped rather than failed. A recipe this release declares but has
- *  never published has no recorded digest to differ from, and that is the catalogue's ordinary state
- *  before the first release; failing on it would mean `--verify` could never pass until something was
- *  published, which is precisely backwards. */
+ *  An unpublished pin is skipped rather than compared: a recipe this release declares but has never
+ *  published has no recorded digest to differ from, and that is the catalogue's ordinary state before the
+ *  first release.
+ *
+ *  Skipped is NOT passed, and `ok` says so. Every pin in this release is unpublished today, so a verify
+ *  that treated "nothing to compare" as success rebuilt nothing, never reached `ensureBuildTools`, and
+ *  exited 0 — a green CI line standing for no verification at all, which is worse than a missing one
+ *  because it is believed. `verified` is what the gate is: a run that compared nothing did not pass. */
 export async function verifyArtifacts({ names, pins = ROOTFS_ARTIFACTS, build, log = () => {} }) {
   const matched = [];
   const differing = [];
@@ -849,7 +853,14 @@ export async function verifyArtifacts({ names, pins = ROOTFS_ARTIFACTS, build, l
     log(`  ${reference}: REBUILD DIFFERS — pinned ${pin.digest} (${pin.sizeBytes} bytes), built ${built.digest} (${built.sizeBytes} bytes)`);
   }
 
-  return { matched, differing, unpublished, missing, ok: differing.length === 0 && missing.length === 0 };
+  return {
+    matched,
+    differing,
+    unpublished,
+    missing,
+    verified: matched.length,
+    ok: matched.length > 0 && differing.length === 0 && missing.length === 0,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -892,7 +903,8 @@ const USAGE = `Build a published root filesystem artifact, or verify a rebuild a
   --recipe <name>   Build one recipe (${Object.keys(ROOTFS_RECIPES).join(', ')}). Repeatable.
   --all             Build every recipe this release declares.
   --out <dir>       Where the tarball and manifest are written. Default .artifacts/rootfs.
-  --verify          Rebuild and compare against the recorded pin. Exits non-zero on any difference.
+  --verify          Rebuild and compare against the recorded pin. Exits non-zero on any difference, and
+                    on a run that compared nothing because no recipe has a published pin.
 
 This script never uploads anything and holds no credential. Publishing a built artifact is a separate,
 owner-approved step.
@@ -922,10 +934,19 @@ async function dispatch(argv) {
     log(`Verifying ${names.length} recipe(s) against ${PIN_FILE}`);
     const result = await verifyArtifacts({ names, build, log });
     if (result.ok) {
-      log(`\n${result.matched.length} matched, ${result.unpublished.length} unpublished and skipped.`);
+      log(`\n${result.verified} verified against their pin, ${result.unpublished.length} unpublished and skipped.`);
       return 0;
     }
-    process.stderr.write(`\n${result.differing.length} rebuild(s) differ from their pin and ${result.missing.length} have no pin entry.\n`);
+    if (result.verified === 0) {
+      // Stated as the whole outcome rather than as a footnote, because this is the run that used to read
+      // as a pass: nothing was rebuilt, nothing was compared, and the exit code said the artifacts were
+      // good. Publishing a recipe and pinning its digest is what makes the gate able to answer at all.
+      process.stderr.write(`\nVERIFIED NOTHING: none of the ${names.length} recipe(s) has a published pin to compare a rebuild against.\n`);
+      for (const item of result.unpublished) process.stderr.write(`  ${item.reference}: declared but never published\n`);
+    }
+    if (result.differing.length > 0 || result.missing.length > 0) {
+      process.stderr.write(`\n${result.differing.length} rebuild(s) differ from their pin and ${result.missing.length} have no pin entry.\n`);
+    }
     for (const item of result.differing) {
       process.stderr.write(
         `  ${item.reference}: pinned ${item.pinned.digest}, built ${item.built.digest}`
