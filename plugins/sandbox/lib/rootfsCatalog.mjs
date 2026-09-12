@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 /** The root filesystems this release can build an environment from, and where its copies live.
  *
@@ -90,20 +91,32 @@ export const SITE_ARTIFACTS = Object.freeze({ base: 'site-base', static: 'site-s
 /** The project artifact every new managed Project is built from. */
 export const PROJECT_ARTIFACT = 'project-base';
 
-/** The pinned copies. `digest` is `sha256:` and 64 hex characters; `sizeBytes` is the exact published
- *  length; `path` is appended to the base URL.
+/** The pinned copies, read from the generated file beside this one rather than written here.
+ *
+ *  A digest is evidence, not a preference: it is what a build measured after inspecting the archive it
+ *  had just produced. Keeping the table in source invites someone to type one in, and a typed digest is
+ *  a pin nobody can reproduce — it either matches bytes no build made, or it silently blesses whatever
+ *  happens to be at that URL. So `scripts/build-rootfs-artifact.mjs` writes `rootfsArtifacts.json`, that
+ *  script is the only writer, and this file only reads it.
+ *
+ *  `digest` is `sha256:` and 64 hex characters; `sizeBytes` is the exact published length; `path` is
+ *  appended to the base URL. Read through `JSON.parse(readFileSync(...))` because that is how this
+ *  repository loads JSON from a plugin's ESM — import attributes appear nowhere in it, and under the
+ *  Node this project supports they are still an experimental syntax that prints a warning on every load.
  *
  *  An entry whose `digest` is null is a recipe this release DECLARES but has not published. That is a
  *  real state and it is spelled out rather than hidden: the artifact store refuses it with an
  *  unpublished error naming the reference, readiness reports it as a separate unmet row, and nothing
- *  falls back to building one on the host. The release script fills these in and the contract test holds
- *  the file to its own shape. */
-export const ROOTFS_ARTIFACTS = Object.freeze({
-  'project-base@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-project-base-v1/project-base-v1.tar.gz' }),
-  'site-base@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-base-v1/site-base-v1.tar.gz' }),
-  'site-static@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-static-v1/site-static-v1.tar.gz' }),
-  'site-node@1': Object.freeze({ digest: null, sizeBytes: null, path: 'rootfs-site-node-v1/site-node-v1.tar.gz' }),
-});
+ *  falls back to building one on the host. */
+const pinned = JSON.parse(readFileSync(new URL('./rootfsArtifacts.json', import.meta.url), 'utf8'));
+
+/** Reshaped rather than passed through, so the frozen entry carries exactly the three fields the
+ *  runtime reads and a stray key in the generated file cannot ride along into a catalogue entry. */
+export const ROOTFS_ARTIFACTS = Object.freeze(Object.fromEntries(
+  Object.entries(pinned.artifacts).map(([reference, { digest, sizeBytes, path }]) => [
+    reference, Object.freeze({ digest, sizeBytes, path }),
+  ]),
+));
 
 const REFERENCE = /^([a-z][a-z0-9-]{0,40})@([1-9][0-9]{0,8})$/;
 export const ARTIFACT_DIGEST = /^sha256:[a-f0-9]{64}$/;
