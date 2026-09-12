@@ -120,16 +120,16 @@ export function resolveRecipe(name, recipes = ROOTFS_RECIPES) {
 // Host dependencies
 // ---------------------------------------------------------------------------------------------------
 
+/** Where the Debian archive keyring lands. One path, named once, because the tool table and the
+ *  mmdebstrap invocation both need it and a second literal would drift. */
+export const DEBIAN_KEYRING = '/usr/share/keyrings/debian-archive-keyring.gpg';
+
 /** What a build needs on the host, and the Debian package that supplies each.
  *
  *  `mmdebstrap` rather than `debootstrap`: the recipes declare `variant: 'important'`, which is an
  *  mmdebstrap variant and not one debootstrap has, and mmdebstrap is the one that documents
  *  `SOURCE_DATE_EPOCH` as making its output reproducible. `uidmap` supplies `newuidmap`/`newgidmap`,
  *  without which `--mode=unshare` cannot map the subordinate ids and the build has to run as root. */
-/** Where the Debian archive keyring lands. One path, named once, because the tool table and the
- *  mmdebstrap invocation both need it and a second literal would drift. */
-export const DEBIAN_KEYRING = '/usr/share/keyrings/debian-archive-keyring.gpg';
-
 export const BUILD_TOOLS = Object.freeze([
   Object.freeze({ command: 'mmdebstrap', package: 'mmdebstrap' }),
   // The Debian archive keyring, as a FILE rather than a command. The recipes build Debian from a pinned
@@ -182,8 +182,8 @@ export function installHint(missing) {
  *  Checked immediately before the first build rather than at startup, because `--verify` over a
  *  catalogue with nothing published rebuilds nothing and therefore needs none of these. Demanding them
  *  anyway would make the CI check fail on every runner for a build it was never going to run. */
-export function ensureBuildTools(present = onPath) {
-  const missing = missingBuildTools(present);
+export function ensureBuildTools(present = onPath, tools = BUILD_TOOLS) {
+  const missing = missingBuildTools(present, tools);
   if (missing.length === 0) return;
   const names = missing.map((tool) => tool.command).join(', ');
   throw Object.assign(
@@ -417,8 +417,14 @@ function enabledUnits(byPath) {
  *
  *  Returns the problems rather than throwing, so a build reports all of them at once instead of one per
  *  attempt, and so the rules can be tested against fixtures. */
-/** The character devices a Debian root filesystem legitimately ships, by path inside the archive. */
-export const BASE_DEVICE_NODES = new Set(['dev/null', 'dev/zero', 'dev/full', 'dev/random', 'dev/urandom', 'dev/tty', 'dev/console', 'dev/ptmx']);
+/** The character devices a Debian root filesystem legitimately ships, by path inside the archive.
+ *
+ *  A frozen array rather than an exported Set: this is an allow-list deciding which special files may
+ *  reach a published root filesystem, and `Object.freeze` does not stop `Set.add` — it seals own
+ *  properties and a Set keeps its members in an internal slot, so a frozen Set is still mutable by any
+ *  importer. The lookup Set is built here and never leaves. */
+export const BASE_DEVICE_NODES = Object.freeze(['dev/null', 'dev/zero', 'dev/full', 'dev/random', 'dev/urandom', 'dev/tty', 'dev/console', 'dev/ptmx']);
+const BASE_DEVICE_NODE_SET = new Set(BASE_DEVICE_NODES);
 
 export function inspectPack(entries, recipe, options = {}) {
   const maxBytes = options.maxBytes ?? MAX_ARTIFACT_BYTES;
@@ -443,7 +449,7 @@ export function inspectPack(entries, recipe, options = {}) {
     // of this rule rejected all six on every real build — it was written before one had ever run.
     if (entry.type === 'block' || entry.type === 'fifo') {
       problem('device_node', `${entry.name} is a ${entry.type} node`);
-    } else if (entry.type === 'char' && !BASE_DEVICE_NODES.has(path)) {
+    } else if (entry.type === 'char' && !BASE_DEVICE_NODE_SET.has(path)) {
       problem('device_node', `${entry.name} is a char node outside the base set`);
     }
     if (entry.type === 'symlink' && linkTarget(entry.name, entry.linkName) === null) {
