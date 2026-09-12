@@ -196,6 +196,32 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
   const readinessRefusal = (readiness) => readiness.items.filter((item) => !item.ok)
     .map((item) => `${item.label}: ${item.detail ?? 'not satisfied'}`).join('; ');
+  /** Prepare the HOST for the machine runtime, on an administrator's explicit request.
+   *
+   *  This is the only path in the plugin that changes the host rather than reporting on it, so it is
+   *  gated on a current administrator and nothing else reaches it: an ordinary environment action still
+   *  refuses an unready host and names the rows. The privileged side is convergent, so running it twice
+   *  is running it once, and the answer is the readiness report as it stands afterwards — a caller shows
+   *  the same rows whether it provisioned or merely looked.
+   *
+   *  The cached readiness is dropped before the round trip rather than after it. A provisioning run that
+   *  throws part-way has still changed the host, and answering the next poll from a snapshot taken before
+   *  it would describe a host that no longer exists. */
+  async function provisionMachineRuntime(input) {
+    account(input.accountUserId, true);
+    if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may prepare the host for the machine runtime', 403);
+    if (!nspawn || typeof nspawn.provisionHost !== 'function') throw error('runtime_unavailable', 'This runtime has no machine client to prepare', 503);
+    readinessCache = null;
+    try {
+      const value = await nspawn.provisionHost();
+      readinessCache = { at: Date.now(), value };
+      ctx.logger.info(`machine runtime provisioning requested by account ${input.accountUserId}: ${value.ready ? 'host ready' : `still unmet — ${readinessRefusal(value)}`}`);
+      return value;
+    } catch (cause) {
+      readinessCache = null;
+      throw error('provision_failed', cause.message, 500);
+    }
+  }
   /** Which runtime a NEW environment is built on, decided once, here, and nowhere else.
    *
    *  There is no configuration flag and no per-environment choice. A host that can hold a machine holds
@@ -2068,6 +2094,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         snapshots: await snapshots('project', id, input.accountUserId), operations };
     },
     requestEnvironment: (input) => request('project', projectId(input.project), input),
+    machineRuntimeReadiness: async (input) => {
+      account(input.accountUserId, false);
+      if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may read host runtime readiness', 403);
+      return await machineReadiness();
+    },
+    provisionMachineRuntime,
     environmentOperation: (input) => getOperation('project', input), projectFiles, revokeProjectAccess,
     environmentSnapshots: (input) => snapshots('project', projectId(input.project), input.accountUserId),
     environmentLogs: (input) => logs('project', projectId(input.project), input.accountUserId, input.lines), managedWorktrees,

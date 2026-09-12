@@ -54,10 +54,12 @@ const HELPER_RESPONSE_LIMIT = 16 * 1024 * 1024;
 const GUEST_COMMAND_TIMEOUT_MS = 30_000;
 /** How long one readiness probe may take. Short, because a probe that cannot answer is the answer. */
 const PROBE_TIMEOUT_MS = 5_000;
-/** `provision` is deliberately absent. The daemon reports what a host is missing and never installs it:
- *  an operation that writes root-owned files and runs a package manager belongs to an operator at a
- *  terminal, not to a request a browser can cause. */
-const HELPER_OPERATIONS = new Set(['status', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
+/** `provision` writes root-owned files, runs a package manager and touches the host's packet filter, so it
+ *  is not something an ordinary request may cause. It is reachable only from the administrator-only
+ *  control above it, and every other operation here still REPORTS an unready host rather than repairing
+ *  it — `write-envelope` re-checks the same rows and refuses. That split is the whole point: serving a
+ *  project never changes the host, and an operator asking to prepare the host does. */
+const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
   'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
@@ -317,7 +319,27 @@ export class NspawnClient {
    *  ordinary environment now requests, and a readiness report that omits the rows it will be refused on
    *  would tell a person the runtime is ready right up until the first environment fails to be created. */
   async hostReadiness({ veth = true } = {}) {
-    const reply = await this.#helper('status', { veth });
+    return this.#readiness('status', { veth });
+  }
+
+  /** Bring the host up to what `hostReadiness` asks for, and answer with the readiness report as it
+   *  stands AFTERWARDS rather than with a claim of success. The two share a shape on purpose: a caller
+   *  renders the same rows either way, and a host that is still short of something says which row.
+   *
+   *  Idempotent, because every step on the privileged side asks before it acts: running it against a
+   *  prepared host writes nothing and reloads nothing. It is an ADMINISTRATOR's operation — it installs
+   *  packages and applies firewall rules — so the control above it is the gate, and the helper still
+   *  refuses a host whose operating system it does not support rather than modifying it anyway.
+   *
+   *  A host where the privileged helper is not installed or not permitted cannot be repaired from here at
+   *  all. That failure is reported with the helper's own message, and the unmet readiness rows already
+   *  carry the exact command an operator runs by hand. */
+  async provisionHost({ veth = true } = {}) {
+    return this.#readiness('provision', { veth }, { timeoutMs: 12 * 60_000 });
+  }
+
+  async #readiness(operation, fields, options = {}) {
+    const reply = await this.#helper(operation, fields, options);
     if (typeof reply.ready !== 'boolean' || !Array.isArray(reply.items)) throw new Error('Invalid machine runtime readiness report');
     return {
       ready: reply.ready,
@@ -325,6 +347,7 @@ export class NspawnClient {
         if (typeof item?.id !== 'string' || typeof item?.label !== 'string' || typeof item?.ok !== 'boolean') throw new Error('Invalid machine runtime readiness item');
         return { id: item.id, label: item.label, ok: item.ok, ...(typeof item.detail === 'string' ? { detail: item.detail } : {}) };
       }),
+      ...(typeof reply.detail === 'string' && reply.detail ? { detail: reply.detail.slice(0, 500) } : {}),
     };
   }
 

@@ -72,4 +72,19 @@ export function registerEnvironmentApi(ctx, runtime) {
   } });
   read('status', (input, actor) => control.environmentFor(actor));
   read('operation', (input, actor) => control.environmentOperation({ accountUserId: actor.accountUserId, operationId: input.operationId }));
+
+  // What the host still owes the machine runtime, and the one request that repairs it. Both are
+  // administrator-only and the runtime re-checks that for itself; this is a gate, not the decision.
+  // GET is side-effect free and safe to poll. POST installs packages, writes root-owned unit, polkit and
+  // sysctl files and applies firewall rules, so it is deliberately a separate verb on a separate route
+  // rather than a flag on the read — nothing a browser does by merely LOOKING can change the host.
+  const machine = (method, handler) => ctx.registerApiRoute({ path: 'runtime/host', method, access: 'user', handler: async (req) => {
+    try {
+      const accountUserId = req.auth?.userId;
+      if (!Number.isSafeInteger(accountUserId) || accountUserId <= 0) return { status: 401, body: { error: 'account_required' } };
+      return { status: 200, body: await handler({ accountUserId }) };
+    } catch (cause) { return failure(cause); }
+  } });
+  machine('GET', (actor) => control.machineRuntimeReadiness(actor));
+  machine('POST', (actor) => control.provisionMachineRuntime(actor));
 }

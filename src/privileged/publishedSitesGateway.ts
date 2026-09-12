@@ -42,7 +42,7 @@ export type SiteGatewayHelperRequest =
   | { op: 'status' }
   | { op: 'environments-status' }
   | { op: 'environments-provision' }
-  | { domain: 'nspawn'; op: 'provision'; user?: string }
+  | { domain: 'nspawn'; op: 'provision'; veth?: boolean; user?: string }
   | { op: 'prepare-runtime-socket'; siteId: string }
   | { op: 'seal-runtime-socket'; siteId: string }
   | { op: 'remove-runtime-socket'; siteId: string };
@@ -121,8 +121,13 @@ export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = 
   return true;
 }
 
-/** Install the machine runtime's host artefacts: the container tools package, the unit template and the
- *  polkit rule. The helper does the work and is idempotent, so this converges rather than repeating.
+/** Install the machine runtime's host artefacts: the container tools package, the unit template, the
+ *  polkit rule, the firewall unit and the network prerequisites a virtual ethernet needs. The helper does
+ *  the work and is idempotent, so this converges rather than repeating.
+ *
+ *  `veth` is asked for because an ordinary environment asks for one. Leaving it out reported a prepared
+ *  host while forwarding was off and the link service was disabled, so the install said ready and the
+ *  first environment still could not be created.
  *
  *  It is wired into the install and the update because there is no other way in. The runtime refuses to
  *  create an environment while any of the three is missing and there is deliberately no fallback, so a
@@ -135,12 +140,12 @@ export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = 
  *  named: the installer knows it from the plan, an update reads it from the root-owned install record, and
  *  the helper resolves it through passwd and accepts it only from a root caller. */
 export async function provisionMachineRuntime(serviceUser: string | null, invoke: SiteGatewayHelperInvoker = defaultInvoker): Promise<boolean> {
-  const response = await invoke({ domain: 'nspawn', op: 'provision', ...(serviceUser ? { user: serviceUser } : {}) });
+  const response = await invoke({ domain: 'nspawn', op: 'provision', veth: true, ...(serviceUser ? { user: serviceUser } : {}) });
   if (response.ready === false) {
     const blocking = (response.items ?? []).filter((item): item is { ok: boolean; label?: string; detail?: string } =>
       typeof item === 'object' && item !== null && (item as { ok?: unknown }).ok === false);
-    // Not every unmet row is this command's to fix: the firewall rules are the operator's and are only
-    // ever reported. Naming them is the point; failing on them would be wrong.
+    // A row that is still unmet after a convergent run is something this host will not let the helper
+    // fix — an unsupported kernel, a packet filter that is not iptables. Naming it is the point.
     throw new Error(`machine runtime support is incomplete — ${blocking.map((item) => `${item.label ?? 'requirement'}: ${item.detail ?? 'not met'}`).join('; ') || response.detail || 'no detail reported'}`);
   }
   return response.ready === true;

@@ -1039,6 +1039,18 @@ ${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${rule.binary} -C $
 WantedBy=multi-user.target docker.service
 `;
 
+/** Forwarding, recorded where it survives a reboot rather than only set live.
+ *
+ *  `sysctl -w` lasts until the next boot, and a host that came back without forwarding refuses every
+ *  environment creation with a row nobody connects to the restart. The file is the artefact; applying it
+ *  is the effect, and readiness asks the running kernel rather than the file, so a file that exists and
+ *  was never applied still reads as unmet. */
+export const MACHINE_SYSCTL_PATH = '/etc/sysctl.d/99-elowen-machine.conf';
+export const MACHINE_SYSCTL_CONTENT = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+# A machine given a virtual ethernet routes through the host, which needs forwarding on.
+net.ipv4.ip_forward=1
+`;
+
 export function machineUnitFor(machine) {
   if (typeof machine !== 'string' || !NSPAWN_MACHINE.test(machine)) fail('the machine name is invalid');
   return `elowen-machine@${machine}.service`;
@@ -2066,12 +2078,20 @@ function artefactRow(artefact, runner, readText, readMode) {
  *  quietly running a machine with the guard gone. */
 function vethReadiness(runner, readText) {
   const items = [];
+  // The running kernel is what decides whether a machine routes today; the file is what decides whether
+  // it still routes after a restart. Both are required, and they are reported as one row because an
+  // operator cannot act on either half alone.
   const forwarding = readText('/proc/sys/net/ipv4/ip_forward').trim() === '1';
+  const persisted = readText(MACHINE_SYSCTL_PATH) === MACHINE_SYSCTL_CONTENT;
   items.push({
     id: 'net:ip-forward',
     label: 'IPv4 forwarding',
-    ok: forwarding,
-    detail: forwarding ? 'enabled' : 'a machine cannot route without it — run: sysctl -w net.ipv4.ip_forward=1, and record it under /etc/sysctl.d to survive a reboot',
+    ok: forwarding && persisted,
+    detail: forwarding && persisted
+      ? 'enabled and recorded'
+      : !forwarding
+        ? 'a machine cannot route without it — run environment provisioning, or: sysctl -w net.ipv4.ip_forward=1'
+        : `enabled, but it would not come back after a reboot — run environment provisioning to record it in ${MACHINE_SYSCTL_PATH}`,
   });
   const active = runner('/usr/bin/systemctl', ['is-active', 'systemd-networkd']).ok;
   const enabled = runner('/usr/bin/systemctl', ['is-enabled', 'systemd-networkd']).ok;
@@ -2137,10 +2157,36 @@ function nspawnStatus(request, options = {}) {
   return { ok: true, ready: items.every((item) => item.ok), items };
 }
 
+/** The network prerequisites a veth machine needs, brought up to the state `vethReadiness` asks for.
+ *
+ *  The firewall rules are not here: they are the firewall UNIT's, which `nspawnArtefacts` installs and
+ *  enables, and enabling it is what applies them. What is left is forwarding and the link configuration
+ *  service, and both are provisioned the same way everything else here is — asked first, acted on only
+ *  when the answer is no, so a converged host is untouched. */
+function provisionMachineNetwork(runner, readText, writeAtomic) {
+  if (readText(MACHINE_SYSCTL_PATH) !== MACHINE_SYSCTL_CONTENT) {
+    writeAtomic(MACHINE_SYSCTL_PATH, Buffer.from(MACHINE_SYSCTL_CONTENT), 0o644);
+  }
+  // Applied from the file rather than with `-w`, so what the kernel is running and what the host will
+  // restore at the next boot are the same statement and cannot drift apart.
+  if (readText('/proc/sys/net/ipv4/ip_forward').trim() !== '1') {
+    runRequired(runner, '/usr/sbin/sysctl', ['--system'], 'IPv4 forwarding could not be enabled');
+  }
+  const active = runner('/usr/bin/systemctl', ['is-active', 'systemd-networkd']).ok;
+  const enabled = runner('/usr/bin/systemctl', ['is-enabled', 'systemd-networkd']).ok;
+  if (!active || !enabled) {
+    runRequired(runner, '/usr/bin/systemctl', ['enable', '--now', 'systemd-networkd'], 'the machine link configuration service could not be started');
+  }
+}
+
 /** Convergent by construction: every step asks the host what it already has and acts only on the answer,
  *  so provisioning a fresh host, re-provisioning a finished one and repairing a half-done or hand-edited
- *  one are the same code path. Nothing here is a veth prerequisite: those belong to the operator and
- *  provisioning reports them without touching them. */
+ *  one are the same code path.
+ *
+ *  Provisioning is the one path that may act on the host's network and packet filter. Serving an ordinary
+ *  request still only ever REPORTS them: `nspawnWriteEnvelope` checks the same rows and refuses rather
+ *  than repairing, so a browser can never cause a firewall change. An operator asking for provisioning
+ *  can, which is the whole difference between the two. */
 function nspawnProvision(request, options = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
@@ -2154,6 +2200,9 @@ function nspawnProvision(request, options = {}) {
     runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
     runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');
   }
+  // The uid ledger's own directory needs nothing here: `atomicWrite` creates the parent of whatever it
+  // writes, so the first allocation in `uidRangeFor` establishes it. Reaching for it here would also
+  // reach for `/var/lib/elowen`, which the Sites gateway already owns state in.
   for (const artefact of nspawnArtefacts(user)) {
     if (readText(artefact.path) !== artefact.content || readMode(artefact.path) !== artefact.mode) {
       writeAtomic(artefact.path, Buffer.from(artefact.content), artefact.mode);
@@ -2164,6 +2213,10 @@ function nspawnProvision(request, options = {}) {
       for (const command of artefact.effect.reload) runRequired(runner, ...command);
     }
   }
+  // Exactly when the rows are reported. `nspawnStatus` adds the veth rows only for `veth === true`, so
+  // acting on a wider condition than that would change a host's network and then answer with a report
+  // that never mentions it.
+  if (request.veth === true) provisionMachineNetwork(runner, readText, writeAtomic);
   const status = nspawnStatus(request, { runner, readText, readMode, env });
   return {
     ...status,

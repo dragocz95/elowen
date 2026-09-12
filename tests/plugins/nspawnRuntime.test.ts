@@ -323,6 +323,46 @@ describe('nspawn privileged transport', () => {
     const shared = readFileSync(fileURLToPath(new URL('../../src/shared/siteGateway.ts', import.meta.url)), 'utf8');
     expect(shared).toContain(`'${HELPER_PATH}'`);
   });
+
+  it('asks the privileged side to prepare the host, and answers with what it found afterwards', async () => {
+    // Provisioning reports through the SAME shape a read does, so an administrator's surface renders one
+    // set of rows whether it looked or repaired, and a host still short of something says which row
+    // rather than returning a bare success.
+    const { client, helperReply, requests } = fixture();
+    helperReply.provision = { ok: true, ready: false, detail: 'machine runtime support remains incomplete', items: [
+      { id: 'package:systemd-container', label: 'systemd container tools', ok: true, detail: 'installed' },
+      { id: 'net:ip-forward', label: 'IPv4 forwarding', ok: false, detail: 'a machine cannot route without it' },
+    ] };
+
+    const result = await client.provisionHost();
+
+    expect(requests.at(-1)).toEqual({ domain: 'nspawn', op: 'provision', veth: true });
+    expect(result).toEqual({ ready: false, detail: 'machine runtime support remains incomplete', items: [
+      { id: 'package:systemd-container', label: 'systemd container tools', ok: true, detail: 'installed' },
+      { id: 'net:ip-forward', label: 'IPv4 forwarding', ok: false, detail: 'a machine cannot route without it' },
+    ] });
+  });
+
+  it('holds a provisioning report to the same validation as a readiness report', async () => {
+    // Installing packages and applying firewall rules is exactly where a malformed verdict must not
+    // become an optimistic one: a host is never reported prepared on an answer this client cannot read.
+    const { client, helperReply } = fixture();
+    helperReply.provision = { ok: true, ready: true };
+    await expect(client.provisionHost()).rejects.toThrow(/Invalid machine runtime readiness report/);
+    helperReply.provision = { ok: true, ready: true, items: [{ id: 'os:supported', label: 'Supported operating system' }] };
+    await expect(client.provisionHost()).rejects.toThrow(/Invalid machine runtime readiness item/);
+  });
+
+  it('gives provisioning the long privileged deadline rather than the ordinary one', async () => {
+    // It runs a package manager. The ordinary deadline kills that part-way through, which leaves a host
+    // half-prepared and tells the caller it timed out rather than what actually happened.
+    const { client, helperReply, executor } = fixture();
+    helperReply.provision = { ok: true, ready: true, items: [{ id: 'os:supported', label: 'Supported operating system', ok: true }] };
+    await client.provisionHost();
+    const call = executor.run.mock.calls.at(-1) as unknown as [string, string[], { timeoutMs?: number }];
+    expect(call[0]).toBe('/usr/bin/sudo');
+    expect(call[2]?.timeoutMs).toBe(12 * 60_000);
+  });
 });
 
 describe('nspawn guest execution', () => {

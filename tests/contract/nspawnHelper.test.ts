@@ -17,6 +17,8 @@ import {
   MACHINE_FIREWALL_UNIT,
   MACHINE_FIREWALL_UNIT_NAME,
   MACHINE_FIREWALL_UNIT_PATH,
+  MACHINE_SYSCTL_CONTENT,
+  MACHINE_SYSCTL_PATH,
   MACHINE_UNIT_TEMPLATE,
   firewallRuleCommand,
   NSPAWN_FIREWALL_RULES,
@@ -79,7 +81,7 @@ type Call = { file: string; args: string[] };
 function runnerFixture(options: {
   installed?: boolean; polkit?: string; polkitMode?: number; unit?: string; unitMode?: number;
   unitLoaded?: boolean; firewall?: boolean; forwarding?: boolean; networkd?: boolean; deployment?: string;
-  firewallUnit?: string; firewallEnabled?: boolean;
+  firewallUnit?: string; firewallEnabled?: boolean; sysctl?: string; networkdEnabled?: boolean;
 } = {}) {
   const calls: Call[] = [];
   const writes: { path: string; content: string; mode: number }[] = [];
@@ -95,7 +97,12 @@ function runnerFixture(options: {
     firewallUnitMode: 0o644,
     firewallEnabled: options.firewallEnabled ?? false,
     forwarding: options.forwarding ?? true,
+    // Forwarding has two halves: what the kernel is running now, and the file that restores it at the
+    // next boot. A host prepared by provisioning has both; a host somebody fixed with `sysctl -w` has
+    // only the first, and the fixture can hold those apart.
+    sysctl: options.sysctl ?? MACHINE_SYSCTL_CONTENT,
     networkd: options.networkd ?? true,
+    networkdEnabled: options.networkdEnabled ?? options.networkd ?? true,
     deployment: options.deployment ?? JSON.stringify({ storage: { sandboxDataDir: '/srv/sandbox', sitesDataDir: '/srv/sites' } }),
   };
   const readText = (path: string) => {
@@ -105,6 +112,7 @@ function runnerFixture(options: {
     if (path === MACHINE_UNIT_PATH) return state.unit;
     if (path === MACHINE_FIREWALL_UNIT_PATH) return state.firewallUnit;
     if (path === '/proc/sys/net/ipv4/ip_forward') return state.forwarding ? '1\n' : '0\n';
+    if (path === MACHINE_SYSCTL_PATH) return state.sysctl;
     return '';
   };
   const readMode = (path: string) => {
@@ -120,6 +128,9 @@ function runnerFixture(options: {
     // A file the manager has never read is exactly what a fresh write leaves behind.
     if (path === MACHINE_UNIT_PATH) { state.unit = value; state.unitMode = mode; state.unitLoaded = false; }
     if (path === MACHINE_FIREWALL_UNIT_PATH) { state.firewallUnit = value; state.firewallUnitMode = mode; }
+    // Writing the file does NOT enable forwarding: only applying it does, which is what `sysctl --system`
+    // below models. A provisioning run that wrote the file and never applied it must still read as unmet.
+    if (path === MACHINE_SYSCTL_PATH) state.sysctl = value;
   };
   const runner = (file: string, args: string[]) => {
     calls.push({ file, args: [...args] });
@@ -129,9 +140,20 @@ function runnerFixture(options: {
       return state.firewall ? { ok: true, stdout: '' } : { ok: false, stderr: 'No chain/target/match by that name' };
     }
     if (file === '/usr/bin/apt-get') { state.installed = true; return { ok: true, stdout: '' }; }
+    // Applies whatever is currently recorded under /etc/sysctl.d, which is the only way forwarding comes
+    // on here. A run against a host with no file leaves forwarding exactly as it was.
+    if (file === '/usr/sbin/sysctl') {
+      if (state.sysctl.includes('net.ipv4.ip_forward=1')) state.forwarding = true;
+      return { ok: true, stdout: '' };
+    }
     if (file === '/usr/bin/systemctl') {
       if (args[0] === 'show') return { ok: true, stdout: `${state.unitLoaded ? 'loaded' : 'not-found'}\n` };
       if (args[0] === 'daemon-reload') { state.unitLoaded = state.unit !== ''; return { ok: true, stdout: '' }; }
+      if (args[0] === 'enable' && args.includes('systemd-networkd')) {
+        state.networkd = true;
+        state.networkdEnabled = true;
+        return { ok: true, stdout: '' };
+      }
       if (args[0] === 'enable') {
         // What the unit does when it runs: every rule checked, then applied when it is not there.
         state.firewallEnabled = true;
@@ -140,6 +162,10 @@ function runnerFixture(options: {
       }
       if (args[0] === 'is-enabled' && args[1] === MACHINE_FIREWALL_UNIT_NAME) {
         return state.firewallEnabled ? { ok: true, stdout: 'enabled\n' } : { ok: false, stderr: 'disabled' };
+      }
+      if (args[1] === 'systemd-networkd') {
+        const up = args[0] === 'is-active' ? state.networkd : state.networkdEnabled;
+        return up ? { ok: true, stdout: 'active\n' } : { ok: false, stderr: 'inactive' };
       }
       if (args[0] === 'is-active' || args[0] === 'is-enabled') {
         return state.networkd ? { ok: true, stdout: 'active\n' } : { ok: false, stderr: 'inactive' };
@@ -818,6 +844,90 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(firewallRuleCommand(lease)).toContain('-I INPUT 1');
     expect(guards.every((rule) => firewallRuleCommand(rule).includes('-A INPUT'))).toBe(true);
   });
+
+  it('prepares a fresh host end to end, and the second run changes nothing', async () => {
+    // Everything a supported Ubuntu host can be short of at once: no package, no artefacts, no firewall,
+    // no forwarding, no link service. One provisioning request is the whole answer.
+    const fixture = runnerFixture({
+      installed: false, firewall: false, firewallEnabled: false,
+      forwarding: false, sysctl: '', networkd: false, networkdEnabled: false,
+    });
+    const before = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    expect(before.ready).toBe(false);
+
+    const after = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(after.ready, after.items.filter((item) => !item.ok).map((item) => `${item.id}: ${item.detail}`).join('; ')).toBe(true);
+    expect(rowFor(after, 'net:ip-forward')).toMatchObject({ ok: true, detail: 'enabled and recorded' });
+    expect(rowFor(after, 'service:systemd-networkd')).toMatchObject({ ok: true, detail: 'active and enabled' });
+    expect(fixture.writes.map((write) => write.path)).toContain(MACHINE_SYSCTL_PATH);
+
+    // Convergence is the claim, so it is measured rather than asserted: a second run against the host it
+    // just produced writes no file, installs no package and reloads nothing.
+    const writesBefore = fixture.writes.length;
+    const reloadsBefore = reloads(fixture.calls);
+    const again = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(again.ready).toBe(true);
+    expect(fixture.writes).toHaveLength(writesBefore);
+    expect(reloads(fixture.calls)).toBe(reloadsBefore);
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/apt-get')).toHaveLength(2);
+  });
+
+  it('reports forwarding that would not survive a reboot, and records it when asked', async () => {
+    // `sysctl -w` by hand leaves the kernel right and the host one restart away from refusing every
+    // environment. Reporting that as ready is how a host breaks at 3am for a reason nobody connects to
+    // the reboot.
+    const fixture = runnerFixture({ forwarding: true, sysctl: '' });
+    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    const row = rowFor(status, 'net:ip-forward');
+    expect(row.ok).toBe(false);
+    expect(row.detail).toContain('would not come back after a reboot');
+
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(rowFor(provisioned, 'net:ip-forward')).toMatchObject({ ok: true, detail: 'enabled and recorded' });
+    expect(fixture.writes.find((write) => write.path === MACHINE_SYSCTL_PATH))
+      .toMatchObject({ content: MACHINE_SYSCTL_CONTENT, mode: 0o644 });
+  });
+
+  it('asks the running kernel rather than the file it wrote', async () => {
+    // The file being present is not the fact that matters; a recorded setting nobody applied leaves a
+    // machine unable to route exactly as if the file were absent.
+    const fixture = runnerFixture({ forwarding: false, sysctl: MACHINE_SYSCTL_CONTENT });
+    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    const row = rowFor(status, 'net:ip-forward');
+    expect(row.ok).toBe(false);
+    expect(row.detail).toContain('cannot route without it');
+  });
+
+  it('enables a link service that is running but would not come back', async () => {
+    const fixture = runnerFixture({ networkd: true, networkdEnabled: false });
+    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    expect(rowFor(status, 'service:systemd-networkd').ok).toBe(false);
+    expect(rowFor(status, 'service:systemd-networkd').detail).toContain('running, but it would not come back');
+
+    await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl'
+      && call.args[0] === 'enable' && call.args.includes('systemd-networkd'))).toBe(true);
+  });
+
+  it('leaves the host network alone when the request does not ask for veth', async () => {
+    // The network rows belong to veth. A caller that does not want one must not have its packet filter,
+    // its sysctls or its services changed as a side effect of preparing the runtime.
+    const fixture = runnerFixture({ forwarding: false, sysctl: '', networkd: false, networkdEnabled: false });
+    await applyRequest({ domain: 'nspawn', op: 'provision', veth: false }, undefined, fixture.options);
+    expect(fixture.writes.map((write) => write.path)).not.toContain(MACHINE_SYSCTL_PATH);
+    expect(fixture.calls.some((call) => call.file === '/usr/sbin/sysctl')).toBe(false);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl'
+      && call.args[0] === 'enable' && call.args.includes('systemd-networkd'))).toBe(false);
+  });
+
+  it('refuses to modify a host whose operating system it does not support', async () => {
+    // Not a warning and not a partial run: an unsupported host is left exactly as it was found.
+    const fixture = runnerFixture({ installed: false, sysctl: '', forwarding: false });
+    const options = { ...fixture.options, readText: (path: string) => (path === '/etc/os-release' ? 'ID=arch\n' : fixture.readText(path)) };
+    await expect(applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, options)).rejects.toThrow();
+    expect(fixture.writes).toHaveLength(0);
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/apt-get')).toHaveLength(0);
+  });
 });
 
 describe('privileged helper: the disk identity record', () => {
@@ -957,12 +1067,16 @@ describe('privileged helper: the disk identity record', () => {
     };
     const unready = diskFixture();
     await expect(applyRequest(request, undefined, unready.options))
-      .rejects.toThrow(/not ready for machine networking.*sysctl -w net\.ipv4\.ip_forward=1/s);
+      .rejects.toThrow(/not ready for machine networking.*ip_forward=1/s);
     expect(unready.writes).toEqual([]);
 
     const ready = diskFixture();
+    // Forwarding is two facts now — running and recorded — and this test is about the veth gate, not
+    // about either of them, so the host model satisfies both and the refusal that remains is the one
+    // being measured.
     ready.options.readText = (path: string) => {
       if (path === '/proc/sys/net/ipv4/ip_forward') return '1\n';
+      if (path === MACHINE_SYSCTL_PATH) return MACHINE_SYSCTL_CONTENT;
       return path === '/etc/subuid' ? 'azureuser:100000:65536\n' : '';
     };
     await applyRequest(request, undefined, ready.options);
