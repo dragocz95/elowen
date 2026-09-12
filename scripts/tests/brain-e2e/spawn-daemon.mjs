@@ -42,7 +42,17 @@ function freePort() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Poll `GET /health` until the daemon answers `{ ok: true }` or the hard deadline elapses. */
+/**
+ * Poll `GET /health` until the daemon can actually serve a turn, or the hard deadline elapses.
+ *
+ * `ok: true` alone means only that the port is open, and the port opens well BEFORE boot wires the
+ * platform adapters: `startPlatforms` runs once the marketplace reconcile settles. A turn sent into that
+ * window is admitted and offered the delegation tools with their platform seam unconnected, so `Delegate`
+ * answers "delegation is not wired up on this server" and the suite fails on an assertion about the child
+ * a few hundred milliseconds into the run. That is how the delegate and recovery E2E jobs went red on
+ * fast GitHub runners while passing on slower hosts, where the longer boot closed the window before the
+ * first send. Wait for `platformsReady`.
+ */
 async function waitForHealth(baseUrl, deadlineMs) {
   const until = Date.now() + deadlineMs;
   let lastErr = 'no attempt';
@@ -51,13 +61,14 @@ async function waitForHealth(baseUrl, deadlineMs) {
       const res = await fetch(`${baseUrl}/health`);
       if (res.ok) {
         const body = await res.json();
-        if (body && body.ok) return;
-      }
-      lastErr = `status ${res.status}`;
+        // A daemon build predating the field still satisfies the old contract rather than hanging here.
+        if (body && body.ok && body.platformsReady !== false) return;
+        lastErr = body && body.ok ? 'platforms not started yet' : 'health reported not ok';
+      } else lastErr = `status ${res.status}`;
     } catch (e) { lastErr = e instanceof Error ? e.message : String(e); }
     await sleep(100);
   }
-  throw new Error(`daemon did not become healthy within ${deadlineMs}ms (last: ${lastErr})`);
+  throw new Error(`daemon did not become ready within ${deadlineMs}ms (last: ${lastErr})`);
 }
 
 /**

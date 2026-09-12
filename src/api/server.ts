@@ -65,10 +65,15 @@ export function createServer(d: ServerDeps): ElowenApp {
   // The pool rides along beside it for the same reason: a delegated turn waiting in the admission queue
   // and a provider being slow are indistinguishable from outside, and "the pool is saturated" is a
   // diagnosis nobody can reach without the per-runner counts, the queue depth and the oldest wait.
+  // `platformsReady` separates "the port is open" from "boot finished wiring the channel adapters". They
+  // are not the same moment and the gap is not small: the port opens on bind, while startPlatforms waits
+  // for the marketplace reconcile. A turn admitted in between is offered the delegation tools with their
+  // platform seam still unconnected, and Delegate answers "delegation is not wired up on this server".
   app.get('/health', c => c.json({
     ok: true,
     version: ELOWEN_VERSION,
     eventLoop: loopLag.lag(),
+    ...(d.platformsReady ? { platformsReady: d.platformsReady() } : {}),
     ...(d.subagentPool ? { subagentPool: d.subagentPool() } : {}),
   }));
   // Public: lets the web decide whether to show onboarding (no users yet) or the login form.

@@ -24,6 +24,12 @@ export interface ServerDeps {
   /** The sub-agent pool's live state, for `/health`. Absent in a process with no pool (the in-memory test
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
+  /** Whether boot has reached the point where platform adapters are listening, for `/health`. The port
+   *  opens well before that: `startPlatforms` runs only after the marketplace reconcile settles, and
+   *  until it does, a turn admitted through the already-open port is offered tools whose platform seam is
+   *  not connected — `Delegate` answers "delegation is not wired up on this server". Absent in a process
+   *  that never starts platforms (the in-memory test database, the sub-agent runner). */
+  platformsReady?: () => boolean;
   /** Stop daemon- and runner-owned terminal processes for an account before deletion. */
   killAccountProcesses?: (userId: number) => Promise<number>;
   bus: EventBus;

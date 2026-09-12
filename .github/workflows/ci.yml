@@ -340,6 +340,11 @@ jobs:
       - run: npm ci --prefix ..
       - run: npm run build
       - run: npm test
+      # `next build` type-checks this app's own program, and web/tsconfig.json EXCLUDES tests/e2e: the
+      # Playwright specs need `allowImportingTsExtensions` and Playwright's types, which that program does
+      # not carry. Nothing else ever compiled them, so the suite silently drifted 24 type errors out of
+      # date against the very wire shapes it exists to pin. Its own program is type-checked here.
+      - run: npm run typecheck:e2e
 
   install-smoke:
     name: Install smoke (packed tarball in Docker)

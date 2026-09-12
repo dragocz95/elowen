@@ -33,7 +33,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Poll an externally observable condition under a bounded deadline. The short pause only backs off a DB or
  * provider observation; no scenario uses elapsed time as evidence that a turn has reached a state. */
-async function waitFor(label, read, deadlineMs = DEADLINE_MS) {
+async function waitFor(label, read, deadlineMs = DEADLINE_MS, extra) {
   const deadline = Date.now() + deadlineMs;
   let last;
   while (Date.now() < deadline) {
@@ -41,9 +41,20 @@ async function waitFor(label, read, deadlineMs = DEADLINE_MS) {
     if (last) return last;
     await pause(50);
   }
-  // The daemon logs to ELOWEN_LOG_DIR, not stdout: attach its tail, or a timeout explains nothing.
-  const tail = currentDaemon ? daemonLog(currentDaemon).split('\n').filter((line) => /ERROR|WARN|DBG|recover|resume|continu|parked/.test(line)).slice(-25).join('\n') : '';
-  throw new Error(`timed out waiting for ${label}; last observation: ${typeof last === 'string' ? last : JSON.stringify(last)}\n--- daemon log (filtered tail) ---\n${tail}`);
+  // The daemon logs to ELOWEN_LOG_DIR, not stdout: attach its log, or a timeout explains nothing.
+  //
+  // It used to be a keyword whitelist, and a failure the keywords did not anticipate produced a tail of
+  // two boot lines — which is how a red job became impossible to diagnose from its own output. Every
+  // ERROR/WARN plus an UNFILTERED tail instead: the point is to survive a failure nobody predicted.
+  const lines = currentDaemon ? daemonLog(currentDaemon).split('\n') : [];
+  const problems = lines.filter((line) => /\b(ERROR|WARN)\b/.test(line)).slice(-20);
+  const detail = typeof last === 'string' ? last : JSON.stringify(last);
+  throw new Error([
+    `timed out waiting for ${label}; last observation: ${detail}`,
+    ...(extra ? [`--- what the scenario could see instead ---\n${extra()}`] : []),
+    `--- daemon log: ERROR/WARN (${problems.length}) ---\n${problems.join('\n')}`,
+    `--- daemon log: last 40 lines ---\n${lines.slice(-40).join('\n')}`,
+  ].join('\n'));
 }
 /** The scenario's daemon, for diagnostics on a timeout. */
 let currentDaemon = null;
@@ -179,7 +190,21 @@ async function startDelegation({ daemon, token, task }) {
   if (sent?.accepted === false) throw new Error('parent turn was not accepted');
   const running = await waitFor('a durable running delegated row', () => row(daemon.dataDir,
     `SELECT parent_session_id, tool_call_id, child_session_id, lifecycle, state
-       FROM brain_subagent_runs WHERE parent_session_id = ? AND lifecycle = 'running'`, [parentSessionId]));
+       FROM brain_subagent_runs WHERE parent_session_id = ? AND lifecycle = 'running'`, [parentSessionId]),
+  // "last observation: undefined" says only that the row is absent, which is the one thing already
+  // known. What separates the causes is whether ANY delegated row exists (dispatch ran and failed) and
+  // what the parent's transcript recorded for the Delegate call — a refusal names itself there.
+  DEADLINE_MS, () => {
+    const runs = rows(daemon.dataDir,
+      'SELECT tool_call_id, lifecycle, attempt FROM brain_subagent_runs WHERE parent_session_id = ?', [parentSessionId]);
+    const messages = rows(daemon.dataDir,
+      'SELECT role, substr(content, 1, 600) AS head FROM brain_messages WHERE session_id = ? ORDER BY rowid', [parentSessionId]);
+    return [
+      `delegated rows for this parent (${runs.length}): ${JSON.stringify(runs)}`,
+      `parent transcript (${messages.length}):`,
+      ...messages.map((m) => `  ${m.role}: ${m.head}`),
+    ].join('\n');
+  });
   return { parentSessionId, ...running, state: JSON.parse(running.state) };
 }
 
@@ -684,7 +709,7 @@ async function main() {
     if (only.size && !only.has(index + 1)) continue;
     await scenario();
   }
-  console.log(`\nrestart timings (ms), ${USE_RUNNER ? 'sub-agent RUNNER' : 'in-process'} variant: SIGTERM→exit | boot→healthy | boot→first resumed model request`);
+  console.log(`\nrestart timings (ms), ${USE_RUNNER ? 'sub-agent RUNNER' : 'in-process'} variant: SIGTERM→exit | boot→ready (platforms listening) | boot→first resumed model request`);
   for (const t of timings) {
     console.log(`  ${t.label.padEnd(18)} stop=${String(t.stopMs).padStart(5)}${t.forced ? ' (SIGKILL!)' : ''}  boot=${String(t.bootMs).padStart(5)}  resume=${t.resumeMs === null ? '   n/a' : String(t.resumeMs).padStart(6)}`);
   }

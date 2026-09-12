@@ -18,7 +18,7 @@
 // No bare sleeps on the turn: every wait is on a stream frame with a hard deadline. Full cleanup in finally.
 // Run with: node scripts/tests/delegate-e2e/run.mjs
 
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startScriptedModelServer, startSteeringModelServer } from './model-server.mjs';
@@ -54,6 +54,11 @@ async function openStream(baseUrl, path, token) {
       if (waiters[i].predicate(events)) { waiters[i].resolve(events); waiters.splice(i, 1); }
     }
   };
+  // The daemon writes the `: connected` comment only AFTER it has installed the session tap
+  // (api/routes/brainStream.ts). Response headers arrive earlier than that, so resolving on the fetch
+  // alone would let a send race the subscription and lose the turn's events.
+  let markConnected = () => {};
+  const connected = new Promise((resolve) => { markConnected = resolve; });
   (async () => {
     const decoder = new TextDecoder();
     let buffer = '';
@@ -65,7 +70,10 @@ async function openStream(baseUrl, path, token) {
           const frame = buffer.slice(0, sep);
           buffer = buffer.slice(sep + 2);
           let dataLine = '';
-          for (const line of frame.split('\n')) if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+            else if (line.trim() === ': connected') markConnected();
+          }
           if (!dataLine) continue;
           try { events.push(JSON.parse(dataLine)); notify(); } catch { /* non-JSON frame */ }
         }
@@ -75,6 +83,7 @@ async function openStream(baseUrl, path, token) {
 
   return {
     events,
+    connected,
     waitFor(predicate, timeoutMs, label) {
       if (predicate(events)) return Promise.resolve(events);
       return new Promise((resolve, reject) => {
@@ -118,8 +127,8 @@ async function driveParentTurn(baseUrl, token, sendText, mode) {
   assert(typeof sessionId === 'string' && sessionId, 'start returned a sessionId');
 
   const stream = await openStream(baseUrl, `/brain/stream?session=${encodeURIComponent(sessionId)}`, token);
-  await stream.waitFor(() => true, 5_000, 'stream connected').catch(() => {});
-  await new Promise((r) => setTimeout(r, 200)); // let the session tap attach before the send
+  // The tap is provably attached, not assumed attached after a fixed pause a loaded runner can exceed.
+  await withDeadline(stream.connected, 15_000, 'the session tap to attach (`: connected`)');
 
   const send = await post(baseUrl, '/brain/send', token, { text: sendText, session: sessionId, mode });
   assert(send.status === 202, `POST /brain/send → 202 accepted (got ${send.status}: ${send.text})`);
@@ -131,6 +140,70 @@ async function driveParentTurn(baseUrl, token, sendText, mode) {
 function requestText(model, req) {
   const messages = Array.isArray(req?.body?.messages) ? req.body.messages : [];
   return messages.map((m) => model.contentText(m)).join('\n');
+}
+
+const clamp = (text, n) => {
+  const one = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return one.length > n ? `${one.slice(0, n)}…` : one;
+};
+
+/** Everything the daemon wrote. It logs to ELOWEN_LOG_DIR, not to stdout, so its own stdout capture is
+ *  NOT where the lines are — a scenario that reports only `logText()` reports almost nothing. */
+function daemonLog(daemon) {
+  try {
+    return readdirSync(daemon.logDir).filter((name) => name.startsWith('daemon-')).sort()
+      .map((name) => readFileSync(join(daemon.logDir, name), 'utf8')).join('\n');
+  } catch { return ''; }
+}
+
+/**
+ * Print, on the way out of a failing scenario, the three records that decide WHY it failed: what the
+ * model was actually asked, what the parent's stream carried (including each tool's settled output — the
+ * one place a Delegate that failed to spawn says so), and what the daemon logged.
+ *
+ * Without this a delegation assertion reports only that something did not happen, which is unfixable
+ * from a CI log: the run is gone, its temp data dir is gone, and nothing said what the tool returned.
+ */
+function diagnose(label, { model, stream, daemon, markers = {} }) {
+  const out = [`\n=== DIAGNOSTICS (${label}) ===`];
+
+  out.push(`-- model requests (${model.requests.length}) --`);
+  model.requests.forEach((req, i) => {
+    const messages = Array.isArray(req?.body?.messages) ? req.body.messages : [];
+    const hit = Object.entries(markers).filter(([, v]) => requestText(model, req).includes(v)).map(([k]) => k);
+    const roles = messages.map((m) => m.role).join('>');
+    const system = model.contentText(messages.find((m) => m.role === 'system') ?? {});
+    out.push(`  [${i}] roles=${roles || '(none)'} markers=${hit.join(',') || '(none)'}`);
+    out.push(`      system: ${clamp(system, 140)}`);
+    out.push(`      last:   ${clamp(model.contentText(messages.at(-1) ?? {}), 220)}`);
+  });
+
+  if (stream) {
+    out.push(`-- stream event types, in order (${stream.events.length}) --`);
+    out.push(`  ${stream.events.map((e) => e.type).join(' > ') || '(none)'}`);
+    out.push('-- stream events of interest --');
+    for (const e of stream.events) {
+      if (e.type === 'tool') out.push(`  tool        ${e.name}${e.reason ? ` reason=${e.reason}` : ''}`);
+      else if (e.type === 'tool_output') out.push(`  tool_output ${clamp(JSON.stringify(e.output), 400)}`);
+      else if (e.type === 'tool_end') out.push(`  tool_end    ${clamp(JSON.stringify(e), 200)}`);
+      else if (e.type === 'error') out.push(`  error       ${e.message}`);
+      else if (e.type === 'idle') out.push('  idle');
+    }
+  }
+
+  if (daemon) {
+    const lines = daemonLog(daemon).split('\n');
+    const problems = lines.filter((line) => /\b(ERROR|WARN)\b/.test(line));
+    out.push(`-- daemon log: ERROR/WARN lines (${problems.length}, last 20) --`);
+    out.push(problems.slice(-20).join('\n'));
+    // Unfiltered, because the previous filter was a guessed keyword whitelist and a failure it did not
+    // anticipate left the tail empty — which is how a red job became undiagnosable.
+    out.push('-- daemon log: last 40 lines --');
+    out.push(lines.slice(-40).join('\n'));
+  }
+
+  out.push('=== END DIAGNOSTICS ===\n');
+  console.error(out.join('\n'));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -156,12 +229,15 @@ async function scenarioDelegate() {
   });
 
   let daemon = null;
+  let stream = null;
   try {
     daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'e2e-dlg' });
     const { baseUrl, token } = daemon;
     console.log(`[delegate] daemon up on ${baseUrl}; model on ${model.baseUrl}`);
 
-    const { sessionId, stream } = await driveParentTurn(baseUrl, token, PARENT_SEND, 'build');
+    const parent = await driveParentTurn(baseUrl, token, PARENT_SEND, 'build');
+    const sessionId = parent.sessionId;
+    stream = parent.stream;
 
     // --- The parent actually issued the Delegate tool call over the real stream ---
     const toolEvents = stream.events.filter((e) => e.type === 'tool');
@@ -204,6 +280,12 @@ async function scenarioDelegate() {
 
     stream.close();
     console.log('PASS delegate: child spawned with the right task + sub-agent prompt, answer returned to the parent, session persisted.');
+  } catch (error) {
+    diagnose('delegate', {
+      model, stream, daemon,
+      markers: { task: DELEGATE_TASK_MARKER, childAnswer: CHILD_ANSWER_MARKER, subagentPrompt: SUBAGENT_PROMPT_SNIPPET, parentSend: PARENT_SEND },
+    });
+    throw error;
   } finally {
     if (daemon) await daemon.stop();
     await model.close();
@@ -254,12 +336,13 @@ async function scenarioWorkflow() {
   });
 
   let daemon = null;
+  let stream = null;
   try {
     daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'e2e-wf' });
     const { baseUrl, token } = daemon;
     console.log(`[workflow] daemon up on ${baseUrl}; model on ${model.baseUrl}`);
 
-    const { stream } = await driveParentTurn(baseUrl, token, PARENT_SEND, 'workflow');
+    stream = (await driveParentTurn(baseUrl, token, PARENT_SEND, 'workflow')).stream;
 
     // --- The parent issued the WorkflowStart tool call ---
     const toolEvents = stream.events.filter((e) => e.type === 'tool');
@@ -295,6 +378,12 @@ async function scenarioWorkflow() {
 
     stream.close();
     console.log('PASS workflow: 2-node DAG ran in dependency order, both node results rolled up to the parent, sessions persisted.');
+  } catch (error) {
+    diagnose('workflow', {
+      model, stream, daemon,
+      markers: { nodeA: NODE_A_MARKER, nodeB: NODE_B_MARKER, nodeAAnswer: NODE_A_ANSWER, nodeBAnswer: NODE_B_ANSWER, nodePrompt: NODE_PROMPT_SNIPPET },
+    });
+    throw error;
   } finally {
     if (daemon) await daemon.stop();
     await model.close();
@@ -313,6 +402,7 @@ async function scenarioSteeringBatch() {
   const model = await startSteeringModelServer();
 
   let daemon = null;
+  let stream = null;
   try {
     daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'e2e-steer' });
     const { baseUrl, token } = daemon;
@@ -323,8 +413,8 @@ async function scenarioSteeringBatch() {
     const sessionId = start.json?.sessionId;
     assert(typeof sessionId === 'string' && sessionId, 'start returned a sessionId');
 
-    const stream = await openStream(baseUrl, `/brain/stream?session=${encodeURIComponent(sessionId)}`, token);
-    await new Promise((r) => setTimeout(r, 200)); // let the session tap attach before the send
+    stream = await openStream(baseUrl, `/brain/stream?session=${encodeURIComponent(sessionId)}`, token);
+    await withDeadline(stream.connected, 15_000, 'the session tap to attach (`: connected`)');
 
     const first = await post(baseUrl, '/brain/send', token, { text: 'Start on the report.', session: sessionId, mode: 'build' });
     assert(first.status === 202, `first send → 202 accepted (got ${first.status}: ${first.text})`);
@@ -352,6 +442,9 @@ async function scenarioSteeringBatch() {
 
     stream.close();
     console.log('PASS steering: three mid-turn messages reached the model together, in one round.');
+  } catch (error) {
+    diagnose('steering', { model, stream, daemon, markers: { one: MARKERS[0], two: MARKERS[1], three: MARKERS[2] } });
+    throw error;
   } finally {
     if (daemon) await daemon.stop();
     await model.close();
