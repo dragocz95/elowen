@@ -9,6 +9,24 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ## [Unreleased]
 
+## [0.28.43] - 2026-09-12
+
+### Fixed
+
+- The question a new conversation opens with, "Where should this conversation run?", now actually moves the
+  conversation into the project that was picked. The dialog confirmed the switch with the daemon and then
+  threw the answer away: the composer's project picker kept a confirmed target of its own, and a conversation
+  with no messages in it emits no transcript event when its execution target changes, so nothing published
+  the confirmed identity to the other surface. The header went on naming the previous target and the project
+  had to be chosen a second time before the first message ran anywhere but the default.
+- Both project surfaces now commit the daemon's confirmed answer through one shared action on the chat
+  provider, and a status read that started before that confirmation no longer overwrites it. The fence
+  applies to the execution identity alone, so the MCP and LSP sections that arrive in the same superseded
+  read are still published rather than leaving the telemetry panel blank until the next session event.
+- The project question now follows the conversation it was raised for. Switching to another conversation
+  leaves it behind, and a reconnect to the same conversation — a dropped stream, or returning to a tab —
+  keeps it on screen instead of dismissing an unanswered question.
+
 ## [0.28.42] - 2026-09-12
 
 Version 0.28.41 has no section of its own; the changes it carried are included below.
