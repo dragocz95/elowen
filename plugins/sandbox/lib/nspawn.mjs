@@ -57,7 +57,7 @@ const PROBE_TIMEOUT_MS = 5_000;
  *  it — `write-envelope` re-checks the same rows and refuses. That split is the whole point: serving a
  *  project never changes the host, and an operator asking to prepare the host does. */
 const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
-  'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']);
+  'site-data-archive', 'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
  *  shape to read and one place to change. `domain` is what separates the nspawn dispatch table from the
@@ -904,12 +904,41 @@ export class NspawnClient {
   ensureArtifact(reference, options) { return this.#artifacts.ensure(reference, options); }
   collectArtifacts(referenced) { return this.#artifacts.collect(referenced); }
 
-  /** Seeding or exporting a Site's `data` directory as one archive. The container runtime did it by
-   *  streaming a named volume, and a machine has no such handle: the data directory is a plain tree on the
-   *  disk, so the archive has to be taken through the privileged helper that owns the tree's uid range.
-   *  That operation does not exist yet, so the Sites `import-data` and `export-data` actions fail here and
-   *  say what is missing rather than reporting an unrelated absence of volumes. */
-  async siteDataArchive() {
-    throw new Error('Archiving a Site data directory is not implemented for the machine runtime; the disk tree has no named-volume stream to take');
+  /** Seeding or capturing a Site's `data` directory as one archive, which is what the Sites `import-data`
+   *  and `export-data` actions and the bootstrap seed on Site creation all route through.
+   *
+   *  The container runtime streamed a named volume; a machine has no such handle, because the data
+   *  directory is a plain tree on the disk owned by the machine's uid range — so the work itself belongs
+   *  to the privileged helper, which re-derives the environment's storage root from the resource identity
+   *  and accepts only the `data` tree under it. What is decided here is the contract around that call.
+   *
+   *  An import is refused unless the machine is down. The container runtime allowed `created`,
+   *  `configured`, `stopped` and `exited`, which is every state in which nothing inside is writing; a
+   *  machine reports `running`, `paused`, `stopping` or `stopped`, so the same rule leaves exactly one
+   *  state. Replacing the tree under a live guest races whatever it is writing, and a frozen guest thaws
+   *  into a directory that changed underneath it. An environment with no envelope at all is a Site being
+   *  created, which is precisely when the seed arrives, and is allowed.
+   *
+   *  @param {object} spec A Site specification.
+   *  @param {'import'|'export'} operation
+   *  @param {string} archivePath The archive to read, or the one to create; an export never overwrites. */
+  async siteDataArchive(spec, operation, archivePath) {
+    this.#machine(spec);
+    if (spec.resource.kind !== 'site') throw new Error('Sites data authority is required');
+    if (operation !== 'import' && operation !== 'export') throw new Error('Invalid Site data archive operation');
+    const component = spec.disk.components.find((entry) => entry.component === 'data');
+    if (!component) throw new Error('This environment has no Site data directory');
+    const data = checkedHostPath(component.path);
+    const archive = hostPath(archivePath);
+    if (operation === 'import') {
+      const current = await this.inspect(spec);
+      if (current && current.state !== 'stopped') throw new Error(`Stop the machine before importing Site data; it is ${current.state}`);
+      checkedHostPath(archive, { file: true });
+    } else {
+      checkedHostPath(dirname(archive), { create: true });
+      if (!absent(archive)) throw new Error('Archive destination already exists');
+    }
+    await this.#helper('site-data-archive', { kind: spec.resource.kind, resource: String(spec.resource.id),
+      diskId: spec.disk.id, operation, dataPath: data, archivePath: archive }, { timeoutMs: 15 * 60_000 });
   }
 }

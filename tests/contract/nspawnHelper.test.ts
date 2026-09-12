@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,7 @@ import {
   renderMachineSettings,
   renderPolkitRule,
   safeGuestMountTarget,
+  SITE_DATA_ARCHIVE_BYTES,
   storageRootsFor,
   supportedEnvironmentOs,
   trustedPath,
@@ -487,7 +488,8 @@ describe('privileged helper: the four merge constraints', () => {
     for (const op of ['exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-verify', 'status']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(false);
     }
-    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'tree-copy', 'tree-sync', 'tree-remove', 'destroy']) {
+    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'site-data-archive',
+      'tree-copy', 'tree-sync', 'tree-remove', 'destroy']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
     }
     // The Sites classification is unchanged for the operations that remain: a read never takes the lock.
@@ -1717,6 +1719,259 @@ describe('privileged helper: disk tree primitives', () => {
   });
 });
 
+/** A Site's `data` directory is a plain tree the machine's uid range owns, so seeding and capturing it
+ *  both run here: nothing else on the host can read or write it. These exercise the REAL tar and the real
+ *  tree scripts against real files; only the ownership pass is stubbed, because an unprivileged test
+ *  cannot give a file away — the same limitation `diskFixture` above records. */
+describe('privileged helper: the Site data archive', () => {
+  const siteRef = { kind: 'site', resource: 'shop', diskId: 'e'.repeat(32) };
+
+  /** Metadata a filename listing would never notice: a hard link pair, a symlink, an extended attribute,
+   *  a narrow mode and a modification time with nanoseconds in it. Every one of them is a field the tree
+   *  fingerprint hashes, which is what makes the round trip below a real comparison. */
+  function seedDataTree(root: string) {
+    writeFileSync(join(root, 'app.conf'), 'key=value\n', { mode: 0o640 });
+    linkSync(join(root, 'app.conf'), join(root, 'app.conf.bak'));
+    mkdirSync(join(root, 'uploads'), { mode: 0o750 });
+    writeFileSync(join(root, 'uploads', 'photo.bin'), Buffer.from([0, 1, 2, 3, 4, 5]), { mode: 0o600 });
+    symlinkSync('../app.conf', join(root, 'uploads', 'config'));
+    // Node cannot set an extended attribute and cannot set a modification time to the nanosecond, and
+    // both are fields the fingerprint compares — so the fixture sets them the way the helper reads them.
+    execFileSync('/usr/bin/python3', ['-c', `import os,sys
+root=sys.argv[1]
+os.setxattr(os.path.join(root,'app.conf'),'user.elowen.demo',b'retained')
+os.utime(os.path.join(root,'app.conf'),ns=(1709528767123456789,1709528767123456789))
+os.utime(os.path.join(root,'uploads','photo.bin'),ns=(1698765432987654321,1698765432987654321))
+os.utime(os.path.join(root,'uploads'),ns=(1687654321246813579,1687654321246813579))`, root]);
+  }
+
+  function dataFixture(ref: typeof siteRef = siteRef) {
+    const paths = nspawnDiskPaths(storage, ref);
+    const data = join(paths.directory, 'data');
+    const artifacts = join(paths.storageRoot, 'artifacts');
+    rmSync(paths.storageRoot, { recursive: true, force: true });
+    mkdirSync(data, { recursive: true, mode: 0o700 });
+    mkdirSync(artifacts, { recursive: true, mode: 0o700 });
+    const shifts: { spec: { base: number; size: number }; root: string }[] = [];
+    const owners: { uid: number; gid: number }[] = [];
+    const calls: Call[] = [];
+    /** Which command the fixture intercepts instead of running, by the script or flag that identifies it. */
+    const intercept: Record<string, (args: string[]) => { ok: boolean; stdout?: string; stderr?: string }> = {};
+    const options: any = {
+      storage,
+      env: environment,
+      setOwner: (_fd: number, uid: number, gid: number) => { owners.push({ uid, gid }); },
+      readText: () => '',
+      writeAtomic: (path: string, content: Buffer, mode: number) => {
+        if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
+      },
+      runner: (file: string, args: string[], runOptions: { timeoutMs?: number } = {}) => {
+        calls.push({ file, args });
+        if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
+        // The ownership pass is the one command that is faked rather than run: it chowns, and no
+        // unprivileged process can. What it was asked to do is recorded instead.
+        if (file === '/usr/bin/python3' && String(args[1] ?? '').includes('to_machine')) {
+          shifts.push({ spec: JSON.parse(args[2]!), root: args[3]! });
+          return { ok: true, stdout: JSON.stringify({ entries: 9 }) };
+        }
+        for (const [marker, answer] of Object.entries(intercept)) {
+          if (args.some((argument) => String(argument).includes(marker))) return answer(args);
+        }
+        return defaultCommandRunner(file, args, runOptions);
+      },
+    };
+    const fingerprint = async (path: string) => await applyRequest(
+      { domain: 'nspawn', op: 'tree-fingerprint', path }, undefined, options,
+    ) as { digest: string; logicalBytes: number };
+    const archiveOf = (name: string) => join(artifacts, name);
+    return { paths, data, artifacts, shifts, owners, calls, intercept, options, fingerprint, archiveOf };
+  }
+
+  const exportRequest = (fixture: ReturnType<typeof dataFixture>, archivePath: string, ref: typeof siteRef = siteRef) =>
+    ({ domain: 'nspawn', op: 'site-data-archive', ...ref, operation: 'export', dataPath: fixture.data, archivePath });
+  const importRequest = (fixture: ReturnType<typeof dataFixture>, archivePath: string, ref: typeof siteRef = siteRef) =>
+    ({ domain: 'nspawn', op: 'site-data-archive', ...ref, operation: 'import', dataPath: fixture.data, archivePath });
+
+  it('round trips a data tree byte for byte, metadata included', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const before = await fixture.fingerprint(fixture.data);
+    const mode = statSync(fixture.data).mode & 0o7777;
+    const archive = fixture.archiveOf('data.tar');
+
+    await expect(applyRequest(exportRequest(fixture, archive), undefined, fixture.options))
+      .resolves.toMatchObject({ ok: true, operation: 'export', archivePath: archive });
+    expect(existsSync(archive)).toBe(true);
+
+    // Imported into an EMPTY tree, so nothing that survives could have survived by being left alone.
+    for (const name of readdirSync(fixture.data)) rmSync(join(fixture.data, name), { recursive: true, force: true });
+    expect(readdirSync(fixture.data)).toEqual([]);
+
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .resolves.toMatchObject({ ok: true, operation: 'import' });
+
+    const after = await fixture.fingerprint(fixture.data);
+    expect(after.digest).toBe(before.digest);
+    expect(after.logicalBytes).toBe(before.logicalBytes);
+    expect(statSync(fixture.data).mode & 0o7777).toBe(mode);
+    // And the entries themselves, so a fingerprint that silently agreed on two empty trees cannot pass.
+    expect(readdirSync(fixture.data).sort()).toEqual(['app.conf', 'app.conf.bak', 'uploads']);
+  }, 60_000);
+
+  it('leaves no staging tree or retired tree behind once an import has swapped', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    await applyRequest(importRequest(fixture, archive), undefined, fixture.options);
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 60_000);
+
+  it('refuses an import whose archive is not there, and an export onto a destination that is', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    await expect(applyRequest(importRequest(fixture, fixture.archiveOf('absent.tar')), undefined, fixture.options))
+      .rejects.toThrow(/does not exist/);
+
+    const occupied = fixture.archiveOf('taken.tar');
+    writeFileSync(occupied, 'someone else wrote this');
+    await expect(applyRequest(exportRequest(fixture, occupied), undefined, fixture.options))
+      .rejects.toThrow(/destination already exists/);
+    // Refused, not overwritten: the bytes that were there are the bytes that are there.
+    expect(readFileSync(occupied, 'utf8')).toBe('someone else wrote this');
+  }, 60_000);
+
+  it('leaves the data directory untouched when an import fails part way through', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+
+    // The tree MOVES ON after the capture, which is what makes this measurable: the archive and the live
+    // directory now differ, so an extraction that touched the live tree would show up as a tree that had
+    // been rolled back rather than left alone.
+    writeFileSync(join(fixture.data, 'app.conf'), 'key=changed-since-the-capture\n', { mode: 0o640 });
+    writeFileSync(join(fixture.data, 'written-later.log'), 'the Site has been serving\n', { mode: 0o644 });
+    rmSync(join(fixture.data, 'uploads', 'photo.bin'));
+    const before = await fixture.fingerprint(fixture.data);
+
+    // After the extraction and before the swap: the staging tree is full and the target is still the old
+    // one, which is precisely the moment a half-replaced directory would become observable.
+    fixture.intercept['Migrated rootfs differs'] = () => ({ ok: false, stderr: 'injected verification failure' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/injected verification failure/);
+    delete fixture.intercept['Migrated rootfs differs'];
+
+    const after = await fixture.fingerprint(fixture.data);
+    expect(after.digest).toBe(before.digest);
+    expect(readFileSync(join(fixture.data, 'app.conf'), 'utf8')).toBe('key=changed-since-the-capture\n');
+    expect(existsSync(join(fixture.data, 'uploads', 'photo.bin'))).toBe(false);
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 60_000);
+
+  it('refuses an oversized archive in both directions before it writes anything', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    expect(SITE_DATA_ARCHIVE_BYTES).toBe(16 * 1024 ** 3);
+
+    // An export is refused on what the data tree weighs, so no partial archive is ever created.
+    fixture.intercept['Insufficient free space'] = () => ({ ok: true,
+      stdout: JSON.stringify({ requiredBytes: SITE_DATA_ARCHIVE_BYTES + 1, marginBytes: 0, freeBytes: 2 ** 50 }) });
+    const refused = fixture.archiveOf('too-big.tar');
+    await expect(applyRequest(exportRequest(fixture, refused), undefined, fixture.options))
+      .rejects.toThrow(/bound/);
+    expect(existsSync(refused)).toBe(false);
+    expect(existsSync(`${refused}.exporting`)).toBe(false);
+    delete fixture.intercept['Insufficient free space'];
+
+    // An import is refused on the archive's own weight, without reading it. A real archive padded out to
+    // the bound, rather than a file of zeros: an implementation that skipped this check would then go on
+    // to import it quickly and be caught by the assertion instead of running until the suite gave up.
+    const huge = fixture.archiveOf('huge.tar');
+    execFileSync('/usr/bin/tar', ['--create', '--file', huge, '-C', fixture.data, '--', '.']);
+    execFileSync('/usr/bin/truncate', ['-s', String(SITE_DATA_ARCHIVE_BYTES + 1), huge]);
+    await expect(applyRequest(importRequest(fixture, huge), undefined, fixture.options))
+      .rejects.toThrow(/bound/);
+    rmSync(huge, { force: true });
+
+    // And on what it would UNPACK to, which a sparse member states in its header without carrying it:
+    // this archive is a few kilobytes and declares more than the bound.
+    const sparseRoot = join(fixture.paths.storageRoot, 'sparse');
+    mkdirSync(sparseRoot, { recursive: true });
+    execFileSync('/usr/bin/truncate', ['-s', String(SITE_DATA_ARCHIVE_BYTES + 1), join(sparseRoot, 'blob.bin')]);
+    const sparse = fixture.archiveOf('sparse.tar');
+    execFileSync('/usr/bin/tar', ['--create', '--file', sparse, '--sparse', '-C', sparseRoot, '--', '.']);
+    expect(statSync(sparse).size).toBeLessThan(SITE_DATA_ARCHIVE_BYTES);
+    await expect(applyRequest(importRequest(fixture, sparse), undefined, fixture.options))
+      .rejects.toThrow(/unpack/);
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 120_000);
+
+  it('puts the imported tree on the machine uid range, through the one ownership pass', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    fixture.shifts.length = 0;
+    fixture.owners.length = 0;
+
+    await applyRequest(importRequest(fixture, archive), undefined, fixture.options);
+
+    // Exactly one pass, over the STAGING tree, with the range the registry holds for this environment —
+    // the same call `materialize` makes, and made before the tree is swapped into place.
+    expect(fixture.shifts).toHaveLength(1);
+    expect(fixture.shifts[0].spec).toEqual({ base: UID_RANGE_BASE, size: 65_536 });
+    expect(fixture.shifts[0].root).toBe(`${fixture.data}.importing`);
+    // tar chowns what it unpacks, never the directory it unpacks into, so the staging root enters that
+    // pass as the guest's own root rather than as the service account it was created by.
+    expect(fixture.owners).toContainEqual({ uid: 0, gid: 0 });
+  }, 60_000);
+
+  it('leaves no partial archive behind when an export fails', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    // A failing archiver that has already written bytes, which is the state a retry must not mistake for
+    // a finished export.
+    fixture.intercept['--create'] = (args: string[]) => {
+      writeFileSync(args[args.indexOf('--file') + 1]!, 'half an archive');
+      return { ok: false, stderr: 'injected archiver failure' };
+    };
+    await expect(applyRequest(exportRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/injected archiver failure/);
+    expect(readdirSync(fixture.artifacts)).toEqual([]);
+  }, 60_000);
+
+  it('refuses a data path that does not belong to the environment the request names', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    const other = nspawnDiskPaths(storage, { ...siteRef, resource: 'other' });
+    mkdirSync(join(other.directory, 'data'), { recursive: true });
+    await expect(applyRequest({ ...exportRequest(fixture, archive), dataPath: join(other.directory, 'data') }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    // And the root filesystem is not a data tree, however validly it sits under the same storage root.
+    mkdirSync(fixture.paths.rootfs, { recursive: true });
+    await expect(applyRequest({ ...exportRequest(fixture, archive), dataPath: fixture.paths.rootfs }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    expect(existsSync(archive)).toBe(false);
+  }, 60_000);
+
+  it('refuses the operation for anything that is not a Site', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    await expect(applyRequest({
+      ...exportRequest(fixture, fixture.archiveOf('data.tar')), kind: 'project', resource: '54',
+    }, undefined, fixture.options)).rejects.toThrow(/site/i);
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('data.tar')), operation: 'move' },
+      undefined, fixture.options)).rejects.toThrow(/operation is invalid/);
+  }, 60_000);
+
+  it('serializes a data archive behind the global mutation lock, like every other write', () => {
+    expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op: 'site-data-archive' })).toBe(true);
+  });
+});
+
 describe('privileged helper: the invocation the sudoers drop-in pins', () => {
   // sudo matches arguments positionally, so the argv the bundled runtime spawns, the argv the shared
   // constant states and the argv the drop-in pins have to be one thing. They live in three files that
@@ -1759,7 +2014,8 @@ describe('privileged helper: the invocation the sudoers drop-in pins', () => {
       .toBe('00000033\n{"domain":"nspawn","op":"status"}');
     // Every operation the bundled runtime can name is one this helper answers.
     for (const op of ['materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
-      'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']) {
+      'site-data-archive', 'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync',
+      'tree-verify', 'destroy']) {
       expect(helperRequest(op, {})).toEqual({ domain: 'nspawn', op });
       let refusal = '';
       try { applyNspawnRequest({ domain: 'nspawn', op }, { storage }); } catch (error) { refusal = String(error); }

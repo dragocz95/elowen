@@ -7,7 +7,7 @@ import {
 } from 'node:fs';
 
 const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = constants;
-import { dirname, join, normalize } from 'node:path';
+import { basename, dirname, join, normalize } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
 export const NGINX_PATH = '/etc/nginx/conf.d/elowen-sites-gateway.conf';
@@ -1676,6 +1676,206 @@ function nspawnTreeRemove(request, storage) {
   return { ok: true, path };
 }
 
+/** What one Site data archive may weigh, in either direction and whichever side it is measured on.
+ *
+ *  It is the aggregate figure `exportProjectTree` in the Sandbox plugin already applies to one tree
+ *  crossing the boundary between an environment and a host artifact, and this is that same crossing by a
+ *  different transport. What it protects is the host filesystem both sides land on: without it an import
+ *  is an unbounded write into the service account's storage driven by a file the daemon did not produce,
+ *  and an export turns a runaway data directory into an archive that fills the disk every other
+ *  environment on the host is running from. */
+export const SITE_DATA_ARCHIVE_BYTES = 16 * 1024 ** 3;
+
+/** What an archive would unpack to, and whether every member stays inside the directory it is unpacked
+ *  into, read from the member headers alone: an uncompressed archive on a seekable file is walked by
+ *  header without its content ever being read. The running total is held against the bound as it goes,
+ *  so an archive claiming a petabyte is refused on the member that crosses the line. */
+const SITE_DATA_INDEX_PY = `import json,os,sys,tarfile
+archive=sys.argv[1]; limit=int(sys.argv[2]); total=0; members=0
+with tarfile.open(archive,'r') as tar:
+ for member in tar:
+  rel=os.path.normpath(member.name)
+  if os.path.isabs(rel) or rel=='..' or rel.startswith('..'+os.sep):
+   print('the archive names a member outside the data directory: '+member.name[:200],file=sys.stderr); sys.exit(1)
+  members+=1
+  if member.isreg(): total+=member.size
+  if total>limit:
+   print('the archive would unpack to more than %d bytes' % limit,file=sys.stderr); sys.exit(1)
+print(json.dumps({'members':members,'unpackedBytes':total}))`;
+
+/** The archive flags both directions share. `--numeric-owner` is what makes the archive portable back
+ *  into a machine: ids travel as numbers, so the ownership pass on the way in maps guest id g onto this
+ *  machine's own range rather than resolving a name against the host's accounts. The pax format is not
+ *  decoration either — it is what carries modification times to the nanosecond and extended attributes,
+ *  both of which the tree fingerprint compares, so a round trip through any lesser format would come back
+ *  as a different tree. */
+const SITE_DATA_ARCHIVE_FLAGS = Object.freeze(['--numeric-owner', '--preserve-permissions', '--xattrs',
+  '--xattrs-include=*', '--sparse']);
+
+/** The staging names an import owns, and they are deliberately none of the ones already in use.
+ *  `prepare` reads `rootfs.pending` and `disk.pending` as an interrupted disk fill, `adoptDiskIdentity`
+ *  stages at `disk.adopting`, and a snapshot restore stages a component tree at `<component>.pending`.
+ *  A crashed data import must not present as any of them. */
+const DATA_STAGING_SUFFIX = '.importing';
+const DATA_RETIRED_SUFFIX = '.retiring';
+const DATA_EXPORT_SUFFIX = '.exporting';
+
+const missing = (path) => {
+  try { lstatSync(path); return false; }
+  catch (error) { if (error && error.code === 'ENOENT') return true; throw error; }
+};
+
+function syncDirectory(path) {
+  const fd = openDirectory(path);
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+
+/** Seed or capture a Site's `data` directory as one archive. The container runtime did it by streaming a
+ *  named volume; a machine has no such handle, because the data directory is a plain tree on the disk
+ *  that the machine's uid range owns — so both directions run here, where the tree can be read at all.
+ *
+ *  The tree is never named by the request alone. `nspawnDiskPaths` re-derives the environment's storage
+ *  root from the validated kind and resource, and the path the daemon sends has to be the `data`
+ *  component somewhere UNDER that root. The layout puts it in the disk directory, or under
+ *  `storage/<generation>` for an environment migrated onto trees an earlier generation created, and this
+ *  helper cannot re-derive which without restating a layout the Sandbox plugin owns. Confining it to the
+ *  derived root is what makes that difference immaterial: the request can only ever name this
+ *  environment's own data tree, wherever the layout put it. */
+function nspawnSiteDataArchive(request, storage, options) {
+  const paths = nspawnDiskPaths(storage, request);
+  if (paths.kind !== 'site') fail('only a site environment has a data directory to archive');
+  const operation = request.operation;
+  if (operation !== 'import' && operation !== 'export') fail('the data archive operation is invalid');
+  const data = trustedPath(storage, request.dataPath);
+  if (!data.startsWith(`${paths.storageRoot}/`) || basename(data) !== 'data') {
+    fail('the data directory does not belong to the environment the request names');
+  }
+  return operation === 'import'
+    ? importSiteData(request, storage, options, paths, data)
+    : exportSiteData(request, storage, options, data);
+}
+
+/** Capture the tree into an archive the service account can read.
+ *
+ *  Nothing is written at the destination until there is a whole archive to put there: the capture lands
+ *  on its own staging name and is renamed into place, so a failure leaves nothing a retry could mistake
+ *  for a finished export, and the destination is never truncated by a capture that then fails. */
+function exportSiteData(request, storage, options, data) {
+  const archive = trustedPath(storage, request.archivePath, { file: true, allowMissing: true });
+  if (!missing(archive)) fail('the archive destination already exists');
+  // The daemon creates the destination directory, as it creates every other staging directory here: a
+  // directory made by root at 0700 would be one the account that has to read the archive could not enter.
+  const directory = trustedPath(storage, dirname(archive));
+  const staging = trustedPath(storage, `${archive}${DATA_EXPORT_SUFFIX}`, { file: true, allowMissing: true });
+  const run = treeRunner(options);
+  // Asked before a byte is written, and it answers both questions at once: what the tree weighs, and
+  // whether the filesystem the archive lands on has room for it.
+  const sized = run(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, JSON.stringify([data]), directory]);
+  if (!sized.ok) fail(`the site data export was refused: ${String(sized.stderr || '').slice(-400)}`);
+  const required = JSON.parse(String(sized.stdout || '{}')).requiredBytes;
+  if (!Number.isSafeInteger(required)) fail('the site data size is invalid');
+  if (required > SITE_DATA_ARCHIVE_BYTES) {
+    fail(`the site data directory holds ${required} bytes and the archive bound is ${SITE_DATA_ARCHIVE_BYTES}`);
+  }
+  rmSync(staging, { force: true });
+  try {
+    const created = run('/usr/bin/tar', ['--create', '--file', staging, '--directory', data,
+      '--format=posix', ...SITE_DATA_ARCHIVE_FLAGS, '--', '.']);
+    if (!created.ok) fail(`the site data could not be archived: ${String(created.stderr || '').slice(-400)}`);
+    // Everything left is settled through the descriptor rather than through the name a second time. The
+    // archive sits in a directory the service account owns, so between naming the file and changing it
+    // that account could unlink what root just wrote and put a link to a system file in its place — and a
+    // chown by path would then hand that file away. `O_NOFOLLOW` refuses a symlink outright.
+    const fd = openSync(staging, O_RDONLY | O_NOFOLLOW);
+    let bytes;
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.nlink !== 1) fail('the staged site data archive is not a plain file');
+      bytes = stat.size;
+      if (bytes > SITE_DATA_ARCHIVE_BYTES) {
+        fail(`the site data archive weighs ${bytes} bytes and the bound is ${SITE_DATA_ARCHIVE_BYTES}`);
+      }
+      fchmodSync(fd, 0o600);
+      // Handed to the account that has to read it back, download it and eventually delete it. Root keeps
+      // nothing here: the archive is the caller's artifact from the moment it is complete.
+      const env = options.env ?? process.env;
+      (options.setOwner ?? defaultSetOwner)(fd, sudoId(env.SUDO_UID, 'user id'), serviceGroupId(env));
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    renameSync(staging, archive);
+    syncDirectory(directory);
+    return { ok: true, operation: 'export', dataPath: data, archivePath: archive, bytes };
+  } catch (cause) {
+    rmSync(staging, { force: true });
+    throw cause;
+  }
+}
+
+/** Replace the tree with the archive's contents, or leave it exactly as it was.
+ *
+ *  The archive is unpacked into a staging tree beside the target, held against its own member list,
+ *  put on the machine's uid range and flushed to disk before anything visible moves. Only then is the
+ *  swap performed, as two renames: the old tree steps aside and the new one takes its name. Every state
+ *  those two renames can be interrupted between is one the next attempt recognises and finishes, so what
+ *  a crash leaves is the old data or the new data and never a mixture of the two. */
+function importSiteData(request, storage, options, paths, data) {
+  const archive = trustedPath(storage, request.archivePath, { file: true });
+  const staging = `${data}${DATA_STAGING_SUFFIX}`;
+  const retired = `${data}${DATA_RETIRED_SUFFIX}`;
+  const parent = trustedPath(storage, dirname(data));
+  // Finish a swap that was interrupted between its two renames before anything else reads the tree. A
+  // retired tree beside a target that is gone is the old data and belongs back under its own name; one
+  // beside a target that is there has already been superseded and is what the previous attempt was about
+  // to delete.
+  if (missing(data) && !missing(retired)) { renameSync(retired, data); syncDirectory(parent); }
+  rmSync(retired, { recursive: true, force: true });
+  rmSync(staging, { recursive: true, force: true });
+  const size = lstatSync(archive).size;
+  if (size > SITE_DATA_ARCHIVE_BYTES) {
+    fail(`the site data archive weighs ${size} bytes and the bound is ${SITE_DATA_ARCHIVE_BYTES}`);
+  }
+  const run = treeRunner(options);
+  const indexed = run(PYTHON, ['-c', SITE_DATA_INDEX_PY, archive, String(SITE_DATA_ARCHIVE_BYTES)]);
+  if (!indexed.ok) fail(`the site data archive was refused: ${String(indexed.stderr || '').slice(-400)}`);
+  const index = JSON.parse(String(indexed.stdout || '{}'));
+  if (!Number.isSafeInteger(index.members) || !Number.isSafeInteger(index.unpackedBytes)) {
+    fail('the site data archive index is invalid');
+  }
+  // The replacement presents as the directory it replaces. An archive carrying its own root member
+  // rewrites this during extraction, which is correct: the mode then comes from the tree that was
+  // captured rather than from the one being discarded.
+  mkdirSync(staging, { mode: statSync(data).mode & 0o7777 });
+  try {
+    const extracted = run('/usr/bin/tar', ['--extract', '--file', archive, '--directory', staging,
+      '--same-owner', ...SITE_DATA_ARCHIVE_FLAGS]);
+    if (!extracted.ok) fail(`the site data could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
+    // An archive carrying its own root member applies that member's ownership to the directory it is
+    // extracted into, so a tree captured somewhere else can name any id at all for what becomes the
+    // guest's `/data`. That mount point belongs to the guest's root, and the pass below maps guest 0 onto
+    // base+0 — so the directory enters it as guest root rather than as whatever the archive recorded,
+    // which would otherwise land it outside the range everything inside it carries.
+    const rootFd = openDirectory(staging);
+    try { (options.setOwner ?? defaultSetOwner)(rootFd, 0, 0); } finally { closeSync(rootFd); }
+    const verified = run(PYTHON, ['-c', DISK_TREE_VERIFY_PY, archive, staging]);
+    if (!verified.ok) fail(`the imported site data could not be verified: ${String(verified.stderr || '').slice(-400)}`);
+    const base = uidRangeFor(paths, options.readText ?? defaultReadText, options.writeAtomic ?? atomicWrite);
+    shiftOwnership(options.runner ?? defaultCommandRunner, staging, { base, size: UID_RANGE_SIZE });
+    const synced = run(PYTHON, ['-c', DISK_TREE_SYNC_PY, staging]);
+    if (!synced.ok) fail(`the imported site data could not be flushed: ${String(synced.stderr || '').slice(-400)}`);
+    renameSync(data, retired);
+    try { renameSync(staging, data); }
+    catch (cause) { renameSync(retired, data); throw cause; }
+    syncDirectory(parent);
+    rmSync(retired, { recursive: true, force: true });
+    syncDirectory(parent);
+    return { ok: true, operation: 'import', dataPath: data, archivePath: archive,
+      members: index.members, unpackedBytes: index.unpackedBytes, uidBase: base, uidSize: UID_RANGE_SIZE };
+  } catch (cause) {
+    rmSync(staging, { recursive: true, force: true });
+    throw cause;
+  }
+}
+
 /** The envelope, and only the envelope. The disk outlives it: a repair removes an envelope whose
  *  specification changed and writes a new one over the same root filesystem, and storage removal is a
  *  separate operation with its own ownership proof on the runtime side. */
@@ -1956,6 +2156,7 @@ const NSPAWN_OPERATIONS = Object.freeze({
   exec: (request, _storage, options) => nspawnExec(request, options),
   freeze: (request, _storage, options) => nspawnMachineState(request, 'freeze', options),
   thaw: (request, _storage, options) => nspawnMachineState(request, 'thaw', options),
+  'site-data-archive': nspawnSiteDataArchive,
   'tree-copy': nspawnTreeCopy,
   'tree-fingerprint': nspawnTreeFingerprint,
   'tree-preflight': nspawnTreePreflight,

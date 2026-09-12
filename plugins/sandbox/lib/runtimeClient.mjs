@@ -64,6 +64,9 @@
  * @property {(spec: object) => Promise<void>} removeGenerationStorage
  * @property {(spec: object, snapshotId: string) => Promise<void>} removeSnapshotStorage
  * @property {(spec: object, snapshotId: string) => Promise<void>} discardIncompleteSnapshot
+ * @property {(spec: object, operation: 'import' | 'export', archivePath: string) => Promise<void>} siteDataArchive
+ *   Seeds a Site's `data` tree from an archive, or captures it into one. An import replaces the tree
+ *   atomically and only while the environment is stopped; an export never overwrites its destination.
  *
  * Host readiness. The machine runtime needs its host prepared before it can hold an environment at all.
  * @property {() => Promise<{ ready: boolean, items: { id: string, label: string, ok: boolean, detail?: string }[] }>} [hostReadiness]

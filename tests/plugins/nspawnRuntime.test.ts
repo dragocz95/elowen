@@ -626,14 +626,6 @@ describe('nspawn refusals', () => {
     }
   });
 
-  /** The one member of that family that is still called: Sites `import-data` and `export-data` route
-   *  through it. It is a declared gap rather than a removal, and it has to SAY it is missing — a caller
-   *  told "no named volumes" would go looking for the wrong thing. */
-  it('names the missing Site data archive instead of blaming an absent volume store', async () => {
-    const { client } = fixture();
-    await expect((client as any).siteDataArchive()).rejects.toThrow(/not implemented for the machine runtime/);
-  });
-
   it('refuses a legacy image-backed specification and a disk that belongs to another runtime', async () => {
     const { paths, client } = fixture();
     const resource = { kind: 'project' as const, id: 7 };
@@ -754,5 +746,133 @@ describe('nspawn site envelope', () => {
     expect(envelope.binds.some((bind: any) => bind.readOnly)).toBe(true);
     // No path the binding did not produce reaches the helper.
     for (const bind of envelope.binds) expect(bind.source.startsWith(realpathSync(root))).toBe(true);
+  });
+});
+
+/** Seeding and capturing a Site's `data` directory. The tree is owned by the machine's uid range, so the
+ *  work itself belongs to the privileged helper; what this client owes is the contract around it — whose
+ *  data it is, whether the machine may be live while it happens, and which side of the archive already
+ *  exists. */
+describe('nspawn site data archive', () => {
+  function siteDataFixture() {
+    const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-data-'));
+    roots.push(root);
+    const configRoot = join(root, 'config');
+    const binding = { namespace: 'elowen', sitesDataDir: join(root, 'sites'),
+      sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers', 'shop') };
+    for (const path of [binding.sitesDataDir, binding.sourcePath, binding.brokerDir]) mkdirSync(path, { recursive: true });
+    const resource = { kind: 'site' as const, id: 'shop' };
+    const image = 'localhost/elowen/site:fixed';
+    const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' },
+      { sitesDataDir: binding.sitesDataDir, namespace: binding.namespace }, 'f'.repeat(32));
+    const spec: any = createBoundSiteSpec({ resource, generation: 3, image, disk, network: 'shared',
+      workspaceReadOnly: true, limits: { cpus: 1, memoryMb: 512, pidsLimit: 256 } }, binding);
+    mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
+    for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
+    for (const mount of spec.mounts.filter((entry: any) => entry.type === 'bind')) {
+      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, 'gitdir: /dev/null\n'); }
+      else mkdirSync(mount.source, { recursive: true });
+    }
+    const diskDirectory = dirname(spec.disk.rootfsPath);
+    mkdirSync(join(diskDirectory, '.elowen'), { recursive: true });
+    writeFileSync(join(diskDirectory, '.elowen', 'identity.json'), JSON.stringify({ namespace: spec.namespace,
+      kind: 'site', resource: 'shop', generation: 3, diskId: spec.disk.id, machine: spec.name, runtime: 'nspawn',
+      specHash: spec.labels['io.elowen.spec'], uidBase: UID_BASE, uidSize: UID_RANGE_SIZE }), { mode: 0o640 });
+    const envelope = envelopePaths(spec.name, configRoot);
+    for (const path of Object.values(envelope)) mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(envelope.nspawn, '[Exec]\nBoot=on\n', { mode: 0o644 });
+    writeFileSync(envelope.dropIn, '[Service]\nCPUQuota=100%\n', { mode: 0o644 });
+    const rootfs = realpathSync(spec.disk.rootfsPath);
+    const unit: Record<string, string> = {
+      LoadState: 'loaded', FragmentPath: join(configRoot, '/etc/systemd/system/elowen-machine@.service'),
+      DropInPaths: envelope.dropIn, Environment: `ELOWEN_MACHINE_DIRECTORY=${rootfs}`,
+      ActiveState: 'inactive', SubState: 'dead', FreezerState: 'running',
+      MemoryMax: String(512 * 1024 * 1024), TasksMax: '256', CPUQuotaPerSecUSec: '1s', Slice: 'machine.slice',
+    };
+    const machine: Record<string, string> = { Unit: unitFor(spec.name), RootDirectory: rootfs };
+    const render = (record: Record<string, string>) => Object.entries(record).map(([key, value]) => `${key}=${value}`).join('\n');
+    const requests: any[] = [];
+    const executor = { run: vi.fn(async (file: string, args: string[], options: any = {}) => {
+      if (file === '/usr/bin/systemctl' && args[0] === 'show') return { code: 0, stdout: render(unit), stderr: '' };
+      if (file === '/usr/bin/machinectl' && args[0] === 'show') return { code: 0, stdout: render(machine), stderr: '' };
+      if (file === '/usr/bin/sudo') {
+        const frame: Buffer = Buffer.isBuffer(options.input) ? options.input : Buffer.from(String(options.input ?? ''));
+        const length = Number(frame.subarray(0, 8).toString('latin1'));
+        requests.push(JSON.parse(frame.subarray(9, 9 + length).toString('utf8')));
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: '' };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    }) };
+    const client = new NspawnClient({ executor, artifacts: { status: vi.fn(), ensure: vi.fn(), collect: vi.fn() }, configRoot, namespace: binding.namespace });
+    const dataPath = spec.disk.components.find((entry: any) => entry.component === 'data').path;
+    const artifacts = join(root, 'artifacts');
+    mkdirSync(artifacts, { recursive: true });
+    return { root, spec, unit, requests, client, dataPath, artifacts, envelope, diskDirectory };
+  }
+
+  it('sends the environment identity and both paths, and never the machine name', async () => {
+    const { client, spec, requests, dataPath, artifacts } = siteDataFixture();
+    const archive = join(artifacts, 'seed.tar');
+    writeFileSync(archive, 'tar bytes');
+    await client.siteDataArchive(spec, 'import', archive);
+    const request = requests.find((entry) => entry.op === 'site-data-archive');
+    expect(request).toEqual({ domain: 'nspawn', op: 'site-data-archive', kind: 'site', resource: 'shop',
+      diskId: spec.disk.id, operation: 'import', dataPath, archivePath: archive });
+  });
+
+  it('refuses an import while the machine is live and allows one while it is stopped', async () => {
+    const { client, spec, unit, artifacts } = siteDataFixture();
+    const archive = join(artifacts, 'seed.tar');
+    writeFileSync(archive, 'tar bytes');
+    // Importing under a live guest races whatever the guest is writing, and a frozen guest resumes into a
+    // tree that changed underneath it. Both are refused; only a machine that is down may be seeded.
+    for (const [live, properties] of [
+      ['running', { ActiveState: 'active', SubState: 'running', FreezerState: 'running' }],
+      ['paused', { ActiveState: 'active', SubState: 'running', FreezerState: 'frozen' }],
+      ['stopping', { ActiveState: 'deactivating', SubState: 'stop-sigterm', FreezerState: 'running' }],
+    ] as const) {
+      Object.assign(unit, properties);
+      await expect(client.siteDataArchive(spec, 'import', archive), live).rejects.toThrow(/Stop the machine/);
+    }
+    Object.assign(unit, { ActiveState: 'inactive', SubState: 'dead', FreezerState: 'running' });
+    await expect(client.siteDataArchive(spec, 'import', archive)).resolves.toBeUndefined();
+  });
+
+  it('exports from a machine that is still running, because a capture does not replace the tree', async () => {
+    const { client, spec, unit, artifacts } = siteDataFixture();
+    Object.assign(unit, { ActiveState: 'active', SubState: 'running' });
+    await expect(client.siteDataArchive(spec, 'export', join(artifacts, 'capture.tar'))).resolves.toBeUndefined();
+  });
+
+  it('seeds an environment that has no envelope yet, which is when a Site is first created', async () => {
+    const { client, spec, envelope, artifacts, requests } = siteDataFixture();
+    rmSync(envelope.nspawn); rmSync(envelope.dropIn);
+    const archive = join(artifacts, 'seed.tar');
+    writeFileSync(archive, 'tar bytes');
+    await expect(client.siteDataArchive(spec, 'import', archive)).resolves.toBeUndefined();
+    expect(requests.some((entry) => entry.op === 'site-data-archive')).toBe(true);
+  });
+
+  it('refuses an archive that is missing, a destination that exists, and an unknown direction', async () => {
+    const { client, spec, artifacts } = siteDataFixture();
+    await expect(client.siteDataArchive(spec, 'import', join(artifacts, 'absent.tar'))).rejects.toThrow(/ENOENT|no such file/i);
+    const taken = join(artifacts, 'taken.tar');
+    writeFileSync(taken, 'already here');
+    await expect(client.siteDataArchive(spec, 'export', taken)).rejects.toThrow(/already exists/);
+    expect(readFileSync(taken, 'utf8')).toBe('already here');
+    await expect((client as any).siteDataArchive(spec, 'move', join(artifacts, 'x.tar'))).rejects.toThrow(/archive operation/);
+  });
+
+  it('creates the destination directory an export is asked to write into', async () => {
+    const { client, spec, artifacts } = siteDataFixture();
+    const archive = join(artifacts, 'nested', 'deeper', 'capture.tar');
+    await expect(client.siteDataArchive(spec, 'export', archive)).resolves.toBeUndefined();
+    expect(existsSync(dirname(archive))).toBe(true);
+  });
+
+  it('refuses a specification that is not a Site at all', async () => {
+    const { client, spec } = fixture();
+    await expect((client as any).siteDataArchive(spec, 'export', join(spec.storageRoot, 'capture.tar')))
+      .rejects.toThrow(/Sites data authority/);
   });
 });

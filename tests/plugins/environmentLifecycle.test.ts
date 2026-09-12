@@ -121,8 +121,10 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     removeVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
     inspectVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
     importSnapshotVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
-    siteDataArchive: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
     removeSnapshotImage: vi.fn(async () => { throw new Error('A disk-backed environment snapshots its disk, not an image'); }),
+    // Not a volume handle: the Site data archive seeds and captures the `data` tree the disk already
+    // holds, and the machine client implements it through the privileged helper.
+    siteDataArchive: vi.fn(async () => {}),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
     // The rows the helper reports, in the helper's own shape. `unready` carries the details a real host
     // returns, because what the runtime does with them — quoting them back in its refusal — is the thing
@@ -847,6 +849,44 @@ describe('durable managed environment lifecycle', () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toEqual({ n: 0 });
     expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
   });
+
+  /** The one path that seeds a Site's `data` tree automatically: the first start after registration, from
+   *  the bootstrap archive the Sites plugin hands over. It runs before the envelope exists, and it runs
+   *  once for the life of the disk — a second start must not write the bootstrap over data the Site has
+   *  since been serving from. */
+  it('seeds a new Site data directory from the bootstrap archive, and only on the first start', async () => {
+    const { runtime, nspawn, root } = setup();
+    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed',
+      network: 'shared', workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'),
+      sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
+    mkdirSync(registration.sourcePath, { recursive: true });
+    const archivePath = join(root, 'sites', 'shop', 'bootstrap.tar');
+    mkdirSync(dirname(archivePath), { recursive: true });
+    writeFileSync(archivePath, 'bootstrap archive');
+    const containerSeed = vi.fn(async () => ({ kind: 'data' as const, archivePath }));
+    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {}, containerSeed });
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'seed-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    expect(nspawn.siteDataArchive).toHaveBeenCalledTimes(1);
+    const [spec, operation, archive] = nspawn.siteDataArchive.mock.calls[0]!;
+    expect(operation).toBe('import');
+    expect(archive).toBe(archivePath);
+    expect(spec.resource).toEqual({ kind: 'site', id: 'shop' });
+    // Seeded into the disk's own data tree, before the envelope that will bind it into the machine.
+    expect(spec.disk.components.map((entry: any) => entry.component)).toEqual(['data']);
+    expect(nspawn.siteDataArchive.mock.invocationCallOrder[0]).toBeLessThan(nspawn.create.mock.invocationCallOrder[0]!);
+    expect((await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).state).toBe('running');
+
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'seed-stop', action: { kind: 'stop' } });
+    await runtime.reconcile();
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'seed-restart', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect(nspawn.siteDataArchive).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('project root filesystem binding', () => {
@@ -992,7 +1032,7 @@ describe('adopted workspace rollback', () => {
     expect(siteCreates[1].disk.rootfsPath).toBe(siteCreates[0].disk.rootfsPath);
     // The rebuild replaces the envelope and nothing else: the disk carries the Site's installed
     // application across it, so nothing is re-seeded from a data archive and no handle is released.
-    // Both methods refuse on the real machine client, so calling either would fail this rebuild outright.
+    // A re-seed here would write the bootstrap over data the Site has been serving from.
     expect(nspawn.siteDataArchive).not.toHaveBeenCalled();
     expect(nspawn.removeVolume).not.toHaveBeenCalled();
     expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 1 });
