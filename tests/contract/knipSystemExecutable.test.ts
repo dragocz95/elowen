@@ -11,11 +11,14 @@ const config = JSON.parse(readFileSync(join(root, 'knip.json'), 'utf8')) as {
 let fixture: string | undefined;
 afterEach(() => { if (fixture) rmSync(fixture, { recursive: true, force: true }); });
 
-// Knip treats an absolute execFileSync target as a file import before its binary scanner runs.
-// Certbot is provisioned by the host, not npm. Its absence must not hide missing JavaScript modules.
+// Knip treats an absolute execFileSync target as a file import before its binary scanner runs, and it
+// resolves that "import" against the filesystem it runs on — so a host executable the machine happens to
+// have looks resolved locally and unresolved on a CI runner that never installs it. Certbot is
+// provisioned by the host, not npm; machinectl ships with systemd-container, which the machine runtime
+// needs and a runner does not have. Their absence must not hide missing JavaScript modules.
 describe('Knip system executable exception', () => {
-  it('names only the exact Certbot executable in the root workspace', () => {
-    expect(config.workspaces['.']?.ignoreUnresolved).toEqual(['/usr/bin/certbot']);
+  it('names only the exact host executables in the root workspace', () => {
+    expect(config.workspaces['.']?.ignoreUnresolved).toEqual(['/usr/bin/certbot', '/usr/bin/machinectl']);
   });
 
   it('still reports missing JavaScript imports, including a similar absolute path', () => {

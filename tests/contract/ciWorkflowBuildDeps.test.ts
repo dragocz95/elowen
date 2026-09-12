@@ -42,6 +42,18 @@ describe('CI workflow: jobs that build also install the web dependencies', () =>
     expect(rootBuildJobs.length).toBeGreaterThan(5);
   });
 
+  // The mirror of the pairing above, and the same class of failure that is invisible locally: the web
+  // app's `next build` type-checks a program that reaches OUT of web/. Its plugin-bundle tests compile
+  // ../plugins/*/web-src, those import ../src/plugins/environmentTypes, and that reaches
+  // ../src/shared/projectExecution, whose `zod` lives in the ROOT node_modules. A job that installs only
+  // web/ fails there on TS2307 for a file the web app does not own.
+  it('installs the root dependencies in the web job, whose type-check reaches outside web/', () => {
+    const yaml = readFileSync(workflow, 'utf-8');
+    const web = yaml.split('\n  web:\n')[1]?.split(/\n  [a-z0-9_-]+:\n/, 1)[0] ?? '';
+    expect(web).toContain('working-directory: web');
+    expect(web).toContain('npm ci --prefix ..');
+  });
+
   it('runs the destructive dist build probe outside the parallel daemon suite', () => {
     const yaml = readFileSync(workflow, 'utf-8');
     const daemon = yaml.split('\n  daemon:\n')[1]?.split(/\n  [a-z0-9_-]+:\n/, 1)[0] ?? '';

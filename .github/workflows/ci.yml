@@ -327,9 +327,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            package-lock.json
 
       - run: npm ci
+      # `next build` type-checks this app's whole program, and that program reaches OUT of web/: the
+      # plugin-bundle tests in web/tests/pluginUi compile ../plugins/*/web-src, which import the daemon's
+      # shared contracts under ../src. Those files resolve their own dependencies (zod) in the ROOT
+      # node_modules, which a `npm ci` inside web/ does not install — so without this the build fails in
+      # TypeScript on a file the web app does not own, long before it reaches what this job tests.
+      - run: npm ci --prefix ..
       - run: npm run build
       - run: npm test
 
