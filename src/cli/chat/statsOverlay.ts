@@ -204,9 +204,8 @@ class StatsOverlay implements Component, Focusable {
     for (const m of sorted) {
       const exec = m.exec.length > execW - 2 ? `${m.exec.slice(0, execW - 4)}…` : m.exec;
       const costStr = m.usage.costUsd != null ? `$${m.usage.costUsd.toFixed(2)}` : '—';
-      // Effective rate when the model measured one (end-to-end window); the legacy post-header rate
-      // still answers for history written before effective timing existed.
-      const tps = m.usage.effectiveTps ?? m.usage.outputTps;
+      // This column is the effective end-to-end rate. Legacy post-header samples stay unknown here.
+      const tps = m.usage.effectiveTps;
       const tpsStr = tps != null && tps > 0 ? `${Math.round(tps)}` : '—';
       body.push(`${pad}${color.text(exec.padEnd(execW))}${color.text(formatK(m.usage.total).padStart(tokW))}${color.faint(formatK(m.usage.cacheRead + m.usage.cacheWrite).padStart(cacheW))}${color.faint(tpsStr.padStart(tpsW))}${color.text(costStr.padStart(costW))}`);
     }
@@ -215,13 +214,12 @@ class StatsOverlay implements Component, Focusable {
     const totalCache = models.reduce((sum, m) => sum + m.usage.cacheRead + m.usage.cacheWrite, 0);
     const costs = models.map((m) => m.usage.costUsd).filter((c): c is number => c != null);
     const totalCost = costs.length ? costs.reduce((sum, c) => sum + c, 0) : null;
-    // Duration-weighted average speed across the models that measured one — a model's seconds are its
-    // MEASURED output over its rate; total `output` would overweight untimed history. The effective
-    // window wins when any model measured one end-to-end; the legacy post-header window answers only
-    // when nothing effective was measured (all history predating the stamp).
-    const pairs = (pick: (m: ModelUsageView) => { tps?: number | null; measuredOutput?: number }) => weightedSpeedFromPairs(models.map(pick));
-    const avgTps = pairs((m) => ({ tps: m.usage.effectiveTps, measuredOutput: m.usage.effectiveMeasuredOutput }))
-      ?? pairs((m) => ({ tps: m.usage.outputTps, measuredOutput: m.usage.measuredOutput }));
+    // Duration-weighted average over effective samples only. Models whose history predates the end-to-end
+    // timing stamp stay unknown and cannot change the denominator.
+    const avgTps = weightedSpeedFromPairs(models.map((m) => ({
+      tps: m.usage.effectiveTps,
+      measuredOutput: m.usage.effectiveMeasuredOutput,
+    })));
     const avgTpsStr = avgTps != null ? `${Math.round(avgTps)}` : '—';
     body.push(`${pad}${color.faint('─'.repeat(execW + tokW + cacheW + tpsW + costW))}`);
     body.push(`${pad}${color.accent('Σ'.padEnd(execW))}${color.text(formatK(totalTokens).padStart(tokW))}${color.faint(formatK(totalCache).padStart(cacheW))}${color.faint(avgTpsStr.padStart(tpsW))}${color.bold(color.text((totalCost != null ? `$${totalCost.toFixed(2)}` : '—').padStart(costW)))}`);

@@ -340,6 +340,14 @@ describe('sessionUsageSnapshot — effective speed', () => {
     expect(usage.firstContentMs).toBe(2500);    // its first-content wait, carried verbatim
   });
 
+  it('does not skip past the latest completed call when that call is unmeasured', () => {
+    const usage = snapshot([
+      msg({ effectiveMs: 1000 }),
+      msg({ usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10, cost: { total: 0 } } }),
+    ]);
+    expect(usage.effectiveTps).toBeUndefined();
+  });
+
   it('skips failed and aborted attempts — the previous completed call still answers', () => {
     const usage = snapshot([
       msg({ effectiveMs: 1000 }),
