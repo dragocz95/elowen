@@ -141,17 +141,99 @@ describe('RBAC tightening — /users directory & deletion are admin-only', () =>
 });
 
 describe('admin impersonation (sign in as)', () => {
-  it('admin gets a token that authenticates as the target; non-admin/self/unknown are rejected', async () => {
+  it('mints a target session plus opaque return proof; non-admin/self/unknown are rejected', async () => {
     const { app, adminTok, bobTok, admin, bob } = await setup();
-    expect((await app.request(`/users/${admin.id}/impersonate`, post(bobTok, {}))).status).toBe(403); // non-admin blocked
-    expect((await app.request(`/users/${admin.id}/impersonate`, post(adminTok, {}))).status).toBe(400); // self rejected
-    expect((await app.request('/users/999/impersonate', post(adminTok, {}))).status).toBe(404); // unknown target
+    expect((await app.request(`/users/${admin.id}/impersonate`, post(bobTok, {}))).status).toBe(403);
+    expect((await app.request(`/users/${admin.id}/impersonate`, post(adminTok, {}))).status).toBe(400);
+    expect((await app.request('/users/999/impersonate', post(adminTok, {}))).status).toBe(404);
+
     const res = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
     expect(res.status).toBe(200);
-    const { token, user } = await res.json();
+    const { token, returnCode, user } = await res.json();
     expect(user.id).toBe(bob.id);
-    // the issued token really acts as bob
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    expect(returnCode).toMatch(/^[a-f0-9]{64}$/);
+    expect(returnCode).not.toBe(adminTok);
     expect((await (await app.request('/auth/me', auth(token))).json()).user.id).toBe(bob.id);
+  });
+
+  it('restores a fresh admin session atomically without depending on the original admin token', async () => {
+    const { app, users, adminTok, admin, bob } = await setup();
+    const started = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    const { token: targetToken, returnCode } = await started.json();
+
+    const unrelatedBobToken = users.issueToken(bob.id);
+    expect((await app.request('/auth/impersonation/stop', post(unrelatedBobToken, { returnCode }))).status).toBe(403);
+    expect(users.principalForToken(targetToken)?.user.id).toBe(bob.id);
+
+    users.revokeToken(adminTok);
+    expect(users.principalForToken(adminTok)).toBeNull();
+
+    const stopped = await app.request('/auth/impersonation/stop', post(targetToken, { returnCode }));
+    expect(stopped.status).toBe(200);
+    const restored = await stopped.json();
+    const { token: restoredToken, user } = restored;
+    expect(user.id).toBe(admin.id);
+    expect(restoredToken).not.toBe(adminTok);
+    expect((await (await app.request('/auth/me', auth(restoredToken))).json()).user.id).toBe(admin.id);
+    expect(users.principalForToken(targetToken)).toBeNull();
+    expect(users.principalForToken(adminTok)).toBeNull();
+
+    const retry = await app.request('/auth/impersonation/stop', post(targetToken, { returnCode }));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(restored);
+  });
+
+  it('makes rapid duplicate starts idempotent for one admin session', async () => {
+    const { app, adminTok, bob } = await setup();
+    const first = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    const second = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(await first.json());
+  });
+
+  it('lets logout cancel a just-completed return and invalidate its late response token', async () => {
+    const { app, users, adminTok, bob } = await setup();
+    const started = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    const { token: targetToken, returnCode } = await started.json();
+    const stopped = await app.request('/auth/impersonation/stop', post(targetToken, { returnCode }));
+    const { token: restoredToken } = await stopped.json();
+
+    expect((await app.request('/auth/impersonation/cancel', post(targetToken, { returnCode }))).status).toBe(200);
+    expect(users.principalForToken(restoredToken)).toBeNull();
+    expect((await app.request('/auth/impersonation/stop', post(targetToken, { returnCode }))).status).toBe(403);
+  });
+
+  it('rejects cancellation after the bounded lost-response window', async () => {
+    const { app, db, users, adminTok, bob } = await setup();
+    const started = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    const { token: targetToken, returnCode } = await started.json();
+    const stopped = await app.request('/auth/impersonation/stop', post(targetToken, { returnCode }));
+    const { token: restoredToken } = await stopped.json();
+    db.prepare("UPDATE auth_impersonations SET completed_at = datetime('now', '-10 minutes') WHERE return_code = ?").run(returnCode);
+
+    expect((await app.request('/auth/impersonation/cancel', post(targetToken, { returnCode }))).status).toBe(403);
+    expect(users.principalForToken(restoredToken)?.user.id).toBe(1);
+  });
+
+  it('rotates away the original admin bearer when the transition completes', async () => {
+    const { app, users, adminTok, bob } = await setup();
+    const started = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    const { token, returnCode } = await started.json();
+    expect((await app.request('/auth/impersonation/stop', post(token, { returnCode }))).status).toBe(200);
+    expect(users.principalForToken(adminTok)).toBeNull();
+  });
+
+  it('refuses nested impersonation even when the target account is also an admin', async () => {
+    const { app, users, adminTok, bob } = await setup();
+    users.setAdmin(bob.id, true);
+    const carol = users.create('carol', 'pw');
+    const started = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    const { token: bobTargetToken } = await started.json();
+    const nested = await app.request(`/users/${carol.id}/impersonate`, post(bobTargetToken, {}));
+    expect(nested.status).toBe(409);
+    expect(await nested.json()).toEqual({ error: 'impersonation already active for another user' });
   });
 });
 

@@ -8,7 +8,7 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openDb } from '../../src/store/db.js';
 
-function setup() {
+function setup(assignBob = true) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
@@ -16,7 +16,7 @@ function setup() {
   const admin = users.create('admin', 'pw');
   const bob = users.create('bob', 'pw');
   const userProjects = new UserProjectStore(db);
-  userProjects.assign(bob.id, 1);
+  if (assignBob) userProjects.assign(bob.id, 1);
   const bus = new EventBus();
   const app = createServer({
     bus, project: { id: 1, path: '/o' }, clock: new FakeClock(0), config: new ConfigStore(db),
@@ -54,6 +54,22 @@ describe('GET /events tenancy filtering', () => {
     const out = await streamAfter(app, bobTok, () => { bus.publish(foreign); bus.publish(home); });
     expect(out).toContain('"kind":"home"');
     expect(out).not.toContain('"kind":"foreign"');
+  });
+
+  it('opens for an account with no projects while withholding every project event', async () => {
+    const { app, bus, bob, bobTok } = setup(false);
+    const out = await streamAfter(app, bobTok, () => {
+      bus.publish(foreign);
+      bus.publish(home);
+      bus.publish({ type: 'memory', userId: bob.id });
+      bus.publish({ type: 'activity', kind: 'turn', actorUserId: 1, surface: 'web', target: 'brain-secret', detail: 'private' });
+    });
+    expect(out).not.toContain('"kind":"home"');
+    expect(out).not.toContain('"kind":"foreign"');
+    expect(out).toContain('"type":"memory"');
+    expect(out).toContain('event: activity');
+    expect(out).not.toContain('brain-secret');
+    expect(out).not.toContain('actorUserId');
   });
 
   it('streams an admin every event', async () => {

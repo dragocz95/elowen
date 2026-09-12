@@ -14,34 +14,40 @@
 // fetching /auth/me itself and seeding the result. Seeding cannot win the race now that children mount
 // immediately: their useMe() fires on the same tick as the gate's own probe, so the app would ask twice.
 // Sharing one query key makes the duplicate structurally impossible instead of merely unlikely.
-import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { AUTH_CLEARED_EVENT } from '../../lib/token';
+import { AUTH_CLEARED_EVENT, subscribeAuthTransitions } from '../../lib/token';
 import { elowenClient } from '../../lib/elowenClient';
-import { useMe } from '../../lib/queries';
+import { QUERY_KEYS, useMe } from '../../lib/queries';
 import { EventBridge } from '../../app/providers';
 import { LoginForm } from './LoginForm';
 import { SetupPending } from './SetupPending';
+import { LoadingState } from '../ui/states';
 
-type Gate = 'checking' | 'open' | 'login' | 'setup';
+type Gate = 'checking' | 'transitioning' | 'open' | 'login' | 'setup';
 
 export function LoginGate({ children, initiallyAuthenticated = false, sessionPresent = true }: { children: ReactNode; initiallyAuthenticated?: boolean; sessionPresent?: boolean }) {
   // A server-prefetched identity already proved this exact request's httpOnly session. Conversely, the
   // server's absence of a cookie proves it is logged out. Only a present-but-unvalidated cookie checks.
   const [gate, setGate] = useState<Gate>(initiallyAuthenticated ? 'open' : sessionPresent ? 'checking' : 'login');
   const qc = useQueryClient();
-  const me = useMe();
+  const router = useRouter();
+  const transitionId = useRef<string | null>(null);
+  const transitionCleanup = useRef<Promise<void>>(Promise.resolve());
+  const me = useMe(gate !== 'transitioning');
   const meSettled = !me.isPending;
   const meFailed = me.error;
 
   useEffect(() => {
-    if (!meSettled) return;
+    if ((gate !== 'checking' && gate !== 'open') || !meSettled) return;
     // The session query answers the gate: data means the httpOnly cookie is a valid session → open the
     // shell. A 401 means no/invalid session → on a box where the installer never finished there is no
     // account to sign in as, so we say that instead of showing a login nobody can pass. A transient/
     // network error is treated as "not authed" so we show login rather than a blank gate.
     setGate(meFailed ? 'login' : 'open');
-  }, [meSettled, meFailed]);
+  }, [gate, meSettled, meFailed]);
 
   // Whether "log in" is even meaningful is a separate question from whether this session is valid, so it
   // gets its own probe. Hanging it off the session query does not work: a 401 clears the query cache
@@ -56,16 +62,45 @@ export function LoginGate({ children, initiallyAuthenticated = false, sessionPre
     return () => { alive = false; };
   }, [gate]);
 
+  // An identity transition is coordinated across every tab. `start` synchronously replaces the shell so
+  // React cleans up all account-scoped streams before the BFF swaps cookies, then clears and cancels the
+  // old cache exactly once. `commit` and `rollback` both load the identity now held by the cookie: rollback
+  // keeps the original admin, commit sees the target or the freshly restored admin.
+  useEffect(() => subscribeAuthTransitions((transition) => {
+    if (transition.phase === 'start') {
+      transitionId.current = transition.id;
+      flushSync(() => setGate('transitioning'));
+      transitionCleanup.current = qc.cancelQueries().then(() => { qc.clear(); });
+      return;
+    }
+    const id = transition.id;
+    if (transitionId.current !== id) return;
+    void transitionCleanup.current.then(async () => {
+      if (transitionId.current !== id) return;
+      try {
+        await qc.fetchQuery({ queryKey: QUERY_KEYS.me, queryFn: elowenClient.me, staleTime: 5 * 60 * 1000 });
+        if (transitionId.current !== id) return;
+        router.replace('/dash');
+        setGate('open');
+      } catch {
+        if (transitionId.current === id) setGate('login');
+      } finally {
+        if (transitionId.current === id) transitionId.current = null;
+      }
+    });
+  }), [qc, router]);
+
   // Token dropped (stale-token validation 401, mid-session 401, or explicit logout): go to login with
   // no reload, and clear the cache so a re-login can never flash the previous user's data.
   useEffect(() => {
-    const onCleared = () => { qc.clear(); setGate('login'); };
+    const onCleared = () => { transitionId.current = null; qc.clear(); setGate('login'); };
     window.addEventListener(AUTH_CLEARED_EVENT, onCleared);
     return () => window.removeEventListener(AUTH_CLEARED_EVENT, onCleared);
   }, [qc]);
 
   // The login form REPLACES the shell (an unauthenticated visitor must not reach the app), but the
   // 'checking' state renders children so the shell and its query fan-out start immediately.
+  if (gate === 'transitioning') return <main className="flex min-h-screen items-center justify-center bg-background"><LoadingState /></main>;
   if (gate === 'setup') return <SetupPending />;
   if (gate === 'login') return <Suspense fallback={null}><LoginForm onAuthed={() => setGate('open')} /></Suspense>;
 

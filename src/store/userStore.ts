@@ -6,6 +6,7 @@ import { execRefSpec, parseExecRef } from '../shared/execs.js';
 /** Fallback token TTL (days) when no configured value is passed in — keeps the store usable on its
  *  own (e.g. tests). The live value comes from config.security.tokenTtlDays. */
 const DEFAULT_TOKEN_TTL_DAYS = 30;
+const IMPERSONATION_RETURN_RETRY_MINUTES = 5;
 const ttlDays = (days?: number): number =>
   typeof days === 'number' && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_TOKEN_TTL_DAYS;
 
@@ -27,6 +28,11 @@ export function readIsAdmin(db: Db, userId: number): boolean {
 export type TokenScope = 'full';
 export type StoredScope = TokenScope | 'advisor';
 export interface Principal { user: User; scope: TokenScope }
+export interface ImpersonationStart { token: string; returnCode: string }
+export interface ImpersonationStop { token: string; user: User }
+export class ImpersonationConflictError extends Error {
+  constructor() { super('impersonation already active for another user'); this.name = 'ImpersonationConflictError'; }
+}
 export interface ExternalIdentityInput {
   provider: string;
   tenantId: string;
@@ -442,6 +448,7 @@ export class UserStore {
     // One transaction so a mid-way failure cannot leave core-owned tokens, grants or encrypted plugin
     // credentials behind. Plugin-owned rows and files are handled through registerUserRemoved before this.
     this.db.transaction(() => {
+      this.db.prepare('DELETE FROM auth_impersonations WHERE admin_user_id = ? OR target_user_id = ?').run(id, id);
       this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
       this.db.prepare('DELETE FROM user_prompts WHERE user_id = ?').run(id); // no orphan prompt overrides
@@ -457,6 +464,103 @@ export class UserStore {
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }
+  /** Start one bounded admin-to-user transition. Repeating the same request with the same admin session
+   *  returns the same pair, so rapid clicks or reordered duplicate HTTP requests cannot strand the browser
+   *  with mismatched target and return cookies. A second target is refused until the first transition ends. */
+  startImpersonation(actorToken: string, adminUserId: number, targetUserId: number, days?: number): ImpersonationStart {
+    return this.db.transaction(() => {
+      const actor = this.principalForToken(actorToken, days)?.user;
+      if (!actor || actor.id !== adminUserId || !actor.is_admin) throw new ImpersonationConflictError();
+      if (this.db.prepare('SELECT 1 FROM auth_impersonations WHERE target_token = ? AND completed_at IS NULL').get(actorToken)) {
+        throw new ImpersonationConflictError();
+      }
+
+      const existing = this.db.prepare(`SELECT return_code, target_token, target_user_id, created_at, completed_at
+        FROM auth_impersonations WHERE actor_token = ?`).get(actorToken) as {
+          return_code: string; target_token: string; target_user_id: number; created_at: string; completed_at: string | null;
+        } | undefined;
+      if (existing) {
+        const live = this.db.prepare(`SELECT 1 FROM auth_tokens
+          WHERE token = ? AND user_id = ? AND created_at > datetime('now', '-${ttlDays(days)} days')`)
+          .get(existing.target_token, existing.target_user_id);
+        const unexpired = this.db.prepare(`SELECT 1 WHERE ? > datetime('now', '-${ttlDays(days)} days')`).get(existing.created_at);
+        if (!existing.completed_at && live && unexpired) {
+          if (existing.target_user_id !== targetUserId) throw new ImpersonationConflictError();
+          return { token: existing.target_token, returnCode: existing.return_code };
+        }
+        this.db.prepare('DELETE FROM auth_impersonations WHERE actor_token = ?').run(actorToken);
+        this.db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(existing.target_token);
+      }
+
+      const token = this.issueToken(targetUserId);
+      const returnCode = randomBytes(32).toString('hex');
+      this.db.prepare(`INSERT INTO auth_impersonations
+        (return_code, actor_token, target_token, admin_user_id, target_user_id)
+        VALUES (?, ?, ?, ?, ?)`)
+        .run(returnCode, actorToken, token, adminUserId, targetUserId);
+      return { token, returnCode };
+    }).immediate();
+  }
+
+  /** Exchange the opaque return proof and exact target token for a fresh admin session. A completed
+   *  exchange remains idempotently readable for a short retry window, so losing the HTTP response after
+   *  commit cannot strand the browser. The target token is still revoked on the first commit. */
+  stopImpersonation(returnCode: string, targetToken: string, days?: number): ImpersonationStop | null {
+    return this.db.transaction(() => {
+      const row = this.db.prepare(`SELECT actor_token, admin_user_id, target_user_id, restored_token, completed_at
+        FROM auth_impersonations
+        WHERE return_code = ? AND target_token = ?
+          AND created_at > datetime('now', '-${ttlDays(days)} days')`)
+        .get(returnCode, targetToken) as {
+          actor_token: string; admin_user_id: number; target_user_id: number; restored_token: string | null; completed_at: string | null;
+        } | undefined;
+      if (!row) return null;
+
+      const admin = this.get(row.admin_user_id);
+      if (!admin?.is_admin) {
+        this.db.prepare('DELETE FROM auth_impersonations WHERE return_code = ?').run(returnCode);
+        this.db.prepare('DELETE FROM auth_tokens WHERE token IN (?, ?)').run(targetToken, row.actor_token);
+        return null;
+      }
+
+      if (row.restored_token && row.completed_at) {
+        const retryable = this.db.prepare(`SELECT 1 WHERE ? > datetime('now', '-${IMPERSONATION_RETURN_RETRY_MINUTES} minutes')`)
+          .get(row.completed_at);
+        const restored = retryable ? this.principalForToken(row.restored_token, days)?.user : null;
+        return restored?.id === admin.id ? { token: row.restored_token, user: admin } : null;
+      }
+
+      const target = this.principalForToken(targetToken, days)?.user;
+      if (!target || target.id !== row.target_user_id) return null;
+      const token = this.issueToken(admin.id);
+      this.db.prepare(`UPDATE auth_impersonations
+        SET restored_token = ?, completed_at = datetime('now') WHERE return_code = ?`)
+        .run(token, returnCode);
+      this.db.prepare('DELETE FROM auth_tokens WHERE token IN (?, ?)').run(targetToken, row.actor_token);
+      return { token, user: admin };
+    }).immediate();
+  }
+
+  /** Cancel an in-flight or just-completed transition from logout. Matching the same target token + proof
+   *  makes the race with stop atomic: whichever transaction wins invalidates every token the other could
+   *  otherwise return or retain. */
+  cancelImpersonation(returnCode: string, targetToken: string, days?: number): boolean {
+    return this.db.transaction(() => {
+      const row = this.db.prepare(`SELECT actor_token, target_token, restored_token FROM auth_impersonations
+        WHERE return_code = ? AND target_token = ?
+          AND created_at > datetime('now', '-${ttlDays(days)} days')
+          AND (completed_at IS NULL OR completed_at > datetime('now', '-${IMPERSONATION_RETURN_RETRY_MINUTES} minutes'))`)
+        .get(returnCode, targetToken) as {
+          actor_token: string; target_token: string; restored_token: string | null;
+        } | undefined;
+      if (!row) return false;
+      this.db.prepare('DELETE FROM auth_impersonations WHERE return_code = ?').run(returnCode);
+      this.db.prepare('DELETE FROM auth_tokens WHERE token IN (?, ?, ?)')
+        .run(row.actor_token, row.target_token, row.restored_token ?? '');
+      return true;
+    }).immediate();
+  }
+
   issueToken(userId: number, scope: StoredScope = 'full'): string {
     const token = randomBytes(32).toString('hex');
     this.db.prepare('INSERT INTO auth_tokens (token, user_id, scope) VALUES (?, ?, ?)').run(token, userId, scope);
@@ -486,10 +590,34 @@ export class UserStore {
     })();
   }
   revokeToken(token: string): void {
-    this.db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(token);
+    this.db.transaction(() => {
+      const active = this.db.prepare(`SELECT return_code, actor_token FROM auth_impersonations
+        WHERE target_token = ? AND completed_at IS NULL`).get(token) as { return_code: string; actor_token: string } | undefined;
+      if (active) {
+        // Logging out the impersonated session cancels the whole transition, including the original actor
+        // credential. A separately revoked/expired actor token leaves the bounded return proof usable.
+        this.db.prepare('DELETE FROM auth_impersonations WHERE return_code = ?').run(active.return_code);
+        this.db.prepare('DELETE FROM auth_tokens WHERE token IN (?, ?)').run(token, active.actor_token);
+        return;
+      }
+      this.db.prepare('DELETE FROM auth_impersonations WHERE restored_token = ?').run(token);
+      this.db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(token);
+    })();
   }
-  /** Delete tokens past their TTL. Cheap; called periodically so the table doesn't grow unbounded. */
+  /** Delete tokens past their TTL together with bounded impersonation proofs and orphan target sessions. */
   purgeExpiredTokens(days?: number): void {
-    this.db.prepare(`DELETE FROM auth_tokens WHERE created_at <= datetime('now', '-${ttlDays(days)} days')`).run();
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM auth_tokens WHERE token IN (
+        SELECT target_token FROM auth_impersonations
+        WHERE completed_at IS NULL AND created_at <= datetime('now', '-${ttlDays(days)} days')
+        UNION
+        SELECT actor_token FROM auth_impersonations
+        WHERE completed_at IS NULL AND created_at <= datetime('now', '-${ttlDays(days)} days')
+      )`).run();
+      this.db.prepare(`DELETE FROM auth_impersonations
+        WHERE (completed_at IS NULL AND created_at <= datetime('now', '-${ttlDays(days)} days'))
+           OR (completed_at IS NOT NULL AND completed_at <= datetime('now', '-${IMPERSONATION_RETURN_RETRY_MINUTES} minutes'))`).run();
+      this.db.prepare(`DELETE FROM auth_tokens WHERE created_at <= datetime('now', '-${ttlDays(days)} days')`).run();
+    })();
   }
 }

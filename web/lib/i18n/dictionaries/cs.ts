@@ -932,6 +932,7 @@ export const cs = {
     impersonateError: 'Přihlášení jako uživatel se nezdařilo',
     impersonatingAs: 'Prohlížíte aplikaci jako {name}',
     stopImpersonating: 'Zpět na svůj účet',
+    stopImpersonateError: 'Návrat na váš účet se nezdařil',
     grantedPlugins: 'Povolené pluginy',
     grantedPluginsHint: 'Části systému, které se povolují jednotlivě (automatizace, dovednosti). Dokud je uživateli nepovolíte, nedostane se k nim; správci mají přístup vždy.',
     grantedPluginsCount: 'Povoleno {n} z {total}',

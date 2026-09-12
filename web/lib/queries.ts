@@ -252,8 +252,8 @@ export const useProjectChanged = (id: number | null, enabled = true) =>
 export const useProjectChanges = (id: number | null, enabled: boolean) =>
   useQuery({ queryKey: ['project-changes', id], queryFn: () => elowenClient.projectChanges(id as number), enabled: !!id && enabled });
 
-export const useMe = () =>
-  useQuery({ queryKey: QUERY_KEYS.me, queryFn: elowenClient.me, staleTime: 5 * 60 * 1000 });
+export const useMe = (enabled = true) =>
+  useQuery({ queryKey: QUERY_KEYS.me, queryFn: elowenClient.me, staleTime: 5 * 60 * 1000, enabled });
 
 /** Enabled plugins with a browser UI — drives the shell nav + the /p/[plugin] host page. Keyed per
  *  locale (labels are localized server-side); held in the query cache so a plugin toggle can invalidate

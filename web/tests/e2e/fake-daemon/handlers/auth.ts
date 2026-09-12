@@ -5,13 +5,14 @@
 // which is undefined in setup mode (guard passes through with no user), and the gate opens the shell on
 // that 200 so the root page's fresh-install check can route to onboarding.
 import type { Hono } from 'hono';
-import { ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_TOKEN, TOKEN_TTL_DAYS, adminUser } from '../../seed/fixtures.ts';
+import { ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_TOKEN, TARGET_TOKEN, IMPERSONATION_RETURN_CODE, TOKEN_TTL_DAYS, adminUser, targetUser } from '../../seed/fixtures.ts';
 import { needsSetup, addUser, listUsers } from '../setup.ts';
 import { getResponse } from '../overrides.ts';
 
-/** True when the request carries the admin bearer the BFF injects from the session cookie. */
-function isAuthed(authorization: string | undefined): boolean {
-  return authorization === `Bearer ${ADMIN_TOKEN}`;
+function principal(authorization: string | undefined) {
+  if (authorization === `Bearer ${ADMIN_TOKEN}`) return adminUser;
+  if (authorization === `Bearer ${TARGET_TOKEN}`) return targetUser;
+  return null;
 }
 
 export function registerAuthRoutes(app: Hono): void {
@@ -25,7 +26,21 @@ export function registerAuthRoutes(app: Hono): void {
 
   app.post('/auth/logout', (c) => c.json({ ok: true }));
 
-  app.get('/auth/me', (c) => c.json({ user: isAuthed(c.req.header('authorization')) ? adminUser : null }));
+  app.get('/auth/me', (c) => c.json({ user: principal(c.req.header('authorization')) }));
+
+  app.post('/users/:id/impersonate', (c) => {
+    if (principal(c.req.header('authorization'))?.id !== adminUser.id) return c.json({ error: 'forbidden' }, 403);
+    if (Number(c.req.param('id')) !== targetUser.id) return c.json({ error: 'user not found' }, 404);
+    return c.json({ token: TARGET_TOKEN, returnCode: IMPERSONATION_RETURN_CODE, user: targetUser, tokenTtlDays: TOKEN_TTL_DAYS });
+  });
+
+  app.post('/auth/impersonation/stop', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { returnCode?: unknown };
+    if (principal(c.req.header('authorization'))?.id !== targetUser.id || body.returnCode !== IMPERSONATION_RETURN_CODE) {
+      return c.json({ error: 'invalid impersonation return' }, 403);
+    }
+    return c.json({ token: ADMIN_TOKEN, user: adminUser, tokenTtlDays: TOKEN_TTL_DAYS });
+  });
 
   // Fresh-install probe: reports the setup-lane state (true only while setup mode is armed AND no admin
   // exists yet). Default (no lane armed) → false, exactly as before.

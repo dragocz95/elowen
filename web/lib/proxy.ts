@@ -40,9 +40,8 @@ export function clearCookie(secure: boolean): string {
 }
 
 // Impersonation ("sign in as") cookies, set only while an admin views the app as another user:
-//  - RETURN_COOKIE: httpOnly stash of the admin's OWN token, so "stop impersonating" can restore it.
-//  - IMPERSONATING_COOKIE: a JS-readable display hint (the target's name) so the UI can show a banner.
-//    It carries no authority — the session token above is what actually authenticates.
+//  - RETURN_COOKIE: opaque proof that the daemon accepts only beside the exact active target token.
+//  - IMPERSONATING_COOKIE: a JS-readable display hint for the banner. It carries no authority.
 export const RETURN_COOKIE = 'elowen_return';
 export const IMPERSONATING_COOKIE = 'elowen_as';
 

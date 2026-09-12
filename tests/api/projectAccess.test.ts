@@ -130,10 +130,12 @@ describe('project access gating', () => {
     expect((await app.request('/fs/dirs', post(bobTok, { parent: process.cwd(), name: 'blocked' }))).status).toBe(403);
   });
 
-  it('also gates the activity log and the live event stream (no cross-tenant leak)', async () => {
+  it('gates aggregate activity but lets the filtered live stream open without project access', async () => {
     const { app, adminTok, bobTok } = setup();
     expect((await app.request('/activity', auth(bobTok))).status).toBe(403);
-    expect((await app.request('/events', auth(bobTok))).status).toBe(403); // 403 before the SSE stream opens
+    const stream = await app.request('/events', auth(bobTok));
+    expect(stream.status).toBe(200);
+    await stream.body?.cancel();
     expect((await app.request('/activity', auth(adminTok))).status).toBe(200);
   });
 
