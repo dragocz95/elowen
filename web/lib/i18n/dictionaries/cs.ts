@@ -1681,6 +1681,7 @@ export const cs = {
     readOnlyExit: 'Zpět do chatu',
     childFocusHint: 'Zprávy směřují do tohoto delegovaného sub-agenta — během jeho tahu ho usměrní, po dokončení spustí nový tah',
     childFocusExit: 'Zpět na konverzaci',
+    childFocusCommandDisabled: 'Tento příkaz se týká rodičovské konverzace — nejprve se vraťte z tohoto sub-agenta.',
     untitled: 'Bez názvu',
     empty: 'Ptejte se na cokoli — úkoly, mise nebo vaše repozitáře.',
     placeholder: 'Napište zprávu, / pro příkazy',

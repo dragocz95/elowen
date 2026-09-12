@@ -2129,6 +2129,16 @@ export class BrainService {
     return this.delegated.stopForOwner(userId, childSessionId);
   }
 
+  /** The owner's MODEL SWITCH for a delegated child they drilled into. Validated against the SAME
+   *  per-account model permission the ordinary /brain/model switch applies, then persisted on the
+   *  child's own row — see DelegatedSessionService.switchModelForOwner. */
+  switchSubagentModelForOwner(userId: number, childSessionId: string,
+    sel: { provider?: string; model: string }): { model: string } {
+    if (this.draining || this.reloadingPlugins) throw new Error('the daemon is temporarily not admitting new work');
+    if (!this.permissionSvc.selectionAllowed(userId, sel)) throw new Error('model not allowed for user');
+    return this.delegated.switchModelForOwner(userId, childSessionId, sel);
+  }
+
   /** A delegating turn reading the final stored reply of one of its own sub-agents — see
    *  DelegatedSessionService.readSubagent. */
   readSubagent(parentSessionId: string, childSessionId: string): string {

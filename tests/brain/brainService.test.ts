@@ -9362,6 +9362,54 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
     expect(abort).not.toHaveBeenCalled();
   });
 
+  it('the owner model switch persists on the VIEWED child row and its next continuation runs on it', async () => {
+    const { d, svc, c } = await seedNest();
+    const channel = (svc as unknown as { channelService: { send: ReturnType<typeof vi.fn> } }).channelService;
+    const send = vi.spyOn(channel, 'send').mockResolvedValue('');
+
+    expect(svc.switchSubagentModelForOwner(1, c, { provider: 'openai', model: 'gpt-9' })).toEqual({ model: 'gpt-9' });
+    expect(d.store.getSession(c)).toMatchObject({ model: 'gpt-9', provider: 'openai' });
+
+    // The pick survives into the child's own next turn — the same read-back a respawn uses.
+    await svc.sendToSubagent(1, c, 'go on');
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      channelId: 'subagent-sub-nest-c',
+      model: { model: 'gpt-9', provider: 'openai' },
+    }), 'go on');
+  });
+
+  it('the model switch refuses a child with a turn in flight — a live turn cannot change model', async () => {
+    const { d, svc, b, c, sessions } = await seedNest();
+    sessions.setChildRunning(b, c, true);
+
+    expect(() => svc.switchSubagentModelForOwner(1, c, { model: 'gpt-9' }))
+      .toThrow('that sub-agent has a turn in flight and cannot switch model — wait for it to finish');
+    expect(d.store.getSession(c)).toMatchObject({ model: 'c-model' }); // the row is untouched
+  });
+
+  it('the model switch applies the same per-account model permission as the parent switch', async () => {
+    const { d, svc, c } = await seedNest();
+    (svc as unknown as { permissionSvc: { selectionAllowed: ReturnType<typeof vi.fn> } })
+      .permissionSvc.selectionAllowed = vi.fn(() => false);
+
+    expect(() => svc.switchSubagentModelForOwner(1, c, { model: 'gpt-9' })).toThrow('model not allowed for user');
+    expect(d.store.getSession(c)).toMatchObject({ model: 'c-model' });
+  });
+
+  it('the model switch refuses a child belonging to another account', async () => {
+    const { d, svc, c } = await seedNest();
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    d.store.createSession({
+      id: 'brain-ch-subagent-sub-nest-foreign', userId: 2, model: 'm',
+      parentSessionId: 'brain-2', delegatedAccess: SCOPE,
+    });
+
+    expect(() => svc.switchSubagentModelForOwner(2, c, { model: 'gpt-9' })).toThrow('unknown session');
+    expect(() => svc.switchSubagentModelForOwner(1, 'brain-ch-subagent-sub-nest-foreign', { model: 'gpt-9' }))
+      .toThrow('unknown session');
+    expect(d.store.getSession(c)).toMatchObject({ model: 'c-model' });
+  });
+
   it('the Ctrl+B detach and kill-escalation controls resolve the viewed child through the same predicate', async () => {
     const { svc, c, d } = await seedNest();
     const reg = new PluginRegistry();

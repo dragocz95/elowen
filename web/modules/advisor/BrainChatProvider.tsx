@@ -1194,7 +1194,12 @@ function useBrainChatController(): BrainChatValue {
     // slower first click arriving after a newer choice and reverting the conversation on the server.
     modelQueueRef.current = modelQueueRef.current.catch(() => undefined).then(async () => {
       try {
-        const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
+        // Focused delegated child: the SAME picker switch, but the child's own row is what changes —
+        // the server persists the pick there and the child's next turn comes up on it. A refusal
+        // (turn in flight, foreign session) surfaces with its precise reason.
+        const { model } = childFocus
+          ? await elowenClient.brainSubagentSetModel({ provider: m.provider, model: m.model }, childFocus)
+          : await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
         if (latestModelRef.current !== m) return;
         setCurrentModel(model);
         // A catalog entry names the public identity only; the internal usage key arrives with the next
@@ -1214,10 +1219,20 @@ function useBrainChatController(): BrainChatValue {
   };
   const retryModel = (): void => { if (latestModelRef.current) runModel(latestModelRef.current); };
   // Switch the mode every following send is stamped with (the CLI's /plan|/build|/workflow, whose mode is
-  // likewise client state). Nothing is sent here — the mode takes effect on the NEXT turn.
+  // likewise client state). Nothing is sent here — the mode takes effect on the NEXT turn. A focused
+  // delegated child has no mode stamp at all (its send seam carries none), so a switch would silently
+  // do nothing for the conversation on screen: refuse it with the reason instead.
   const runMode = (mode: BrainWorkMode): void => {
+    if (childFocus) { toast(t.brainChat.childFocusCommandDisabled, 'error'); return; }
     setWorkMode(mode);
     toast(`${t.brainChat.modeSwitched} ${t.brainChat.workMode[mode]}`, 'ok');
+  };
+  // The reasoning picker is refused while a delegated child is focused: it writes the ACTIVE
+  // conversation's level AND the account default (POST /brain/think), and a child session is neither —
+  // the daemon would 409 with daemon-ese after the modal was already open. Say it up front instead.
+  const openReasoning = (v: boolean): void => {
+    if (v && childFocus) { toast(t.brainChat.childFocusCommandDisabled, 'error'); return; }
+    setReasoningOpen(v);
   };
   // The transcript carries the same submitted plan the daemon does — live on `tool_end`, and rebuilt from
   // history on every hydration — so it is what keeps the hydrated decision in step between snapshots, in
@@ -1280,13 +1295,23 @@ function useBrainChatController(): BrainChatValue {
   // The CLI's skills picker submits `/skill:name` through the ordinary send path, and so does this: the
   // daemon recognizes the prefix and hands the slash to PI RAW, which expands it to the skill's full
   // instructions. The DAEMON renders the user turn (the `user` stream event), so nothing is echoed here.
+  // Inside a child view a skill load is a message too — it becomes the child's own turn through the
+  // same subagent send seam as typing into the focused composer.
   const loadSkill = (name: string): void => {
-    void elowenClient.brainSend(`/skill:${name}`, [], undefined, binding(), workMode)
+    void (childFocus
+      ? elowenClient.brainSubagentSend(childFocus, `/skill:${name}`)
+      : elowenClient.brainSend(`/skill:${name}`, [], undefined, binding(), workMode))
       .catch(() => toast(t.brainChat.sendError, 'error'));
   };
   const runSlash = async (cmd: SlashCommandDef, argument?: string): Promise<void> => {
     if (cmd.name === 'model') { setInput(''); setModelOpen(true); void loadModels(); return; }
     setInput('');
+    // Focused delegated child: the viewed composer's slash set shrinks to what a child actually
+    // supports. Prompt macros prefill and then ride the child send seam; /stop is the child's abort;
+    // the rest is parent-scoped (mode/reasoning/rename/actions/pickers) and is refused with the
+    // reason here — never executed against the hidden parent behind the view.
+    const childCapable = cmd.kind === 'prompt' || ['new', 'help', 'stats', 'skills', 'tasks', 'stop'].includes(cmd.name);
+    if (childFocus && !childCapable) { toast(t.brainChat.childFocusCommandDisabled, 'error'); return; }
     try {
       if (cmd.name === 'new') { await startNewConversation(); return; }
       if (cmd.name === 'help') { setHelpOpen(true); return; }
@@ -1323,6 +1348,9 @@ function useBrainChatController(): BrainChatValue {
       // user types them and submits; the submit path expands the template (args or not).
       if (cmd.kind === 'prompt') { setInput(`/${cmd.name} `); return; }
       if (cmd.kind === 'action') {
+        // Only /stop reaches here while a child is focused (the gate above refused the rest) — and it
+        // means the VIEWED child's abort, the same intent as the header's Stop button.
+        if (childFocus) { abort(); return; }
         const r = await elowenClient.brainCommand(cmd.name, boundSessionRef.current, argument);
         if (r.data && Object.prototype.hasOwnProperty.call(r.data, 'goal')) setGoal(r.data.goal ?? null);
         toast(r.message ?? `/${cmd.name}`, 'ok');
@@ -1465,7 +1493,7 @@ function useBrainChatController(): BrainChatValue {
 
   return {
     turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks,
+    reasoningOpen, setReasoningOpen: openReasoning, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks,
     pluginPicker, closePluginPicker: () => setPluginPicker(null),
     helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
     queued: visibleQueue, readOnly, childFocus, activeSessionId,

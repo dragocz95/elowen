@@ -1725,6 +1725,7 @@ export const en = {
     readOnlyExit: 'Back to chat',
     childFocusHint: 'Messages go to this delegated sub-agent (steered while it runs, continued when idle)',
     childFocusExit: 'Back to conversation',
+    childFocusCommandDisabled: 'This command belongs to the parent conversation — leave the focused sub-agent first.',
     untitled: 'Untitled',
     empty: 'Ask anything — tasks, missions or your repositories.',
     placeholder: 'Write a message, or / for commands',

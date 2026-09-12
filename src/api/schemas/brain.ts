@@ -154,6 +154,14 @@ export const subagentSendSchema = z.object({
   images: z.array(imageSchema).max(4).optional(),
 });
 
+/** Switch the model a drilled-in delegated child runs on (POST /brain/subagent/model). Ownership is
+ *  enforced in BrainService.switchSubagentModelForOwner; a child with a turn in flight refuses. */
+export const subagentModelSchema = z.object({
+  session: z.string().min(1).max(200),
+  provider: z.string().optional(),
+  model: z.string().min(1),
+});
+
 /** The user's answer to a parked AskUserQuestion (POST /brain/answer). `id` is the question id carried
  *  on the `ask` event; `answers` holds one entry per question with the picked label(s) + optional free
  *  text. Bounds mirror the tool schema (≤4 questions, each with a handful of picks). */

@@ -541,6 +541,23 @@ export class DelegatedSessionService {
     return this.stopSubagent(parentSessionId, childSessionId);
   }
 
+  /** The owner's MODEL SWITCH for a delegated child they drilled into — the session-local op a child
+   *  DOES support, routed through the same durable ancestry predicate as every other drill-in control.
+   *  A child has no owner session to respawn: the pick is persisted on the child's row, which is exactly
+   *  what a continuation reads back ({@link sendDelegated} restores the stored provider/model), so the
+   *  next turn — and any respawn of an evicted or runner-owned channel — comes up on it. A running turn
+   *  refuses, the same rule {@link continueSubagent} applies to its explicit model override: a live turn
+   *  cannot change model, and silently dropping the switch would lie about what the child runs on. */
+  switchModelForOwner(userId: number, childSessionId: string,
+    sel: { provider?: string; model: string }): { model: string } {
+    this.delegatedContinuation(userId, childSessionId);
+    if (this.d.sessions.isActiveChild(childSessionId)) {
+      throw new Error('that sub-agent has a turn in flight and cannot switch model — wait for it to finish');
+    }
+    this.d.store.setSessionModel(childSessionId, sel.model, sel.provider);
+    return { model: sel.model };
+  }
+
   /** A delegating TURN continuing one of its own sub-agents — the agent-facing counterpart of the owner's
    *  drill-in `sendToSubagent`, which streams to a human instead.
    *

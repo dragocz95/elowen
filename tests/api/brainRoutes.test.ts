@@ -40,6 +40,7 @@ function fakeBrain() {
   const readActivityCalls: { id: number; session: string; through: number; surface: 'web' | 'cli' }[] = [];
   const tapSnapshotCalls: { id: number; session: string; history?: { limit: number; before?: number } }[] = [];
   const subagentSends: { id: number; session: string; text: string; images?: { data: string; mimeType: string }[] }[] = [];
+  const subagentModelSwitches: { id: number; session: string; sel: { provider?: string; model: string } }[] = [];
   const acceptedSendFailures: { session: string; message: string }[] = [];
   const turnRequests: Omit<TurnRequest, 'onAdmitted'>[] = [];
   const bindContextCalls: { id: number; channel: string; session: string }[] = [];
@@ -92,6 +93,7 @@ function fakeBrain() {
     readActivityCalls,
     tapSnapshotCalls,
     subagentSends,
+    subagentModelSwitches,
     acceptedSendFailures,
     turnRequests,
     get snapshotOffCalls() { return snapshotOffCalls; },
@@ -270,6 +272,12 @@ function fakeBrain() {
       ({ items: [{ role: 'user', text: `page ${session ?? 'active'} l${opts.limit} b${opts.before ?? '-'}` }], hasMore: true, nextBefore: 7 }),
     preflightSubagentSend: () => { if (subagentPreflightError) throw subagentPreflightError; },
     sendToSubagent: async (id: number, session: string, text: string, images?: { data: string; mimeType: string }[]) => { subagentSends.push({ id, session, text, ...(images ? { images } : {}) }); },
+    switchSubagentModelForOwner: (id: number, session: string, sel: { provider?: string; model: string }) => {
+      if (session === 'brain-ch-subagent-foreign') throw new Error('unknown session');
+      if (session === 'brain-ch-subagent-busy') throw new Error('that sub-agent has a turn in flight and cannot switch model — wait for it to finish');
+      subagentModelSwitches.push({ id, session, sel });
+      return { model: sel.model };
+    },
     searchMessages: (id: number, q: string) =>
       q.trim().length < 2 ? [] : [{ sessionId: `s-${id}`, sessionTitle: 'T', role: 'user', snippet: q, ts: '2026-01-01 00:00:00' }],
     bindContextCalls,
@@ -752,6 +760,25 @@ describe('brain routes', () => {
       images: [{ data: 'aGk=', mimeType: 'image/heic' }],
     }));
     expect(rejected.status).toBe(400);
+  });
+
+  it('routes a drilled-in child model switch to the sub-agent seam — success, in-flight and foreign refusals', async () => {
+    const { app, amyTok, brain } = setup();
+    const ok = await app.request('/brain/subagent/model', post(amyTok, {
+      session: 'brain-ch-subagent-good', provider: 'openai', model: 'gpt-9',
+    }));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ model: 'gpt-9' });
+    expect(brain.subagentModelSwitches).toEqual([
+      { id: 2, session: 'brain-ch-subagent-good', sel: { provider: 'openai', model: 'gpt-9' } },
+    ]);
+
+    const busy = await app.request('/brain/subagent/model', post(amyTok, { session: 'brain-ch-subagent-busy', model: 'gpt-9' }));
+    expect(busy.status).toBe(409);
+    const foreign = await app.request('/brain/subagent/model', post(amyTok, { session: 'brain-ch-subagent-foreign', model: 'gpt-9' }));
+    expect(foreign.status).toBe(404);
+    expect(await foreign.json()).toEqual({ error: 'unknown session' });
+    expect(brain.subagentModelSwitches).toHaveLength(1);
   });
 
   it('opt-in fixed-session stream starts with one durable + live snapshot frame', async () => {
@@ -1407,10 +1434,15 @@ describe('GET /brain/models allow-list', () => {
     expect((await app.request('/brain/model', post(tok, { model: 'relay/ollama/kimi' }))).status).toBe(200);
     expect((await app.request('/brain/model', post(tok, { model: 'ollama/kimi' }))).status).toBe(200);
     expect((await app.request('/brain/model', post(tok, { provider: 'relay', model: 'azure/deployment' }))).status).toBe(200);
+    // The drilled-in child route shares the same splitter — the child's row changes, not the parent's.
+    expect((await app.request('/brain/subagent/model', post(tok, { session: 'brain-ch-subagent-good', model: 'relay/ollama/kimi' }))).status).toBe(200);
     expect(brain.switchModelCalls.map((call) => call.sel)).toEqual([
       { provider: 'relay', model: 'ollama/kimi' }, // the prefix names a provider: split at the first slash
       { model: 'ollama/kimi' }, // no configured provider called `ollama`: a bare model id on the default provider
       { provider: 'relay', model: 'azure/deployment' }, // an explicit provider is never second-guessed
+    ]);
+    expect(brain.subagentModelSwitches).toEqual([
+      { id: admin.id, session: 'brain-ch-subagent-good', sel: { provider: 'relay', model: 'ollama/kimi' } },
     ]);
   });
 

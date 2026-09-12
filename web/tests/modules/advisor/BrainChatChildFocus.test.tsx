@@ -30,6 +30,9 @@ class FakeES {
 const subagentSends: { session: string; text: string }[] = [];
 const aborts: (string | undefined)[] = [];
 const parentSends: unknown[] = [];
+const childModelSwitches: { session: string; provider?: string; model?: string }[] = [];
+const parentModelSwitches: unknown[] = [];
+const commandCalls: unknown[] = [];
 
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-parent' }, { status: 201 })),
@@ -55,6 +58,19 @@ const server = setupServer(
     aborts.push(body.session);
     return HttpResponse.json({ ok: true });
   }),
+  http.post('*/api/brain/subagent/model', async ({ request }) => {
+    const body = await request.json() as { session: string; provider?: string; model?: string };
+    childModelSwitches.push(body);
+    return HttpResponse.json({ model: body.model });
+  }),
+  http.post('*/api/brain/model', async ({ request }) => {
+    parentModelSwitches.push(await request.json());
+    return HttpResponse.json({ model: 'parent-model' });
+  }),
+  http.post('*/api/brain/command', async ({ request }) => {
+    commandCalls.push(await request.json());
+    return HttpResponse.json({ message: 'done' });
+  }),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest }));
@@ -65,6 +81,9 @@ afterEach(() => {
   subagentSends.length = 0;
   aborts.length = 0;
   parentSends.length = 0;
+  childModelSwitches.length = 0;
+  parentModelSwitches.length = 0;
+  commandCalls.length = 0;
 });
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -76,6 +95,16 @@ function Harness() {
     <button onClick={() => chat.exitChildFocus()}>exit child</button>
     <button onClick={() => { chat.setInput('guide the child'); void chat.submit(); }}>submit</button>
     <button onClick={() => chat.abort()}>stop</button>
+    <button onClick={() => chat.setModel({
+      provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-9', exec: 'elowen:openai/gpt-9',
+      source: 'api-key', contextWindow: 0, contextWindowSet: false,
+    })}>pick model</button>
+    <button onClick={() => void chat.runSlash({ name: 'stop', kind: 'action' } as never)}>slash stop</button>
+    <button onClick={() => void chat.runSlash({ name: 'compact', kind: 'action' } as never)}>slash compact</button>
+    <button onClick={() => void chat.runSlash({ name: 'plan', kind: 'mode' } as never)}>slash plan</button>
+    <button onClick={() => void chat.runSlash({ name: 'rename' } as never)}>slash rename</button>
+    <button onClick={() => chat.setReasoningOpen(true)}>open reasoning</button>
+    <button onClick={() => chat.loadSkill('review')}>load skill</button>
     <span data-testid="child-focus">{chat.childFocus ?? 'none'}</span>
     <span data-testid="read-only">{chat.readOnly ?? 'live'}</span>
     <span data-testid="draft">{chat.draft.getSnapshot()}</span>
@@ -135,5 +164,58 @@ describe('BrainChatProvider — a focused delegated child is writable', () => {
     await renderHarness();
     await act(async () => { fireEvent.click(screen.getByText('submit')); });
     await waitFor(() => expect(screen.getByTestId('draft')).toHaveTextContent('guide the child'));
+  });
+});
+
+describe('BrainChatProvider — session-local actions inside a child view', () => {
+  it('the model picker switches the VIEWED child through the subagent seam — the parent model is untouched', async () => {
+    await renderHarness();
+    await act(async () => { fireEvent.click(screen.getByText('pick model')); });
+    await waitFor(() => expect(childModelSwitches)
+      .toEqual([{ session: 'brain-child', provider: 'openai', model: 'gpt-9' }]));
+    expect(parentModelSwitches).toEqual([]);
+  });
+
+  it('/stop inside the view means the child\'s abort — never the parent command route', async () => {
+    await renderHarness();
+    await act(async () => { fireEvent.click(screen.getByText('slash stop')); });
+    await waitFor(() => expect(aborts).toEqual(['brain-child']));
+    expect(commandCalls).toEqual([]);
+  });
+
+  it('a parent-scoped action is refused with the reason and reaches no route at all', async () => {
+    await renderHarness();
+    await act(async () => { fireEvent.click(screen.getByText('slash compact')); });
+    expect(await screen.findByText(/parent conversation/i, { selector: '[data-slot="toast-description"]' }))
+      .toBeInTheDocument();
+    expect(commandCalls).toEqual([]);
+    expect(subagentSends).toEqual([]);
+    expect(parentSends).toEqual([]);
+  });
+
+  it('mode switching and the reasoning picker are refused with the reason while focused', async () => {
+    await renderHarness();
+    await act(async () => { fireEvent.click(screen.getByText('slash plan')); });
+    expect((await screen.findAllByText(/parent conversation/i, { selector: '[data-slot="toast-description"]' })))
+      .not.toHaveLength(0);
+    await act(async () => { fireEvent.click(screen.getByText('open reasoning')); });
+    expect((await screen.findAllByText(/parent conversation/i, { selector: '[data-slot="toast-description"]' })))
+      .toHaveLength(2); // one refusal per attempt — the toasts stack until their timers expire
+    expect(parentSends).toEqual([]);
+  });
+
+  it('a skill load is a message: inside the view it becomes the child\'s own turn', async () => {
+    await renderHarness();
+    await act(async () => { fireEvent.click(screen.getByText('load skill')); });
+    await waitFor(() => expect(subagentSends).toEqual([{ session: 'brain-child', text: '/skill:review' }]));
+    expect(parentSends).toEqual([]);
+  });
+
+  it('the gate is focus-scoped: after exiting, the same slash acts on the parent again', async () => {
+    await renderHarness();
+    await act(async () => { fireEvent.click(screen.getByText('exit child')); });
+    await waitFor(() => expect(screen.getByTestId('child-focus')).toHaveTextContent('none'));
+    await act(async () => { fireEvent.click(screen.getByText('slash compact')); });
+    await waitFor(() => expect(commandCalls).toEqual([{ name: 'compact', session: 'brain-parent' }]));
   });
 });
