@@ -2257,7 +2257,10 @@ const processAlive = (pid) => {
   try { process.kill(pid, 0); return true; } catch { return false; }
 };
 
-async function acquireMutationLock(lockPath = LOCK_PATH) {
+/** Exported for `tests/plugins/nspawnProofHost.mjs`, which rewrites the uid-range registry at teardown
+ *  and has to hold the same lock a mutating request holds. Nothing about the request surface changes:
+ *  the lock is still taken here for every mutating operation. */
+export async function acquireMutationLock(lockPath = LOCK_PATH) {
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o755 });
   const deadline = Date.now() + 9 * 60_000;
   while (Date.now() < deadline) {

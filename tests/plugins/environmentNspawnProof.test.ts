@@ -9,14 +9,17 @@ import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseI
 import { cleanPodmanEnv, PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_MODE, envelopePaths,
   HELPER_PATH, NspawnClient, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
+import { RECEIPT_PATH } from './nspawnProofHost.mjs';
 
 /** The real thing, on a real host, or nothing. Every fact this file asserts is a property of a running
  *  machine — its capability bound, its seccomp mode, what its binds do to file ownership, what its cgroup
  *  actually holds, how long a command really takes — and none of them can be established against a fake.
  *  So the suite refuses to run rather than to pretend, and says why.
  *
- *  `tests/plugins/nspawnProofHost.mjs` prepares a host for it and takes the preparation away again;
- *  `docs/TESTING.md` has the invocation. */
+ *  `tests/plugins/nspawnProofHost.mjs` prepares a host for it and takes the preparation away again, and
+ *  a run it did not prepare is refused: the uid range each environment here is reserved is never reused,
+ *  and that teardown is the only thing on the host that can give one back. `docs/TESTING.md` has the
+ *  invocation. */
 const MACHINE_UNIT_TEMPLATE = '/etc/systemd/system/elowen-machine@.service';
 /** Which privileged helper this run talks to. Unset, it is the installed one, and the suite proves the
  *  deployed runtime. Set, it is an isolated one a harness put there: a root-owned wrapper around the
@@ -36,6 +39,16 @@ if (!existsSync(PROOF_HELPER)) blockers.push(`the privileged helper is not prese
 // hide the runtime being unusable. A rule that is absent surfaces as an access denial on the first
 // `systemctl start`, which this suite then reports as the failure it is.
 if (!existsSync(MACHINE_UNIT_TEMPLATE)) blockers.push('the machine unit template is not installed');
+// Every environment this suite creates is reserved a uid range out of 4096, in a root-owned registry that
+// is forward-only by design: a range is never reused, because a restored disk carries its ownership on
+// disk and the envelope refuses a mismatch. The service account cannot give one back, so the only run
+// that does not spend two of those slots for good is one whose teardown is already armed — and the
+// receipt is what says it is. Without this the suite runs on a plain `npm test`, against whichever helper
+// is installed, with nothing in the picture that could return what it took.
+if (!existsSync(RECEIPT_PATH)) {
+  blockers.push('the proof host harness is not prepared, and its teardown is what returns the uid ranges'
+    + ' this suite allocates: run `sudo node tests/plugins/nspawnProofHost.mjs run`');
+}
 // An ordinary environment now comes up with a virtual ethernet, and the privileged side refuses to write
 // an envelope carrying one until the host can isolate it. Without these the suite cannot create anything
 // at all, so it says which rule is missing rather than failing thirteen times over.

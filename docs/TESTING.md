@@ -144,6 +144,8 @@ An artefact that already exists is left alone and never removed, so an operator 
 
 Every resource the suite creates is disposable and unmistakably its own: machines named after a throwaway project id and a `nsproof-` site, disks under the real storage roots, and a final case that asserts all of it is gone. Firewall rules for virtual-ethernet machines are reported, never installed — the daemon does not mutate the firewall and neither does a test.
 
+The one resource a run cannot throw away itself is the uid range each environment is reserved. That registry is forward-only by design — one environment, one range, never reused, because a restored disk carries its ownership on disk — it holds 4096 slots, and only root can write it. So teardown gives back what the run reserved, and the suite refuses to run at all when the receipt says no teardown is coming: that is why a plain `npm test` reports it as skipped on a provisioned host. What teardown removes is only a key that was absent when the run was installed, that no environment but this suite can produce, and whose disk tree is gone; a range whose tree survived a failed run stays reserved and is named in the output.
+
 ## Static checks and builds
 
 ```bash
