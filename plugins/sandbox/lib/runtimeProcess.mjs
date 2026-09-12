@@ -12,6 +12,18 @@ import { userInfo } from 'node:os';
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const INPUT_LIMIT = 1024 * 1024;
 export const OUTPUT_LIMIT = 256 * 1024;
+/** The socket `systemd-run` connects to inside the guest; its presence is what makes an execution
+ *  possible, and waiting for it is how a runtime knows a guest has finished booting. A path inside the
+ *  guest, so it belongs to neither runtime in particular. */
+export const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
+
+/** `systemctl show --property=…` output as a plain record; an absent property reads as undefined. */
+export function unitProperties(stdout) {
+  return Object.fromEntries(String(stdout).trim().split('\n').map((line) => {
+    const at = line.indexOf('=');
+    return [line.slice(0, at), line.slice(at + 1)];
+  }));
+}
 
 export function positive(value, max, name) {
   if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new Error(`Invalid ${name} bound`);

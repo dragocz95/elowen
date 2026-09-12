@@ -140,10 +140,13 @@ function runnerFixture(options: {
       return state.firewall ? { ok: true, stdout: '' } : { ok: false, stderr: 'No chain/target/match by that name' };
     }
     if (file === '/usr/bin/apt-get') { state.installed = true; return { ok: true, stdout: '' }; }
-    // Applies whatever is currently recorded under /etc/sysctl.d, which is the only way forwarding comes
-    // on here. A run against a host with no file leaves forwarding exactly as it was.
+    // Applies exactly the file it is pointed at. `--system` would reload the whole search path and revert
+    // unrelated live settings, so being given one `-p <path>` is part of what this models: a call without
+    // it, or with another path, applies nothing here and the forwarding row stays unmet.
     if (file === '/usr/sbin/sysctl') {
-      if (state.sysctl.includes('net.ipv4.ip_forward=1')) state.forwarding = true;
+      if (args[0] === '-p' && args[1] === MACHINE_SYSCTL_PATH && state.sysctl.includes('net.ipv4.ip_forward=1')) {
+        state.forwarding = true;
+      }
       return { ok: true, stdout: '' };
     }
     if (file === '/usr/bin/systemctl') {
@@ -872,16 +875,10 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(fixture.calls.filter((call) => call.file === '/usr/bin/apt-get')).toHaveLength(2);
   });
 
-  it('reports forwarding that would not survive a reboot, and records it when asked', async () => {
+  it('records forwarding that was only ever set live, so a reboot does not take it away', async () => {
     // `sysctl -w` by hand leaves the kernel right and the host one restart away from refusing every
-    // environment. Reporting that as ready is how a host breaks at 3am for a reason nobody connects to
-    // the reboot.
+    // environment. It is not grounds to refuse the host today, but provisioning should fix it.
     const fixture = runnerFixture({ forwarding: true, sysctl: '' });
-    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
-    const row = rowFor(status, 'net:ip-forward');
-    expect(row.ok).toBe(false);
-    expect(row.detail).toContain('would not come back after a reboot');
-
     const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
     expect(rowFor(provisioned, 'net:ip-forward')).toMatchObject({ ok: true, detail: 'enabled and recorded' });
     expect(fixture.writes.find((write) => write.path === MACHINE_SYSCTL_PATH))
@@ -896,6 +893,29 @@ describe('privileged helper: host artefacts and readiness', () => {
     const row = rowFor(status, 'net:ip-forward');
     expect(row.ok).toBe(false);
     expect(row.detail).toContain('cannot route without it');
+  });
+
+  it('does not newly refuse a host whose forwarding somebody else turned on', async () => {
+    // This row gates every veth envelope write, so making it demand this helper's own file would refuse
+    // creation, envelope re-creation and snapshot restore on hosts that have been running fine — Docker
+    // enables forwarding, and so does any other file under /etc/sysctl.d. The persistence question is
+    // real and is answered in the detail, where it blocks nothing.
+    const fixture = runnerFixture({ forwarding: true, sysctl: '' });
+    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    const row = rowFor(status, 'net:ip-forward');
+    expect(row.ok).toBe(true);
+    expect(row.detail).toContain('no record of it');
+  });
+
+  it('applies only its own file, never the whole sysctl search path', async () => {
+    // `--system` reloads kernel hardening, ptrace scope, magic-sysrq and apparmor along with it, and
+    // would silently revert anything an operator had changed live. Preparing a machine runtime is not
+    // licence to restate the rest of the host's settings.
+    const fixture = runnerFixture({ forwarding: false, sysctl: '' });
+    await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options);
+    const applied = fixture.calls.filter((call) => call.file === '/usr/sbin/sysctl');
+    expect(applied).toHaveLength(1);
+    expect(applied[0]!.args).toEqual(['-p', MACHINE_SYSCTL_PATH]);
   });
 
   it('enables a link service that is running but would not come back', async () => {
@@ -1080,14 +1100,16 @@ describe('privileged helper: the disk identity record', () => {
     rmSync(archive, { force: true });
   });
 
-  it('still refuses a subordinate-id pass that names only one end of the mapping', async () => {
-    // The converter would read an absent end as a mapping that matches nothing and refuse every id in the
-    // tree, one file at a time, with a message about that file rather than about the missing argument.
+  it('still refuses a subordinate-id pass on a host that has no subordinate range', async () => {
+    // The contrast with the test above is the point: a fresh disk needs no subordinate range, and a
+    // migration between the two ownership schemes cannot be done without one. `subordinateRangeFor`
+    // refuses before any id in the tree is touched.
     const fixture = diskFixture();
     fixture.options.readText = (path: string) => (path === '/etc/subuid' ? '' : '');
     await expect(applyRequest({
       domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'nspawn',
     }, undefined, fixture.options)).rejects.toThrow(/subordinate id range/);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/python3')).toBe(false);
   });
 
   it('refuses to write a veth envelope until the host can isolate the link', async () => {

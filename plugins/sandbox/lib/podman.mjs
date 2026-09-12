@@ -5,8 +5,7 @@ import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseIm
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
 import { COMPLETION_CWD_LIMIT, completionArtifact, completionPrelude, parseCompletionCwd } from './managedCompletion.mjs';
-import { OUTPUT_LIMIT, positive, serviceProcessEnv, SpawnExecutor, validateInput } from './runtimeProcess.mjs';
-import { GUEST_SYSTEM_BUS, unitProperties } from './nspawn.mjs';
+import { GUEST_SYSTEM_BUS, OUTPUT_LIMIT, positive, serviceProcessEnv, SpawnExecutor, unitProperties, validateInput } from './runtimeProcess.mjs';
 
 const DISK_TREE_INVENTORY_PY = `def inventory(root):
  rows=[]; links={}

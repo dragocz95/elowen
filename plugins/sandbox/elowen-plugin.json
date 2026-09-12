@@ -37,7 +37,8 @@
       "environment/reset-preview",
       "environment/reset",
       "environments/status",
-      "environments/operation"
+      "environments/operation",
+      "runtime/host"
     ]
   },
   "icons": {

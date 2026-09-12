@@ -1343,14 +1343,10 @@ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
   if uid!=st.st_uid or gid!=st.st_gid: os.lchown(path,uid,gid); shifted+=1
 print(json.dumps({'entries':shifted}))`;
 
-/** `offset` maps guest id g to base+g and consults no other mapping; `subid` translates between the
- *  machine range and the service account's subordinate range, and needs both ends named. The distinction
- *  is enforced here rather than left to the converter, where an absent field would read as a mapping that
- *  simply matches nothing and silently refuse every id in the tree. */
+/** `offset` maps guest id g to base+g and consults no other mapping, so it carries no subordinate range.
+ *  `subid` translates between the machine range and the service account's subordinate range and carries
+ *  both ends, which `subordinateRangeFor` has already refused to produce when the host has neither. */
 function shiftOwnership(runner, root, spec) {
-  if (spec.mode === 'subid' && (!Number.isSafeInteger(spec.serviceId) || !Number.isSafeInteger(spec.previousBase))) {
-    fail('a subordinate-id ownership pass requires both ends of the mapping');
-  }
   const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root], { timeoutMs: DISK_TREE_TIMEOUT_MS });
   if (!result.ok) fail(`the machine ownership pass failed: ${String(result.stderr || '').slice(-400)}`);
   return JSON.parse(String(result.stdout || '{}'));
@@ -2084,20 +2080,25 @@ function artefactRow(artefact, runner, readText, readMode) {
  *  quietly running a machine with the guard gone. */
 function vethReadiness(runner, readText) {
   const items = [];
-  // The running kernel is what decides whether a machine routes today; the file is what decides whether
-  // it still routes after a restart. Both are required, and they are reported as one row because an
-  // operator cannot act on either half alone.
+  // `ok` is the RUNNING kernel and nothing else, because that is what decides whether a machine routes,
+  // and this row gates every veth envelope write. A host forwarding today because Docker enabled it, or
+  // because of a differently named file under /etc/sysctl.d, works — and must keep working. Demanding
+  // this helper's own file here would newly refuse creation, envelope re-creation and snapshot restore on
+  // hosts that have been running fine, which is a bigger fault than the one it would report.
+  //
+  // Whether it survives a restart is a real question and is answered in the detail, where an operator
+  // reads it without it blocking anything. Provisioning records the file, so a prepared host says so.
   const forwarding = readText('/proc/sys/net/ipv4/ip_forward').trim() === '1';
   const persisted = readText(MACHINE_SYSCTL_PATH) === MACHINE_SYSCTL_CONTENT;
   items.push({
     id: 'net:ip-forward',
     label: 'IPv4 forwarding',
-    ok: forwarding && persisted,
-    detail: forwarding && persisted
-      ? 'enabled and recorded'
-      : !forwarding
-        ? 'a machine cannot route without it — run environment provisioning, or: sysctl -w net.ipv4.ip_forward=1'
-        : `enabled, but it would not come back after a reboot — run environment provisioning to record it in ${MACHINE_SYSCTL_PATH}`,
+    ok: forwarding,
+    detail: !forwarding
+      ? 'a machine cannot route without it — run environment provisioning, or: sysctl -w net.ipv4.ip_forward=1'
+      : persisted
+        ? 'enabled and recorded'
+        : `enabled, but this host has no record of it and would come back without it — run environment provisioning to write ${MACHINE_SYSCTL_PATH}`,
   });
   const active = runner('/usr/bin/systemctl', ['is-active', 'systemd-networkd']).ok;
   const enabled = runner('/usr/bin/systemctl', ['is-enabled', 'systemd-networkd']).ok;
@@ -2173,10 +2174,11 @@ function provisionMachineNetwork(runner, readText, writeAtomic) {
   if (readText(MACHINE_SYSCTL_PATH) !== MACHINE_SYSCTL_CONTENT) {
     writeAtomic(MACHINE_SYSCTL_PATH, Buffer.from(MACHINE_SYSCTL_CONTENT), 0o644);
   }
-  // Applied from the file rather than with `-w`, so what the kernel is running and what the host will
-  // restore at the next boot are the same statement and cannot drift apart.
+  // This file and no other. `--system` reloads every file on the sysctl search path — kernel hardening,
+  // ptrace scope, magic-sysrq, apparmor — and would silently revert anything an operator had changed live
+  // with `-w`. Preparing a machine runtime is not licence to restate the rest of the host's settings.
   if (readText('/proc/sys/net/ipv4/ip_forward').trim() !== '1') {
-    runRequired(runner, '/usr/sbin/sysctl', ['--system'], 'IPv4 forwarding could not be enabled');
+    runRequired(runner, '/usr/sbin/sysctl', ['-p', MACHINE_SYSCTL_PATH], 'IPv4 forwarding could not be enabled');
   }
   const active = runner('/usr/bin/systemctl', ['is-active', 'systemd-networkd']).ok;
   const enabled = runner('/usr/bin/systemctl', ['is-enabled', 'systemd-networkd']).ok;
