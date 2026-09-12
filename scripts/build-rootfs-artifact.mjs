@@ -23,7 +23,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, closeSync, constants, copyFileSync, createReadStream, mkdirSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, closeSync, constants, copyFileSync, createReadStream, mkdirSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -126,8 +126,19 @@ export function resolveRecipe(name, recipes = ROOTFS_RECIPES) {
  *  mmdebstrap variant and not one debootstrap has, and mmdebstrap is the one that documents
  *  `SOURCE_DATE_EPOCH` as making its output reproducible. `uidmap` supplies `newuidmap`/`newgidmap`,
  *  without which `--mode=unshare` cannot map the subordinate ids and the build has to run as root. */
+/** Where the Debian archive keyring lands. One path, named once, because the tool table and the
+ *  mmdebstrap invocation both need it and a second literal would drift. */
+export const DEBIAN_KEYRING = '/usr/share/keyrings/debian-archive-keyring.gpg';
+
 export const BUILD_TOOLS = Object.freeze([
   Object.freeze({ command: 'mmdebstrap', package: 'mmdebstrap' }),
+  // The Debian archive keyring, as a FILE rather than a command. The recipes build Debian from a pinned
+  // Debian snapshot, and the builder is frequently not Debian: on Ubuntu apt holds Ubuntu's keys and
+  // cannot verify a Debian Release file at all, so every build dies with NO_PUBKEY before it installs a
+  // single package. Pinning a mirror is only worth something if its signatures are checked, so the
+  // keyring is a hard requirement and the alternative — telling apt to accept an unsigned repository —
+  // would throw away exactly the guarantee the pin exists to provide.
+  Object.freeze({ command: DEBIAN_KEYRING, package: 'debian-archive-keyring', file: true }),
   Object.freeze({ command: 'newuidmap', package: 'uidmap' }),
   Object.freeze({ command: 'systemctl', package: 'systemd' }),
   Object.freeze({ command: 'tar', package: 'tar' }),
@@ -150,7 +161,15 @@ export function onPath(command, path = process.env.PATH ?? '') {
  *  minutes in, fails inside a hook, and leaves a partial tree behind. The operator's next question is
  *  always which package supplies the missing binary, so the answer is the message. */
 export function missingBuildTools(present = onPath, tools = BUILD_TOOLS) {
-  return tools.filter((tool) => !present(tool.command));
+  // An absolute path is a file to stat, not a name to resolve against PATH. `accessSync` answers both
+  // questions, so the probe stays one injectable function for the tests.
+  return tools.filter((tool) => (tool.file ? !readable(tool.command) : !present(tool.command)));
+}
+
+/** Whether an absolute path exists and this process may read it. */
+export function readable(path) {
+  try { accessSync(path, constants.R_OK); return true; }
+  catch { return false; }
 }
 
 export function installHint(missing) {
@@ -398,6 +417,9 @@ function enabledUnits(byPath) {
  *
  *  Returns the problems rather than throwing, so a build reports all of them at once instead of one per
  *  attempt, and so the rules can be tested against fixtures. */
+/** The character devices a Debian root filesystem legitimately ships, by path inside the archive. */
+export const BASE_DEVICE_NODES = new Set(['dev/null', 'dev/zero', 'dev/full', 'dev/random', 'dev/urandom', 'dev/tty', 'dev/console', 'dev/ptmx']);
+
 export function inspectPack(entries, recipe, options = {}) {
   const maxBytes = options.maxBytes ?? MAX_ARTIFACT_BYTES;
   const sourceDateEpoch = options.sourceDateEpoch ?? null;
@@ -407,21 +429,22 @@ export function inspectPack(entries, recipe, options = {}) {
   const byPath = new Map();
   let unpackedBytes = 0;
   let root = null;
-  let previousName = null;
-  let sorted = true;
 
   for (const entry of entries) {
-    if (previousName !== null && entry.name < previousName) sorted = false;
-    previousName = entry.name;
-
     const path = archivePath(entry.name);
     if (path === null) { problem('name_escapes', entry.name); continue; }
     if (path === '') { root = entry; continue; }
     byPath.set(path, entry);
     unpackedBytes += entry.size;
 
-    if (entry.type === 'char' || entry.type === 'block' || entry.type === 'fifo') {
+    // Block devices and named pipes have no business in a shipped root filesystem, and neither does a
+    // character device this recipe did not ask for. The standard minimal set does belong: every Debian
+    // tree carries it, systemd expects it before it can mount its own devtmpfs, and an earlier revision
+    // of this rule rejected all six on every real build — it was written before one had ever run.
+    if (entry.type === 'block' || entry.type === 'fifo') {
       problem('device_node', `${entry.name} is a ${entry.type} node`);
+    } else if (entry.type === 'char' && !BASE_DEVICE_NODES.has(path)) {
+      problem('device_node', `${entry.name} is a char node outside the base set`);
     }
     if (entry.type === 'symlink' && linkTarget(entry.name, entry.linkName) === null) {
       problem('symlink_escapes', `${entry.name} -> ${entry.linkName}`);
@@ -465,7 +488,11 @@ export function inspectPack(entries, recipe, options = {}) {
   // would put a random value into the digest.
   else if (machineId.size !== 0) problem('machine_id_not_empty', `/etc/machine-id holds ${machineId.size} bytes`);
 
-  if (!sorted) problem('unsorted', 'members are not in ascending name order');
+  // Member order is deliberately NOT checked. An earlier revision required ascending names as a proxy
+  // for reproducibility; mmdebstrap does not write them that way, so the rule failed every real build,
+  // and the proxy was never needed. Reproducibility is proved directly: `--verify` rebuilds the recipe
+  // and compares the digest, which covers member order along with everything else, and two independent
+  // builds of the same revision are compared before a pin is written.
   if (unpackedBytes > maxBytes) problem('too_large', `${unpackedBytes} unpacked bytes exceed the ${maxBytes} bound`);
 
   return { problems, unpackedBytes, memberCount: entries.length };
@@ -649,6 +676,13 @@ async function buildRecipe(name, options) {
   const reference = artifactReference(name);
   const sourceDateEpoch = snapshotEpoch();
   const workspace = mkdtempSync(join(tmpdir(), `elowen-rootfs-${name}-`));
+  // `mkdtempSync` creates the directory 0700, and `--mode=unshare` runs the customize hook under a
+  // MAPPED uid that is not this process's. A 0700 workspace is therefore not traversable from inside the
+  // namespace and mmdebstrap fails with `Permission denied` on a hook it can see but not reach. Nothing
+  // in here is secret — the hook and the Node tarball, both about to be baked into a published artifact —
+  // so the directory is made traversable rather than the hook copied somewhere else. It stays unwritable
+  // by anyone but the builder.
+  chmodSync(workspace, 0o755);
   const log = options.log;
 
   try {
@@ -675,12 +709,24 @@ async function buildRecipe(name, options) {
       '--format=tar',
       `--variant=${recipe.variant}`,
       '--components=main',
+      // Verify the pinned snapshot against Debian's own keys rather than the builder's. Without this a
+      // non-Debian host has no key that signs a Debian Release file and apt refuses the repository.
+      `--keyring=${DEBIAN_KEYRING}`,
       // A snapshot's Release file is long past its Valid-Until by the time it is useful. Refusing it
       // would make a pinned mirror unusable, which is the opposite of what pinning is for.
       '--aptopt=Acquire::Check-Valid-Until "false"',
-      // Retries are off: a mirror that answers differently on the second attempt is exactly the drift
-      // this build exists to exclude, and a half-answered download must fail rather than be patched up.
-      '--aptopt=Acquire::Retries "0"',
+      // Retries ON, bounded, with a patient timeout. An earlier revision set this to zero, reasoning
+      // that a mirror answering differently on a second attempt is the drift this build exists to
+      // exclude. That conflates two different events. A pinned snapshot is immutable by construction, and
+      // apt checks every package against the checksum in the signed index before it is unpacked, so a
+      // retry cannot substitute different content: it would fail that check. What zero retries actually
+      // excluded was snapshot.debian.org answering 503 under its own rate limiting, which it does
+      // constantly, and that made a whole build unreproducible for a reason that has nothing to do with
+      // the bytes. Measured here: a `site-base` build died after seven minutes with thirty-one packages
+      // reporting `All backends failed or unhealthy`.
+      '--aptopt=Acquire::Retries "5"',
+      '--aptopt=Acquire::http::Timeout "120"',
+      '--aptopt=Acquire::https::Timeout "120"',
       // The customize hook runs BEFORE cleanup, and cleanup/run empties /run. A recipe that declares
       // /run/elowen would have it created and then removed, and the inspection would refuse the result
       // on every build. The hook does that stage's work itself, in an order that survives.

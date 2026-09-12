@@ -6,10 +6,11 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 // The build script is standalone ESM with no declaration file, like the other scripts pinned by tests.
 // @ts-expect-error the root filesystem build script intentionally has no TypeScript declaration file
 import {
-  BUILD_TOOLS, ensureBuildTools, installHint, inspectPack, assertPack, installedPackages,
-  missingBuildTools, onPath, readTar, releasePathFor, resolveRecipe, snapshotEpoch, verifyArtifacts,
+  BASE_DEVICE_NODES, BUILD_TOOLS, DEBIAN_KEYRING, ensureBuildTools, installHint, inspectPack, assertPack,
+  installedPackages, missingBuildTools, onPath, readTar, releasePathFor, resolveRecipe, snapshotEpoch,
+  verifyArtifacts,
 } from '../../scripts/build-rootfs-artifact.mjs';
-import { ROOTFS_RECIPES } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
+import { ROOTFS_RECIPES, artifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'elowen-rootfs-build-'));
 afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
@@ -125,20 +126,20 @@ describe('root filesystem pack inspection', () => {
     expect(inspectPack(entries, RECIPE, { maxBytes: 1024 * 1024 }).problems).toEqual([]);
   });
 
-  it('refuses a device node the recipe never asked for', async () => {
+  it('refuses a special file outside the base device set', async () => {
     // Appended to the members of a real archive rather than laid out on disk, because creating a
-    // character device needs root and a test must not. The recipes declare no devices, so a tree that
-    // carries any was built somewhere it could call mknod, and systemd-nspawn supplies /dev itself.
+    // character device needs root and a test must not. Past the base set the inspection allows, a tree
+    // carrying one of these was built somewhere it could call mknod, and systemd-nspawn supplies /dev
+    // itself — a block device in particular names host storage that the machine must not be handed.
     const entries = await entriesOf(fixture('devices'));
-    for (const type of ['char', 'block', 'fifo']) {
+    for (const [type, name] of [['char', './dev/kmsg'], ['block', './dev/sda1'], ['fifo', './dev/initctl']]) {
       const node = {
-        name: `./dev/${type}-one`, type, mode: 0o600, uid: 0, gid: 0, size: 0, mtime: EPOCH, uname: '', gname: '', linkName: '',
+        name, type, mode: 0o600, uid: 0, gid: 0, size: 0, mtime: EPOCH, uname: '', gname: '', linkName: '',
       };
-      // Kept in name order, so the sortedness check stays out of this one's way.
-      const combined = [...entries, node].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
-      const report = inspectPack(combined, RECIPE, {});
-      expect(codes(report), type).toEqual(['device_node']);
-      expect(report.problems[0].detail).toContain(type);
+      const report = inspectPack([...entries, node], RECIPE, {});
+      expect(codes(report), name).toEqual(['device_node']);
+      expect(report.problems[0].detail, name).toContain(name);
+      expect(report.problems[0].detail, name).toContain(type);
     }
   });
 
@@ -169,17 +170,19 @@ describe('root filesystem pack inspection', () => {
     expect(codes(inspectPack(await entriesOf(named), RECIPE, {}))).toContain('owner_name_recorded');
   });
 
-  it('refuses members that are not in ascending name order', async () => {
-    const tree = join(scratch, 'unsorted');
-    mkdirSync(tree, { recursive: true });
-    for (const name of ['a', 'b']) writeFileSync(join(tree, name), name);
-    const archive = join(scratch, 'unsorted.tar');
-    // Named in reverse with recursion off, which is what an archiver without --sort can produce.
-    execFileSync('tar', [
-      '--create', '--file', archive, '--directory', tree, '--no-recursion',
-      '--format=gnu', `--mtime=@${EPOCH}`, '--numeric-owner', './b', './a',
-    ]);
-    expect(codes(inspectPack(await entriesOf(archive), RECIPE, {}))).toContain('unsorted');
+  it('accepts the base device nodes a Debian root filesystem always carries', async () => {
+    // mmdebstrap creates these in every tree it builds and systemd expects them before it can mount its
+    // own devtmpfs, so refusing them refuses every real artifact — which is what an earlier revision of
+    // this rule did, having been written before a build had ever run. The set is named rather than
+    // inferred: a tree may carry these eight and no other special file.
+    expect([...BASE_DEVICE_NODES].sort()).toEqual(
+      ['dev/console', 'dev/full', 'dev/null', 'dev/ptmx', 'dev/random', 'dev/tty', 'dev/urandom', 'dev/zero'],
+    );
+    const entries = await entriesOf(fixture('base-devices'));
+    const nodes = [...BASE_DEVICE_NODES].map((path: string) => ({
+      name: `./${path}`, type: 'char', mode: 0o666, uid: 0, gid: 0, size: 0, mtime: EPOCH, uname: '', gname: '', linkName: '',
+    }));
+    expect(inspectPack([...entries, ...nodes], RECIPE, { sourceDateEpoch: EPOCH }).problems).toEqual([]);
   });
 
   it('stops the build on any problem rather than pinning what it found', async () => {
@@ -272,11 +275,36 @@ describe('recipe resolution', () => {
 
 describe('host dependencies', () => {
   it('names the missing tool and the command that installs it, rather than half-building', () => {
-    const absent = missingBuildTools((command: string) => command !== 'mmdebstrap');
+    // A fixture table for the probe itself. The keyring entry is answered by the filesystem rather than
+    // by PATH, so probing the real table here would make the result depend on whether this host happens
+    // to have Debian's keyring installed. The shipped table is still held to its exact install line below.
+    const present = join(scratch, 'keyring-present.gpg');
+    writeFileSync(present, 'readable, which is all the probe asks');
+    const tools = [
+      { command: 'mmdebstrap', package: 'mmdebstrap' },
+      { command: present, package: 'debian-archive-keyring', file: true },
+    ];
+
+    const absent = missingBuildTools((command: string) => command !== 'mmdebstrap', tools);
     expect(absent.map((tool: { command: string }) => tool.command)).toEqual(['mmdebstrap']);
     expect(installHint(absent)).toBe('sudo apt-get install -y mmdebstrap');
-    expect(installHint(BUILD_TOOLS)).toBe('sudo apt-get install -y gzip mmdebstrap systemd tar uidmap');
-    expect(missingBuildTools(() => true)).toEqual([]);
+    expect(missingBuildTools(() => true, tools)).toEqual([]);
+
+    // The keyring is probed as a FILE and not against PATH, which is the distinction that matters: every
+    // binary present and no keyring is exactly the host where the build died with NO_PUBKEY, and a PATH
+    // lookup would have called an absolute path to a missing file present.
+    const missingKeyring = [tools[0], { ...tools[1], command: join(scratch, 'keyring-absent.gpg') }];
+    expect(missingBuildTools(() => true, missingKeyring).map((tool: { package: string }) => tool.package))
+      .toEqual(['debian-archive-keyring']);
+    expect(installHint(missingBuildTools(() => true, missingKeyring)))
+      .toBe('sudo apt-get install -y debian-archive-keyring');
+
+    // And the table this release ships names a package for every one of its tools, keyring included, at
+    // an absolute path — a relative one would be probed against whatever directory the build ran from.
+    expect(installHint(BUILD_TOOLS)).toBe('sudo apt-get install -y debian-archive-keyring gzip mmdebstrap systemd tar uidmap');
+    expect(BUILD_TOOLS.filter((tool: { file?: boolean }) => tool.file))
+      .toEqual([{ command: DEBIAN_KEYRING, package: 'debian-archive-keyring', file: true }]);
+    expect(DEBIAN_KEYRING.startsWith('/')).toBe(true);
   });
 
   it('refuses to start a build it cannot finish, with a code the caller can act on', () => {
@@ -343,10 +371,10 @@ describe('rebuild verification', () => {
   });
 
   it('fails a run that verified nothing, because a check that cannot fail is not a check', async () => {
-    // Every pin this release ships is unpublished, so this is the shipped state and not an edge case:
-    // `npm run rootfs:verify` rebuilt nothing, compared nothing, never reached the build tools and exited
-    // 0. CI then reported a verification that had not happened, which is worse than no gate at all —
-    // a missing gate is visible and a green one is believed.
+    // Asked only about recipes with no published pin, `npm run rootfs:verify` rebuilt nothing, compared
+    // nothing, never reached the build tools and exited 0. CI then reported a verification that had not
+    // happened, which is worse than no gate at all — a missing gate is visible and a green one is
+    // believed.
     const build = vi.fn(async () => ({ digest: `sha256:${'e'.repeat(64)}`, sizeBytes: 1 }));
     const result = await verifyArtifacts({ names: ['site-base', 'site-node'], pins, build });
     expect(result.ok).toBe(false);
@@ -358,14 +386,50 @@ describe('rebuild verification', () => {
     expect(build).not.toHaveBeenCalled();
   });
 
-  it('refuses the whole shipped catalogue as unverifiable rather than reporting it green', async () => {
-    // Against the pins actually checked in, not a fixture: this is exactly what `--all --verify` does on
-    // this commit, and the answer has to be a non-zero one.
+  const pinsFor = (entry: (name: string, at: number) => { digest: string | null; sizeBytes: number | null }) =>
+    Object.fromEntries(Object.keys(ROOTFS_RECIPES).map((name, at) => [
+      artifactReference(name),
+      { ...entry(name, at), path: releasePathFor(name, ROOTFS_RECIPES[name].version) },
+    ]));
+
+  it('refuses a whole catalogue with nothing published as unverifiable rather than reporting it green', async () => {
+    // `--all --verify` over every recipe this release declares, none of them pinned. That was the shipped
+    // state until a build produced the bytes, and it is what a catalogue looks like again the moment a
+    // recipe is revised without being rebuilt. The answer has to be a non-zero one.
     const build = vi.fn(async () => ({ digest: `sha256:${'e'.repeat(64)}`, sizeBytes: 1 }));
-    const result = await verifyArtifacts({ names: Object.keys(ROOTFS_RECIPES), build });
+    const pins = pinsFor(() => ({ digest: null, sizeBytes: null }));
+    const result = await verifyArtifacts({ names: Object.keys(ROOTFS_RECIPES), pins, build });
     expect(result.verified).toBe(0);
     expect(result.ok).toBe(false);
+    expect(result.unpublished).toHaveLength(Object.keys(ROOTFS_RECIPES).length);
     expect(build).not.toHaveBeenCalled();
+  });
+
+  it('verifies a whole published catalogue, and fails it the moment one rebuild differs', async () => {
+    // The complement, and the state this release actually ships: every recipe pinned, so the gate has
+    // something to compare and can answer either way. A run where every rebuild reproduces its pin has to
+    // pass — a gate that cannot go green is ignored — and one where a single recipe rebuilds to other
+    // bytes has to fail the whole run rather than report a majority.
+    const names = Object.keys(ROOTFS_RECIPES);
+    const pins = pinsFor((_name, at) => ({ digest: `sha256:${at.toString(16).repeat(64).slice(0, 64)}`, sizeBytes: 1024 + at }));
+    const rebuild = (name: string) => ({ ...pins[artifactReference(name)] });
+
+    const matching = vi.fn(async (name: string) => rebuild(name));
+    const passed = await verifyArtifacts({ names, pins, build: matching });
+    expect(passed.ok).toBe(true);
+    expect(passed.verified).toBe(names.length);
+    expect(passed.differing).toEqual([]);
+    expect(passed.unpublished).toEqual([]);
+    expect(passed.missing).toEqual([]);
+    expect(matching).toHaveBeenCalledTimes(names.length);
+
+    const drifted = vi.fn(async (name: string) => (name === names[1]
+      ? { digest: `sha256:${'d'.repeat(64)}`, sizeBytes: 7 }
+      : rebuild(name)));
+    const failed = await verifyArtifacts({ names, pins, build: drifted });
+    expect(failed.ok).toBe(false);
+    expect(failed.verified).toBe(names.length - 1);
+    expect(failed.differing.map((item: { reference: string }) => item.reference)).toEqual([artifactReference(names[1])]);
   });
 
   it('fails when the pin file carries no entry for a recipe at all', async () => {
