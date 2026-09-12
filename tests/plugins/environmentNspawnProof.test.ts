@@ -543,7 +543,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     writeFileSync(join(sourcePath, 'index.html'), '<!doctype html>site source\n', { mode: 0o600 });
     expect(lstatSync(gitStub).isFile()).toBe(true);
 
-    const siteClient = new NspawnClient({ images, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
+    const siteClient = new NspawnClient({ artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
     const siteGuest = (argv: string[], options: Record<string, unknown> = {}): Promise<Verdict> =>
       siteClient.exec(siteSpec, randomBytes(16).toString('hex'), argv, { timeoutMs: 60_000, persistent: true, ...options }) as Promise<Verdict>;
     try {
