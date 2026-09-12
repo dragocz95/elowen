@@ -1,5 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
@@ -30,13 +30,16 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 interface Call { args: string[]; input?: string }
 
 /** `--flag=value` / repeated `--label k=v` argv as a record, which is all the fake needs to answer an
- *  inspect with the shape the client demands. */
+ *  inspect with the shape the client demands. A disk-backed envelope ends in `<rootfs> /sbin/init` rather
+ *  than an image, so what the trailing argument means depends on `--rootfs`. */
 function parseCreate(args: string[]) {
   const labels: Record<string, string> = {};
   const mounts: { type: string; source: string; target: string; readOnly: boolean }[] = [];
   const flags: Record<string, string> = {};
+  let name = '';
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
+    if (arg === '--name') { name = args[++index]!; continue; }
     if (arg === '--label') { const [key, ...rest] = args[++index]!.split('='); labels[key!] = rest.join('='); continue; }
     if (arg === '--mount') {
       const parts = Object.fromEntries(args[++index]!.split(',').map((part) => part.split('=') as [string, string]));
@@ -45,7 +48,8 @@ function parseCreate(args: string[]) {
     }
     if (arg.startsWith('--') && arg.includes('=')) { const [key, ...rest] = arg.split('='); flags[key!] = rest.join('='); }
   }
-  return { labels, mounts, flags, image: args.at(-1)! };
+  const rootfs = args.includes('--rootfs') ? args.at(-2)! : null;
+  return { labels, mounts, flags, name, rootfs, image: rootfs ? '' : args.at(-1)! };
 }
 
 function setup() {
@@ -104,8 +108,13 @@ function setup() {
   const containerRow = (name: string) => {
     const created = containers.get(name)!;
     const memory = Number(created.flags['--memory']!.replace(/m$/, '')) * 1024 * 1024;
+    // A disk-backed envelope carries no image at all: the client holds `Image`/`ImageName` empty, the
+    // root filesystem path and the systemd entry point against the specification, and refuses the row
+    // when any of them drifts.
     return {
-      Id: CONTAINER_ID, Name: name, ImageName: created.image, Config: { Labels: created.labels }, State: { Status: state },
+      Id: CONTAINER_ID, Name: name, Image: created.rootfs ? '' : created.image, ImageName: created.rootfs ? '' : created.image,
+      ...(created.rootfs ? { Rootfs: realpathSync(created.rootfs), Path: '/sbin/init' } : {}),
+      Config: { Labels: created.labels, ...(created.rootfs ? { SystemdMode: true, StopSignal: 37 } : {}) }, State: { Status: state },
       HostConfig: {
         Privileged: false, NetworkMode: created.flags['--network'], Memory: memory, MemorySwap: memory,
         NanoCpus: Number(created.flags['--cpus']) * 1e9, PidsLimit: Number(created.flags['--pids-limit']),
@@ -141,7 +150,7 @@ function setup() {
         volumes.set(name, { Name: name, Labels: created.labels, Driver: 'local', Options: { type: 'none', o: 'bind', device: device.slice('device='.length) } });
         return reply(0);
       }
-      if (args[0] === 'create') { containers.set(args[2]!, parseCreate(args)); return reply(0); }
+      if (args[0] === 'create') { const created = parseCreate(args); containers.set(created.name, created); return reply(0); }
       if (args[0] === 'start') { state = 'running'; return reply(0); }
       if (args[0] === 'inspect') {
         const name = args.at(-1)!;
@@ -187,9 +196,38 @@ function setup() {
 
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 } as const;
 
+interface DiskRecord { id: string; rootfsPath: string; sourceImage: string; components: { component: string; path: string }[] }
+
+/** An environment that already exists, which is what every measurement below is about: the cost of ONE
+ *  file operation, not of the first start that built the environment. Two things separate that state from
+ *  a row the runtime has only just inserted, and both are reached the way the product reaches them.
+ *
+ *  The marker `runtimePending` is what sends a NEW environment to systemd-nspawn (`decideRuntime`);
+ *  clearing it is how the sibling environment suites express an environment that predates the machine
+ *  runtime, and a Podman environment is the subject here — it is what every environment created before
+ *  `migrate-runtime` still runs on.
+ *
+ *  The disk manifest is the durable record that says this disk is materialized. Writing it (and the
+ *  directories it names) makes `ContainerStorage` adopt the disk by its record, exactly as it does on
+ *  every start after the first, instead of building a root filesystem out of the base image — which is
+ *  real filesystem work no faked executor can perform. */
+function existing(state: ReturnType<typeof setup>) {
+  state.db.prepare("UPDATE p_sandbox_runtimes SET spec_json=json_remove(spec_json,'$.runtimePending')").run();
+  const row = state.db.prepare('SELECT spec_json FROM p_sandbox_runtimes').get() as { spec_json: string };
+  const spec = JSON.parse(row.spec_json).input as { resource: { kind: string; id: number }; disk: DiskRecord };
+  mkdirSync(spec.disk.rootfsPath, { recursive: true });
+  for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
+  writeFileSync(join(dirname(spec.disk.rootfsPath), 'disk.json'), JSON.stringify({
+    resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
+    rootfsPath: spec.disk.rootfsPath, components: spec.disk.components,
+    createdAt: '2026-01-01T00:00:00.000Z', materialized: true,
+  }));
+}
+
 async function provisioned() {
   const state = setup();
   await state.runtime.requestEnvironment({ ...input, requestId: 'cost-start', action: { kind: 'start' } });
+  existing(state);
   await state.runtime.reconcile();
   expect((await state.runtime.environmentFor(input)).state).toBe('running');
   state.calls.length = 0;
@@ -205,11 +243,16 @@ describe('managed file operation Podman cost', () => {
     const state = await provisioned();
     await state.runtime.projectFiles({ ...input, operation: operationFor(kind) });
 
-    // Five, and which five: container existence, container inspection, one batched inspection of all
-    // three project volumes, the guest launcher, and the release probe. The pre-repair path issued 33 for
-    // the same work. This is an exact figure on purpose — a sixth invocation is a regression worth a
-    // conversation, not something to absorb into a bound with room in it.
-    expect(state.calls.length).toBe(5);
+    // Four, and which four: container existence, container inspection, the guest launcher, and the
+    // release probe. The pre-repair path issued 33 for the same work. The fifth this suite once counted —
+    // one batched inspection of all three project volumes — went away with the volumes themselves: a
+    // disk-backed envelope bind mounts the disk's own directories and holds no named volume handles, so
+    // ownership has nothing to inspect beyond the container. This is an exact figure on purpose — a fifth
+    // invocation is a regression worth a conversation, not something to absorb into a bound with room in
+    // it.
+    expect(state.calls.map((call) => call.args.slice(0, 2).join(' '))).toEqual([
+      'container exists', 'inspect --type', 'exec --interactive', `exec ${CONTAINER_ID}`,
+    ]);
 
     // Exactly one guest execution.
     expect(state.calls.filter((call) => call.args[1] === '--interactive')).toHaveLength(1);
@@ -251,9 +294,11 @@ describe('managed file operation Podman cost', () => {
   it('verifies ownership once for the whole fenced execution', async () => {
     const state = await provisioned();
     await state.runtime.projectFiles({ ...input, operation: operationFor('stat') });
-    // One container inspection, and one batched volume inspection for all three project volumes.
+    // One container inspection for the whole execution, and no volume inspection at all: the disk's
+    // component directories are bind mounts held against the specification by that same inspection, so a
+    // per-component volume round trip would be a new cost with nothing left to verify.
     expect(state.calls.filter((call) => call.args[0] === 'inspect')).toHaveLength(1);
-    expect(state.calls.filter((call) => call.args[0] === 'volume' && call.args[1] === 'inspect')).toHaveLength(1);
+    expect(state.calls.filter((call) => call.args[0] === 'volume' && call.args[1] === 'inspect')).toHaveLength(0);
   });
 });
 

@@ -3,7 +3,8 @@
   "workspaces": {
     ".": {
       "ignoreUnresolved": [
-        "/usr/bin/certbot"
+        "/usr/bin/certbot",
+        "/usr/bin/machinectl"
       ],
       "entry": [
         "plugins/**/index.mjs",
