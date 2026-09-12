@@ -454,6 +454,7 @@ export class BrainService {
     this.delegated = new DelegatedSessionService({
       store: d.store, sessions: this.sessions, channelService: this.channelService, identity: this.identity,
       users: d.users, policyForProjects: d.policyForProjects,
+      ownerAccessFor: (userId, rootSessionId) => this.ownerDelegatingAccess(userId, rootSessionId),
       sandbox: () => d.plugins?.peek()?.control('sandbox'),
       // A daemon-side delegated send (an owner drill-in, a DelegateContinue, a durable result delivery)
       // rehydrates the child from SQLite HERE, so the runner must not still be holding a live record for
@@ -1344,6 +1345,33 @@ export class BrainService {
       deliver: (text, target) => this.platforms.notify(text, target),
       log: logger('brain'),
     }, row, continuation);
+  }
+
+  /** Rebuild the CURRENT authority ceiling for a human continuing a delegated descendant from an owned
+   *  conversation. The durable scope was valid when spawned; account/project/tool/permission access may
+   *  have narrowed since, so the continuation compares against this fresh view before every dispatch. */
+  private ownerDelegatingAccess(userId: number, rootSessionId: string): DelegatingTurnAccess {
+    const root = this.d.store.getSession(rootSessionId);
+    if (!isOwnedUserSession(root, userId, rootSessionId)) throw new Error('delegated session is not rooted in an owner conversation');
+    const policy = this.d.policy?.(userId);
+    const settings = this.d.permissions?.(userId);
+    const toolPolicy = toolAuthorityForUser(this.d, userId);
+    return {
+      admin: policy?.allowedProjectIds === 'all',
+      projectIds: !policy || policy.allowedProjectIds === 'all' ? [] : [...policy.allowedProjectIds],
+      owner: true,
+      permissionBoundary: settings
+        ? noninteractivePermissionBoundary({ ruleset: buildPermissionRuleset(settings), yolo: false, unattendedAsks: settings.unattendedAsks })
+        : null,
+      settingsUserId: userId,
+      contributionUserId: userId,
+      accountUserId: userId,
+      ...(toolPolicy ? { toolPolicy: {
+        ...(toolPolicy.allow ? { allow: [...toolPolicy.allow] } : {}),
+        ...(toolPolicy.deny ? { deny: [...toolPolicy.deny] } : {}),
+      } } : {}),
+      projectRef: this.d.store.getProjectExecution(rootSessionId),
+    };
   }
 
   /** D3 — never replay authority from disk unchecked. The workflow recovery journal lives in the plugin
@@ -2325,14 +2353,17 @@ export class BrainService {
    *  conversation. Async because a runner-hosted child's half is read live from the runner. See
    *  SessionProcessService.processes. */
   async processes(userId: number, sessionId?: string): Promise<ProcessInfo[]> {
+    if (sessionId && isSubagentSession(sessionId)) this.delegated.preflightOwnerRelation(userId, sessionId);
     return this.processSvc.processes(userId, sessionId);
   }
 
   async processOutput(userId: number, processId: string, sessionId?: string): Promise<string | null> {
+    if (sessionId && isSubagentSession(sessionId)) this.delegated.preflightOwnerRelation(userId, sessionId);
     return this.processSvc.processOutput(userId, processId, sessionId);
   }
 
   async killProcess(userId: number, processId: string, sessionId?: string): Promise<boolean> {
+    if (sessionId && isSubagentSession(sessionId)) this.delegated.preflightOwnerRelation(userId, sessionId);
     return this.processSvc.killProcess(userId, processId, sessionId);
   }
 
@@ -2488,14 +2519,13 @@ export class BrainService {
   }
 
   /** The session a CLIENT CONTROL action (Ctrl+B detach, stop-escalation kill) names: the caller's
-   *  ordinary conversation as {@link preflightSend} resolves it — or, when the caller drilled into a
-   *  delegated child, that child through the SAME durable ancestry predicate the send seam uses
-   *  ({@link preflightSubagentSend}). One resolver, so every control route shares one authorization
-   *  story; a foreign or unknown child is refused exactly like a foreign conversation. The client
-   *  generation fence applies only to user conversations — a focused child has no CLI binding. */
+   *  ordinary conversation as {@link preflightSend} resolves it — or a delegated child whose complete
+   *  ancestry reaches that caller's own user conversation. Controls do not start another model turn, so
+   *  they keep the relation check even after access narrows; a user must still be able to stop old work.
+   *  The client generation fence applies only to user conversations — a focused child has no CLI binding. */
   private preflightControlTarget(userId: number, session?: string, client?: BoundClientRequest): string {
     if (!session || !isSubagentSession(session)) return this.preflightSend(userId, session, client);
-    this.preflightSubagentSend(userId, session);
+    this.delegated.preflightOwnerRelation(userId, session);
     return session;
   }
 

@@ -56,24 +56,6 @@ function requestedConversationIds(raw?: string): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-/** Every child transcript named by one branch read, depth-first and deduplicated — the batch the owner
- *  lookup answers for the admin register's eligibility pass. */
-function childSessionIdsOf(byConversation: Record<string, import('../../store/brainDelegationStore.js').ConversationSubagentNode[]>): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const walk = (nodes: import('../../store/brainDelegationStore.js').ConversationSubagentNode[]): void => {
-    for (const node of nodes) {
-      if (node.childSessionId && !seen.has(node.childSessionId)) {
-        seen.add(node.childSessionId);
-        out.push(node.childSessionId);
-      }
-      walk(node.children);
-    }
-  };
-  for (const nodes of Object.values(byConversation)) walk(nodes);
-  return out;
-}
-
 /** Depth-first over one branch read: mark every sub-agent node whose transcript the VIEWER may write
  *  into. This is the one host pass that decides drill-in eligibility, so no client ever has to guess
  *  it from session ids or owner labels — `continuable` stays absent (falsy) on everything else. */
@@ -333,19 +315,14 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (d.brainStore) {
       try {
         const branches = d.brainStore.conversationSubagentBranches(rootIds);
-        // Drill-in eligibility is caller-relative. In the personal listing every verified edge is
-        // same-owner from the caller's own roots, so each transcript is continuable; the admin register
-        // spans accounts, so each child is checked against ITS owner — an admin may READ another
-        // account's delegation, never write into it.
-        if (all) {
-          const owners = d.brainStore.ownersOfSessions(childSessionIdsOf(branches.byConversation));
-          for (const nodes of Object.values(branches.byConversation)) {
-            setSubagentContinuables(nodes, (id) => owners.get(id) === user.id);
-          }
-        } else {
-          for (const nodes of Object.values(branches.byConversation)) {
-            setSubagentContinuables(nodes, () => true);
-          }
+        // Drill-in eligibility is caller-relative and rooted in an OWN user conversation. A shared
+        // channel's delegated child can carry the instance owner's `user_id` as a storage owner; that
+        // never authorizes the admin register to write as the channel sender. The write route re-walks
+        // the same durable ancestry, so this is a truthful UI capability hint rather than the boundary.
+        const rootOwners = all ? d.brainStore.ownersOfSessions(Object.keys(branches.byConversation)) : undefined;
+        for (const [rootId, nodes] of Object.entries(branches.byConversation)) {
+          const continuableRoot = !all || (rootOwners?.get(rootId) === user.id && !isNonUserSession(rootId));
+          setSubagentContinuables(nodes, () => continuableRoot);
         }
         subagents = branches.byConversation;
         subagentStatus = 'available';

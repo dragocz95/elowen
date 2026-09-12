@@ -5844,6 +5844,7 @@ describe('sub-agent session tap + owner steering', () => {
   it('sendToSubagent forwards the durable parent so a respawned continuation stays in its abort tree', async () => {
     const d = fakeDeps();
     d.users.get = () => ({ name: 'Filip', username: 'filip', disabled_tools: ['DiscordApi'] });
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: new Set([3]), allowedPaths: () => [] });
     const svc = new BrainService(d as never);
     d.store.createSession({ id: 'brain-parent', userId: 1, model: 'm' });
     d.store.createSession({
@@ -5891,12 +5892,14 @@ describe('sub-agent session tap + owner steering', () => {
     await svc.sendToSubagent(1, 'brain-ch-subagent-sub1', 'do the thing');
     expect(d.session.prompt).toHaveBeenCalledTimes(1); // idle child → normal turn
     d.session.isStreaming = true; // the child is mid-turn now
-    await svc.sendToSubagent(1, 'brain-ch-subagent-sub1', 'also check X');
-    expect(d.session.steer).toHaveBeenCalledWith('also check X', undefined); // owner steering crosses the sender gate
+    await svc.sendToSubagent(1, 'brain-ch-subagent-sub1', 'also check X', [{ data: 'aGk=', mimeType: 'image/png' }]);
+    expect(d.session.steer).toHaveBeenCalledWith('also check X\n[📎 1× image]', [
+      { type: 'image', data: 'aGk=', mimeType: 'image/png' },
+    ]); // owner steering crosses the sender gate without dropping attachments
     expect(d.session.prompt).toHaveBeenCalledTimes(1); // no second unlocked turn
     expect(userEchoes).toEqual(['do the thing']);
     expect(d.store.getMessages('brain-ch-subagent-sub1').filter((m) => m.role === 'user')).toHaveLength(1);
-    d.deliverQueued('also check X');
+    d.deliverQueued('also check X\n[📎 1× image]');
     // Both paths use the daemon as the single user-echo authority, at their real PI delivery boundary.
     expect(userEchoes).toEqual(['do the thing', 'also check X']);
     expect(d.store.getMessages('brain-ch-subagent-sub1').filter((m) => m.role === 'user')).toHaveLength(2);
@@ -9273,6 +9276,7 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
    *  chain, never through the id prefix alone and never through the caller's active-session pointer. */
   async function seedNest() {
     const d = fakeDeps();
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
     const b = 'brain-ch-subagent-sub-nest-b';
@@ -9316,6 +9320,30 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
       expect.objectContaining({ channelId: 'subagent-sub-nest-c', images: [{ data: 'aGk=', mimeType: 'image/png' }] }),
       'what is in this screenshot',
     );
+  });
+
+  it('refuses an admin-owned child rooted in a shared channel — register ownership is not write authority', async () => {
+    const d = fakeDeps();
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
+    d.users.get = () => ({ name: 'Filip', username: 'filip', is_admin: true });
+    const svc = new BrainService(d as never);
+    const root = 'brain-ch-discord-shared';
+    const child = 'brain-ch-subagent-shared-child';
+    d.store.createSession({ id: root, userId: 1, model: 'm' });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: root, delegatedAccess: SCOPE });
+
+    expect(() => svc.preflightSubagentSend(1, child)).toThrow('not rooted in an owner conversation');
+    await expect(svc.sendToSubagent(1, child, 'act as the channel sender')).rejects.toThrow('not rooted in an owner conversation');
+    await expect(svc.processes(1, child)).rejects.toThrow('not rooted in an owner conversation');
+    await expect(svc.killProcess(1, 'any-process', child)).rejects.toThrow('not rooted in an owner conversation');
+  });
+
+  it('refuses an old all-project child after the owner loses admin access', async () => {
+    const { d, svc, c } = await seedNest();
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: new Set([7]), allowedPaths: () => [] });
+
+    expect(() => svc.preflightSubagentSend(1, c)).toThrow('no longer');
+    await expect(svc.sendToSubagent(1, c, 'use the old authority')).rejects.toThrow('no longer');
   });
 
   it('refuses a grandchild of another account and a session outside the sub-agent family', async () => {

@@ -30,7 +30,7 @@ function setup(opts: {
   managed?: { id: string }[];
   /** Session rows the run-target resolution may find, keyed by id. Absent = no store at all. */
   rows?: Record<string, { user_id: number }>;
-  /** Child-session owners the eligibility pass resolves in the admin register (id → user id). */
+  /** Root-session owners the eligibility pass resolves in the admin register (id → user id). */
   owners?: Record<string, number>;
   /** The sub-agent branch the core store answers with, or a thrower to simulate a failed read. */
   branches?: (rootIds: readonly string[]) => ConversationSubagentBranches;
@@ -451,29 +451,28 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     expect(root.children[0]!.continuable).toBe(true);
   });
 
-  /** The admin register spans accounts: an admin may READ another account's delegation, but the child
-   *  transcript stays theirs — continuable only when the owner is the CALLING admin. */
-  it('marks continuable per owner in the admin register, leaving foreign children read-only', async () => {
+  /** The admin register spans accounts and non-user roots. Writable drill-in belongs only to a branch
+   *  rooted in the calling account's own user conversation; child-row ownership alone cannot grant it. */
+  it('marks continuable per root in the admin register, leaving foreign and shared-channel branches read-only', async () => {
     const { app, adminTok } = setup({
       cron: () => [],
-      managed: [{ id: 'brain-2' }],
-      // admin is the first account (id 1); amy owns the foreign child (id 2).
-      owners: { 'brain-ch-subagent-sub-a': 2, 'brain-ch-subagent-sub-own': 1 },
+      managed: [{ id: 'brain-2' }, { id: 'brain-1-own' }, { id: 'brain-ch-discord-shared' }],
+      // admin is account 1; amy owns brain-2. The shared channel is storage-owned by admin too.
+      owners: { 'brain-2': 2, 'brain-1-own': 1, 'brain-ch-discord-shared': 1 },
       branches: () => ({
         byConversation: {
-          'brain-2': [
-            node(),
-            node({ key: 'sub:brain-ch-subagent-sub-own', childSessionId: 'brain-ch-subagent-sub-own' }),
-          ],
+          'brain-2': [node()],
+          'brain-1-own': [node({ key: 'sub:brain-ch-subagent-sub-own', childSessionId: 'brain-ch-subagent-sub-own' })],
+          'brain-ch-discord-shared': [node({ key: 'sub:brain-ch-subagent-sub-shared', childSessionId: 'brain-ch-subagent-sub-shared' })],
         },
         truncated: false,
       }),
     });
 
     const { body } = await links(app, adminTok, 'all');
-    const nodes = body.subagents['brain-2']!;
 
-    expect(nodes[0]!.continuable).toBeUndefined();
-    expect(nodes[1]!.continuable).toBe(true);
+    expect(body.subagents['brain-2']![0]!.continuable).toBeUndefined();
+    expect(body.subagents['brain-1-own']![0]!.continuable).toBe(true);
+    expect(body.subagents['brain-ch-discord-shared']![0]!.continuable).toBeUndefined();
   });
 });
