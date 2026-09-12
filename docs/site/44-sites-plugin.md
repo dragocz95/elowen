@@ -91,7 +91,7 @@ Every site keeps its own address for as long as the site exists. Public Sites DN
 
 ## How to install and enable
 
-Install the plugin from **Settings → Plugins → Available**. The manifest requires Elowen 0.28.42 or newer; the marketplace refuses installation on an older core. The plugin is not user-grantable, so there is no per-user grant step. Enabling asks for consent to the plugin's declared capabilities, which include mutating events, alongside its reads and network access. See [Plugins](plugins) for the general lifecycle.
+Install the plugin from **Settings → Plugins → Available**. The manifest requires Elowen 0.28.44 or newer; the marketplace refuses installation on an older core. The plugin is not user-grantable, so there is no per-user grant step. Enabling asks for consent to the plugin's declared capabilities, which include mutating events, alongside its reads and network access. See [Plugins](plugins) for the general lifecycle.
 
 ## Configuration
 

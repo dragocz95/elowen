@@ -9,6 +9,53 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ## [Unreleased]
 
+## [0.28.44] - 2026-09-13
+
+### Added
+
+- Managed Project and Site environments now run exclusively as systemd-nspawn machines created from four
+  published, content-addressed root filesystem artifacts. The Sandbox host page reports readiness and lets an
+  administrator provision the fixed machine runtime and its artifacts through one typed operation.
+- Environment networking now has a bounded `shared` or `isolated` mode. Administrators can declare up to 32
+  explicit TCP or UDP inbound mappings for a shared environment; the privileged helper writes native `Port=`
+  settings and fixed-position firewall rules while isolated environments accept no inbound mapping.
+- Machine environments carry their environment file into the guest, use an explicit read-only uplink resolver,
+  and expose structured readiness for root filesystems, virtualization, networking, DNS and firewall state.
+
+### Changed
+
+- Persistent root filesystems, data trees, snapshots, restores, lifecycle mutations, resource limits and
+  publication transports are owned by the nspawn runtime. Start, stop and live limit changes now pass through
+  the typed privileged helper instead of a broad service-user Polkit grant.
+- Sites delegates host provisioning and readiness to Sandbox. Its setup page links to the Sandbox host runtime,
+  and the obsolete Sites provisioning and readiness routes have been removed.
+
+### Fixed
+
+- Environment deletion now releases a uid range only after the storage root, machine envelope and systemd
+  drop-in are gone. Canonical and legacy disk aliases are validated for one consistent range and removed
+  together, while active ranges, snapshots, backups and sources remain protected.
+- Site deletion remains durable and retryable until runtime sockets, gateway records, nginx configuration and
+  certificates are confirmed absent. Missing controls and failed broker verdicts propagate instead of being
+  treated as successful cleanup.
+- Publication establishment, reconciliation and release now serialize per publication, preventing a recovered
+  forwarder from appearing after its durable record was released.
+- The machine firewall unit repairs rule ordering on every run and retires exact older managed rules before it
+  installs the current guarded forward, return, DHCP and host-protection rules.
+
+### Removed
+
+- Removed the Podman environment runtime and the legacy identity migration surface. An environment owned by the
+  retired runtime now returns one actionable refusal and must be deleted and recreated on the machine runtime.
+- Removed the broad managed Polkit lifecycle rule. Provisioning removes the exact retired rule and refuses to
+  overwrite unrelated content at that path.
+
+### Compatibility
+
+- The core version is `0.28.44`. Sites requires core `0.28.44` because its cleanup, publication and host-runtime
+  setup use the completed Sandbox nspawn contract.
+- Plugin UI API remains 16, shared-helper API remains 4, and the minimum Node.js version remains 22.12.0.
+
 ## [0.28.43] - 2026-09-12
 
 ### Fixed
