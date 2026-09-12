@@ -37,6 +37,8 @@ export const adminUser: User = {
   is_admin: true,
   allowed_execs: [],
   disabled_tools: [],
+  allowed_tools: [],
+  granted_plugins: [],
   name: 'E2E Admin',
   email: 'admin@example.test',
   avatar: '',
@@ -47,12 +49,15 @@ export const adminUser: User = {
 
 export const config: ElowenConfig = {
   allowedExecs: ['elowen:oauth-anthropic/claude-sonnet-4'],
+  allowedSkins: [],
   customModels: [],
   hiddenPresets: [],
   modelNotes: {},
   providers: {},
   defaults: { exec: 'elowen:oauth-anthropic/claude-sonnet-4' },
-  security: { tokenTtlDays: TOKEN_TTL_DAYS },
+  // Mirrors the daemon default (configStore DEFAULTS): the install wizard owns the nginx vhost, so the
+  // forwarded client IP is trusted out of the box.
+  security: { tokenTtlDays: TOKEN_TTL_DAYS, trustProxy: true },
   sessionRetention: { enabled: false, days: 30 },
   autoUpdate: false,
   plugins: { enabled: [] },

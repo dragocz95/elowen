@@ -54,6 +54,21 @@ describe('CI workflow: jobs that build also install the web dependencies', () =>
     expect(web).toContain('npm ci --prefix ..');
   });
 
+  // The Playwright program is the one part of web/ that nothing else compiles: web/tsconfig.json
+  // excludes tests/e2e, and `next build` therefore never sees it. Left unwired it drifts silently —
+  // which is how 24 type errors accumulated in the specs that exist to pin the daemon's wire shapes.
+  it('type-checks the Playwright E2E program, which the web build excludes', () => {
+    const yaml = readFileSync(workflow, 'utf-8');
+    const web = yaml.split('\n  web:\n')[1]?.split(/\n  [a-z0-9_-]+:\n/, 1)[0] ?? '';
+    expect(web).toContain('npm run typecheck:e2e');
+
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'web', 'package.json'), 'utf-8')) as { scripts: Record<string, string> };
+    expect(pkg.scripts['typecheck:e2e']).toContain('tests/e2e/tsconfig.json');
+
+    // Still excluded from the app program — which is precisely why the step above has to exist.
+    expect(readFileSync(join(process.cwd(), 'web', 'tsconfig.json'), 'utf-8')).toContain('"tests/e2e"');
+  });
+
   it('runs the destructive dist build probe outside the parallel daemon suite', () => {
     const yaml = readFileSync(workflow, 'utf-8');
     const daemon = yaml.split('\n  daemon:\n')[1]?.split(/\n  [a-z0-9_-]+:\n/, 1)[0] ?? '';

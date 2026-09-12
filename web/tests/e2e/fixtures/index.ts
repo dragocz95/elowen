@@ -73,3 +73,7 @@ export { ShellPage } from '../pages/ShellPage.ts';
 export { ChatPage } from '../pages/ChatPage.ts';
 export { SandboxDrawer, SANDBOX_TEXT } from '../pages/SandboxDrawer.ts';
 export type { StreamTarget } from './SseScript.ts';
+// Specs annotate their own helpers (`async function openRow(page: Page)`) and the contexts they open
+// themselves against these. Re-exported here so a spec never imports `@playwright/test` directly and
+// accidentally picks up the un-extended `test`.
+export type { Page, Browser } from '@playwright/test';
