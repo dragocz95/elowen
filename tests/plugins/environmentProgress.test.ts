@@ -257,7 +257,7 @@ describe('environment operation progress', () => {
     await expect(runtime.requestEnvironment({ ...input, requestId: `stale-${kind}`, action: { kind } }))
       .rejects.toMatchObject({ code: 'unsupported_runtime', status: 409 });
     await expect(runtime.requestEnvironment({ ...input, requestId: `stale-again-${kind}`, action: { kind } }))
-      .rejects.toThrow(/predates the named project mount.*delete the environment and create it again/s);
+      .rejects.toThrow(/removed Podman runtime.*Delete the managed Project or Site/s);
     // Refused before anything durable is enqueued, and nothing on the host was touched on the way.
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key LIKE 'stale-%'").get()).toEqual({ n: 0 });
     expect(nspawn.create).not.toHaveBeenCalled();

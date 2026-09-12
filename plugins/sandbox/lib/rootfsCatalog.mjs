@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { unsupportedRuntime } from './runtimeClient.mjs';
 
 /** The root filesystems this release can build an environment from, and where its copies live.
  *
@@ -148,9 +149,7 @@ export function parseArtifactReference(reference) {
   // materialized under this one: the image it names is not published anywhere as a root filesystem, and
   // there is no rule that turns a tag into an artifact. Recreating the environment is the repair, and
   // saying so is more use than a parse failure that reads like corruption.
-  if (isLegacyImageReference(reference)) {
-    throw Object.assign(new Error(`This environment names the container image ${reference}, which this release no longer runs; delete the environment and create it again to build it from a published root filesystem`), { code: 'unsupported_runtime', status: 409 });
-  }
+  if (isLegacyImageReference(reference)) throw unsupportedRuntime();
   throw Object.assign(new Error('Invalid root filesystem artifact reference'), { code: 'artifact_unknown' });
 }
 

@@ -294,7 +294,7 @@ describe('durable managed environment lifecycle', () => {
     await expect(runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } }))
       .rejects.toMatchObject({ code: 'unsupported_runtime', status: 409 });
     await expect(runtime.requestEnvironment({ ...input, requestId: 'legacy-start-2', action: { kind: 'start' } }))
-      .rejects.toThrow(/predates the named project mount[\s\S]*delete the environment and create it again/);
+      .rejects.toThrow(/removed Podman runtime.*Delete the managed Project or Site/);
   });
 
   // Reconcile sweeps publications of every running project without going through `rowFor`, so a running

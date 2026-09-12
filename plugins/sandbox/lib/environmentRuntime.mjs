@@ -12,7 +12,7 @@ import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createEnvironmentDiskSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { NspawnClient } from './nspawn.mjs';
-import { selectRuntimeClient } from './runtimeClient.mjs';
+import { selectRuntimeClient, unsupportedRuntime, UNSUPPORTED_RUNTIME_MESSAGE } from './runtimeClient.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
 import { RootfsArtifactStore } from './rootfsArtifacts.mjs';
 import { ARTIFACT_MIRROR_SETTING, PROJECT_ARTIFACT, SITE_ARTIFACTS, artifactReference, isLegacyImageReference } from './rootfsCatalog.mjs';
@@ -198,7 +198,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return { id: 'runtime:legacy-references', label: 'Environment root filesystem identity', ok: pending === 0,
       detail: pending === 0
         ? 'every environment names a published root filesystem'
-        : `${pending} environment${pending === 1 ? '' : 's'} still ${pending === 1 ? 'names' : 'name'} a container image; run the migrate-identity action on each` };
+        : `${pending} environment${pending === 1 ? '' : 's'} still ${pending === 1 ? 'belongs' : 'belong'} to the removed Podman runtime. ${UNSUPPORTED_RUNTIME_MESSAGE}` };
   }
   /** The host's readiness rows, plus what this instance still owes the runtime.
    *
@@ -359,7 +359,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // A row built against `/workspace` predates the named project mount, and therefore predates this
       // runtime entirely: its envelope was hashed from a specification this release no longer produces.
       // Filling the mount point in would silently rewrite that identity, so the row is named and refused.
-      throw error('unsupported_runtime', `This environment predates the named project mount and the machine runtime; delete the environment and create it again to build it from a published root filesystem`, 409);
+      throw unsupportedRuntime();
     }
     if (!row) {
       const effective = configuredDefaults(ctx.config);
@@ -1120,7 +1120,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // There is no rule that turns a container image tag into a published root filesystem, so this refuses
     // by name rather than inventing one.
     if (neverMaterialized(row) || !row.spec.input.disk) {
-      throw error('unsupported_runtime', 'This environment has no nspawn disk; it must first become one before its root filesystem identity can be migrated', 409);
+      throw unsupportedRuntime();
     }
     // Once the row has moved, its own reference no longer says what this operation is doing. The target is
     // therefore read back from the checkpoint on every pass after the first.

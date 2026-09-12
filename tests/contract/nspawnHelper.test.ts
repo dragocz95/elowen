@@ -33,6 +33,7 @@ import {
   nspawnExecArgs,
   renderMachineDropIn,
   renderMachineSettings,
+  readUidRangeRegistry,
   renderPolkitRule,
   safeGuestMountTarget,
   SITE_DATA_ARCHIVE_BYTES,
@@ -627,8 +628,10 @@ describe('privileged helper: host artefacts and readiness', () => {
       { source: '/srv/sandbox/projects/54/disks/x/workspace', target: '/demo', readOnly: false },
       { source: '/srv/sandbox/projects/54/disks/x/home', target: '/root', readOnly: true },
     ];
-    const settings = renderMachineSettings(binds, { uidBase: 1_073_741_824 });
+    const settings = renderMachineSettings(binds, { uidBase: 1_073_741_824, environment: { ELOWEN_SITE_SLUG: 'demo', ELOWEN_SITE_URL: 'https://demo.example/path?a=1&b=2' } });
     expect(settings).toContain('PrivateUsers=1073741824:65536');
+    expect(settings).toContain('Environment="ELOWEN_SITE_SLUG=demo"');
+    expect(settings).toContain('Environment="ELOWEN_SITE_URL=https://demo.example/path?a=1&b=2"');
     expect(settings).toContain('PrivateUsersOwnership=off');
     expect(settings).toContain('NoNewPrivileges=yes');
     expect(settings).toContain('CAP_SYS_PTRACE');
@@ -1257,14 +1260,14 @@ describe('privileged helper: the disk identity record', () => {
       }, undefined, {
         storage,
         env: environment,
-        readOwner: () => registry[`project:54:${diskRef.diskId}`],
-        readText: (path: string) => {
-          if (path === '/etc/subuid') return 'azureuser:100000:65536\n';
-          return path === RANGES ? JSON.stringify(registry) : '';
-        },
+        readOwner: () => registry['project:54'] ?? registry[`project:54:${diskRef.diskId}`],
+        readText: (path: string) => path === '/etc/subuid' ? 'azureuser:100000:65536\n' : '',
+        readUidRanges: () => ({ ...registry }),
         writeAtomic: (path: string, content: Buffer, mode: number) => {
-          if (path === RANGES) Object.assign(registry, JSON.parse(content.toString('utf8')));
-          else if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
+          if (path === RANGES) {
+            for (const key of Object.keys(registry)) delete registry[key];
+            Object.assign(registry, JSON.parse(content.toString('utf8')));
+          } else if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
         },
         runner: (file: string) => (file === '/usr/bin/getent'
           ? { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' }
@@ -1279,6 +1282,38 @@ describe('privileged helper: the disk identity record', () => {
     expect(next.uidBase).toBe(original.uidBase);
     // Adopted under the environment key, so the disk id it was allocated against stops deciding anything.
     expect(registry['project:54']).toBe(original.uidBase);
+    expect(registry[`project:54:${diskRef.diskId}`]).toBeUndefined();
+  });
+
+  it('treats only a missing uid registry as empty and never overwrites a damaged one', async () => {
+    const registryPath = join(scratch, `uid-registry-${randomUUID()}.json`);
+    expect(readUidRangeRegistry(registryPath)).toEqual({});
+    writeFileSync(registryPath, `${JSON.stringify({ 'project:54': UID_RANGE_BASE })}\n`, { mode: 0o600 });
+    expect(readUidRangeRegistry(registryPath)).toEqual({ 'project:54': UID_RANGE_BASE });
+
+    const broken = [
+      '{"project:54":',
+      '[]',
+      JSON.stringify({ 'project:54': UID_RANGE_BASE, 'project:55': UID_RANGE_BASE }),
+      JSON.stringify({ 'project:54': UID_RANGE_BASE + 1 }),
+    ];
+    for (const content of broken) {
+      writeFileSync(registryPath, content, { mode: 0o600 });
+      const fixture = diskFixture();
+      const before = fixture.writes.length;
+      await expect(applyRequest({
+        domain: 'nspawn', op: 'write-envelope', ...diskRef,
+        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, binds: [], dropCapabilities: [], privateNetwork: true,
+      }, undefined, { ...fixture.options, readUidRanges: () => readUidRangeRegistry(registryPath) })).rejects.toThrow(/uid range registry/);
+      expect(fixture.writes).toHaveLength(before);
+      expect(readFileSync(registryPath, 'utf8')).toBe(content);
+    }
+
+    const target = `${registryPath}.target`;
+    writeFileSync(target, '{}', { mode: 0o600 });
+    rmSync(registryPath, { force: true });
+    symlinkSync(target, registryPath);
+    expect(() => readUidRangeRegistry(registryPath)).toThrow(/cannot be opened/);
   });
 
   it('refuses an envelope over a root filesystem some other range owns', async () => {
@@ -1414,6 +1449,7 @@ describe('privileged helper: the disk identity record', () => {
       storage,
       env: environment,
       readOwner: () => UID_RANGE_BASE,
+      readUidRanges: () => ({}),
       writeAtomic: (path: string, content: Buffer, mode: number) => {
         writes.push({ path, content: content.toString('utf8'), mode });
         if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
@@ -1452,7 +1488,7 @@ describe('privileged helper: the disk identity record', () => {
       binds,
       dropCapabilities: [],
       privateNetwork: true,
-    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
+    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, readUidRanges: () => ({ [`site:${siteId}`]: UID_RANGE_BASE }), writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
 
     // A real repository already at that path is data, not a mount point to overwrite, and a file bound
     // over a directory fails the mount with a message that explains nothing.

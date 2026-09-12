@@ -220,6 +220,8 @@ function atomicWrite(path, bytes, mode) {
   }
   chmodSync(temp, mode);
   renameSync(temp, path);
+  const directory = openSync(dirname(path), O_RDONLY | O_DIRECTORY);
+  try { fsyncSync(directory); } finally { closeSync(directory); }
 }
 
 function restore(path, previous, mode) {
@@ -1032,13 +1034,59 @@ function nspawnExec(request, options) {
   };
 }
 
-function readUidRanges(readText) {
-  try {
-    const value = JSON.parse(readText(NSPAWN_UID_STATE_PATH));
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  } catch {
-    return {};
+const UID_REGISTRY_BYTES = 1024 * 1024;
+const UID_REGISTRY_KEY = /^(?:project:[1-9][0-9]*|site:[a-z0-9][a-z0-9-]{0,127})(?::[a-z0-9][a-z0-9-]{0,127})?$/;
+
+function validateUidRangeRegistry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('machine uid range registry has the wrong shape');
+  const ranges = {};
+  const occupied = new Set();
+  for (const [key, base] of Object.entries(value)) {
+    if (!UID_REGISTRY_KEY.test(key)) fail(`machine uid range registry has an invalid key: ${key}`);
+    if (!Number.isSafeInteger(base) || base < UID_RANGE_BASE || (base - UID_RANGE_BASE) % UID_RANGE_SIZE !== 0
+      || base >= UID_RANGE_BASE + UID_RANGE_SLOTS * UID_RANGE_SIZE) fail(`machine uid range registry has an invalid range for ${key}`);
+    if (occupied.has(base)) fail(`machine uid range registry assigns range ${base} more than once`);
+    occupied.add(base); ranges[key] = base;
   }
+  return ranges;
+}
+
+/** Read the root-owned uid registry without ever turning a damaged file into an empty allocation set.
+ *  Missing is the one initial state. Every existing file has to be a single, non-writable regular file,
+ *  bounded, complete JSON with one valid and unique slot per key. A partial write, permission failure,
+ *  symlink or wrong shape therefore stops the mutation that asked for a range. */
+export function readUidRangeRegistry(path = NSPAWN_UID_STATE_PATH) {
+  let fd;
+  try {
+    fd = openSync(path, O_RDONLY | O_NOFOLLOW);
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') return {};
+    throw new Error(`machine uid range registry cannot be opened: ${cause.message}`);
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o022) !== 0) fail('machine uid range registry is untrusted');
+    if (stat.size > UID_REGISTRY_BYTES) fail('machine uid range registry exceeds its bound');
+    let value;
+    try { value = JSON.parse(readFileSync(fd, 'utf8')); }
+    catch (cause) { throw new Error(`machine uid range registry is malformed: ${cause.message}`); }
+    return validateUidRangeRegistry(value);
+  } finally { closeSync(fd); }
+}
+
+function readUidRanges(options) {
+  if (typeof options.readUidRanges === 'function') return validateUidRangeRegistry(options.readUidRanges());
+  // Test and installer seams already virtualize host reads through this callback. Empty is their explicit
+  // missing-file sentinel; every non-empty existing value still has to parse and validate without fallback.
+  if (typeof options.readText === 'function') {
+    const text = options.readText(NSPAWN_UID_STATE_PATH);
+    if (text === '') return {};
+    let value;
+    try { value = JSON.parse(text); }
+    catch (cause) { throw new Error(`machine uid range registry is malformed: ${cause.message}`); }
+    return validateUidRangeRegistry(value);
+  }
+  return readUidRangeRegistry();
 }
 
 /** Allocate the ENVIRONMENT's fixed range once and record it. The registry is the single owner of the
@@ -1053,23 +1101,25 @@ function readUidRanges(readText) {
  *
  *  A disk allocated under the earlier per-disk key keeps the range its files are already chowned to; it
  *  is adopted under the environment key the first time the environment asks. */
-function uidRangeFor(paths, readText, writeAtomic) {
+function uidRangeFor(paths, options) {
   const key = `${paths.kind}:${paths.resource}`;
-  const ranges = readUidRanges(readText);
-  const recorded = Number.isSafeInteger(ranges[key]) ? ranges[key] : ranges[`${key}:${paths.diskId}`];
+  const legacyKey = `${key}:${paths.diskId}`;
+  const ranges = readUidRanges(options);
+  const recorded = Number.isSafeInteger(ranges[key]) ? ranges[key] : ranges[legacyKey];
   if (Number.isSafeInteger(recorded)) {
-    if (ranges[key] !== recorded) {
+    if (ranges[key] !== recorded || Object.hasOwn(ranges, legacyKey)) {
       ranges[key] = recorded;
-      writeAtomic(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+      delete ranges[legacyKey];
+      (options.writeAtomic ?? atomicWrite)(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
     }
     return recorded;
   }
-  const taken = new Set(Object.values(ranges).filter((value) => Number.isSafeInteger(value)));
+  const taken = new Set(Object.values(ranges));
   for (let slot = 0; slot < UID_RANGE_SLOTS; slot++) {
     const base = UID_RANGE_BASE + slot * UID_RANGE_SIZE;
     if (taken.has(base)) continue;
     ranges[key] = base;
-    writeAtomic(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+    (options.writeAtomic ?? atomicWrite)(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
     return base;
   }
   return fail('no machine uid range is available');
@@ -1223,7 +1273,6 @@ function nspawnMachineName(value) {
  *  own storage, and the target is the staging directory the daemon created and will rename into place. */
 function nspawnMaterialize(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
   const paths = nspawnDiskPaths(storage, request);
   const archive = trustedPath(storage, request.archivePath, { file: true });
   const target = trustedPath(storage, request.targetPath);
@@ -1268,7 +1317,7 @@ function nspawnMaterialize(request, storage, options) {
     const machineIdPath = join(trustedPath(storage, etc), 'machine-id');
     if (existsSync(machineIdPath)) writeFileSync(machineIdPath, '');
   }
-  const base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
+  const base = uidRangeFor(paths, options);
   // The pass translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
   // needs nothing from /etc/subuid and nothing about the service account.
   const shifted = shiftOwnership(runner, target, { base, size: UID_RANGE_SIZE });
@@ -1281,10 +1330,9 @@ function nspawnMaterialize(request, storage, options) {
  *  so a pass interrupted part-way through a tree is re-run rather than repaired. */
 function nspawnShiftOwnership(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
   const paths = nspawnDiskPaths(storage, request);
   const rootfs = trustedPath(storage, paths.rootfs);
-  const base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
+  const base = uidRangeFor(paths, options);
   const shifted = shiftOwnership(runner, rootfs, { base, size: UID_RANGE_SIZE });
   writeIdentity(paths, storage, identityFields(request, paths, base), options);
   return {
@@ -1395,10 +1443,19 @@ function nspawnDropCapabilities(raw) {
   return [...new Set([...NSPAWN_DROP_CAPABILITIES, ...requested])];
 }
 
+function nspawnEnvironment(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 64) fail('the machine environment is invalid');
+  return Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, raw]) => {
+    const text = typeof raw === 'string' ? raw : fail('the machine environment value is invalid');
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || text.length > 4096 || /[\0\r\n]/.test(text)) fail('the machine environment is invalid');
+    return `Environment="${`${key}=${text}`.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+  });
+}
+
 /** `:rootidmap` gives the guest's root the identity of the directory's host owner: a file the guest
  *  writes appears on the host as the service user, and a service-user file appears inside the machine as
  *  root. */
-export function renderMachineSettings(binds, { privateNetwork = true, uidBase, dropCapabilities = NSPAWN_DROP_CAPABILITIES }) {
+export function renderMachineSettings(binds, { privateNetwork = true, uidBase, environment = {}, dropCapabilities = NSPAWN_DROP_CAPABILITIES }) {
   if (!Number.isSafeInteger(uidBase) || uidBase < UID_RANGE_BASE) fail('the machine uid range is invalid');
   const lines = [
     '# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.',
@@ -1407,6 +1464,7 @@ export function renderMachineSettings(binds, { privateNetwork = true, uidBase, d
     'NoNewPrivileges=yes',
     `DropCapability=${[...dropCapabilities].join(' ')}`,
     'LinkJournal=no',
+    ...nspawnEnvironment(environment),
     '',
     '[Files]',
     // Ownership was applied once when the disk was materialized, so the boot must not repeat a chown over
@@ -1456,7 +1514,7 @@ function nspawnWriteEnvelope(request, storage, options) {
   const binds = nspawnBinds(storage, request.binds ?? []);
   ensureNestedMountPoints(binds, options.writeAtomic === undefined);
   const dropCapabilities = nspawnDropCapabilities(request.dropCapabilities);
-  const uidBase = uidRangeFor(paths, readText, writeAtomic);
+  const uidBase = uidRangeFor(paths, options);
   // The envelope DECLARES a range and never establishes one: `PrivateUsersOwnership=off` is deliberate,
   // so nothing at boot chowns the tree into the range written here. A tree that carries a different range
   // therefore boots into a machine whose own root owns none of it — `/etc` reads back as `nobody:nogroup`
@@ -1465,7 +1523,7 @@ function nspawnWriteEnvelope(request, storage, options) {
   // the two agree is one lstat, and it is exact.
   const owner = (options.readOwner ?? defaultReadOwner)(rootfs);
   if (owner !== uidBase) fail(`the root filesystem is owned by ${owner} and this envelope declares the range at ${uidBase}`);
-  const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, dropCapabilities });
+  const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, environment: request.environment ?? {}, dropCapabilities });
   const dropIn = renderMachineDropIn(rootfs, limits, uidBase);
   const settingsPath = join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`);
   const dropInPath = join('/etc/systemd/system', `elowen-machine@${machine}.service.d`, '10-elowen.conf');
@@ -1985,7 +2043,7 @@ function importSiteData(request, storage, options, paths, data) {
     try { (options.setOwner ?? defaultSetOwner)(rootFd, 0, 0); } finally { closeSync(rootFd); }
     const verified = run(PYTHON, ['-c', DISK_TREE_VERIFY_PY, archive, staging]);
     if (!verified.ok) fail(`the imported site data could not be verified: ${String(verified.stderr || '').slice(-400)}`);
-    const base = uidRangeFor(paths, options.readText ?? defaultReadText, options.writeAtomic ?? atomicWrite);
+    const base = uidRangeFor(paths, options);
     shiftOwnership(options.runner ?? defaultCommandRunner, staging, { base, size: UID_RANGE_SIZE });
     const synced = run(PYTHON, ['-c', DISK_TREE_SYNC_PY, staging]);
     if (!synced.ok) fail(`the imported site data could not be flushed: ${String(synced.stderr || '').slice(-400)}`);

@@ -679,7 +679,7 @@ describe('runtime client selection', () => {
     try { selectRuntimeClient(build(paths), { nspawn: client as any }); }
     catch (cause) { raised = cause; }
     expect(raised).toMatchObject({ code: 'unsupported_runtime', status: 409 });
-    expect(raised.message).toMatch(/delete the environment and create it again to build it from a published root filesystem/);
+    expect(raised.message).toMatch(/removed Podman runtime.*Delete the managed Project or Site/);
   });
 
   it('refuses an nspawn row on a runtime that has no machine client rather than falling back', () => {
@@ -707,6 +707,7 @@ describe('nspawn site envelope', () => {
       workspaceReadOnly: true, limits: { cpus: 1, memoryMb: 512, pidsLimit: 256 } }, binding);
     mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
     for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
+    writeFileSync(spec.envFile, 'ELOWEN_SITE_SLUG=shop\nELOWEN_SITE_URL=https://shop.example\n', { mode: 0o600 });
     // The git stub a Site mounts over `/workspace/.git` is a FILE, and the client validates it as one.
     // Creating every bind source as a directory is the kind of invented path that hides a real defect.
     for (const mount of spec.mounts.filter((entry: any) => entry.type === 'bind')) {
@@ -737,7 +738,8 @@ describe('nspawn site envelope', () => {
     const envelope = requests.find((request) => request.op === 'write-envelope');
     expect(envelope, String(outcome)).toBeDefined();
     expect(envelope).toMatchObject({ machine: spec.name, kind: 'site', resource: 'shop', generation: 3,
-      diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'], privateNetwork: false });
+      diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'], privateNetwork: false,
+      environment: { ELOWEN_SITE_SLUG: 'shop', ELOWEN_SITE_URL: 'https://shop.example' } });
     // Every bind, in the specification's own order, with the specification's own read-only flags. A Site
     // mounts its source read-only and its broker writable, and those are not the same decision.
     expect(envelope.binds).toEqual(spec.mounts.filter((mount: any) => mount.type === 'bind')
