@@ -1053,6 +1053,43 @@ describe('privileged helper: the disk identity record', () => {
     rmSync(archive, { force: true });
   });
 
+  it('materializes a fresh disk without a subordinate id range on the host', async () => {
+    // `offset` maps guest id g to base+g and reads no other mapping, so a fresh disk needs nothing from
+    // /etc/subuid. Asking for it anyway made creating ANY environment depend on provisioning that exists
+    // only to serve the container runtime, and failed outright on a host that had never run it — for two
+    // arguments the converter never reaches.
+    const fixture = diskFixture();
+    fixture.options.readText = (path: string) => (path === '/etc/subuid' ? '' : '');
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+
+    const response = await applyRequest({
+      domain: 'nspawn', op: 'materialize', ...diskRef,
+      archivePath: archive, targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options) as { ok: boolean; uidBase: number };
+
+    expect(response.ok).toBe(true);
+    expect(response.uidBase).toBeGreaterThanOrEqual(UID_RANGE_BASE);
+    // And the pass it ran carried no subordinate-range arguments at all, rather than carrying unused ones.
+    const pass = fixture.calls.find((call) => call.file === '/usr/bin/python3'
+      && String(call.args[1] ?? '').includes('to_machine'));
+    const spec = JSON.parse(pass!.args[2]!);
+    expect(spec).toMatchObject({ mode: 'offset', target: 'nspawn' });
+    expect(spec).not.toHaveProperty('serviceId');
+    expect(spec).not.toHaveProperty('previousBase');
+    rmSync(archive, { force: true });
+  });
+
+  it('still refuses a subordinate-id pass that names only one end of the mapping', async () => {
+    // The converter would read an absent end as a mapping that matches nothing and refuse every id in the
+    // tree, one file at a time, with a message about that file rather than about the missing argument.
+    const fixture = diskFixture();
+    fixture.options.readText = (path: string) => (path === '/etc/subuid' ? '' : '');
+    await expect(applyRequest({
+      domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'nspawn',
+    }, undefined, fixture.options)).rejects.toThrow(/subordinate id range/);
+  });
+
   it('refuses to write a veth envelope until the host can isolate the link', async () => {
     // The envelope is what turns veth on, so the gate lives here rather than in a status row a client is
     // free not to read. Nothing is written and no uid range is allocated on the way to the refusal.

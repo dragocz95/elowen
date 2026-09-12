@@ -1317,7 +1317,7 @@ function uidRangeFor(paths, readText, writeAtomic) {
  *  interrupted pass, which has no receipt and therefore cannot be reversed, is simply re-run. */
 const OWNERSHIP_SHIFT_PY = `import json,os,sys
 spec=json.loads(sys.argv[1]); root=sys.argv[2]
-base=spec['base']; size=spec['size']; service=spec['serviceId']; previous=spec['previousBase']
+base=spec['base']; size=spec['size']; service=spec.get('serviceId'); previous=spec.get('previousBase')
 def machine(uid):
  return base<=uid<base+size
 def podman(uid):
@@ -1343,7 +1343,14 @@ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
   if uid!=st.st_uid or gid!=st.st_gid: os.lchown(path,uid,gid); shifted+=1
 print(json.dumps({'entries':shifted}))`;
 
+/** `offset` maps guest id g to base+g and consults no other mapping; `subid` translates between the
+ *  machine range and the service account's subordinate range, and needs both ends named. The distinction
+ *  is enforced here rather than left to the converter, where an absent field would read as a mapping that
+ *  simply matches nothing and silently refuse every id in the tree. */
 function shiftOwnership(runner, root, spec) {
+  if (spec.mode === 'subid' && (!Number.isSafeInteger(spec.serviceId) || !Number.isSafeInteger(spec.previousBase))) {
+    fail('a subordinate-id ownership pass requires both ends of the mapping');
+  }
   const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root], { timeoutMs: DISK_TREE_TIMEOUT_MS });
   if (!result.ok) fail(`the machine ownership pass failed: ${String(result.stderr || '').slice(-400)}`);
   return JSON.parse(String(result.stdout || '{}'));
@@ -1483,7 +1490,6 @@ function nspawnMachineName(value) {
 function nspawnMaterialize(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
-  const env = options.env ?? process.env;
   const paths = nspawnDiskPaths(storage, request);
   const archive = trustedPath(storage, request.archivePath, { file: true });
   const target = trustedPath(storage, request.targetPath);
@@ -1529,11 +1535,11 @@ function nspawnMaterialize(request, storage, options) {
     if (existsSync(machineIdPath)) writeFileSync(machineIdPath, '');
   }
   const base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
-  const user = serviceUser(runner, env);
-  const podman = subordinateRangeFor(readText, user);
-  const shifted = shiftOwnership(runner, target, {
-    mode: 'offset', target: 'nspawn', base, size: UID_RANGE_SIZE, serviceId: podman.serviceId, previousBase: podman.subStart,
-  });
+  // `offset` translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
+  // needs nothing from /etc/subuid. It used to ask for it anyway and fail outright when the service
+  // account had no subordinate range, which made creating any environment depend on provisioning that
+  // exists only to serve the container runtime — for two arguments the converter never reaches.
+  const shifted = shiftOwnership(runner, target, { mode: 'offset', target: 'nspawn', base, size: UID_RANGE_SIZE });
   const identity = writeIdentity(paths, storage, identityFields(request, paths, base), options);
   return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity };
 }
