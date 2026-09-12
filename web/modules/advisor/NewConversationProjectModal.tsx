@@ -4,7 +4,7 @@ import { FolderGit2, Server } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useMe, useProjects } from '../../lib/queries';
 import { useMobileViewport } from '../../lib/useMobile';
-import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
+import { apiErrorMessage } from '../../lib/elowenClient';
 import { useToast } from '../../components/ui/Toast';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { ErrorState } from '../../components/ui/states';
@@ -51,7 +51,7 @@ function newConversationDestinations(projects: readonly Project[], isAdmin: bool
  *  composer with no signal that the project they picked was still being built, and no way to learn that
  *  it had failed. */
 export function NewConversationProjectModal() {
-  const { projectChoiceOpen, closeProjectChoice } = useBrainChat();
+  const { projectChoiceOpen, closeProjectChoice, activeSessionId } = useBrainChat();
   const { t } = useTranslation();
   const { toast } = useToast();
   const environment = useEnvironmentOperationWindow();
@@ -68,7 +68,7 @@ export function NewConversationProjectModal() {
 
   return (
     <>
-      {projectChoiceOpen ? <NewConversationProjectDialog environment={environment} onClose={closeProjectChoice} /> : null}
+      {projectChoiceOpen ? <NewConversationProjectDialog key={activeSessionId} environment={environment} onClose={closeProjectChoice} /> : null}
       {environment.pending ? (
         <OperationProgressDialog
           // Hiding the window is not a cancel: the start carries on without the tab, and a failure reopens
@@ -92,7 +92,7 @@ function NewConversationProjectDialog({ environment, onClose }: { environment: E
   const { t } = useTranslation();
   const s = t.projects;
   const { toast } = useToast();
-  const { telemetry, activeSessionId } = useBrainChat();
+  const { telemetry, activeSessionId, selectProjectExecution } = useBrainChat();
   const projects = useProjects();
   const me = useMe();
   const phone = useMobileViewport() === true;
@@ -119,7 +119,8 @@ function NewConversationProjectDialog({ environment, onClose }: { environment: E
     try {
       // The same authorized endpoint the chat's project picker uses; the daemon owns whether this
       // account may enter the target.
-      const response = await elowenClient.brainSetExecution(destination.ref, session);
+      const response = await selectProjectExecution(destination.ref, session);
+      if (!response) return;
       // A cold environment answers the switch with the operation that brings it up. The window that
       // follows it belongs to the level above, so the question is over the moment it is answered: the
       // person lands in the composer and that window reports the start.

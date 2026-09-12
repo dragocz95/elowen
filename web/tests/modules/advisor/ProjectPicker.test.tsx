@@ -8,7 +8,16 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { emitPluginEvent } from '../../../lib/pluginEvents';
 import type { ProjectExecutionRef } from '../../../lib/types';
 
-const chat = { telemetry: { project: null as { cwd: string } | null, projectRef: null as ProjectExecutionRef | null }, activeSessionId: null as string | null };
+import { elowenClient } from '../../../lib/elowenClient';
+const chat = {
+  telemetry: { project: null as { cwd: string } | null, projectRef: null as ProjectExecutionRef | null },
+  activeSessionId: null as string | null,
+  selectProjectExecution: async (target: ProjectExecutionRef, session: string) => {
+    const response = await elowenClient.brainSetExecution(target, session);
+    if (chat.activeSessionId === session) chat.telemetry.projectRef = response.projectRef;
+    return response;
+  },
+};
 vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => chat }));
 const { ProjectPicker } = await import('../../../modules/advisor/ProjectPicker');
 const PROJECTS = [{ id: 1, slug: 'kolin', path: '/workspace', executionKind: 'managed' }, { id: 2, slug: 'elowen', path: '/workspace', executionKind: 'managed' }];

@@ -14,7 +14,7 @@ import {
   brainRateLimits,
   DEFAULT_SESSION_ID,
 } from '../../seed/fixtures.ts';
-import type { BrainGoal, BrainMessage } from '../../../../lib/types.ts';
+import type { BrainGoal, BrainMessage, ProjectExecutionRef } from '../../../../lib/types.ts';
 import { registerStream, unregisterStream, emitToStreams } from '../streams.ts';
 import { sseFrame, idleEvent } from '../emitters.ts';
 import { getResponse, getMessages } from '../overrides.ts';
@@ -26,6 +26,7 @@ export interface RecordedSend {
   client?: string;
   generation?: number;
   mode?: string;
+  projectRef?: ProjectExecutionRef;
   at: number;
 }
 
@@ -44,6 +45,9 @@ const recordedCalls: RecordedCall[] = [];
  *  afterwards — mirroring the real route, which respawns the session in place under the new model. Keyed by
  *  the session id the switch targeted (defaulting to the active conversation). */
 const modelBySession = new Map<string, string>();
+// A fresh, empty conversation persists its target without publishing a transcript event.
+const executionBySession = new Map<string, ProjectExecutionRef>();
+let activeSessionId = DEFAULT_SESSION_ID;
 
 /** Durable `model → X` markers a `POST /brain/model` switch persisted into the transcript, keyed by session.
  *  The real route writes a display marker into history AND pushes a `session-event`; every attached client
@@ -67,6 +71,8 @@ export function resetSentTurns(): void {
   recordedSends.length = 0;
   recordedCalls.length = 0;
   modelBySession.clear();
+  executionBySession.clear();
+  activeSessionId = DEFAULT_SESSION_ID;
   markersBySession.clear();
 }
 
@@ -107,7 +113,8 @@ export function registerBrainRoutes(app: Hono): void {
     // status and must see the new model (exactly what makes a passive watcher's picker label move).
     const key = session ?? base.sessionId ?? DEFAULT_SESSION_ID;
     const switched = modelBySession.get(key);
-    return c.json({ ...base, ...(switched ? { model: switched } : {}), ...(session ? { sessionId: session } : {}) });
+    const projectRef = executionBySession.get(key);
+    return c.json({ ...base, ...(switched ? { model: switched } : {}), ...(projectRef ? { projectRef } : {}), ...(session ? { sessionId: session } : {}) });
   });
 
   app.get('/brain/sessions', (c) => c.json(getResponse('brain/sessions', brainSessions)));
@@ -141,8 +148,16 @@ export function registerBrainRoutes(app: Hono): void {
         ? body.session
         : body.fresh === true
           ? `brain-fresh-${Date.now()}`
-          : DEFAULT_SESSION_ID;
-    return c.json({ sessionId }, 201);
+          : activeSessionId;
+    activeSessionId = sessionId;
+    if (body.fresh === true) executionBySession.set(sessionId, { kind: 'host' });
+    return c.json({ sessionId, created: body.fresh === true }, 201);
+  });
+
+  app.post('/brain/execution', async (c) => {
+    const { target, session } = await c.req.json() as { target: ProjectExecutionRef; session: string };
+    executionBySession.set(session, target);
+    return c.json({ projectRef: target, workDir: target.kind === 'managed' ? '/selected-project' : '/host' });
   });
 
   app.post('/brain/send', async (c) => {
@@ -159,6 +174,7 @@ export function registerBrainRoutes(app: Hono): void {
       client: typeof body.client === 'string' ? body.client : undefined,
       generation: typeof body.generation === 'number' ? body.generation : undefined,
       mode: typeof body.mode === 'string' ? body.mode : undefined,
+      projectRef: executionBySession.get(typeof body.session === 'string' ? body.session : activeSessionId),
       at: Date.now(),
     });
     return c.json({ ok: true, accepted: true }, 202);

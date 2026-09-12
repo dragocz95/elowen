@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useProjects } from '../../lib/queries';
-import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
+import { apiErrorMessage } from '../../lib/elowenClient';
 import { executionRefKey, executionRefOf, type ProjectExecutionRef } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
@@ -20,24 +20,23 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const { t } = useTranslation();
   const s = t.projects;
   const { toast } = useToast();
-  const { telemetry, activeSessionId } = useBrainChat();
+  const { telemetry, activeSessionId, selectProjectExecution } = useBrainChat();
   const projects = useProjects();
   const [open, setOpen] = useState(false);
   const [moving, setMoving] = useState(false);
   const [moveStatus, setMoveStatus] = useState<SaveStatus>('idle');
   const [retryTarget, setRetryTarget] = useState<ProjectExecutionRef | null>(null);
-  const [confirmed, setConfirmed] = useState<{ session: string; target: ProjectExecutionRef } | null>(null);
   // The environment the switch asked for, followed until it settles.
   const environment = useEnvironmentOperationWindow();
   const { forget } = environment;
   const sessionRef = useRef(activeSessionId);
   sessionRef.current = activeSessionId;
   const reported = telemetry.projectRef;
-  useEffect(() => { setConfirmed(null); setMoveStatus('idle'); setRetryTarget(null); }, [activeSessionId, reported?.kind, reported?.projectId]);
+  useEffect(() => { setMoveStatus('idle'); setRetryTarget(null); }, [activeSessionId, reported?.kind, reported?.projectId]);
   // Another conversation's environment is not this one's business: what the picker follows belongs to the
   // switch that started it, and only the reported target moves while that switch is still coming up.
   useEffect(() => { forget(); }, [activeSessionId, forget]);
-  const target = confirmed?.session === activeSessionId ? confirmed.target : reported;
+  const target = reported;
   // A host project is a project: whoever the API offers it to may work in it, and the daemon confines
   // the turn to that project's root exactly as it confines a managed one to its environment.
   const items = (projects.data ?? []).filter((p) => p.lifecycle !== 'deleting');
@@ -60,9 +59,9 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
     if (!session || moving) return;
     setOpen(false); setRetryTarget(next); setMoveStatus('saving'); setMoving(true);
     try {
-      const response = await elowenClient.brainSetExecution(next, session);
-      if (sessionRef.current !== session) return;
-      setConfirmed({ session, target: response.projectRef }); setMoveStatus('idle');
+      const response = await selectProjectExecution(next, session);
+      if (!response || sessionRef.current !== session) return;
+      setMoveStatus('idle');
       // The switch itself is already done — the daemon answered before the container work started. What
       // comes back is the operation that brings the environment up, and following it is what replaces
       // the spinner that used to sit on the save indicator until the container happened to appear.

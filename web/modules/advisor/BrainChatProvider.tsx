@@ -235,6 +235,8 @@ export interface BrainChatValue {
   /** Whether the project question for a just-created conversation is on screen. */
   projectChoiceOpen: boolean;
   closeProjectChoice: () => void;
+  /** Commit the daemon-confirmed execution identity for both project selection surfaces. */
+  selectProjectExecution: (target: NonNullable<BrainStatus['projectRef']>, session: string) => Promise<Awaited<ReturnType<typeof elowenClient.brainSetExecution>> | undefined>;
   openReadOnly: (sessionId: string) => Promise<void>;
   exitReadOnly: () => void;
   deleteSession: (id: string, wasActive: boolean) => Promise<void>;
@@ -531,7 +533,30 @@ function useBrainChatController(): BrainChatValue {
   const truncatedPendingRef = useRef(false);
   /** Per-field stream freshness. Status starts before the stream, so any overlapping frame that lands first
    *  is newer truth for that field and must not be overwritten by the older read. */
-  const hydrationStampRef = useRef({ session: 0, model: 0, control: 0, cards: 0, artifacts: 0, queue: 0 });
+  const hydrationStampRef = useRef({ session: 0, model: 0, control: 0, cards: 0, artifacts: 0, queue: 0, project: 0 });
+
+  /** Publish one status read's telemetry. The execution identity is fenced on its own stamp, because a
+   *  confirmed switch or a newer read may already have published it while this read was in flight. The MCP
+   *  and LSP sections of the same response carry no such race — nothing else ever publishes them — so a
+   *  fenced project field must not take them down with it and leave the panel blank until the next session
+   *  event happens to refill it. */
+  const applyTelemetry = (st: BrainStatus, projectFresh: boolean): void => {
+    setTelemetry((current) => (projectFresh
+      ? telemetryOf(st)
+      : { ...telemetryOf(st), projectRef: current.projectRef, project: current.project }));
+  };
+
+  const selectProjectExecution: BrainChatValue['selectProjectExecution'] = async (target, session) => {
+    if (boundSessionRef.current !== session) return;
+    const generation = genRef.current;
+    const response = await elowenClient.brainSetExecution(target, session);
+    if (generation !== genRef.current || boundSessionRef.current !== session) return;
+    // Empty conversations emit no transcript cwd event. The mutation response is already authoritative;
+    // publish it for every consumer and fence status reads started before confirmation.
+    hydrationStampRef.current.project += 1;
+    setTelemetry((current) => ({ ...current, projectRef: response.projectRef, project: null }));
+    return response;
+  };
   /** How long the stream may stay silent before it counts as dead, in either phase — operator-tunable
    *  (`runtime.limits`), floored at the heartbeat interval, and falling back to the built-in defaults until
    *  the config arrives, so a daemon that never answers behaves exactly as before. */
@@ -583,8 +608,11 @@ function useBrainChatController(): BrainChatValue {
     boundGenRef.current = generation;
     setActiveSessionId(started.sessionId);
     // A conversation that did not exist before this connect gets the project question, whether the person
-    // asked for a new one or simply opened the chat with nothing to resume.
-    if (started.created) setProjectChoiceOpen(true);
+    // asked for a new one or simply opened the chat with nothing to resume. A question already on screen
+    // belongs to the conversation it was raised for: switching away leaves it behind, while a plain
+    // reconnect to the SAME conversation must not answer it by making it disappear.
+    if (started.created === true) setProjectChoiceOpen(true);
+    else if (previousSession !== started.sessionId) setProjectChoiceOpen(false);
     // The stream's snapshot frame hydrates the transcript (see the `snapshot` listener), so there is no
     // history fetch here. The view is cleared up front only when what it currently shows does NOT belong to
     // the conversation being connected — another conversation, or a read-only preview of a foreign session.
@@ -781,12 +809,16 @@ function useBrainChatController(): BrainChatValue {
         // reconnecting; usage stays fenced against a newer stream event.
         sessionEvent: () => {
           void loadHistory(genRef.current).catch(() => { /* best-effort */ });
+          const projectStamp = ++hydrationStampRef.current.project;
+          const session = boundSessionRef.current;
           const usageRead = startUsageRead();
           void elowenClient.brainStatus(boundSessionRef.current)
             .then((status) => {
               if (generation !== genRef.current) return;
               setUsageIfFresh(status.usage, usageRead);
-              setTelemetry(telemetryOf(status));
+              if (session === boundSessionRef.current) {
+                applyTelemetry(status, projectStamp === hydrationStampRef.current.project);
+              }
               setLineCfg(status.statusline);
               hydrationStampRef.current.model += 1;
               setCurrentModel(status.model);
@@ -845,7 +877,7 @@ function useBrainChatController(): BrainChatValue {
     // field in that response belongs to the conversation we already left.
     if (fresh.session !== statusHydrationStamp.session) return;
     setUsageIfFresh(st.usage, statusUsageRead);
-    setTelemetry(telemetryOf(st));
+    applyTelemetry(st, fresh.project === statusHydrationStamp.project);
     setLineCfg(st.statusline);
     if (fresh.model === statusHydrationStamp.model) {
       setCurrentModel(st.model);
@@ -1397,6 +1429,7 @@ function useBrainChatController(): BrainChatValue {
     renameOpen, closeRename: () => setRenameOpen(false), renameSession,
     historyOpen, openHistory: () => setHistoryOpen(true), closeHistory: () => setHistoryOpen(false),
     startNewConversation,
+    selectProjectExecution,
     projectChoiceOpen,
     // Whether a project was chosen or the dialog was simply dismissed, the fresh conversation is where the
     // person is going: reveal the chat and focus its composer, the same request the launcher raises.

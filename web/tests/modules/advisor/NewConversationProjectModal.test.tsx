@@ -7,6 +7,7 @@ import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { emitPluginEvent } from '../../../lib/pluginEvents';
 import type { ProjectExecutionRef } from '../../../lib/types';
+import { elowenClient } from '../../../lib/elowenClient';
 
 /** The question a brand-new conversation is asked, before the first message is written.
  *
@@ -22,6 +23,7 @@ const chat = vi.hoisted(() => {
     value: {
       projectChoiceOpen: true,
       closeProjectChoice,
+      selectProjectExecution: (target: ProjectExecutionRef, session: string) => elowenClient.brainSetExecution(target, session),
       telemetry: { projectRef: null as ProjectExecutionRef | null },
       activeSessionId: 'brain-1-a' as string | null,
     },
