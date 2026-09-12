@@ -1614,10 +1614,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return await manageWorktrees({ db, runGuest, row, userId: input.accountUserId, action: input.action, root: rootOf(row) });
   }
 
-  function forwarderSocketPresent(path) {
-    try { return lstatSync(path).isSocket(); }
-    catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
-  }
   /** Remove a socket this runtime put there: only ever inside the project's own broker directory, which
    *  the daemon owns (0700), and only a socket — anything else at that path is not ours to delete. */
   function removeForwarderSocket(path, kind) {
