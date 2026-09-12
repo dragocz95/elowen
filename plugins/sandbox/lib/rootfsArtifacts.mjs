@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream, lstatSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
+import { createReadStream, createWriteStream, lstatSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -18,10 +18,12 @@ import {
  *
  *  Three properties the rest of the runtime depends on:
  *
- *  - A blob that exists has been VERIFIED. It is written to a private incoming file, hashed as it is
+ *  - A blob this store HANDS OUT has been verified, and verified against its own bytes rather than
+ *    against the history of how it got there. It is written to a private incoming file, hashed as it is
  *    written, and only renamed into the store when the digest and the length both match what the
- *    catalogue pinned. A partial or substituted download never acquires a name anything looks up, so
- *    there is no state where a caller has to decide whether to trust what it found.
+ *    catalogue pinned — and it is hashed again before it is returned from the cache, because what the
+ *    download proved is a statement about the past. The store is a directory on a host, and the whole
+ *    point of addressing it by content is that a name is not evidence.
  *  - Nothing here builds, converts or approximates a root filesystem. A missing artifact is an error
  *    with a code and a reference in it; there is no path that produces a different filesystem instead.
  *  - A materialized disk does not depend on the blob surviving. Unpacking copies the bytes out, so the
@@ -56,8 +58,10 @@ export class RootfsArtifactStore {
     this.#logger = options.logger ?? null;
   }
 
-  /** The catalogue entry plus whether this host already holds the bytes. Read-only and cheap: it stats
-   *  one file and never reaches the network, so a readiness poll can ask it as often as it likes. */
+  /** The catalogue entry plus whether this host looks like it already holds the bytes. Read-only and
+   *  cheap: it stats one file, never reaches the network and never hashes anything, so a readiness poll
+   *  can ask it as often as it likes. `present` is therefore a readiness hint and not a verification —
+   *  `ensure` is the one that decides, and it hashes. */
   status(reference) {
     const { name, version } = parseArtifactReference(reference);
     const entry = this.#catalog(reference);
@@ -88,15 +92,39 @@ export class RootfsArtifactStore {
     if (!ARTIFACT_DIGEST.test(entry.digest)) throw fail('artifact_digest_invalid', `The pinned digest for ${reference} is malformed`);
     if (entry.sizeBytes > this.#maxBytes) throw fail('artifact_too_large', `${reference} is larger than this host accepts`);
     const path = join(this.#root, blobName(entry.digest));
-    // Present already means verified already: nothing is renamed into the store until it has matched.
-    // The size is re-checked because a truncating write outside this process is cheap to notice and
-    // expensive to unpack.
+    // What is already here is HASHED before it is handed over, never accepted on the strength of the
+    // download that put it there. The helper unpacks these bytes as root with `--same-owner` and
+    // `--preserve-permissions`, so anything able to write into this directory could substitute a
+    // filesystem and have its own ownership, modes and capabilities established inside a machine; a name
+    // and a length are not what decides that. The size stays as the cheap pre-filter in front of the hash:
+    // a truncated or replaced blob of the wrong length costs one lstat to reject instead of a read of
+    // several gigabytes.
     try {
-      if (lstatSync(path).size === entry.sizeBytes) return { path, digest: entry.digest, sizeBytes: entry.sizeBytes, fetched: false };
+      const size = lstatSync(path).size;
+      const digest = size === entry.sizeBytes ? await this.#digestOf(path, options) : null;
+      if (digest === entry.digest) return { path, digest: entry.digest, sizeBytes: entry.sizeBytes, fetched: false };
+      this.#logger?.warn?.(`artifact_digest_mismatch: the cached root filesystem ${entry.reference} is ${digest ?? `${size} bytes`} where ${entry.digest} was pinned; removing it and fetching it again`);
       unlinkSync(path);
     } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     await this.#download(entry, path, options);
     return { path, digest: entry.digest, sizeBytes: entry.sizeBytes, fetched: true };
+  }
+
+  /** The digest of a blob already on disk, streamed. These archives run to several gigabytes, so the file
+   *  is read in chunks and only the hash state is kept: reading one into memory to check it would cost
+   *  more than materializing the environment it is about to become. */
+  async #digestOf(path, options) {
+    const hash = createHash('sha256');
+    const stream = createReadStream(path);
+    try {
+      for await (const chunk of stream) {
+        options.signal?.throwIfAborted();
+        hash.update(chunk);
+      }
+    } finally {
+      stream.destroy();
+    }
+    return `sha256:${hash.digest('hex')}`;
   }
 
   async #download(entry, path, options) {

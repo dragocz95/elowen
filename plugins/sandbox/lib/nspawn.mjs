@@ -809,10 +809,11 @@ export class NspawnClient {
   async materializeRootfs(spec, pendingPath, options = {}) {
     this.#assertScope(spec);
     const pending = checkedHostPath(pendingPath);
-    // The artifact store hands back a blob it has already verified against the pinned digest, so nothing
-    // here re-checks it and nothing here cleans it up: the blob is a shared cache entry owned by the
-    // store, not a per-environment temporary. Unpacking copies the bytes out, which is what lets the
-    // store reclaim it afterwards without touching this disk.
+    // The artifact store hashes the blob against the pinned digest before it hands the path over — on a
+    // cache hit as much as on a download — so what arrives here is verified bytes rather than a verified
+    // history, and nothing here cleans it up: the blob is a shared cache entry owned by the store, not a
+    // per-environment temporary. Unpacking copies the bytes out, which is what lets the store reclaim it
+    // afterwards without touching this disk.
     const artifact = await this.#artifacts.ensure(spec.disk.sourceImage, options);
     await this.extractRootfsArchive(spec, artifact.path, pending);
     return artifact.digest;

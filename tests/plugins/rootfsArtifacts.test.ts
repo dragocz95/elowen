@@ -165,6 +165,41 @@ describe('root filesystem artifact store', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('hashes what is already in the store instead of trusting its length', async () => {
+    // The substitution a length cannot see: the SAME number of bytes, different content. The helper
+    // unpacks whatever comes back as root with `--same-owner` and `--preserve-permissions`, so a store
+    // that answered on the size alone would establish this attacker's ownership, modes and capabilities
+    // inside the next machine created from the recipe.
+    const fetchImpl = respond(BYTES);
+    const { dataDir, store: subject } = store({ fetchImpl });
+    const { path } = await subject.ensure('project-base@1');
+
+    const substituted = Buffer.alloc(BYTES.length, 0x7a);
+    expect(substituted.length).toBe(BYTES.length);
+    expect(substituted).not.toEqual(BYTES);
+    writeFileSync(path, substituted);
+
+    const again = await subject.ensure('project-base@1');
+    expect(again).toMatchObject({ digest: DIGEST, fetched: true });
+    expect(readFileSync(again.path)).toEqual(BYTES);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    // Replaced rather than kept beside the real one, so nothing can later find the substituted bytes.
+    expect(blobs(dataDir)).toEqual([blobName(DIGEST)]);
+  });
+
+  it('carries the mismatch through when a substituted blob cannot be replaced', async () => {
+    // The mirror is gone by the time the substitution is noticed, so there is nothing to re-fetch. The
+    // refusal must not degrade into handing back what is on disk.
+    const { dataDir, store: subject } = store({ fetchImpl: respond(BYTES) });
+    const { path } = await subject.ensure('project-base@1');
+    writeFileSync(path, Buffer.alloc(BYTES.length, 0x7a));
+
+    const offline = new RootfsArtifactStore({ dataDir, catalog: published(),
+      fetchImpl: vi.fn(async () => { throw new Error('getaddrinfo ENOTFOUND'); }) });
+    await expect(offline.ensure('project-base@1')).rejects.toMatchObject({ code: 'artifact_unreachable' });
+    expect(blobs(dataDir)).toEqual([]);
+  });
+
   it('reports what the host holds without reaching the network', () => {
     const fetchImpl = vi.fn();
     const { store: subject } = store({ fetchImpl });
