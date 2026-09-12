@@ -60,6 +60,7 @@ function fakeBrain() {
   let processes: ProcessInfo[] = [];
   let processOutputText: string | null = 'buffer';
   let unknownSessionError: Error | null = null;
+  let managedDeleteError: Error | null = null;
   let snapshotPending: BrainEvent[] = [{ type: 'text', delta: 'post-snapshot event' }];
   let snapshotPendingSync = false;
   let snapshotDelay: Promise<void> | undefined;
@@ -113,6 +114,7 @@ function fakeBrain() {
     __setProcesses: (list: ProcessInfo[]) => { processes = list; },
     __setProcessOutput: (text: string | null) => { processOutputText = text; },
     __failUnknownSession: () => { unknownSessionError = new Error('unknown session'); },
+    __failManagedDelete: (message: string | null) => { managedDeleteError = message ? new Error(message) : null; },
     isOwner: (_id: number) => owner,
     processes: (id: number, session?: string) => {
       processCalls.push({ id, session });
@@ -316,6 +318,15 @@ function fakeBrain() {
       if (opts.maxBytes === 1) throw new Error('debug payload exceeds byte limit:42');
       return { items: [{ role: 'user', content: 'legacy' }], nextCursor: null, loadedBytes: 6, exact: false };
     },
+    listManagedSessions: () => [],
+    deleteManagedSession: async () => {
+      if (managedDeleteError) throw managedDeleteError;
+      return 1;
+    },
+    deleteAllManagedSessions: async () => {
+      if (managedDeleteError) throw managedDeleteError;
+      return 2;
+    },
     // Two conversations, so a limit=1 window has a real second page (hasMore).
     listSessions: (id: number, opts?: { limit?: number; offset?: number }) => {
       const all = [
@@ -419,6 +430,19 @@ const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authori
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('brain routes', () => {
+  it('returns 409 when managed session cleanup cannot confirm process cancellation', async () => {
+    const { app, adminTok, brain } = setup();
+    brain.__failManagedDelete('runner process cancellation was unconfirmed');
+
+    const one = await app.request('/brain/managed-sessions/brain-1', del(adminTok));
+    expect(one.status).toBe(409);
+    expect(await one.json()).toEqual({ error: 'session processes are still active' });
+
+    const all = await app.request('/brain/managed-sessions?scope=all', del(adminTok));
+    expect(all.status).toBe(409);
+    expect(await all.json()).toEqual({ error: 'session processes are still active' });
+  });
+
   it('serves an owned .htm only as an opaque attachment and 404s the same file for another user', async () => {
     const root = mkdtempSync(join(tmpdir(), 'brain-chat-files-'));
     pluginRoots.push(root);

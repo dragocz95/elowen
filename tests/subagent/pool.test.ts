@@ -679,6 +679,37 @@ describe('SubagentRunnerPool — the background-process verbs across runners', (
     await run;
   });
 
+  it('aggregates explicit failed ids from session and account sweeps', async () => {
+    const h = poolWith();
+    const run = fire(h.pool.run(request('subagent-sub-dlg-a'), 'one'));
+    await settle();
+    h.children[0]?.boot();
+    await settle();
+
+    const sessionSweep = h.pool.killSessionProcesses('brain-ch-subagent-sub-dlg-a');
+    await settle();
+    const sessionAsk = h.children[0]!.received.filter(
+      (message): message is Extract<DaemonToRunner, { type: 'killSessionProcesses' }> => message.type === 'killSessionProcesses',
+    ).at(-1)!;
+    h.children[0]!.reply({
+      type: 'sessionProcessesKilled', requestId: sessionAsk.requestId, killed: 1, failed: ['session-stubborn'],
+    });
+    expect(await sessionSweep).toEqual({ killed: 1, failed: ['session-stubborn'] });
+
+    const accountSweep = h.pool.killAccountProcesses(1);
+    await settle();
+    const accountAsk = h.children[0]!.received.filter(
+      (message): message is Extract<DaemonToRunner, { type: 'killAccountProcesses' }> => message.type === 'killAccountProcesses',
+    ).at(-1)!;
+    h.children[0]!.reply({
+      type: 'accountProcessesKilled', requestId: accountAsk.requestId, killed: 2, failed: ['account-stubborn'],
+    });
+    expect(await accountSweep).toEqual({ killed: 2, failed: ['account-stubborn'] });
+
+    h.children[0]!.finish(h.children[0]!.turns()[0]!.turnId);
+    await run;
+  });
+
   it('a wedged runner REJECTS the pool verbs instead of faking an answer', { timeout: 15_000 }, async () => {
     const h = poolWith();
     const run = fire(h.pool.run(request('subagent-sub-dlg-a'), 'one'));
@@ -692,6 +723,7 @@ describe('SubagentRunnerPool — the background-process verbs across runners', (
     await Promise.all([
       expect(h.pool.listProcesses()).rejects.toThrow('did not answer the process request in time'),
       expect(h.pool.killSessionProcesses('brain-ch-subagent-sub-dlg-a')).rejects.toThrow('did not answer the process request in time'),
+      expect(h.pool.killAccountProcesses(1)).rejects.toThrow('did not answer the process request in time'),
       expect(h.pool.killProcess('p-a', 'brain-ch-subagent-sub-dlg-a')).rejects.toThrow('did not answer the process request in time'),
     ]);
 
@@ -704,6 +736,6 @@ describe('SubagentRunnerPool — the background-process verbs across runners', (
     expect(await h.pool.listProcesses()).toEqual([]);
     expect(await h.pool.killProcess('p-x', 'brain-ch-subagent-sub-dlg-x')).toBe(false);
     expect(await h.pool.processOutput('p-x', 'brain-ch-subagent-sub-dlg-x')).toBeNull();
-    expect(await h.pool.killSessionProcesses('brain-ch-subagent-sub-dlg-x')).toBe(0);
+    expect(await h.pool.killSessionProcesses('brain-ch-subagent-sub-dlg-x')).toEqual({ killed: 0, failed: [] });
   });
 });

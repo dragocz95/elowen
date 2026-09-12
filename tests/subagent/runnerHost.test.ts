@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { SubagentRunnerHost } from '../../src/subagent/runnerHost.js';
 import { subagentBuildId, type DaemonToRunner, type RunnerToDaemon } from '../../src/subagent/protocol.js';
 import { SubagentRunnerUnavailable, type DelegatedTurnRequest } from '../../src/brain/delegatedTurn.js';
+import { DIRECT_PROCESS_TOKEN_ENV, killTokenProcesses, tokenPids } from '../../src/brain/processTokens.js';
 
 const request: DelegatedTurnRequest = {
   channelId: 'subagent-sub-dlg-1',
@@ -527,6 +529,51 @@ describe('SubagentRunnerHost — the background-process verbs', () => {
     expect(await kill).toBe(true);
   });
 
+  it('rejects an explicit unconfirmed kill instead of reporting an already-finished process', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+    await run;
+
+    const kill = host.killProcess('bg-1', 'brain-ch-subagent-sub-dlg-1');
+    await tick();
+    const ask = child.received.filter((m) => m.type === 'killProcess').at(-1) as { requestId: string };
+    child.reply({
+      type: 'processKilled', requestId: ask.requestId, killed: false,
+      error: 'process bg-1 did not confirm its stop in time',
+    } as RunnerToDaemon);
+    await expect(kill).rejects.toThrow('did not confirm its stop in time');
+  });
+
+  it('gives a healthy bulk sweep enough time to return its bounded confirmation result', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const child = new FakeChild();
+      const host = hostWith(child);
+      const run = host.run(request, 'do it');
+      await tick();
+      ready(child);
+      await tick();
+      const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+      child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+      await run;
+
+      const sweep = host.killSessionProcesses('brain-ch-subagent-sub-dlg-1');
+      await tick();
+      const ask = child.received.filter((m) => m.type === 'killSessionProcesses').at(-1) as { requestId: string };
+      setTimeout(() => child.reply({
+        type: 'sessionProcessesKilled', requestId: ask.requestId, killed: 2, failed: [],
+      }), 2_200);
+      await vi.advanceTimersByTimeAsync(2_200);
+      await expect(sweep).resolves.toEqual({ killed: 2, failed: [] });
+    } finally { vi.useRealTimers(); }
+  });
+
   it('REJECTS on a wedged child instead of faking a confirmed kill or an empty list', async () => {
     // Fake ONLY the timers: setImmediate must stay real or the handshake ticks never run.
     vi.useFakeTimers({ toFake: ['setTimeout'] });
@@ -569,34 +616,54 @@ describe('SubagentRunnerHost — the background-process verbs', () => {
     expect(await list).toEqual([]);
   });
 
-  it('hands the last heartbeat’s kill tokens to onRunnerExited before the host is dropped', async () => {
-    const child = new FakeChild();
-    const events: Array<{ kind: string; tokens?: string[] }> = [];
-    const host = new SubagentRunnerHost({
-      dbPath: '/tmp/elowen-test.db',
-      project: { id: 1, slug: 'e2e', path: '/tmp/project' },
-      cwd: '/tmp/project',
-      fork: () => child.asChild(),
-      onHeartbeat: () => { events.push({ kind: 'beat' }); },
-      onRunnerExited: (tokens) => { events.push({ kind: 'exited', tokens }); },
-      onExit: () => { events.push({ kind: 'dropped' }); },
+  it('captures containment immediately and a stale heartbeat cannot erase it before runner death', async () => {
+    const token = randomBytes(24).toString('hex');
+    const processUnderTest = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      env: { ...process.env, [DIRECT_PROCESS_TOKEN_ENV]: token },
+      stdio: 'ignore',
     });
-    const run = host.run(request, 'do it');
-    await tick();
-    ready(child);
-    await tick();
-    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
-    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
-    await run;
+    try {
+      await vi.waitFor(() => expect(tokenPids([token])).toContain(processUnderTest.pid));
+      const child = new FakeChild();
+      const events: Array<{ kind: string; tokens?: string[] }> = [];
+      const host = new SubagentRunnerHost({
+        dbPath: '/tmp/elowen-test.db',
+        project: { id: 1, slug: 'e2e', path: '/tmp/project' },
+        cwd: '/tmp/project',
+        fork: () => child.asChild(),
+        onHeartbeat: () => { events.push({ kind: 'beat' }); },
+        onRunnerExited: (tokens) => {
+          events.push({ kind: 'exited', tokens });
+          killTokenProcesses(tokens);
+        },
+        onExit: () => { events.push({ kind: 'dropped' }); },
+      });
+      const run = host.run(request, 'do it');
+      await tick();
+      ready(child);
+      await tick();
+      const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+      child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+      await run;
 
-    child.reply({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 10, killTokens: ['tok-a', 'tok-b'] });
-    child.die(1);
-    // The tokens captured BEFORE death reach the sweep, and in order: sweep first, drop last.
-    expect(events).toEqual([
-      { kind: 'beat' },
-      { kind: 'exited', tokens: ['tok-a', 'tok-b'] },
-      { kind: 'dropped' },
-    ]);
+      // A process start must publish the private token immediately. The older heartbeat was already queued
+      // before that change and must not replace the newer containment revision when it arrives afterwards.
+      child.reply({ type: 'processContainment', revision: 2, killTokens: [token] } as RunnerToDaemon);
+      child.reply({
+        type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 10,
+        containment: { revision: 1, killTokens: [] },
+      } as RunnerToDaemon);
+      child.die(1, 'SIGKILL');
+
+      await vi.waitFor(() => expect(tokenPids([token])).toEqual([]));
+      expect(events).toEqual([
+        { kind: 'beat' },
+        { kind: 'exited', tokens: [token] },
+        { kind: 'dropped' },
+      ]);
+    } finally {
+      killTokenProcesses([token]);
+    }
   });
 
   it('settles every open process request when the runner dies', async () => {
@@ -612,15 +679,14 @@ describe('SubagentRunnerHost — the background-process verbs', () => {
 
     const kill = host.killProcess('bg-1', 'brain-ch-subagent-sub-dlg-1');
     const sweep = host.killSessionProcesses('brain-ch-subagent-sub-dlg-1');
+    const accountSweep = host.killAccountProcesses(1);
     await tick();
     child.die(1);
-    expect(await kill).toBe(false);
-    // Each verb settles to ITS OWN shape. A session sweep answers with a COUNT: the boolean the death
-    // path handed every non-list, non-output request reached the pool's sum as a coerced 0 and only
-    // looked right.
-    const swept = await sweep;
-    expect(swept).toBe(0);
-    expect(typeof swept).toBe('number');
+    // A runner that died during either cancellation cannot confirm it. Treating death as false/zero makes
+    // the process UI say "already finished" and lets session teardown delete the ownership rows.
+    await expect(kill).rejects.toThrow('runner exited during process cancellation');
+    await expect(sweep).rejects.toThrow('runner exited during process cancellation');
+    await expect(accountSweep).rejects.toThrow('runner exited during process cancellation');
   });
 
   it('forwards a runner registry change to the sink and settles the killSession sweep', async () => {
@@ -651,7 +717,9 @@ describe('SubagentRunnerHost — the background-process verbs', () => {
     await tick();
     const ask = child.received.filter((m) => m.type === 'killSessionProcesses').at(-1) as { requestId: string; sessionId: string };
     expect(ask.sessionId).toBe('brain-ch-subagent-sub-dlg-1');
-    child.reply({ type: 'sessionProcessesKilled', requestId: ask.requestId, killed: 2 });
-    expect(await sweep).toBe(2);
+    child.reply({
+      type: 'sessionProcessesKilled', requestId: ask.requestId, killed: 1, failed: ['bg-stubborn'],
+    } as RunnerToDaemon);
+    expect(await sweep).toEqual({ killed: 1, failed: ['bg-stubborn'] });
   });
 });
