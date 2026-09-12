@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { type Db } from '../../src/store/db.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore, ProjectExecutionRefError, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
-import { rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
+import { BrainUsageStore, rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
 import { planSlug } from '../../src/shared/planSlug.js';
 
 // The delivery path's tail truncation is a deliberate mirror of the subagent plugin's (neither side can
@@ -1041,7 +1041,7 @@ describe('BrainStore', () => {
     /** Append an assistant row carrying the full PI `usage` breakdown (+ a top-level ms `timestamp` and,
      *  when given, the PI `$.model` the row was produced with — the per-row attribution basis). The
      *  optional `durationMs` mirrors the persistence projector's generation-timing stamp. */
-    const usageMsg = (session: string, id: string, u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens: number; cost?: number }, tsMs = Date.now(), model?: string, durationMs?: number, effectiveMs?: number) =>
+    const usageMsg = (session: string, id: string, u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens: number; cost?: number }, tsMs = Date.now(), model?: string, durationMs?: number, effectiveMs?: number, stopReason?: 'stop' | 'error' | 'aborted') =>
       store.appendMessage({
         id, sessionId: session, parentId: null, role: 'assistant',
         content: {
@@ -1049,6 +1049,7 @@ describe('BrainStore', () => {
           ...(model == null ? {} : { model }),
           ...(durationMs == null ? {} : { durationMs }),
           ...(effectiveMs == null ? {} : { effectiveMs }),
+          ...(stopReason == null ? {} : { stopReason }),
           usage: {
             input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0,
             reasoning: u.reasoning ?? 0, totalTokens: u.totalTokens, ...(u.cost == null ? {} : { cost: { total: u.cost } }),
@@ -1105,6 +1106,25 @@ describe('BrainStore', () => {
       const [row] = store.usageByModel(1);
       expect(row!.usage.effectiveMeasuredOutput).toBe(400);
       expect(row!.usage.effectiveTps).toBeCloseTo(50); // 400 / 8 s — the empty attempt drags nothing
+    });
+
+    it('excludes failed retry attempts with partial output from the effective aggregate', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+      // The failed prefix is persisted for usage accounting, but the successful terminal message already
+      // carries the whole logical request window including that attempt and the retry backoff.
+      usageMsg('brain-a', 'failed', { output: 20, totalTokens: 30 }, Date.now(), undefined, undefined, 2000, 'error');
+      usageMsg('brain-a', 'recovered', { output: 100, totalTokens: 150 }, Date.now(), undefined, undefined, 5000, 'stop');
+
+      const projected = store.usageByModel(1)[0]!.usage;
+      expect(projected.output).toBe(120); // billing totals still include both provider-reported attempts
+      expect(projected.effectiveMeasuredOutput).toBe(100);
+      expect(projected.effectiveTps).toBeCloseTo(20); // delivered 100 / whole logical request 5 s
+
+      // An upgraded database serves the legacy message reader until its explicit projection backfill.
+      db.prepare('UPDATE brain_usage_rollup_state SET ready = 0 WHERE id = 1').run();
+      const legacy = new BrainUsageStore(db).usageByModel(1)[0]!.usage;
+      expect(legacy.effectiveMeasuredOutput).toBe(100);
+      expect(legacy.effectiveTps).toBeCloseTo(20);
     });
 
     it('groups effective speed per model, so a model switch never blends the windows', () => {
@@ -1476,6 +1496,18 @@ describe('BrainStore', () => {
         expect(store.usageByModel(1)[0]!.usage.outputTps).toBeCloseTo(50);
       });
 
+      it('does not revive a failed retry prefix as effective speed during compaction', () => {
+        store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+        usageMsg('brain-a', 'failed', { output: 20, totalTokens: 30 }, Date.now(), undefined, undefined, 2000, 'error');
+        usageMsg('brain-a', 'recovered', { output: 100, totalTokens: 150 }, Date.now(), undefined, undefined, 5000, 'stop');
+        store.compactSessionMessages('brain-a', { id: 'sum', role: 'compaction', content: { role: 'compactionSummary', summary: 's' } }, 1);
+
+        const usage = store.usageByModel(1)[0]!.usage;
+        expect(usage.output).toBe(120);
+        expect(usage.effectiveMeasuredOutput).toBe(100);
+        expect(usage.effectiveTps).toBeCloseTo(20);
+      });
+
       it('keeps the dropped generations EFFECTIVE timing so the end-to-end rate survives compaction', () => {
         store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
         // Effective-stamped rows dropped by the compaction roll their windows onto the divider…
@@ -1488,6 +1520,25 @@ describe('BrainStore', () => {
         expect(row!.usage.effectiveTps).toBeCloseTo(30);
         // These rows never carried a legacy post-header stamp, so the legacy figure stays honestly null.
         expect(row!.usage.outputTps).toBeNull();
+      });
+
+      it('treats unversioned effective rollups as unknown because failed prefixes cannot be reconstructed', () => {
+        store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+        store.appendMessage({
+          id: 'sum', sessionId: 'brain-a', parentId: null, role: 'compaction',
+          content: {
+            role: 'compactionSummary', summary: 's',
+            usageRollup: [{
+              model: 'claude-opus-4-8', input: 0, output: 100, cacheRead: 0, cacheWrite: 0,
+              totalTokens: 100, reasoning: 0, at: Date.now(), effectiveMs: 5000, effectiveOutput: 100,
+            }],
+          },
+        });
+
+        const usage = store.usageByModel(1)[0]!.usage;
+        expect(usage.output).toBe(100);
+        expect(usage.effectiveMeasuredOutput).toBe(0);
+        expect(usage.effectiveTps).toBeNull();
       });
 
       it('reads a rollup bucket written BEFORE effective timing existed as unmeasured (never reinterpreted)', () => {

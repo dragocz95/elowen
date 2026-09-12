@@ -42,8 +42,8 @@ export interface TokenUsage {
    *  the WHOLE logical model request, measured from its initiation — before the provider's response
    *  headers were awaited — to the complete response, PI-level retries and backoff included and tool
    *  execution excluded. An end-to-end rate the client experienced, not a pure decode rate. Computed only
-   *  over generations carrying the recorder's effective timing stamp, so history written before that
-   *  stamp existed never leaks its narrower post-header window into this figure (null here means
+   *  over successful generations carrying the recorder's effective timing stamp. Failed retry prefixes,
+   *  unversioned compaction rollups and history written before the stamp remain unknown (null means
    *  "nothing effective was measured", NOT zero speed). */
   effectiveTps?: number | null;
   /** The output tokens `effectiveTps` was measured over — a SUBSET of `output`, same contract as

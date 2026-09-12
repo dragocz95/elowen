@@ -12,6 +12,12 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
     ELSE json_extract(${src}, '${path}') END
 END, '')`;
 
+const successfulEffectiveMessage = (src: string): string =>
+  `COALESCE(json_extract(${src}, '$.stopReason'), '') NOT IN ('error', 'aborted')`;
+
+const trustedEffectiveRollup = (src: string): string =>
+  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 1`;
+
 const columns = `source_message_id, bucket_index, session_id, user_id, usage_epoch, provider, model, ts,
   input, output, cache_read, cache_write, total, reasoning, calls, duration_ms, measured_output,
   effective_ms, effective_output, cost`;
@@ -33,8 +39,10 @@ SELECT ${message}.id, -1, ${message}.session_id, s.user_id, ${message}.usage_epo
        CASE WHEN ${numeric(`${message}.content`, '$.durationMs')} > 0
                   AND ${numeric(`${message}.content`, '$.usage.output')} > 0
             THEN ${numeric(`${message}.content`, '$.usage.output')} ELSE 0 END,
-       ${numeric(`${message}.content`, '$.effectiveMs')},
-       CASE WHEN ${numeric(`${message}.content`, '$.effectiveMs')} > 0
+       CASE WHEN ${successfulEffectiveMessage(`${message}.content`)}
+            THEN ${numeric(`${message}.content`, '$.effectiveMs')} ELSE 0 END,
+       CASE WHEN ${successfulEffectiveMessage(`${message}.content`)}
+                  AND ${numeric(`${message}.content`, '$.effectiveMs')} > 0
                   AND ${numeric(`${message}.content`, '$.usage.output')} > 0
             THEN ${numeric(`${message}.content`, '$.usage.output')} ELSE 0 END,
        ${numeric(`${message}.content`, '$.usage.cost.total', 'NULL')}
@@ -55,7 +63,8 @@ SELECT ${message}.id, CAST(je.key AS INTEGER), ${message}.session_id, s.user_id,
        ${numeric('je.value', '$.totalTokens')}, ${numeric('je.value', '$.reasoning')},
        ${numeric('je.value', '$.calls')},
        ${numeric('je.value', '$.durationMs')}, ${numeric('je.value', '$.measuredOutput')},
-       ${numeric('je.value', '$.effectiveMs')}, ${numeric('je.value', '$.effectiveOutput')},
+       CASE WHEN ${trustedEffectiveRollup('je.value')} THEN ${numeric('je.value', '$.effectiveMs')} ELSE 0 END,
+       CASE WHEN ${trustedEffectiveRollup('je.value')} THEN ${numeric('je.value', '$.effectiveOutput')} ELSE 0 END,
        ${numeric('je.value', '$.cost.total', 'NULL')}
   FROM brain_sessions s,
        json_each(CASE WHEN json_valid(${message}.content)
@@ -77,7 +86,8 @@ export function installBrainUsageRollup(db: Db): void {
     CREATE TABLE IF NOT EXISTS brain_usage_rollup_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1)),
-      generation INTEGER NOT NULL DEFAULT 0
+      generation INTEGER NOT NULL DEFAULT 0,
+      effective_pair_version INTEGER NOT NULL DEFAULT 0
     );
     INSERT OR IGNORE INTO brain_usage_rollup_state (id, ready, generation) VALUES (1, 0, 0);
     CREATE TABLE IF NOT EXISTS brain_usage_rows (
@@ -98,6 +108,8 @@ export function installBrainUsageRollup(db: Db): void {
       calls INTEGER NOT NULL DEFAULT 0,
       duration_ms REAL NOT NULL DEFAULT 0,
       measured_output REAL NOT NULL DEFAULT 0,
+      effective_ms REAL NOT NULL DEFAULT 0,
+      effective_output REAL NOT NULL DEFAULT 0,
       cost REAL,
       PRIMARY KEY (source_message_id, bucket_index)
     );
@@ -105,22 +117,49 @@ export function installBrainUsageRollup(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_brain_usage_rows_user_model_ts ON brain_usage_rows(user_id, provider, model, ts);
     CREATE INDEX IF NOT EXISTS idx_brain_usage_rows_session ON brain_usage_rows(session_id);
   `);
-  const columns = db.prepare('PRAGMA table_info(brain_usage_rows)').all() as { name: string }[];
-  if (!columns.some((column) => column.name === 'calls')) {
+  const columns = new Set((db.prepare('PRAGMA table_info(brain_usage_rows)').all() as { name: string }[])
+    .map((column) => column.name));
+  if (!columns.has('calls')) {
     // The projection is derived and rebuildable, but historical compaction buckets did not preserve their
     // generation count. Existing rows therefore stay honestly unknown (0); only new writes are exact.
     db.exec('ALTER TABLE brain_usage_rows ADD COLUMN calls INTEGER NOT NULL DEFAULT 0');
   }
-  if (!columns.some((column) => column.name === 'usage_epoch')) {
+  if (!columns.has('usage_epoch')) {
     // Constant-default metadata only: no historical projection rebuild and no large index creation at boot.
     db.exec('ALTER TABLE brain_usage_rows ADD COLUMN usage_epoch INTEGER NOT NULL DEFAULT 0');
   }
-  if (!columns.some((column) => column.name === 'effective_ms')) {
-    // Effective-speed timing postdates the projection: rows written before it existed never carried an
-    // end-to-end window, so they read as unmeasured (0) rather than being reinterpreted. New writes
-    // populate the columns through the recreated triggers below; no historical scan is owed.
-    db.exec('ALTER TABLE brain_usage_rows ADD COLUMN effective_ms REAL NOT NULL DEFAULT 0');
-    db.exec('ALTER TABLE brain_usage_rows ADD COLUMN effective_output REAL NOT NULL DEFAULT 0');
+  // Check each column independently. A process may have stopped after the first ALTER; the next startup
+  // must finish that partial upgrade instead of leaving triggers that reference a missing sibling column.
+  if (!columns.has('effective_ms')) db.exec('ALTER TABLE brain_usage_rows ADD COLUMN effective_ms REAL NOT NULL DEFAULT 0');
+  if (!columns.has('effective_output')) db.exec('ALTER TABLE brain_usage_rows ADD COLUMN effective_output REAL NOT NULL DEFAULT 0');
+  const stateColumns = new Set((db.prepare('PRAGMA table_info(brain_usage_rollup_state)').all() as { name: string }[])
+    .map((column) => column.name));
+  if (!stateColumns.has('effective_pair_version')) {
+    db.exec('ALTER TABLE brain_usage_rollup_state ADD COLUMN effective_pair_version INTEGER NOT NULL DEFAULT 0');
+  }
+  const effectivePairVersion = db.prepare(
+    'SELECT effective_pair_version AS version FROM brain_usage_rollup_state WHERE id = 1',
+  ).get() as { version: number } | undefined;
+  if ((effectivePairVersion?.version ?? 0) < 1) {
+    // The first effective-speed release projected failed retry prefixes as independent samples, even though
+    // the later successful row already timed the whole logical request. Live rows can still be classified
+    // from their source message. Compaction buckets cannot: their source rows are gone and the old bucket
+    // stored no success discriminator, so those historical pairs become honestly unknown.
+    db.exec(`
+      UPDATE brain_usage_rows
+         SET effective_ms = 0, effective_output = 0
+       WHERE bucket_index >= 0
+          OR EXISTS (
+               SELECT 1 FROM brain_messages m
+                WHERE m.id = brain_usage_rows.source_message_id
+                  AND m.role = 'assistant'
+                  AND json_valid(m.content) AND json_type(m.content) = 'object'
+                  AND COALESCE(json_extract(m.content, '$.stopReason'), '') IN ('error', 'aborted')
+             );
+      UPDATE brain_usage_rollup_state
+         SET effective_pair_version = 1, generation = generation + 1
+       WHERE id = 1;
+    `);
   }
   // Trigger SQL is versioned with the projection shape. Recreate it on every boot so an additive column is
   // populated immediately without rewriting the historical projection or scanning brain_messages.

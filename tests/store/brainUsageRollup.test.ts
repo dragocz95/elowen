@@ -36,7 +36,8 @@ describe('brain usage write-time projection', () => {
         user_id INTEGER NOT NULL, provider TEXT, model TEXT NOT NULL, ts INTEGER NOT NULL,
         input REAL NOT NULL DEFAULT 0, output REAL NOT NULL DEFAULT 0, cache_read REAL NOT NULL DEFAULT 0,
         cache_write REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0, reasoning REAL NOT NULL DEFAULT 0,
-        duration_ms REAL NOT NULL DEFAULT 0, measured_output REAL NOT NULL DEFAULT 0, cost REAL,
+        duration_ms REAL NOT NULL DEFAULT 0, measured_output REAL NOT NULL DEFAULT 0,
+        effective_ms REAL NOT NULL DEFAULT 0, cost REAL,
         PRIMARY KEY (source_message_id, bucket_index)
       );
       INSERT INTO brain_usage_rows
@@ -50,8 +51,46 @@ describe('brain usage write-time projection', () => {
       .map((column) => column.name));
     expect(upgraded.has('calls')).toBe(true);
     expect(upgraded.has('usage_epoch')).toBe(true);
-    expect(db.prepare("SELECT total, calls, usage_epoch FROM brain_usage_rows WHERE source_message_id = 'historical'").get())
-      .toEqual({ total: 99, calls: 0, usage_epoch: 0 });
+    expect(upgraded.has('effective_ms')).toBe(true);
+    expect(upgraded.has('effective_output')).toBe(true);
+    expect(db.prepare("SELECT total, calls, usage_epoch, effective_ms, effective_output FROM brain_usage_rows WHERE source_message_id = 'historical'").get())
+      .toEqual({ total: 99, calls: 0, usage_epoch: 0, effective_ms: 0, effective_output: 0 });
+  });
+
+  it('repairs effective pairs projected before failed retry prefixes were excluded', () => {
+    const db = openDb(':memory:');
+    db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run();
+    const store = new BrainStore(db);
+    store.createSession({ id: 's1', userId: 1, model: 'model-a', provider: 'provider-a' });
+    store.appendMessage({
+      id: 'failed', sessionId: 's1', parentId: null, role: 'assistant',
+      content: {
+        role: 'assistant', model: 'model-a', timestamp: 1, stopReason: 'error', effectiveMs: 2000,
+        usage: { output: 20, totalTokens: 30 },
+      },
+    });
+    store.appendMessage({
+      id: 'summary', sessionId: 's1', parentId: null, role: 'compaction',
+      content: {
+        role: 'compactionSummary', usageRollup: [{
+          model: 'model-a', at: 2, output: 100, totalTokens: 100, effectiveMs: 5000, effectiveOutput: 100,
+        }],
+      },
+    });
+    // Reproduce rows written by the first effective-speed projection, before the discriminator existed.
+    db.prepare('UPDATE brain_usage_rows SET effective_ms = 2000, effective_output = 20 WHERE source_message_id = ?').run('failed');
+    db.prepare('UPDATE brain_usage_rows SET effective_ms = 5000, effective_output = 100 WHERE source_message_id = ?').run('summary');
+    db.prepare('UPDATE brain_usage_rollup_state SET effective_pair_version = 0 WHERE id = 1').run();
+
+    installBrainUsageRollup(db);
+
+    expect(db.prepare('SELECT source_message_id, effective_ms, effective_output FROM brain_usage_rows ORDER BY source_message_id').all())
+      .toEqual([
+        { source_message_id: 'failed', effective_ms: 0, effective_output: 0 },
+        { source_message_id: 'summary', effective_ms: 0, effective_output: 0 },
+      ]);
+    expect(db.prepare('SELECT effective_pair_version FROM brain_usage_rollup_state WHERE id = 1').get())
+      .toEqual({ effective_pair_version: 1 });
   });
 
   it('backfills legacy provider attribution once and removes brain_messages from usage reads', () => {

@@ -71,8 +71,8 @@ const producingProvider = (src: string, path: string, modelPath: string, fallbac
 // `duration_ms` actually timed (see {@link UsageRollupBucket}) — the legacy tok/s numerator, kept separate so
 // untimed history can never be read as measured. `effective_ms`/`effective_output` are the end-to-end
 // counterpart: the recorder stamps `$.effectiveMs` (whole logical request from initiation, retries
-// included) on new messages, and the same measured-pair rule keeps rows without it (all history written
-// before effective timing existed) out of the effective figures. Purely static SQL (no user input) → safe to
+// included) on new messages. Only successful terminal rows count, and compacted pairs need the current
+// discriminator; failed prefixes, older history and ambiguous old rollups remain unknown. Purely static SQL (no user input) → safe to
 // interpolate. Callers add the user/window/day filters + GROUP BY.
 //
 // The `json_valid` guards are load-bearing: `json_extract` and `json_each` THROW on malformed JSON, so a
@@ -87,6 +87,12 @@ const producingProvider = (src: string, path: string, modelPath: string, fallbac
 // keeps a JSON scalar (a row that is just `null` or a number) out of the assistant side, and `je.type`
 // keeps a bucket element that is a scalar — including a DOUBLE-SERIALIZED bucket, a JSON string whose
 // text happens to be an object — out of the fan-out. Every numeric field goes through {@link numeric}.
+const successfulEffectiveMessage = (src: string): string =>
+  `COALESCE(json_extract(${src}, '$.stopReason'), '') NOT IN ('error', 'aborted')`;
+
+const trustedEffectiveRollup = (src: string): string =>
+  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 1`;
+
 const USAGE_ROWS = `
   SELECT s.user_id AS user_id, s.id AS session_id, m.usage_epoch AS usage_epoch,
          ${producingProvider('m.content', '$.provider', '$.model', 's.provider')} AS provider,
@@ -102,8 +108,10 @@ const USAGE_ROWS = `
          CASE WHEN ${numeric('m.content', '$.durationMs')} > 0
                AND ${numeric('m.content', '$.usage.output')} > 0
               THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END AS measured_output,
-         ${numeric('m.content', '$.effectiveMs')} AS effective_ms,
-         CASE WHEN ${numeric('m.content', '$.effectiveMs')} > 0
+         CASE WHEN ${successfulEffectiveMessage('m.content')}
+              THEN ${numeric('m.content', '$.effectiveMs')} ELSE 0 END AS effective_ms,
+         CASE WHEN ${successfulEffectiveMessage('m.content')}
+               AND ${numeric('m.content', '$.effectiveMs')} > 0
                AND ${numeric('m.content', '$.usage.output')} > 0
               THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END AS effective_output,
          ${numeric('m.content', '$.usage.cost.total', 'NULL')} AS cost
@@ -126,8 +134,10 @@ const USAGE_ROWS = `
          ${numeric('je.value', '$.reasoning')} AS reasoning,
          ${numeric('je.value', '$.durationMs')} AS duration_ms,
          ${numeric('je.value', '$.measuredOutput')} AS measured_output,
-         ${numeric('je.value', '$.effectiveMs')} AS effective_ms,
-         ${numeric('je.value', '$.effectiveOutput')} AS effective_output,
+         CASE WHEN ${trustedEffectiveRollup('je.value')}
+              THEN ${numeric('je.value', '$.effectiveMs')} ELSE 0 END AS effective_ms,
+         CASE WHEN ${trustedEffectiveRollup('je.value')}
+              THEN ${numeric('je.value', '$.effectiveOutput')} ELSE 0 END AS effective_output,
          ${numeric('je.value', '$.cost.total', 'NULL')} AS cost
     FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id,
          json_each(CASE WHEN json_valid(m.content)
@@ -207,10 +217,11 @@ export interface UsageRollupBucket {
    *  remain unknown (0) rather than being presented as one call when they may contain thousands. */
   calls?: number;
   durationMs?: number; measuredOutput?: number; cost?: { total: number };
+  /** Marks a rollup whose effective pair excluded failed and aborted retry prefixes. Earlier persisted
+   *  rollups cannot be reconstructed after their source messages were dropped, so absence stays unknown. */
+  effectiveTimingVersion?: 1;
   /** The end-to-end measured pair (see {@link EffectiveRequestTiming}): wall time and output tokens of the
-   *  dropped generations that carried the recorder's effective stamp. Same subset rule as the legacy
-   *  pair — untimed rows (everything written before effective timing existed) contribute to neither
-   *  side, so a bucket never presents an effective rate its samples never covered. */
+   *  dropped successful generations that carried the recorder's effective stamp. */
   effectiveMs?: number; effectiveOutput?: number;
 }
 
@@ -257,6 +268,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
     // Same rule for the end-to-end pair, so an effective rate survives compaction exactly as far as its
     // samples do: rows written before effective timing existed contribute to neither side.
     if (effective.effectiveMs > 0 && effective.output > 0) {
+      b.effectiveTimingVersion = 1;
       b.effectiveMs = (b.effectiveMs ?? 0) + effective.effectiveMs;
       b.effectiveOutput = (b.effectiveOutput ?? 0) + effective.output;
     }
@@ -268,7 +280,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
     let content: unknown;
     try { content = JSON.parse(row.content); } catch { continue; }
     if (typeof content !== 'object' || content === null) continue;
-    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; provider?: unknown; providerIdentity?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown; effectiveMs?: unknown };
+    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; provider?: unknown; providerIdentity?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown; effectiveMs?: unknown; stopReason?: unknown };
     if (Array.isArray(c.usageRollup)) {
       // A prior divider — merge each of its per-identity buckets (chained compaction). Legacy buckets have
       // no provider, so they remain separate and unresolved rather than being guessed from newer state.
@@ -283,7 +295,9 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
           pb.providerIdentity === 'config', at,
         ), pb, at, num(pb.calls),
           { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) },
-          { effectiveMs: num(pb.effectiveMs), output: num(pb.effectiveOutput) });
+          pb.effectiveTimingVersion === 1
+            ? { effectiveMs: num(pb.effectiveMs), output: num(pb.effectiveOutput) }
+            : { effectiveMs: 0, output: 0 });
       }
     } else if (c.usage && typeof c.usage === 'object') {
       // An assistant message — attribute to the identity it recorded. Empty fields are resolved from the
@@ -296,7 +310,9 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
         c.providerIdentity === 'config', at,
       ), c.usage, at, 1,
         { durationMs: num(c.durationMs), output: num(c.usage.output) },
-        { effectiveMs: num(c.effectiveMs), output: num(c.usage.output) });
+        c.stopReason === 'error' || c.stopReason === 'aborted'
+          ? { effectiveMs: 0, output: 0 }
+          : { effectiveMs: num(c.effectiveMs), output: num(c.usage.output) });
     }
   }
   const buckets = [...byIdentityAndDay.values()]
@@ -452,10 +468,9 @@ export class BrainUsageStore {
             // needs the measured seconds, which are measuredOutput / outputTps.
             measuredOutput: r.measured_output,
             outputTps: r.duration_ms > 0 ? (r.measured_output / (r.duration_ms / 1000)) : null,
-            // The effective counterpart over the SAME rows: only generations carrying the recorder's
-            // end-to-end stamp count, so history written before effective timing existed never leaks its
-            // post-header window into the effective figure. `effectiveMeasuredOutput` ships for the same
-            // cross-bucket weighting reason as `measuredOutput`.
+            // The effective counterpart over successful rows carrying the recorder's end-to-end stamp.
+            // Failed retry prefixes and unversioned compacted history remain unknown. The measured output
+            // ships beside the rate so cross-bucket consumers can recover the duration weight.
             effectiveMeasuredOutput: r.effective_output,
             effectiveTps: r.effective_ms > 0 ? (r.effective_output / (r.effective_ms / 1000)) : null,
           };
