@@ -286,8 +286,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return needed.filter((g) => !acked.has(g));
   };
 
-  /** Enable + apply live, shared by the toggle and the marketplace install so both reach the runtime the
-   *  same way (config write, then registry swap; a deferred swap answers 202, see `applied`). */
   /** Control keys `name` declares it cannot work without, that nothing ENABLED would publish.
    *
    *  A plugin whose provider is missing does not crash - `ctx.control()` answers undefined and the plugin
@@ -321,12 +319,64 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     }));
   };
 
+  /** Enable + apply live, shared by the toggle and the marketplace install so both reach the runtime the
+   *  same way (config write, then registry swap; a deferred swap answers 202, see `applied`). */
   const enablePlugin = async (c: Context, name: string) => {
     const missing = missingControls(name);
     if (missing.length > 0) return c.json({ error: 'missing plugin dependency', controls: missing }, 409);
     const cur = new Set(d.config.get().plugins.enabled);
     cur.add(name);
     d.config.update({ plugins: { enabled: [...cur] } });
+    return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
+  };
+
+  /** Enabled plugins that declared a control `name` is the only remaining provider of.
+   *
+   *  The mirror image of `missingControls`, and needed for the same reason. A consumer left without its
+   *  provider does not crash — `ctx.control()` answers undefined — so turning off a provider silently
+   *  guts whatever depended on it, and the person who did it sees a plugin that is still enabled and
+   *  quietly no longer works. Sites on Sandbox is the case in hand: with the Sandbox off, a Site cannot
+   *  start, publish or hold a disk, and nothing on screen would have said so.
+   *
+   *  Keyed on the control, like the enable gate, so the daemon still never learns that one named plugin
+   *  needs another. Version compatibility is expressed the same way it is everywhere else here: a
+   *  contract that breaks gets a NEW key, and a consumer that needs the new contract requires the new
+   *  key. There is deliberately no version range to satisfy. */
+  const dependentsOf = (name: string): { key: string; requiredBy: string[] }[] => {
+    const installed = discoverPlugins(d.pluginDirs ?? []);
+    const provider = installed.find((p) => p.manifest.name === name);
+    const offered = provider?.manifest.provides?.controls ?? [];
+    if (offered.length === 0) return [];
+
+    const stillEnabled = new Set(d.config.get().plugins.enabled);
+    stillEnabled.delete(name);
+    const survives = new Set<string>();
+    for (const plugin of installed) {
+      if (!stillEnabled.has(plugin.manifest.name)) continue;
+      for (const key of plugin.manifest.provides?.controls ?? []) survives.add(key);
+    }
+
+    return offered
+      // A key another enabled plugin also publishes is not lost, so turning this one off breaks nothing.
+      .filter((key) => !survives.has(key))
+      .map((key) => ({
+        key,
+        requiredBy: installed
+          .filter((plugin) => stillEnabled.has(plugin.manifest.name)
+            && (plugin.manifest.requiresControls ?? []).includes(key))
+          .map((plugin) => plugin.manifest.name),
+      }))
+      .filter((row) => row.requiredBy.length > 0);
+  };
+
+  /** Take a plugin out of the enabled set, unless something enabled still depends on what it publishes. */
+  const disablePlugin = async (c: Context, name: string) => {
+    const blocking = dependentsOf(name);
+    if (blocking.length > 0) return c.json({ error: 'plugin dependency in use', controls: blocking }, 409);
+    const cur = new Set(d.config.get().plugins.enabled);
+    cur.delete(name);
+    d.config.update({ plugins: { enabled: [...cur] } });
+    // Apply live: drop the brain's memoized registry and restart running sessions with the new set.
     return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
   };
 
@@ -668,11 +718,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (missingConsent(needed, b.acknowledgeGrants).length) return c.json({ error: 'grants require consent', grants: needed }, 409);
       return await enablePlugin(c, name);
     }
-    const cur = new Set(d.config.get().plugins.enabled);
-    cur.delete(name);
-    d.config.update({ plugins: { enabled: [...cur] } });
-    // Apply live: drop the brain's memoized registry and restart running sessions with the new set.
-    return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
+    return await disablePlugin(c, name);
   });
 
   // Remove a plugin. A user-source (marketplace) plugin is uninstalled outright — folder AND data
@@ -685,6 +731,11 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const name = c.req.param('name');
     const disc = discoverPlugins(d.pluginDirs ?? []).find((p) => p.manifest.name === name);
     if (!disc) return c.json({ error: 'unknown plugin' }, 404);
+    // Removal ends with the plugin out of the enabled set either way, so it owes the same answer as the
+    // toggle: a dependant left without its provider is the same broken instance whichever door it came
+    // through.
+    const blocking = dependentsOf(name);
+    if (blocking.length > 0) return c.json({ error: 'plugin dependency in use', controls: blocking }, 409);
     if (disc.source === 'user') {
       if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
       try {

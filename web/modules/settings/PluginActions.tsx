@@ -3,7 +3,7 @@ import { Toggle } from '../../components/ui/Toggle';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { usePluginConsent } from './usePluginConsent';
+import { PluginDependencyError, usePluginConsent } from './usePluginConsent';
 import { pluginDisplayName } from './pluginDisplayName';
 import type { PluginDetail } from '../../lib/types';
 
@@ -16,7 +16,9 @@ export function PluginActions({ name, detail }: { name: string; detail: PluginDe
     // A deferred swap still saved the change, so the switch stays flipped — the toast explains why the
     // plugin's pages and tools appear a moment later instead of leaving the delay unexplained.
     onSuccess: (res) => { if (res.pending) toast(t.plugins.pendingToast, 'ok'); },
-    onError: () => toast(t.plugins.toggleError, 'error'),
+    // The detail page is where an admin switches a provider off, so it is the page that most needs to say
+    // which plugin still depends on it rather than reporting a bare failure.
+    onError: (e) => toast(e instanceof PluginDependencyError ? e.message : t.plugins.toggleError, 'error'),
   });
   return (
     <div className="flex items-center gap-2">

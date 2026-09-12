@@ -19,6 +19,42 @@ function grantLabels(t: ReturnType<typeof useTranslation>['t'], grants: string[]
   return grants.map((g) => known[g] ?? g);
 }
 
+const names = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((n): n is string => typeof n === 'string') : [];
+
+/** A dependency refusal already carries a sentence written for the reader, which is what makes it safe to
+ *  show verbatim. Its own type, because every other failure must keep the generic wording: a raw daemon
+ *  message in a toast is how internals reach a screen that was never meant to carry them. */
+export class PluginDependencyError extends Error {}
+
+/** A 409 naming controls is NOT a question — there is nothing for the reader to approve, only another
+ *  plugin to switch on or off first. Turned into a sentence here so every surface reports it the same way,
+ *  instead of showing a raw `missing plugin dependency` or a generic "changing the plugin failed".
+ *
+ *  Both directions arrive on the same shape, told apart by which side of the dependency the body names:
+ *  `providedBy` is the enable refusal (turn that one on first), `requiredBy` is the disable and remove
+ *  refusal (turn that one off first). Exported because removal is refused from a screen that has no
+ *  consent dialog and would otherwise report the daemon's reason as an unexplained failure. */
+export function pluginDependencyError(t: ReturnType<typeof useTranslation>['t'], e: unknown): PluginDependencyError | null {
+  if (!(e instanceof ElowenApiError) || e.status !== 409) return null;
+  const controls = e.details?.controls;
+  if (!Array.isArray(controls) || controls.length === 0) return null;
+  const parts = controls.map((entry) => {
+    const item = entry as { key?: unknown; providedBy?: unknown; requiredBy?: unknown };
+    const key = typeof item.key === 'string' ? item.key : '';
+    if (!key) return null;
+    const dependants = names(item.requiredBy);
+    if (dependants.length > 0) {
+      return t.plugins.dependencyInUse.replaceAll('{plugin}', dependants.join(', ')).replace('{control}', key);
+    }
+    const providers = names(item.providedBy);
+    return providers.length > 0
+      ? t.plugins.dependencyOn.replace('{plugin}', providers.join(', ')).replace('{control}', key)
+      : t.plugins.dependencyMissing.replace('{control}', key);
+  }).filter((line): line is string => line !== null);
+  return parts.length > 0 ? new PluginDependencyError(parts.join(' ')) : null;
+}
+
 type Pending = { name: string; grants: string[]; kind: 'enable' | 'install' };
 
 /** The two ways a plugin's powers can become real — the enable toggle and a marketplace install — behind
@@ -41,26 +77,7 @@ export function usePluginConsent(opts: {
   const { t } = useTranslation();
   const [asking, setAsking] = useState<Pending | null>(null);
 
-  /** A 409 naming missing controls is NOT a question - there is nothing for the reader to approve, only
-   *  another plugin to turn on first. Turned into a sentence here so every caller of this hook reports it
-   *  the same way, instead of showing a raw `missing plugin dependency`. */
-  const dependencyError = (e: unknown): Error | null => {
-    if (!(e instanceof ElowenApiError) || e.status !== 409) return null;
-    const controls = e.details?.controls;
-    if (!Array.isArray(controls) || controls.length === 0) return null;
-    const parts = controls.map((entry) => {
-      const item = entry as { key?: unknown; providedBy?: unknown };
-      const key = typeof item.key === 'string' ? item.key : '';
-      const providers = Array.isArray(item.providedBy)
-        ? item.providedBy.filter((n): n is string => typeof n === 'string')
-        : [];
-      if (!key) return null;
-      return providers.length > 0
-        ? t.plugins.dependencyOn.replace('{plugin}', providers.join(', ')).replace('{control}', key)
-        : t.plugins.dependencyMissing.replace('{control}', key);
-    }).filter((line): line is string => line !== null);
-    return parts.length > 0 ? new Error(parts.join(' ')) : null;
-  };
+  const dependencyError = (e: unknown): PluginDependencyError | null => pluginDependencyError(t, e);
 
   /** A 409 that names powers is the consent question; anything else is a genuine failure. */
   const askedGrants = (e: unknown): string[] | null => {

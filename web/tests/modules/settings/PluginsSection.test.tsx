@@ -23,7 +23,8 @@ vi.mock('../../../lib/mutations', () => ({
   useUninstallPlugin: () => ({ mutate: uninstallMutate, isPending: false }),
   useRestorePlugin: () => ({ mutate: vi.fn(), isPending: false }),
 }));
-vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+const toastSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: toastSpy }) }));
 vi.mock('../../../modules/settings/PluginDetail', () => ({
   PluginDetail: ({ name, onBack }: { name: string; onBack: () => void }) => (
     <div data-testid="plugin-detail" data-plugin={name}>
@@ -324,6 +325,76 @@ describe('PluginsSection grant consent', () => {
 
     await waitFor(() => expect(screen.queryByText(en.plugins.grantsTitle.replace('{name}', 'risky'))).not.toBeInTheDocument());
     expect(toggleMutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PluginsSection dependency refusals', () => {
+  // A dependency is a two-sided fact and the daemon refuses from both ends: it will not enable a consumer
+  // without its provider, and it will not let the provider go while the consumer is live. Only the first
+  // half reached the reader — the second arrived as a generic "changing the plugin failed", or, worse,
+  // borrowed the enable sentence and told an admin to install something that was already installed.
+  beforeEach(() => {
+    usePlugins.mockReset(); useMarketplace.mockReset();
+    toggleMutate.mockReset(); uninstallMutate.mockReset(); toastSpy.mockReset();
+    useMarketplace.mockReturnValue({ data: { plugins: [] }, isLoading: false });
+  });
+
+  const refuse = (mock: ReturnType<typeof vi.fn>, error: string, details: Record<string, unknown>) =>
+    mock.mockImplementationOnce((_v: unknown, o: { onError?: (e: unknown) => void }) => {
+      o.onError?.(new ElowenApiError('elowen 409', 409, error, details));
+    });
+
+  it('names the plugin to switch on when a consumer is enabled without its provider', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'sites', enabled: false })], isLoading: false });
+    refuse(toggleMutate, 'missing plugin dependency', { controls: [{ key: 'sandbox', providedBy: ['sandbox'] }] });
+    renderSection();
+    fireEvent.click(screen.getByLabelText(`sites: ${en.plugins.enable}`));
+
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled());
+    expect(toastSpy.mock.calls[0][0]).toBe(
+      en.plugins.dependencyOn.replace('{plugin}', 'sandbox').replace('{control}', 'sandbox'),
+    );
+  });
+
+  it('names the plugin to switch off first when the provider is disabled underneath a live consumer', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'sandbox', enabled: true })], isLoading: false });
+    refuse(toggleMutate, 'plugin dependency in use', { controls: [{ key: 'sandbox', requiredBy: ['sites'] }] });
+    renderSection();
+    fireEvent.click(screen.getByLabelText(`sandbox: ${en.plugins.disable}`));
+
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled());
+    // The disable refusal must not borrow the enable sentence: `requiredBy` decides, and the reader is
+    // told to switch `sites` OFF, not to go looking for a provider to install.
+    expect(toastSpy.mock.calls[0][0]).toBe(
+      en.plugins.dependencyInUse.replaceAll('{plugin}', 'sites').replace('{control}', 'sandbox'),
+    );
+    expect(toastSpy.mock.calls[0][0]).not.toBe(en.plugins.toggleError);
+    expect(toastSpy.mock.calls[0][1]).toBe('error');
+  });
+
+  it('gives removal the same reason, instead of an unexplained failure', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'sandbox', enabled: true })], isLoading: false });
+    refuse(uninstallMutate, 'plugin dependency in use', { controls: [{ key: 'sandbox', requiredBy: ['sites'] }] });
+    renderSection();
+    fireEvent.click(screen.getByText('sandbox').closest('[role="listitem"]')!.querySelector('[aria-haspopup="menu"]')!);
+    fireEvent.click(await screen.findByText(en.plugins.remove));
+    fireEvent.click(await screen.findByRole('button', { name: en.plugins.remove }));
+
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled());
+    expect(toastSpy.mock.calls[0][0]).toBe(
+      en.plugins.dependencyInUse.replaceAll('{plugin}', 'sites').replace('{control}', 'sandbox'),
+    );
+    expect(toastSpy.mock.calls[0][0]).not.toBe(en.plugins.removedError);
+  });
+
+  it('falls back to the generic failure when a 409 carries no dependency at all', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'sandbox', enabled: true })], isLoading: false });
+    refuse(toggleMutate, 'conflict', {});
+    renderSection();
+    fireEvent.click(screen.getByLabelText(`sandbox: ${en.plugins.disable}`));
+
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled());
+    expect(toastSpy.mock.calls[0][0]).toBe(en.plugins.toggleError);
   });
 });
 

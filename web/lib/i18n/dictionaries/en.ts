@@ -1543,6 +1543,7 @@ export const en = {
     grantWorkflowDag: 'Change running sub-agent workflows',
     dependencyOn: 'This add-on needs {plugin} switched on first — that is what provides {control}.',
     dependencyMissing: 'This add-on needs another add-on that provides {control}, and none is installed.',
+    dependencyInUse: 'This add-on provides {control}, which {plugin} still needs — switch {plugin} off first.',
     toggleError: 'Changing the plugin failed',
     empty: 'No plugins found',
     configure: 'Configure',

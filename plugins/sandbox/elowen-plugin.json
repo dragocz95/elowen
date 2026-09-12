@@ -22,6 +22,9 @@
       "EnvironmentOperation",
       "EnvironmentWorktrees"
     ],
+    "controls": [
+      "sandbox"
+    ],
     "apiRoutes": [
       "projects",
       "overview",

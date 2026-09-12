@@ -1501,6 +1501,7 @@ export const cs = {
     grantWorkflowDag: 'Měnit běžící workflow dílčích agentů',
     dependencyOn: 'Tento doplněk vyžaduje, aby byl nejprve zapnutý doplněk {plugin} — ten poskytuje {control}.',
     dependencyMissing: 'Tento doplněk vyžaduje jiný doplněk poskytující {control}, žádný však není nainstalován.',
+    dependencyInUse: 'Tento doplněk poskytuje {control}, které doplněk {plugin} stále potřebuje — nejprve vypněte {plugin}.',
     toggleError: 'Změna pluginu selhala',
     empty: 'Žádné pluginy nenalezeny',
     configure: 'Nastavit',
