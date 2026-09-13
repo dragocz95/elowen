@@ -14,7 +14,7 @@ vi.mock('../../../lib/pluginUi', async (loadOriginal) => ({
 
 import { ProjectsView } from '../../../modules/projects/ProjectsView';
 
-/** Two managed projects, so one row can be running while the other is doing something. */
+/** Two managed projects, so one card can be running while the other is doing something. */
 const projects = [
   { id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' },
   { id: 5, slug: 'reports', path: '', notes: '', icon: '', executionKind: 'managed' },
@@ -64,7 +64,7 @@ function mount() {
   render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
 }
 
-describe('Project register rows: environment state and lifecycle actions', () => {
+describe('Project register cards: environment state and lifecycle actions', () => {
   beforeEach(() => {
     chosen.length = 0;
     loadPluginUi.mockReset();
@@ -72,29 +72,31 @@ describe('Project register rows: environment state and lifecycle actions', () =>
   });
 
   // The register used to say only "Managed environment" — the same six words whether the container was
-  // running, cold or broken. The state is at the row's far end now, as a glyph with the state as its
-  // accessible name.
-  it('shows each managed row its own environment state, tone included', async () => {
+  // running, cold or broken. The state is a pill in the card's runtime band now, and the plugin's own
+  // wording is ON SCREEN rather than behind a hover: a card has the room a row never had.
+  it('shows each managed card its own environment state, tone included', async () => {
     mount();
-    const running = await screen.findAllByRole('img', { name: 'Running' });
+    const running = await screen.findAllByText('Running');
     expect(running).toHaveLength(1);
-    expect(running[0]!.closest('[data-project-row-status]')).toHaveAttribute('data-project-row-status', 'success');
-    // An operation in flight is a spinner rather than a glyph, and still says what it is.
-    const starting = await screen.findAllByRole('status', { name: 'Starting' });
-    expect(starting[0]!.closest('[data-project-row-status]')).toHaveAttribute('data-project-row-status', 'busy');
-    // One status per row, directly left of the row actions and on the same icon size the action menu's
-    // kebab draws, so the two read as one control band.
-    const menuCell = screen.getByRole('button', { name: 'analysis: Actions' }).closest('[role="cell"]') as HTMLElement;
-    expect(menuCell.previousElementSibling).toBe(running[0]!.closest('[role="cell"]'));
-    expect(running[0]).toHaveAttribute('width', '16');
-    expect(menuCell.querySelector('svg')).toHaveAttribute('width', '16');
-    // A row nobody contributed a state for carries none rather than an unknown-state glyph.
-    expect(screen.queryByRole('img', { name: 'Stopped' })).toBeNull();
+    const runningPill = running[0]!.closest('[data-project-row-status]') as HTMLElement;
+    expect(runningPill).toHaveAttribute('data-project-row-status', 'success');
+    // The glyph beside a visible label is decoration: announcing both reads the state twice.
+    expect(runningPill.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+    // An operation in flight is a spinner rather than a glyph, and the pill says it is busy.
+    const startingPill = (await screen.findAllByText('Starting'))[0]!.closest('[data-project-row-status]') as HTMLElement;
+    expect(startingPill).toHaveAttribute('data-project-row-status', 'busy');
+    expect(startingPill).toHaveAttribute('aria-busy', 'true');
+    // One status per card, and it sits in the same band as the execution target rather than in a track
+    // of its own beside the actions.
+    expect(runningPill.closest('[data-project-card]')).toHaveAttribute('data-project-card', '3');
+    expect(runningPill.parentElement!.querySelector('[data-project-runtime]')).not.toBeNull();
+    // A card nobody contributed a state for carries none rather than an unknown-state pill.
+    expect(screen.queryByText('Stopped')).toBeNull();
   });
 
-  it('offers the lifecycle actions in the row menu, enabled by the state the plugin reported', async () => {
+  it('offers the lifecycle actions in the card menu, enabled by the state the plugin reported', async () => {
     mount();
-    await screen.findAllByRole('img', { name: 'Running' });
+    await screen.findAllByText('Running');
 
     fireEvent.click(screen.getByRole('button', { name: 'analysis: Actions' }));
     const items = await screen.findAllByRole('menuitem');
@@ -111,16 +113,16 @@ describe('Project register rows: environment state and lifecycle actions', () =>
 
   it('offers the same lifecycle actions on right-click, and the plugin renders its own dialogs once', async () => {
     mount();
-    await screen.findAllByRole('img', { name: 'Running' });
-    const row = screen.getByRole('button', { name: 'Open project analysis' }).closest('[role="row"]');
-    if (!row) throw new Error('project row not rendered');
+    await screen.findAllByText('Running');
+    const card = screen.getByRole('button', { name: 'Open project analysis' }).closest('[data-project-card]');
+    if (!card) throw new Error('project card not rendered');
 
     fireEvent.click(screen.getByRole('button', { name: 'analysis: Actions' }));
     const menuActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryAllByRole('menuitem')).toHaveLength(0));
 
-    fireEvent.contextMenu(row);
+    fireEvent.contextMenu(card);
     const contextActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
     expect(contextActions).toEqual(menuActions);
     expect(screen.getByRole('menuitem', { name: 'Start environment' })).toHaveAttribute('data-disabled');
@@ -132,7 +134,7 @@ describe('Project register rows: environment state and lifecycle actions', () =>
 
   // The seam promises `<plugin>:<id>` keys. Two plugins may well both call their action "Restart", and a
   // menu keyed by wording makes React reuse one item's element for the other's.
-  it('keys a row action by its plugin and id, so two plugins may name an action the same', async () => {
+  it('keys a card action by its plugin and id, so two plugins may name an action the same', async () => {
     const warnings: unknown[][] = [];
     const console_error = vi.spyOn(console, 'error').mockImplementation((...args) => { warnings.push(args); });
     loadPluginUi.mockResolvedValue({
@@ -152,10 +154,10 @@ describe('Project register rows: environment state and lifecycle actions', () =>
     console_error.mockRestore();
   });
 
-  // The busy row's menu is the same list; only what it allows differs.
-  it('refuses a start and a stop on a row whose environment is already moving', async () => {
+  // The busy card's menu is the same list; only what it allows differs.
+  it('refuses a start and a stop on a card whose environment is already moving', async () => {
     mount();
-    await screen.findAllByRole('status', { name: 'Starting' });
+    await screen.findAllByText('Starting');
     fireEvent.click(screen.getByRole('button', { name: 'reports: Actions' }));
     await screen.findAllByRole('menuitem');
 

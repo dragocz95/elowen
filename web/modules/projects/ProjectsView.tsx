@@ -1,9 +1,9 @@
 'use client';
-import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, HardDrive, MoreHorizontal, Code2, Copy, Pencil, RefreshCw, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, Code2, Copy, Pencil, RefreshCw, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, useProjectEnvironmentState, usePluginPresent, useMe } from '../../lib/queries';
 import { useAdoptProject, useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
@@ -15,7 +15,7 @@ import { Field } from '../../components/ui/Field';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
-import { EmptyState, ErrorState, LoadingLine, LoadingState, Spinner } from '../../components/ui/states';
+import { EmptyState, ErrorState, LoadingLine, LoadingState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { ContextMenu, DIVIDER, type ContextMenuState, type MenuEntry } from '../../components/ui/ContextMenu';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
@@ -23,119 +23,24 @@ import { ProjectIconPicker } from './ProjectIconPicker';
 import { DirectoryPicker } from './DirectoryPicker';
 import { ProjectDetailTabs } from './ProjectDetailTabs';
 import { EntityList, EntityRow } from '../../components/ui/EntityList';
-import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
-import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../../components/ui/DataTable';
+import { type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState } from '../../components/ui/ControlSurface';
 import { copyText } from '../../lib/clipboard';
-import { Avatar } from '../../components/ui/Avatar';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { requestEnvironmentAction } from '../../lib/environmentActions';
-import { usePluginProjectRows, type PluginProjectRowMetric, type PluginProjectRowMetrics, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
-import { Progress } from '../../components/ui/shadcn/progress';
-import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
-import { usageProgressClass } from '../settings/OAuthUsageRail';
-import type { ProjectSummary } from '../../lib/types';
+import { usePluginProjectRows, type PluginProjectRowMetrics } from '../../lib/pluginProjectRows';
+import { ProjectCard, ProjectResourceMeters, type ProjectCardLabels } from './ProjectCard';
 
-function MissingProjectPathBadge({ label }: { label: string }) {
-  return <Badge tone="danger"><AlertTriangle size={11} className="mr-1" aria-hidden />{label}</Badge>;
-}
-
-const ROW_STATUS_TONE: Record<PluginProjectRowTone, string> = {
-  muted: 'text-muted-foreground',
-  accent: 'text-primary',
-  success: 'text-success',
-  warning: 'text-warning',
-  danger: 'text-destructive',
-};
-
-/** A plugin's word on what this row's project is DOING, at the row's far end directly left of the row
- *  actions. Core draws the glyph and the colour; the plugin owns the meaning, the icon it names and the
- *  wording of the tooltip, which is also the icon's accessible name — a coloured dot nobody can hover is
- *  not a state report. The glyph shares the action menu icon's size, so the two read as one control band. */
-function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
-  if (!status) return null;
-  const Icon = pluginLucideIcon(status.icon);
-  const tone = ROW_STATUS_TONE[status.tone ?? 'muted'];
-  return (
-    <span
-      data-project-row-status={status.busy ? 'busy' : status.tone ?? 'muted'}
-      title={status.label}
-      className={`inline-flex shrink-0 items-center ${tone}`}
-    >
-      {status.busy ? <Spinner size="md" tone={tone} label={status.label} /> : <Icon size={16} role="img" aria-label={status.label} />}
-    </span>
-  );
-}
-
-/** ONE measured resource of the snapshot its owning plugin published.
- *
- *  A meter is drawn for `ready` and for nothing else, because `ready` is the only state that carries a
- *  percentage against a ceiling that exists. `absolute` is an equally real figure with no ceiling to
- *  divide by — a managed environment has no disk quota — and `loading`, `stopped` and `unavailable`
- *  carry no figure at all. All four get a dashed channel in the meter's place: the row keeps one rhythm,
- *  and a filled bar never claims a proportion of something that was never measured. */
-function ProjectResourceMeter({ item }: { item: PluginProjectRowMetric }) {
-  const percent = item.state === 'ready' && typeof item.percent === 'number' && Number.isFinite(item.percent)
-    ? Math.max(0, Math.min(100, item.percent))
-    : null;
-  const title = item.valueText ?? `${item.label}: ${item.value}`;
-  return (
-    <div className="min-w-0" title={title} data-metric={item.id} data-metric-state={item.state}>
-      <div className="mb-1 flex min-w-0 items-baseline justify-between gap-1.5 text-[10px] leading-none">
-        <span className="shrink-0 font-semibold uppercase tracking-[0.08em] text-muted-foreground">{item.label}</span>
-        <span className="min-w-0 truncate tabular-nums text-foreground">{item.value}</span>
-      </div>
-      {percent === null ? (
-        <span
-          aria-hidden
-          data-metric-track="none"
-          className={`block h-1 rounded-full border border-dashed border-border bg-transparent ${item.state === 'loading' ? 'animate-pulse' : ''}`}
-        />
-      ) : (
-        <Progress
-          className="h-1"
-          value={percent}
-          indicatorClassName={usageProgressClass(percent)}
-          aria-label={item.label}
-          aria-valuetext={title}
-        />
-      )}
-    </div>
-  );
-}
-
-/** The three meters of one snapshot, in the register row and in the drawer alike. The figures are the
- *  ones the plugin last measured in EVERY state: a refresh in flight only dims them, and a failed read
- *  only marks them, because replacing a measurement with a placeholder is how a populated environment
- *  reported nothing each time a poll missed. */
-function ProjectResourceMeters({ metrics, compact = false }: { metrics?: PluginProjectRowMetrics; compact?: boolean }) {
-  if (!metrics || !Array.isArray(metrics.items) || metrics.items.length === 0) return null;
-  const items = metrics.items.slice(0, 3);
-  const loading = items.every((item) => item.state === 'loading');
-  const label = metrics.stale && metrics.staleLabel ? `${metrics.label} — ${metrics.staleLabel}` : metrics.label;
-  return (
-    <div
-      role={loading ? 'status' : 'group'}
-      aria-label={label}
-      data-project-row-metrics
-      data-compact={compact || undefined}
-      data-refreshing={metrics.refreshing ? 'true' : undefined}
-      data-stale={metrics.stale ? 'true' : undefined}
-      className={`grid min-w-0 grid-cols-3 gap-x-3 transition-opacity duration-300 ${compact ? 'mt-2' : 'w-full'} ${metrics.stale ? 'opacity-70' : metrics.refreshing ? 'opacity-80' : ''}`}
-    >
-      {items.map((item) => <ProjectResourceMeter key={item.id} item={item} />)}
-    </div>
-  );
-}
-
-/** The drawer's copy of the SAME snapshot, so opening a project shows the figures already on its row
- *  rather than a spinner over a fresh request. The revalidation is explicit here — the row has no room
- *  for a control, and a reader who wants a current figure should not have to wait out a poll. */
+/** The drawer's copy of the SAME snapshot, so opening a project shows the figures already on its card
+ *  rather than a spinner over a fresh request. The revalidation is explicit here — a card in a grid has
+ *  no room for a control of its own, and a reader who wants a current figure should not have to wait out
+ *  a poll. It keeps the three-abreast `grid` arrangement: the rail is one column wide, so its figures do
+ *  not have to give the label a track of their own the way a card's do. */
 function ProjectResourcePanel({ metrics, title }: { metrics: PluginProjectRowMetrics; title: string }) {
   return (
     <section data-project-resource-panel className="border-b border-border/70 py-3">
@@ -167,120 +72,6 @@ function ProjectResourcePanel({ metrics, title }: { metrics: PluginProjectRowMet
   );
 }
 
-/** How many faces the stack shows before it starts counting. Three keeps the column narrow enough to
- *  leave the resources their width on a tablet, and a fourth face is worth less than the number is. */
-const TEAM_AVATARS_VISIBLE = 3;
-
-/** Who works on this project, as one overlapping stack naming its people on hover, focus or tap.
- *
- *  Membership is served to administrators only, so a client that received no list says nothing about it:
- *  "no one assigned" for a reader who was simply not told would be this component's guess. An empty list
- *  IS an answer, and it gets the quiet one. */
-function ProjectTeamCell({ members, labels }: {
-  members?: ProjectSummary['members'];
-  labels: { count: string; empty: string; more: string };
-}) {
-  const [open, setOpen] = useState(false);
-  const tooltipId = useId();
-  if (!members) return null;
-  if (members.total === 0) return <span className="sr-only" data-project-team="empty">{labels.empty}</span>;
-  const visible = members.samples.slice(0, TEAM_AVATARS_VISIBLE);
-  const overflow = Math.max(0, members.total - visible.length);
-  return (
-    <Tooltip open={open} onOpenChange={setOpen}>
-      <TooltipAnchor asChild>
-        {/* One control, not one per face: a button per avatar inside a row that is itself openable is
-            the nested-interactive problem, and voice control would offer four unnamed targets where
-            there is one piece of information. */}
-        <button
-          type="button"
-          data-project-team="stack"
-          aria-label={labels.count.replace('{n}', String(members.total))}
-          aria-describedby={open ? tooltipId : undefined}
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
-          onClick={(event) => { event.stopPropagation(); setOpen(true); }}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-full px-0.5 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-        >
-          <span className="flex shrink-0 -space-x-1.5">
-            {visible.map((user) => (
-              <span key={user.id} className="rounded-full ring-2 ring-card"><Avatar user={user} size={20} /></span>
-            ))}
-          </span>
-          {overflow > 0 ? (
-            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">+{overflow}</span>
-          ) : null}
-        </button>
-      </TooltipAnchor>
-      <TooltipContent id={tooltipId} align="start" className="w-56">
-        <ul className="flex flex-col gap-1">
-          {visible.map((user) => (
-            <li key={user.id} className="truncate">
-              <span className="text-foreground">{user.name || user.username}</span>
-              <span className="ml-1.5 text-muted-foreground">@{user.username}</span>
-            </li>
-          ))}
-          {overflow > 0 ? <li className="text-muted-foreground">{labels.more.replace('{n}', String(overflow))}</li> : null}
-        </ul>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-/** Where the project actually LIVES, behind one quiet mark instead of a column of paths.
- *
- *  A host path and a managed environment's guest root are both long, both monospaced and both read the
- *  same at a glance, which is what made the old Path column the widest and least useful thing in the
- *  register. The mark is named for the project it belongs to, so an element list reads "Host directory
- *  of elowen" rather than a column of buttons all called "Path". */
-function ProjectLocationTip({ project, labels }: {
-  project: Project;
-  labels: { host: string; managed: string; hostTitle: string; guestRoot: string; adoptedFrom: string };
-}) {
-  const [open, setOpen] = useState(false);
-  const tooltipId = useId();
-  const managed = project.executionKind === 'managed';
-  const Icon = managed ? HardDrive : Folder;
-  return (
-    <Tooltip open={open} onOpenChange={setOpen}>
-      <TooltipAnchor asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          data-project-location={managed ? 'managed' : 'host'}
-          className="h-6 w-6 shrink-0 text-muted-foreground"
-          aria-label={(managed ? labels.managed : labels.host).replace('{slug}', project.slug)}
-          aria-describedby={open ? tooltipId : undefined}
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
-          onClick={(event) => { event.stopPropagation(); setOpen(true); }}
-        >
-          <Icon size={12} aria-hidden />
-        </Button>
-      </TooltipAnchor>
-      <TooltipContent id={tooltipId} align="start" className="w-64">
-        <dl className="flex flex-col gap-1.5">
-          <div className="flex flex-col gap-0.5">
-            <dt className="uppercase tracking-[0.08em]">{managed ? labels.guestRoot : labels.hostTitle}</dt>
-            <dd className="break-all font-mono text-foreground">{managed ? (project.guestRoot ?? '/') : project.path}</dd>
-          </div>
-          {/* A managed project converted from a host directory keeps that directory on record, and it is
-              the only remaining way to recognise where its contents came from. */}
-          {project.adoptedPath ? (
-            <div className="flex flex-col gap-0.5">
-              <dt className="uppercase tracking-[0.08em]">{labels.adoptedFrom}</dt>
-              <dd className="break-all font-mono text-foreground">{project.adoptedPath}</dd>
-            </div>
-          ) : null}
-        </dl>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
 
 export function ProjectsView() {
   const projects = useProjects();
@@ -516,8 +307,33 @@ export function ProjectsView() {
         : filteredProjects[index + (direction === 'next' ? 1 : -1)];
     if (!next) return;
     setSelectedId(next.id);
-    // The row itself is no longer a tab stop — its open button is, so that is what receives focus.
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-project-row="${next.id}"] .data-table-row-open`)?.focus());
+    // The card itself is not a tab stop — its open button is, so that is what receives focus.
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-project-card="${next.id}"] [data-project-card-open]`)?.focus());
+  };
+
+  // One bag, built once per render rather than per card: every card reads the same words, and passing
+  // the dictionary slice down keeps `ProjectCard` free of a translation context it would otherwise need
+  // in every test that mounts a single card.
+  const cardLabels: ProjectCardLabels = {
+    open: s.openProject,
+    openShort: s.cardOpen,
+    actions: t.common.actions,
+    runtimeManaged: s.runtimeManaged,
+    runtimeHost: s.runtimeHost,
+    runtimeManagedTitle: s.managed,
+    runtimeHostTitle: s.host,
+    hostStateTitle: s.hostStateTitle,
+    hostStateHint: s.hostStateHint,
+    branch: s.branchLabel,
+    pathMissing: s.pathMissing,
+    team: { strip: s.teamStrip, count: s.membersCount, empty: s.teamEmpty, more: s.teamMore },
+    location: {
+      host: s.locationHost,
+      managed: s.locationManaged,
+      hostTitle: s.locationHostTitle,
+      guestRoot: s.locationGuestRoot,
+      adoptedFrom: s.locationAdoptedFrom,
+    },
   };
 
   return (
@@ -564,106 +380,49 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    /* Identity and resources. The Path column is gone: two thirds of the register's width
-                       went to monospaced strings that read the same at a glance, and the one genuinely
-                       useful thing about a path — knowing it exactly — is served better by the mark in the
-                       identity cell than by an ellipsised column. Team membership belongs to that same
-                       identity, so its compact face stack sits beside the project name instead of claiming
-                       a sparse column of its own. Plugin indicators stay in their owning project surfaces. */
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(16rem,1.5fr) minmax(15rem,1.2fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
-                      <DataTableRow header>
-                        <DataTableCell header lines={1}>{t.projects.columnProject}</DataTableCell>
-                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnResources}</DataTableCell>
-                        {/* The state track carries a glyph, not a name of its own: each row's glyph is
-                            named by the state label the plugin itself reports. */}
-                        <DataTableCell header labelHidden lines={1}>{t.projects.columnStatus}</DataTableCell>
-                        {/* The chevron track carries no header of its own: the cell is decorative, and the
-                            column the row's open control lives in is named by DataTableRow itself. */}
-                        <DataTableCell header labelHidden lines={1}>{t.common.actions}</DataTableCell>
-                      </DataTableRow>
-                      {filteredProjects.map((project) => {
-                        const active = selectedId === project.id;
-                        return (
-                          <DataTableRow
-                            key={project.id}
-                            selected={active}
-                            aria-selected={active}
-                            data-project-row={project.id}
-                            className="group cursor-pointer"
-                            onOpen={() => setSelectedId(project.id)}
-                            openLabel={t.projects.openProject.replace('{slug}', project.slug)}
-                            onContextMenu={(event) => openCtxMenu(event, project)}
-                            // Enter and Space belong to the row's own open button now. Only the roving
-                            // arrow/Home/End navigation is left, and it still lives on the row because
-                            // that is where a keystroke aimed at any cell bubbles to.
-                            onKeyDown={(event) => {
-                              if (event.key === 'ArrowDown') { event.preventDefault(); navigateProject(project, 'next'); }
-                              if (event.key === 'ArrowUp') { event.preventDefault(); navigateProject(project, 'previous'); }
-                              if (event.key === 'Home') { event.preventDefault(); navigateProject(project, 'home'); }
-                              if (event.key === 'End') { event.preventDefault(); navigateProject(project, 'end'); }
-                            }}
-                          >
-                            {/* The identity cell carries the whole row on a phone: the slug, the mark that
-                                holds the exact location, the missing-directory warning, and the meters,
-                                which the wide-only Resources column cannot show there. The warning is NOT
-                                behind the mark — a directory that is gone is a fact about the row, not a
-                                detail someone has to go looking for. */}
-                            <DataTableCell
-                              lines="auto"
-                              className="flex items-center gap-3"
-                              // The identity cell contains its own location/team controls, so the shared
-                              // table raises the whole cell above the stretched row-open button. Let the
-                              // quiet identity surface open the detail itself; those controls already stop
-                              // propagation and retain their independent tooltip behavior.
-                              onClick={() => setSelectedId(project.id)}
-                            >
-                              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
-                                <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-muted-foreground" />
-                              </span>
-                              <div className="flex min-w-0 flex-1 flex-col">
-                                <span className="flex min-w-0 items-center gap-1.5">
-                                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
-                                  <span className="hidden shrink-0 @min-[56rem]:inline-flex">
-                                    <ProjectTeamCell
-                                      members={summariesByProject.get(project.id)?.members}
-                                      labels={{ count: t.projects.membersCount, empty: t.projects.teamEmpty, more: t.projects.teamMore }}
-                                    />
-                                  </span>
-                                  <ProjectLocationTip
-                                    project={project}
-                                    labels={{
-                                      host: t.projects.locationHost,
-                                      managed: t.projects.locationManaged,
-                                      hostTitle: t.projects.locationHostTitle,
-                                      guestRoot: t.projects.locationGuestRoot,
-                                      adoptedFrom: t.projects.locationAdoptedFrom,
-                                    }}
-                                  />
-                                  {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
-                                </span>
-                                <div className="@min-[56rem]:hidden"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} compact /></div>
-                              </div>
-                            </DataTableCell>
-                            <DataTableCell priority="wide" lines="auto"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} /></DataTableCell>
-                            {/* The state glyph sits at the row's far end, one narrow track left of the row
-                                actions. A row whose plugin says nothing leaves the track empty, so the
-                                actions never move as states arrive and go. */}
-                            <DataTableCell lines="auto" className="flex items-center justify-end">
-                              <ProjectRowStatus status={pluginRows.statusFor(project.id)} />
-                            </DataTableCell>
-                            <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()}>
-                              <ActionMenu
-                                label={`${project.slug}: ${t.common.actions}`}
-                                items={projectActions(project)}
-                                trigger={<MoreHorizontal size={16} aria-hidden />}
-                                triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-                              />
-                            </DataTableCell>
-                            <DataTableChevronCell />
-                          </DataTableRow>
-                        );
-                      })}
-                    </DataTable>
+                    /* The register is a GRID of cards, not a table of rows. A project is an identity, a
+                       runtime, a measurement, a repository and a team — five different kinds of fact, of
+                       which a table can only align the two that happen to be short. The Path column had
+                       already gone for that reason, and the meters had to be drawn twice, once in a
+                       wide-only column and once folded into the identity cell, because no single place in
+                       a row held them. A card holds all five without competing for one horizontal budget.
+
+                       The column counts are the CONTAINER's, not the viewport's: this same register is
+                       rendered inside surfaces of very different widths, and three cards across a phone
+                       is the failure the breakpoints exist to prevent. Three is the ceiling deliberately —
+                       a fourth column takes a card below the width its exact figures need, and this
+                       register is read to find the one project that is misbehaving, not to be filled. */
+                    <div
+                      role="list"
+                      aria-label={t.projects.tableLabel}
+                      data-testid="projects-register"
+                      className="@container grid grid-cols-1 gap-3 @min-[38rem]:grid-cols-2 @min-[58rem]:grid-cols-3"
+                    >
+                      {filteredProjects.map((project) => (
+                        <ProjectCard
+                          key={project.id}
+                          project={project}
+                          selected={selectedId === project.id}
+                          metrics={pluginRows.metricsFor(project.id)}
+                          status={pluginRows.statusFor(project.id)}
+                          actions={projectActions(project)}
+                          members={summariesByProject.get(project.id)?.members}
+                          branch={summariesByProject.get(project.id)?.branch}
+                          labels={cardLabels}
+                          onOpen={() => setSelectedId(project.id)}
+                          onContextMenu={(event) => openCtxMenu(event, project)}
+                          // Roving arrow/Home/End navigation between cards. It lives on the card because
+                          // that is where a keystroke aimed at anything inside it bubbles to; the team
+                          // strip consumes the arrows it needs before they get here.
+                          onKeyDown={(event) => {
+                            if (event.key === 'ArrowDown' || event.key === 'ArrowRight') { event.preventDefault(); navigateProject(project, 'next'); }
+                            if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') { event.preventDefault(); navigateProject(project, 'previous'); }
+                            if (event.key === 'Home') { event.preventDefault(); navigateProject(project, 'home'); }
+                            if (event.key === 'End') { event.preventDefault(); navigateProject(project, 'end'); }
+                          }}
+                        />
+                      ))}
+                    </div>
                   )}
                 </div>
 

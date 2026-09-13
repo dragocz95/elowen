@@ -94,7 +94,7 @@ function mount() {
   return client;
 }
 
-describe('sandbox contribution to the Project register rows', () => {
+describe('sandbox contribution to the Project register cards', () => {
   beforeEach(() => {
     posted = [];
     usageRequests = [];
@@ -105,28 +105,35 @@ describe('sandbox contribution to the Project register rows', () => {
 
   it('reads all managed states and resource bars in one batch', async () => {
     mount();
-    const running = await screen.findAllByRole('img', { name: strings.state_running });
-    const stopped = await screen.findAllByRole('img', { name: strings.state_stopped });
+    const running = await screen.findAllByText(strings.state_running!);
+    const stopped = await screen.findAllByText(strings.state_stopped!);
     expect(running.length).toBeGreaterThan(0);
     expect(stopped.length).toBeGreaterThan(0);
-    expect(running[0]).toHaveClass('lucide-play');
-    expect(stopped[0]).toHaveClass('lucide-square');
+    expect(running[0]!.closest('[data-project-row-status]')!.querySelector('svg')).toHaveClass('lucide-play');
+    expect(stopped[0]!.closest('[data-project-row-status]')!.querySelector('svg')).toHaveClass('lucide-square');
     await waitFor(() => expect(usageRequests).toEqual([[3, 5]]));
 
-    const runningRow = screen.getByRole('button', { name: 'Open project analysis' }).closest('[role="row"]') as HTMLElement;
-    expect(within(runningRow).getAllByRole('progressbar', { name: strings.usageCpu }).at(0)).toHaveAttribute('aria-valuenow', '50');
-    expect(within(runningRow).getAllByRole('progressbar', { name: strings.usageRam }).at(0)).toHaveAttribute('aria-valuetext', expect.stringContaining('256 MiB / 1 GiB'));
-    expect([...runningRow.querySelectorAll('[title]')].some((element) => element.getAttribute('title')?.includes(strings.usageLimitUnknown))).toBe(true);
-    expect(runningRow.querySelector('[data-project-row-metrics][data-compact="true"]')).not.toBeNull();
+    const runningCard = screen.getByRole('button', { name: 'Open project analysis' }).closest('[data-project-card]') as HTMLElement;
+    expect(within(runningCard).getAllByRole('progressbar', { name: strings.usageCpu }).at(0)).toHaveAttribute('aria-valuenow', '50');
+    expect(within(runningCard).getAllByRole('progressbar', { name: strings.usageRam }).at(0)).toHaveAttribute('aria-valuetext', expect.stringContaining('256 MiB / 1 GiB'));
+    expect([...runningCard.querySelectorAll('[title]')].some((element) => element.getAttribute('title')?.includes(strings.usageLimitUnknown))).toBe(true);
+    // ONE snapshot per card. The row had to draw the meters twice, once in a wide-only column and once
+    // folded back into the identity cell; a card has a place for them and needs neither copy.
+    expect(runningCard.querySelectorAll('[data-project-row-metrics]')).toHaveLength(1);
 
-    const stoppedRow = screen.getByRole('button', { name: 'Open project reports' }).closest('[role="row"]') as HTMLElement;
-    expect(within(stoppedRow).getAllByText(strings.usageStopped).length).toBeGreaterThan(0);
-    expect(within(stoppedRow).queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
+    const stoppedCard = screen.getByRole('button', { name: 'Open project reports' }).closest('[data-project-card]') as HTMLElement;
+    expect(within(stoppedCard).getAllByText(strings.usageStopped).length).toBeGreaterThan(0);
+    expect(within(stoppedCard).queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
 
-    const hostRow = screen.getByRole('button', { name: 'Open project elowen' }).closest('[role="row"]') as HTMLElement;
-    expect(within(hostRow).queryByRole('img', { name: strings.state_running })).toBeNull();
-    expect(hostRow.querySelector('[data-project-row-metrics]')).toBeNull();
-    expect(within(hostRow).queryByRole('menuitem')).toBeNull();
+    // A host project has no container, so it has no state, no meters and no lifecycle actions — and it
+    // says that in words rather than showing three empty bars that could be read as zero.
+    const hostCard = screen.getByRole('button', { name: 'Open project elowen' }).closest('[data-project-card]') as HTMLElement;
+    expect(hostCard.querySelector('[data-project-row-status]')).toBeNull();
+    expect(hostCard.querySelector('[data-project-row-metrics]')).toBeNull();
+    expect(hostCard.querySelector('[data-project-host-state]')).not.toBeNull();
+    expect(within(hostCard).getByText('Host project')).toBeInTheDocument();
+    expect(within(hostCard).queryByRole('progressbar')).toBeNull();
+    expect(within(hostCard).queryByRole('menuitem')).toBeNull();
   });
 
   it('uses warning and danger tokens at the resource thresholds', async () => {
@@ -142,9 +149,9 @@ describe('sandbox contribution to the Project register rows', () => {
       }) });
     }));
     mount();
-    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
-    const cpu = (await within(row).findAllByRole('progressbar', { name: strings.usageCpu }))[0]!;
-    const ram = within(row).getAllByRole('progressbar', { name: strings.usageRam })[0]!;
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    const cpu = (await within(card).findAllByRole('progressbar', { name: strings.usageCpu }))[0]!;
+    const ram = within(card).getAllByRole('progressbar', { name: strings.usageRam })[0]!;
     // The meter is the shared shadcn `Progress`, so the fill is its indicator slot rather than a bare span.
     expect(cpu.querySelector('[data-slot="progress-indicator"]')).toHaveClass('bg-destructive');
     expect(ram.querySelector('[data-slot="progress-indicator"]')).toHaveClass('bg-warning');
@@ -196,8 +203,8 @@ describe('sandbox contribution to the Project register rows', () => {
   // replacing numbers the reader can still see behind the rail.
   it('hydrates the project drawer from the row snapshot instead of reading again', async () => {
     mount();
-    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
-    await waitFor(() => expect(within(row).getAllByRole('progressbar', { name: strings.usageCpu }).length).toBeGreaterThan(0));
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(within(card).getAllByRole('progressbar', { name: strings.usageCpu }).length).toBeGreaterThan(0));
     await waitFor(() => expect(usageRequests).toEqual([[3, 5]]));
 
     fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
@@ -220,8 +227,8 @@ describe('sandbox contribution to the Project register rows', () => {
     await screen.findAllByRole('progressbar', { name: strings.usageCpu });
     const open = screen.getByRole('button', { name: 'Open project analysis' });
     // Held before the rail opens: the register behind an open drawer is marked inert, so a role query
-    // would no longer reach the row.
-    const row = open.closest('[role="row"]') as HTMLElement;
+    // would no longer reach the card.
+    const card = open.closest('[data-project-card]') as HTMLElement;
     fireEvent.click(open);
     const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
 
@@ -234,8 +241,8 @@ describe('sandbox contribution to the Project register rows', () => {
     expect(within(panel).getByText('512 MiB')).toBeInTheDocument();
     expect(within(panel).getByText(strings.usageStale!)).toBeInTheDocument();
     expect(within(panel).queryByText(strings.usageUnavailable!)).toBeNull();
-    // The row behind it agrees: one snapshot, two surfaces.
-    expect(row.querySelector('[data-project-row-metrics][data-stale="true"]')).not.toBeNull();
+    // The card behind it agrees: one snapshot, two surfaces.
+    expect(card.querySelector('[data-project-row-metrics][data-stale="true"]')).not.toBeNull();
   });
 
   /** Replace one resource of the batch, keeping the `200` and every other figure intact. This is the
@@ -257,10 +264,9 @@ describe('sandbox contribution to the Project register rows', () => {
   // stays, marked as the last known one.
   it('keeps a measured disk when a successful batch reports that one resource is unavailable', async () => {
     mount();
-    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
-    // Two copies of the same snapshot live on the row: the compact one in the identity cell and the one
-    // in the Resources column.
-    await waitFor(() => expect(within(row).getAllByText('512 MiB').length).toBe(2));
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    // ONE copy of the snapshot per card, where a row had to carry two.
+    await waitFor(() => expect(within(card).getAllByText('512 MiB')).toHaveLength(1));
 
     server.use(usageWithout('disk'));
     fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
@@ -280,8 +286,8 @@ describe('sandbox contribution to the Project register rows', () => {
 
   it('keeps measured CPU and memory when the cgroup read fails inside a successful batch', async () => {
     mount();
-    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
-    await waitFor(() => expect(within(row).getAllByRole('progressbar', { name: strings.usageCpu }).length).toBeGreaterThan(0));
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(within(card).getAllByRole('progressbar', { name: strings.usageCpu }).length).toBeGreaterThan(0));
 
     server.use(usageWithout('cpu', 'memory'));
     fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
@@ -300,14 +306,14 @@ describe('sandbox contribution to the Project register rows', () => {
   it('states unavailable for a resource no good value was ever measured for', async () => {
     server.use(usageWithout('disk'));
     mount();
-    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
-    await waitFor(() => expect(row.querySelector('[data-metric="disk"]')).not.toBeNull());
-    const disk = row.querySelector('[data-metric="disk"]') as HTMLElement;
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(card.querySelector('[data-metric="disk"]')).not.toBeNull());
+    const disk = card.querySelector('[data-metric="disk"]') as HTMLElement;
 
     expect(disk).toHaveAttribute('data-metric-state', 'unavailable');
     expect(within(disk).getByText(strings.usageUnavailable!)).toBeInTheDocument();
     // Nothing was kept, so nothing is claimed to be older than it is.
-    expect(row.querySelector('[data-project-row-metrics][data-stale="true"]')).toBeNull();
+    expect(card.querySelector('[data-project-row-metrics][data-stale="true"]')).toBeNull();
   });
 
   // The resource read belongs to the PAGE, not to whatever the filter box currently leaves on screen.
@@ -367,50 +373,73 @@ describe('sandbox contribution to the Project register rows', () => {
   // hidden, because the measurement is real.
   it('reports a disk with no configured ceiling as an absolute figure', async () => {
     mount();
-    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
-    await waitFor(() => expect(row.querySelector('[data-metric="disk"]')).not.toBeNull());
-    const disk = row.querySelector('[data-metric="disk"]') as HTMLElement;
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(card.querySelector('[data-metric="disk"]')).not.toBeNull());
+    const disk = card.querySelector('[data-metric="disk"]') as HTMLElement;
 
     expect(disk).toHaveAttribute('data-metric-state', 'absolute');
     expect(within(disk).getByText('512 MiB')).toBeInTheDocument();
-    expect(row.textContent).not.toContain('/ ?');
+    expect(card.textContent).not.toContain('/ ?');
     // No meter at all: a bar would claim a proportion of a ceiling that does not exist.
     expect(within(disk).queryByRole('progressbar')).toBeNull();
     expect(disk.querySelector('[data-metric-track="none"]')).not.toBeNull();
     expect(disk.getAttribute('title')).toContain(strings.usageLimitUnknown);
   });
 
-  // The Resources column is wide-only, so on a tablet and a phone the same meters have to travel with
-  // the identity cell — otherwise the one thing a managed row is worth opening for disappears with the
-  // column. Both copies are the same snapshot, and neither of them may overflow its track.
-  it('carries the meters in their own column when wide and inside the identity cell when not', async () => {
+  // The card draws the snapshot ONCE, stacked, and the drawer draws the same one three abreast. The
+  // arrangement is the difference: at three cards across, a label and an exact figure on one line put
+  // `256 MiB / 1 GiB` and `RAM` in the same 250px, and whichever gives way is the one the reader came
+  // for. Stacking gives the figure the card's whole width, so nothing is clipped to fit.
+  it('stacks one snapshot per card and keeps the drawer three abreast', async () => {
     mount();
-    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
-    await waitFor(() => expect(row.querySelectorAll('[data-project-row-metrics]')).toHaveLength(2));
-    const [identity, wide] = [...row.querySelectorAll('[data-project-row-metrics]')] as HTMLElement[];
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(card.querySelectorAll('[data-project-row-metrics]')).toHaveLength(1));
+    const inCard = card.querySelector('[data-project-row-metrics]') as HTMLElement;
 
-    expect(identity).toHaveAttribute('data-compact', 'true');
-    expect(identity.closest('[data-priority="wide"]')).toBeNull();
-    expect(identity.parentElement?.className).toContain('@min-[56rem]:hidden');
-    expect(wide).not.toHaveAttribute('data-compact');
-    expect(wide.closest('[data-priority="wide"]')).not.toBeNull();
-
-    // Three equal tracks that may shrink, and every reading clipped inside its own track rather than
-    // pushing the row wider.
-    for (const group of [identity, wide]) {
-      expect(group.className).toContain('grid-cols-3');
-      expect(group.className).toContain('min-w-0');
-      for (const metric of group.querySelectorAll('[data-metric]')) {
-        expect(metric.className).toContain('min-w-0');
-        expect(metric.querySelector('.truncate')).not.toBeNull();
-      }
+    expect(inCard).toHaveAttribute('data-metrics-layout', 'rows');
+    expect(inCard.className).toContain('flex-col');
+    expect(inCard.className).toContain('min-w-0');
+    // Every reading clipped inside its own track rather than pushing the card wider.
+    for (const metric of inCard.querySelectorAll('[data-metric]')) {
+      expect(metric.className).toContain('min-w-0');
+      expect(metric.querySelector('.truncate')).not.toBeNull();
+    }
+    // All three resources are labelled and carry an exact figure, not just a bar.
+    expect([...inCard.querySelectorAll('[data-metric]')].map((metric) => metric.getAttribute('data-metric'))).toEqual(['cpu', 'memory', 'disk']);
+    for (const label of [strings.usageCpu, strings.usageRam, strings.usageDisk]) {
+      expect(within(inCard).getByText(label!)).toBeInTheDocument();
     }
 
-    // The register's own tracks: identity, resources, state, actions, chevron when wide; the identity
-    // column alone plus those three narrow tracks when not.
-    const table = screen.getByTestId('projects-register');
-    expect(table.style.getPropertyValue('--data-table-columns').trim().split(/\s+(?![^(]*\))/)).toHaveLength(5);
-    expect(table.style.getPropertyValue('--data-table-compact-columns').trim().split(/\s+(?![^(]*\))/)).toHaveLength(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
+    const panel = document.querySelector('[data-project-resource-panel] [data-project-row-metrics]') as HTMLElement;
+    expect(panel).toHaveAttribute('data-metrics-layout', 'grid');
+    expect(panel.className).toContain('grid-cols-3');
+  });
+
+  // The register is a grid of cards whose column count follows its CONTAINER, not the viewport: the same
+  // surface is rendered at very different widths, and three cards across a phone is the failure these
+  // breakpoints exist to prevent. Three is the ceiling; a fourth column takes a card below the width its
+  // exact figures need.
+  it('lays the register out as one, two or three cards by container width', async () => {
+    mount();
+    await screen.findAllByText(strings.state_running!);
+    const grid = screen.getByTestId('projects-register');
+
+    expect(grid).toHaveAttribute('role', 'list');
+    expect(grid.className).toContain('@container');
+    expect(grid.className).toContain('grid-cols-1');
+    expect(grid.className).toContain('@min-[38rem]:grid-cols-2');
+    expect(grid.className).toContain('@min-[58rem]:grid-cols-3');
+    expect(grid.className).not.toContain('grid-cols-4');
+    // Every card is a list item of that list, and each one is min-width-0 so a long slug cannot widen
+    // its column and push the grid out of the surface.
+    const items = [...grid.children] as HTMLElement[];
+    expect(items).toHaveLength(3);
+    for (const item of items) {
+      expect(item).toHaveAttribute('role', 'listitem');
+      expect(item.className).toContain('min-w-0');
+      expect(item.querySelector('[data-project-card]')).not.toBeNull();
+    }
   });
 
   it('uses a calm foreground-only polling policy', () => {
@@ -424,7 +453,7 @@ describe('sandbox contribution to the Project register rows', () => {
 
   it('enables each lifecycle action by the state the environment is actually in', async () => {
     mount();
-    await screen.findAllByRole('img', { name: strings.state_running });
+    await screen.findAllByText(strings.state_running!);
 
     fireEvent.click(screen.getByRole('button', { name: 'analysis: Actions' }));
     await screen.findAllByRole('menuitem');
@@ -444,7 +473,7 @@ describe('sandbox contribution to the Project register rows', () => {
 
   it('starts a stopped environment from the row and follows the durable operation', async () => {
     mount();
-    await screen.findAllByRole('img', { name: strings.state_stopped });
+    await screen.findAllByText(strings.state_stopped!);
     fireEvent.click(screen.getByRole('button', { name: 'reports: Actions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: strings.startEnvironment }));
 
@@ -469,7 +498,7 @@ describe('sandbox contribution to the Project register rows', () => {
       return HttpResponse.json({ id: 'op-1', requestId: body.requestId, projectId: 5, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'pending', error: null });
     }));
     mount();
-    await screen.findAllByRole('img', { name: strings.state_stopped });
+    await screen.findAllByText(strings.state_stopped!);
 
     for (const attempt of [1, 2]) {
       fireEvent.click(screen.getByRole('button', { name: 'reports: Actions' }));
@@ -486,7 +515,7 @@ describe('sandbox contribution to the Project register rows', () => {
   it('shows a refused action inside the confirmation that raised it', async () => {
     server.use(http.post('*/api/plugins/sandbox/api/projects/3/environment', () => HttpResponse.json({ error: 'environment_busy' }, { status: 409 })));
     mount();
-    await screen.findAllByRole('img', { name: strings.state_running });
+    await screen.findAllByText(strings.state_running!);
     fireEvent.click(screen.getByRole('button', { name: 'analysis: Actions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: strings.stopEnvironment }));
 
@@ -498,7 +527,7 @@ describe('sandbox contribution to the Project register rows', () => {
 
   it('asks before stopping a running environment, and sends nothing until it is confirmed', async () => {
     mount();
-    await screen.findAllByRole('img', { name: strings.state_running });
+    await screen.findAllByText(strings.state_running!);
     fireEvent.click(screen.getByRole('button', { name: 'analysis: Actions' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: strings.stopEnvironment }));
 

@@ -1,0 +1,40 @@
+/* The team strip inside a Project register card: .project-card-team.
+
+   Only what a utility class cannot say lives here. The grid's column counts and the card's paint are
+   Tailwind on the elements themselves; this file owns the two things that are behaviour rather than
+   paint — how a scrollable strip announces that it has more to show, and how it moves under a
+   reduced-motion preference. Like every file under components/, it is imported UNLAYERED, so it outranks
+   Tailwind's utilities whatever the specificity: nothing here may restate a declaration a caller is
+   expected to be able to pass. */
+
+/* The strip's own scrolling. `scroll-behavior` is declared here rather than set per keystroke so the
+   app's single motion boundary governs it: `[data-effects]` is written on <html> by EffectsProvider and
+   the media query catches a reader whose preference never reached the app (first paint, no JS yet).
+   The pointer drift sets `scroll-behavior: auto` inline while it runs — it interpolates frame by frame
+   itself, and a second animation on top of that fights the first. */
+.project-card-team {
+  scroll-behavior: smooth;
+  /* One line of 22px faces inside a card that already has a border: a scrollbar gutter there is taller
+     than the content it describes, and the fade below is the affordance instead. */
+  scrollbar-width: none;
+  /* The faces nearest an edge fade rather than being cut, which is the only ALWAYS-VISIBLE signal that
+     the strip continues. A hover-revealed arrow would be invisible to touch and to the keyboard, and a
+     permanently drawn pair would take two finger-widths from a card that has three columns to fit in.
+     The stops are an alpha stencil rather than paint — `black` here means "keep this pixel" — so there
+     is no colour in this rule for a skin to own. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 1rem, black calc(100% - 1rem), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 1rem, black calc(100% - 1rem), transparent 100%);
+}
+/* A strip with nothing to scroll must not fade its first and last face: the signal has to mean "there
+   is more", or it means nothing. */
+.project-card-team:not([data-project-team-overflow='true']) {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.project-card-team::-webkit-scrollbar { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .project-card-team { scroll-behavior: auto; }
+}
+/* Damping `reduced` without damping `off` would leave the quietest mode the only one still animating. */
+:is([data-effects='reduced'], [data-effects='off']) .project-card-team { scroll-behavior: auto; }

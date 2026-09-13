@@ -46,8 +46,10 @@ describe('ProjectsView', () => {
     window.history.replaceState(null, '', '/projects?project=3');
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
-    expect(await screen.findByRole('dialog', { name: 'analysis' })).toBeInTheDocument();
-    expect(screen.getByText('URL target')).toBeInTheDocument();
+    const rail = await screen.findByRole('dialog', { name: 'analysis' });
+    // The notes are the card's identity line as well as the drawer's body, so the drawer is addressed
+    // rather than the document.
+    expect(within(rail).getByText('URL target')).toBeInTheDocument();
   });
 
   it('opens the server-owned default project without requesting container provisioning', async () => {
@@ -178,8 +180,9 @@ describe('ProjectsView', () => {
 
     expect(screen.queryByRole('button', { name: /Inspect repository/i })).toBeNull();
     // What the register already holds is on screen straight away; only the repository is still coming.
-    expect(await screen.findByText('Research notes')).toBeInTheDocument();
-    expect(await screen.findByText('main')).toBeInTheDocument();
+    const rail = await screen.findByRole('dialog', { name: 'analysis' });
+    expect(within(rail).getByText('Research notes')).toBeInTheDocument();
+    expect(await within(rail).findByText('main')).toBeInTheDocument();
     expect(asked).toBe(1);
   });
 
@@ -398,25 +401,21 @@ describe('ProjectsView', () => {
   it('lists projects and shows git on select', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
-    const row = await screen.findByText('elowen');
-    // Team membership is part of the project's identity now, not a sparse column of its own. A plugin
-    // indicator pill is not a column either: the old summary repeated the same "GitHub @…" chip on every
-    // row and told the reader nothing that distinguished one project from another. The connections remain
-    // available in their owning project surfaces and `/projects/summary` still serves both kinds of data.
-    expect(screen.queryByRole('columnheader', { name: 'Team' })).toBeNull();
-    expect(await screen.findByRole('columnheader', { name: 'Resources' })).toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Summary' })).toBeNull();
-    expect(screen.queryByRole('columnheader', { name: 'Path' })).toBeNull();
+    const name = await screen.findByText('elowen');
+    // The register is a LIST of cards, not a table. There are no columns to name, and a plugin indicator
+    // pill is not one either: the old summary repeated the same "GitHub @…" chip on every row and told the
+    // reader nothing that distinguished one project from another. The connections remain available in
+    // their owning project surfaces and `/projects/summary` still serves both kinds of data.
+    expect(screen.queryByRole('columnheader')).toBeNull();
     expect(screen.queryByText('Connected')).toBeNull();
-    expect(screen.queryByRole('columnheader', { name: 'Pilot info' })).toBeNull();
     expect(screen.getByRole('button', { name: '1 assigned users' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open project elowen' }));
     expect(await screen.findByText('master')).toBeTruthy();
     expect(await screen.findByText('feat: x')).toBeTruthy();
-    expect(screen.getByTestId('projects-register')).toHaveAttribute('role', 'table');
+    expect(screen.getByTestId('projects-register')).toHaveAttribute('role', 'list');
+    expect(screen.getByTestId('projects-register')).toHaveAttribute('aria-label', 'Project registry');
     expect(screen.getByTestId('projects-register').closest('.control-surface-register')).toBeInTheDocument();
-    expect(screen.getByTestId('projects-register')).not.toHaveClass('border-t-0');
-    expect(row.closest('[role="row"]')).toHaveAttribute('aria-selected', 'true');
+    expect(name.closest('[data-project-card]')).toHaveAttribute('data-selected', 'true');
     // The rail names the record and states its path in the ONE header it already draws. It used to be
     // titled "Project detail" and then repeat the slug and path in a header band of its own.
     const rail = screen.getByRole('dialog', { name: 'elowen' });
@@ -427,7 +426,7 @@ describe('ProjectsView', () => {
   // The path itself moved behind the identity mark, but a directory that is GONE is a fact about the
   // row rather than a detail to go looking for, so the warning stays on the row at every width — and it
   // is now stated once instead of duplicated across a wide column and a compact line.
-  it('states a missing directory on the row itself, only for explicit false', async () => {
+  it('states a missing directory on the card itself, only for explicit false', async () => {
     server.use(http.get('*/api/projects', () => HttpResponse.json([
       { id: 1, slug: 'elowen', path: '/var/www/elowen', pathExists: false, notes: '', icon: '' },
       { id: 2, slug: 'legacy', path: '/var/www/legacy', notes: '', icon: '' },
@@ -438,10 +437,8 @@ describe('ProjectsView', () => {
     await screen.findByText('legacy');
     const warnings = screen.getAllByText('Directory missing');
     expect(warnings).toHaveLength(1);
-    // In the always-visible identity cell, so it survives the wide-only columns disappearing.
-    expect(warnings[0]!.closest('[data-priority="wide"]')).toBeNull();
-    expect(warnings[0]!.closest('[role="row"]')).toHaveAttribute('data-project-row', '1');
-    expect(screen.getByRole('button', { name: 'Open project legacy' }).closest('[role="row"]')).not.toHaveTextContent('Directory missing');
+    expect(warnings[0]!.closest('[data-project-card]')).toHaveAttribute('data-project-card', '1');
+    expect(screen.getByRole('button', { name: 'Open project legacy' }).closest('[data-project-card]')).not.toHaveTextContent('Directory missing');
   });
 
   it('manages member access from the selected Project', async () => {
@@ -456,19 +453,22 @@ describe('ProjectsView', () => {
     expect(dialog).not.toHaveTextContent('@admin');
   });
 
-  // A row opens through a real button spanning it, so Enter and Space come from the platform rather than
-  // a keydown handler — and the accessible name is the short one the caller supplies, not the row's text.
-  it('opens a project from a single named button, not from the row itself', async () => {
+  // A card opens through a real named button in its footer, so Enter and Space come from the platform
+  // rather than a keydown handler. The card itself is NOT a button and NOT a tab stop: it holds a
+  // heading, a scrollable strip, a tooltip control and a menu, and wrapping all of that in one control
+  // is a control containing controls.
+  it('opens a project from a single named button, not from the card itself', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
     const open = await screen.findByRole('button', { name: 'Open project elowen' });
     expect(open.tagName).toBe('BUTTON');
-    const row = open.closest('[role="row"]')!;
-    expect(row).not.toHaveAttribute('tabindex');
+    const card = open.closest('[data-project-card]')!;
+    expect(card).not.toHaveAttribute('tabindex');
+    expect(card.getAttribute('role')).toBeNull();
 
     fireEvent.click(open);
     expect(await screen.findByText('master')).toBeTruthy();
-    expect(row).toHaveAttribute('aria-selected', 'true');
+    expect(card).toHaveAttribute('data-selected', 'true');
   });
 
   it('withholds editor controls when the editor plugin is unavailable', async () => {
@@ -485,15 +485,15 @@ describe('ProjectsView', () => {
   it('offers the same project actions in the row menu and the right-click menu', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
-    const row = (await screen.findByText('elowen')).closest('[role="row"]');
-    if (!row) throw new Error('project row not rendered');
+    const card = (await screen.findByText('elowen')).closest('[data-project-card]');
+    if (!card) throw new Error('project card not rendered');
 
     fireEvent.click(screen.getByRole('button', { name: 'elowen: Actions' }));
     const hoverActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryAllByRole('menuitem')).toHaveLength(0));
 
-    fireEvent.contextMenu(row);
+    fireEvent.contextMenu(card);
     const contextActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
 
     expect(hoverActions).toEqual(['Edit project', 'Copy path', 'Remove project']);
@@ -508,8 +508,8 @@ describe('ProjectsView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
 
-    const row = (await screen.findByText('elowen')).closest('[role="row"]');
-    if (!row) throw new Error('project row not rendered');
+    const card = (await screen.findByText('elowen')).closest('[data-project-card]');
+    if (!card) throw new Error('project card not rendered');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'New project' })).toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'elowen: Actions' }));
@@ -779,7 +779,7 @@ describe('ProjectsView', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Remove project' })).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Edit project' })).toBeInTheDocument();
     expect((currentEditor.querySelector('input') as HTMLInputElement)).toHaveValue('website');
-    expect(screen.getByRole('button', { name: 'Open project website', hidden: true }).closest('[role="row"]')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Open project website', hidden: true }).closest('[data-project-card]')).toHaveAttribute('data-selected', 'true');
     expect(deleteHits).toBe(1);
   });
 });
