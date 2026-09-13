@@ -42,6 +42,7 @@ function fakeBrain() {
   const subagentSends: { id: number; session: string; text: string; images?: { data: string; mimeType: string }[] }[] = [];
   const subagentModelSwitches: { id: number; session: string; sel: { provider?: string; model: string } }[] = [];
   const acceptedSendFailures: { session: string; message: string }[] = [];
+  const exportCalls: { id: number; session: string; format: 'html' | 'jsonl'; anyOwner?: boolean }[] = [];
   const turnRequests: Omit<TurnRequest, 'onAdmitted'>[] = [];
   const bindContextCalls: { id: number; channel: string; session: string }[] = [];
   const switchModelCalls: { id: number; sel: { provider?: string; model?: string }; session?: string }[] = [];
@@ -96,6 +97,7 @@ function fakeBrain() {
     subagentSends,
     subagentModelSwitches,
     acceptedSendFailures,
+    exportCalls,
     turnRequests,
     get snapshotOffCalls() { return snapshotOffCalls; },
     __setSnapshotPending: (events: BrainEvent[], synchronous = false) => {
@@ -216,7 +218,8 @@ function fakeBrain() {
     /** Writes a real temp file so the route can stream it back; a 'missing' id throws (→ 404). Records
      *  each cleaned-up path so the test can assert the route removed the temp file afterwards. */
     cleaned: [] as string[],
-    exportSession(_id: number, sessionId: string, format: 'html' | 'jsonl') {
+    exportSession(id: number, sessionId: string, format: 'html' | 'jsonl', access: { anyOwner?: boolean } = {}) {
+      exportCalls.push({ id, session: sessionId, format, ...(access.anyOwner ? { anyOwner: true } : {}) });
       if (sessionId === 'missing') return Promise.reject(new Error('unknown session'));
       const dir = mkdtempSync(join(tmpdir(), 'test-export-'));
       const filename = `elowen-${sessionId}.${format}`;
@@ -1230,19 +1233,23 @@ describe('brain routes', () => {
       .toEqual([{ id: 'q2', text: 'second' }]);
   });
 
-  it('GET /brain/sessions/:id/export streams HTML by default and JSONL on request, then cleans up', async () => {
-    const { app, amyTok, brain } = setup();
+  it('GET /brain/sessions/:id/export streams HTML and JSONL with the shared owner/admin read policy', async () => {
+    const { app, adminTok, amyTok, brain } = setup();
     const html = await app.request('/brain/sessions/s-2/export', auth(amyTok));
     expect(html.status).toBe(200);
     expect(html.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect(html.headers.get('content-disposition')).toBe('attachment; filename="elowen-s-2.html"');
     expect(await html.text()).toContain('<!DOCTYPE html>');
 
-    const jsonl = await app.request('/brain/sessions/s-2/export?format=jsonl', auth(amyTok));
+    const jsonl = await app.request('/brain/sessions/s-2/export?format=jsonl', auth(adminTok));
     expect(jsonl.status).toBe(200);
     expect(jsonl.headers.get('content-type')).toBe('application/x-ndjson');
     expect(jsonl.headers.get('content-disposition')).toBe('attachment; filename="elowen-s-2.jsonl"');
 
+    expect(brain.exportCalls).toEqual([
+      { id: 2, session: 's-2', format: 'html' },
+      { id: 1, session: 's-2', format: 'jsonl', anyOwner: true },
+    ]);
     // The route removes each temp file after streaming it out.
     expect(brain.cleaned).toHaveLength(2);
   });

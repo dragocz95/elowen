@@ -2088,18 +2088,6 @@ export class BrainService {
     return started;
   }
 
-  /** Authorize one explicit transcript read. Ordinary same-owner sessions retain the historical read
-   *  contract; a sub-agent additionally has to reach this user's own conversation through its complete
-   *  durable ancestry. Admin oversight may still read a foreign transcript without attaching to it. */
-  private preflightSessionRead(userId: number, sessionId: string, anyOwner = false): { user_id: number } {
-    const row = this.d.store.getSession(sessionId);
-    if (!row || (row.user_id !== userId && !anyOwner)) throw new Error('unknown session');
-    if (row.user_id === userId && isSubagentSession(sessionId)) {
-      this.delegated.preflightOwnerRelation(userId, sessionId);
-    }
-    return row;
-  }
-
   /** Follow the user's ACTIVE conversation live — see ConversationLifecycle.subscribe. */
   subscribe(userId: number, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number, surface?: ConversationActivitySurface): () => void {
     return this.lifecycle.subscribe(userId, listener, clientId, clientGeneration, surface);
@@ -2107,7 +2095,7 @@ export class BrainService {
 
   /** Follow one of the CALLER'S OWN sessions live, by explicit id — see ConversationLifecycle.tapSession. */
   tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number, surface?: ConversationActivitySurface): () => void {
-    this.preflightSessionRead(userId, sessionId);
+    this.statusView.sessionForRead(userId, sessionId);
     return this.lifecycle.tapSession(userId, sessionId, listener, clientId, clientGeneration, surface);
   }
 
@@ -2131,9 +2119,9 @@ export class BrainService {
     // re-key which session that person's CLI resumes. Reading someone's history must not move their
     // client around. The snapshot is taken AS THE OWNER, the same way a foreign teardown runs as the
     // session's real owner, so no ownership check is bypassed anywhere -- it is answered truthfully.
-    const target = this.preflightSessionRead(userId, sessionId, opts.anyOwner === true);
+    const target = this.statusView.sessionForRead(userId, sessionId, opts);
     if (target.user_id !== userId) {
-      return { off: () => {}, snapshot: this.statusView.streamSnapshot(target.user_id, sessionId, history) };
+      return { off: () => {}, snapshot: this.statusView.streamSnapshot(userId, sessionId, history, opts) };
     }
     // Resolve and authorize in the daemon before crossing IPC. The runner repeats ownership validation;
     // userId and sessionId in the wire frame are routing facts, never an authority minted by the child.
@@ -2875,24 +2863,24 @@ export class BrainService {
 
   /** ANY of the owner's stored sessions, shaped for display — see BrainStatusService.messagesOf. */
   messagesOf(userId: number, sessionId: string, opts: { anyOwner?: boolean } = {}): BrainMessageView[] {
-    this.preflightSessionRead(userId, sessionId, opts.anyOwner === true);
     return this.statusView.messagesOf(userId, sessionId, opts);
   }
 
   /** A backwards-paged window over a conversation's history (chat lazy-load) — see
    *  BrainStatusService.messagesPage. */
   messagesPage(userId: number, sessionId: string | undefined, opts: MessagePageOpts, access: { anyOwner?: boolean } = {}): MessagePage {
-    if (sessionId) this.preflightSessionRead(userId, sessionId, access.anyOwner === true);
     return this.statusView.messagesPage(userId, sessionId, opts, access);
   }
 
-  /** Export one of the caller's OWN conversations (owner-scoped exactly like messagesOf) as a
-   *  self-contained HTML transcript or a JSONL session file. Reads history from the store and renders
-   *  through PI's own exporter into a private temp dir — no live PI session required. Throws for an
-   *  unknown or foreign session; the returned handle's cleanup() removes the temp dir. */
-  exportSession(userId: number, sessionId: string, format: ExportFormat): Promise<SessionExport> {
-    const row = this.d.store.getSession(sessionId);
-    if (!row || row.user_id !== userId) throw new Error('unknown session');
+  /** Export one authorized transcript under the same ownership/admin read policy as history and stream
+   *  snapshots. No live PI session is required; the returned handle removes its private temp directory. */
+  exportSession(
+    userId: number,
+    sessionId: string,
+    format: ExportFormat,
+    access: { anyOwner?: boolean } = {},
+  ): Promise<SessionExport> {
+    const row = this.statusView.sessionForRead(userId, sessionId, access);
     return exportBrainSession({ store: this.d.store, sessionId, cwd: row.work_dir || process.cwd(), title: row.title, format });
   }
 }

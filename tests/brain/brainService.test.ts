@@ -9403,26 +9403,72 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
       .rejects.toThrow('unknown session');
   });
 
-  it('refuses read-only drill-in for a same-owner child rooted in a shared channel', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    const root = 'brain-ch-discord-shared-read';
-    const child = 'brain-ch-subagent-shared-read-child';
-    d.store.createSession({ id: root, userId: 1, model: 'm' });
-    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: root, delegatedAccess: SCOPE });
+  it('keeps an orphaned child readable through history, paging, stream snapshot and export', async () => {
+    const { d, svc, sessionId, b } = await seedNest();
+    d.store.appendMessage({
+      id: 'orphan-answer', sessionId: b, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'preserved orphan transcript' }], stopReason: 'stop' },
+    });
+    d.store.deleteSession(sessionId);
+    expect(d.store.getSession(b)?.parent_session_id).toBeNull();
 
-    await expect(svc.tapSessionSnapshot(1, child, () => {}))
-      .rejects.toThrow('delegated session is not rooted in an owner conversation');
-    expect(() => svc.messagesOf(1, child))
-      .toThrow('delegated session is not rooted in an owner conversation');
+    expect(svc.messagesOf(1, b)).toEqual([
+      expect.objectContaining({ id: 'orphan-answer', text: 'preserved orphan transcript' }),
+    ]);
+    expect(svc.messagesPage(1, b, { limit: 20 }).items).toEqual([
+      expect.objectContaining({ id: 'orphan-answer', text: 'preserved orphan transcript' }),
+    ]);
+    const tapped = await svc.tapSessionSnapshot(1, b, () => {});
+    expect(tapped.snapshot.history).toEqual([
+      expect.objectContaining({ id: 'orphan-answer', text: 'preserved orphan transcript' }),
+    ]);
+    tapped.off();
+    const exported = await svc.exportSession(1, b, 'jsonl');
+    try { expect(exported.filename).toContain('brain-ch-subagent-sub-nest-b'); }
+    finally { exported.cleanup(); }
   });
 
-  it('fails closed when the durable parent lineage contains a cycle', async () => {
-    const { d, svc, b, c } = await seedNest();
-    d.db.prepare('UPDATE brain_sessions SET parent_session_id = ? WHERE id = ?').run(c, b);
+  it('keeps channel, cron, workflow-rooted, legacy no-scope and cyclic child transcripts readable', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const cases = [
+      { root: 'brain-ch-discord-shared-read', child: 'brain-ch-subagent-shared-read-child', scope: SCOPE },
+      { root: 'brain-ch-cron-nightly-read', child: 'brain-ch-subagent-cron-read-child', scope: SCOPE },
+      { root: 'brain-ch-subagent-wf-wf-read-n1-abc', child: 'brain-ch-subagent-workflow-read-child', scope: SCOPE },
+      { root: 'brain-1', child: 'brain-ch-subagent-legacy-read-child', scope: undefined },
+    ] as const;
+    for (const item of cases) {
+      if (!d.store.getSession(item.root)) d.store.createSession({ id: item.root, userId: 1, model: 'm' });
+      d.store.createSession({
+        id: item.child, userId: 1, model: 'm', parentSessionId: item.root,
+        ...(item.scope ? { delegatedAccess: item.scope } : {}),
+      });
+      d.store.appendMessage({
+        id: `${item.child}-answer`, sessionId: item.child, parentId: null, role: 'assistant',
+        content: { role: 'assistant', content: [{ type: 'text', text: item.child }], stopReason: 'stop' },
+      });
+      expect(svc.messagesOf(1, item.child)).toEqual([
+        expect.objectContaining({ text: item.child }),
+      ]);
+      const tapped = await svc.tapSessionSnapshot(1, item.child, () => {});
+      expect(tapped.snapshot.history).toEqual([expect.objectContaining({ text: item.child })]);
+      tapped.off();
+    }
 
-    await expect(svc.tapSessionSnapshot(1, c, () => {})).rejects.toThrow('invalid parent session');
-    expect(() => svc.messagesOf(1, c)).toThrow('invalid parent session');
+    const cyclicA = 'brain-ch-subagent-cyclic-read-a';
+    const cyclicB = 'brain-ch-subagent-cyclic-read-b';
+    d.store.createSession({ id: cyclicA, userId: 1, model: 'm', parentSessionId: 'brain-1', delegatedAccess: SCOPE });
+    d.store.createSession({ id: cyclicB, userId: 1, model: 'm', parentSessionId: cyclicA, delegatedAccess: SCOPE });
+    d.db.prepare('UPDATE brain_sessions SET parent_session_id = ? WHERE id = ?').run(cyclicB, cyclicA);
+    d.store.appendMessage({
+      id: 'cyclic-answer', sessionId: cyclicB, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'cyclic transcript' }], stopReason: 'stop' },
+    });
+    expect(svc.messagesOf(1, cyclicB)).toEqual([expect.objectContaining({ text: 'cyclic transcript' })]);
+    const cyclicTap = await svc.tapSessionSnapshot(1, cyclicB, () => {});
+    expect(cyclicTap.snapshot.history).toEqual([expect.objectContaining({ text: 'cyclic transcript' })]);
+    cyclicTap.off();
   });
 
   it('abort on the viewed grandchild stops exactly that child through the channel abort tree', async () => {
@@ -9669,13 +9715,40 @@ describe('BrainService admin oversight of a foreign conversation', () => {
     attached.off();
   });
 
+  it('applies the same admin oversight policy to foreign child history, paging, stream and export', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    const child = 'brain-ch-subagent-foreign-oversight';
+    d.store.createSession({ id: child, userId: 2, model: 'm', parentSessionId: 'brain-2' });
+    d.store.appendMessage({
+      id: 'foreign-child-answer', sessionId: child, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'foreign child transcript' }], stopReason: 'stop' },
+    });
+
+    expect(svc.messagesOf(1, child, { anyOwner: true })).toEqual([
+      expect.objectContaining({ text: 'foreign child transcript' }),
+    ]);
+    expect(svc.messagesPage(1, child, { limit: 20 }, { anyOwner: true }).items).toEqual([
+      expect.objectContaining({ text: 'foreign child transcript' }),
+    ]);
+    const attached = await svc.tapSessionSnapshot(1, child, () => {}, undefined, undefined, undefined, { anyOwner: true });
+    expect(attached.snapshot.history).toEqual([expect.objectContaining({ text: 'foreign child transcript' })]);
+    attached.off();
+    const exported = await svc.exportSession(1, child, 'jsonl', { anyOwner: true });
+    exported.cleanup();
+  });
+
   it('refuses a foreign conversation when the caller is not an admin', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(2);
 
-    // No anyOwner ⇒ the ordinary ownership check decides, and it fails closed.
+    // No anyOwner ⇒ the ordinary ownership check decides, and it fails closed everywhere.
+    expect(() => svc.messagesOf(1, 'brain-2')).toThrow('unknown session');
+    expect(() => svc.messagesPage(1, 'brain-2', { limit: 20 })).toThrow('unknown session');
     await expect(svc.tapSessionSnapshot(1, 'brain-2', () => {})).rejects.toThrow('unknown session');
+    expect(() => svc.exportSession(1, 'brain-2', 'jsonl')).toThrow('unknown session');
   });
 
   it('still gives an admin a real live tap on their OWN conversation', async () => {

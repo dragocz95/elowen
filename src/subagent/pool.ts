@@ -183,18 +183,33 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
     childSessionId: string,
     running: boolean,
   ): void {
+    const refused = (reason: string): void => log.debug('refused nested child edge', {
+      reason, parentSessionId, childSessionId, running,
+    });
     if (!isSubagentSession(parentSessionId) || !isSubagentSession(childSessionId)
-      || parentSessionId === childSessionId) return;
+      || parentSessionId === childSessionId) {
+      refused('malformed lineage');
+      return;
+    }
     const childChannelId = channelIdOf(childSessionId);
     const current = this.routes.get(childChannelId);
     if (!running) {
-      // The middle parent's idle route may already have been retired while a detached grandchild kept
-      // running. The child route was admitted from a valid true edge, so it is the durable IPC proof that
-      // this runner owns the matching false edge and may retract it from the daemon registry.
-      if (current !== entry) return;
+      // Reset clears routes before SIGTERM settles the host's mirrored edges. An absent route is therefore
+      // a valid terminal retraction; only a PRESENT route owned by another runner proves this frame foreign.
+      if (current && current !== entry) {
+        refused('child routed to another runner');
+        return;
+      }
     } else {
       const parentChannelId = channelIdOf(parentSessionId);
-      if (this.routes.get(parentChannelId) !== entry || (current && current !== entry)) return;
+      if (this.routes.get(parentChannelId) !== entry) {
+        refused('parent not routed to reporting runner');
+        return;
+      }
+      if (current && current !== entry) {
+        refused('child routed to another runner');
+        return;
+      }
       this.routes.set(childChannelId, entry);
     }
     this.routeTouched.set(childChannelId, Date.now());

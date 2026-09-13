@@ -418,7 +418,23 @@ describe('SubagentRunnerPool — placement and routing', () => {
       childSessionId: 'brain-ch-subagent-sub-nest-b',
       running: true,
     });
+    // A terminal frame from this runner may retract an ABSENT reset-cleared route, but never a route that
+    // is presently owned elsewhere. Exercise the ownership branch directly with two distinct pool entries.
+    const internals = h.pool as unknown as {
+      routes: Map<string, unknown>;
+      runners: unknown[];
+      onChildEdge(entry: unknown, parentSessionId: string, childSessionId: string, running: boolean): void;
+    };
+    const foreignRoute = {};
+    internals.routes.set('subagent-foreign-child', foreignRoute);
+    internals.onChildEdge(
+      internals.runners[0],
+      'brain-ch-subagent-sub-nest-b',
+      'brain-ch-subagent-foreign-child',
+      false,
+    );
 
+    expect(internals.routes.get('subagent-foreign-child')).toBe(foreignRoute);
     expect(await h.pool.tapSessionSnapshot(1, 'brain-ch-subagent-unrelated-child', () => {})).toBeUndefined();
     expect(edge).not.toHaveBeenCalled();
     expect(child.received.some((m) => m.type === 'tap')).toBe(false);
@@ -663,6 +679,32 @@ describe('SubagentRunnerPool — reset is a teardown, not a kill switch', () => 
     h.children[1]!.finish(h.children[1]!.turns()[0]!.turnId, 'reloaded');
     expect(await again).toBe('reloaded');
     h.pool.reset('test over');
+  });
+
+  it('retracts a nested live edge when the runner exits after reset cleared its routes', async () => {
+    const h = poolWith();
+    const liveChildren = new Set<string>();
+    const edge = vi.fn((_parentSessionId: string, childSessionId: string, running: boolean) => {
+      if (running) liveChildren.add(childSessionId);
+      else liveChildren.delete(childSessionId);
+    });
+    h.pool.attachChildEdgeSink(edge);
+    const { run } = await coldStart(h, 'subagent-sub-reset-parent');
+    const child = h.children[0]!;
+    const parentSessionId = 'brain-ch-subagent-sub-reset-parent';
+    const nestedSessionId = 'brain-ch-subagent-sub-reset-child';
+    child.reply({ type: 'child', parentSessionId, childSessionId: nestedSessionId, running: true });
+    expect(liveChildren).toEqual(new Set([nestedSessionId]));
+
+    h.pool.reset('plugins reloaded');
+    child.die(0, 'SIGTERM');
+    await expect(run).rejects.toThrow('interrupted');
+
+    expect(edge.mock.calls).toEqual([
+      [parentSessionId, nestedSessionId, true],
+      [parentSessionId, nestedSessionId, false],
+    ]);
+    expect(liveChildren.size).toBe(0);
   });
 
   // A runner still booting when the reload lands was forked from the OLD build. Letting it join would put
