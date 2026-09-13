@@ -38,7 +38,7 @@ import { logger } from '../shared/logger.js';
 import type { BrainEvent } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
 import type { ProcessInfo, ProcessSweepResult } from '../brain/processRegistry.js';
-import { channelSessionId, channelIdOf } from '../brain/sessionId.js';
+import { channelSessionId, channelIdOf, isSubagentSession } from '../brain/sessionId.js';
 import { SubagentRunnerUnavailable, type DelegatedTurnRequest, type DelegatedTurnRunner } from '../brain/delegatedTurn.js';
 import { SubagentRunnerHost, type RunnerHeartbeat, type SubagentRunnerHostDeps } from './runnerHost.js';
 import { FairQueue } from './fairQueue.js';
@@ -171,7 +171,34 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
 
   attachChildEdgeSink(sink: (parentSessionId: string, childSessionId: string, running: boolean) => void): void {
     this.childEdgeSink = sink;
-    for (const r of this.runners) r.host.attachChildEdgeSink(sink);
+  }
+
+  /** Accept a nested edge only from the runner already routed for its parent. The edge then becomes the
+   *  route for the child session as well, so drill-in snapshots, live events, steering and teardown reach
+   *  the process that owns its LiveBrain. A malformed frame cannot claim an unrelated session, create a
+   *  cycle or steal a route from another runner: every level must extend this runner's existing route. */
+  private onChildEdge(
+    entry: PooledRunner,
+    parentSessionId: string,
+    childSessionId: string,
+    running: boolean,
+  ): void {
+    if (!isSubagentSession(parentSessionId) || !isSubagentSession(childSessionId)
+      || parentSessionId === childSessionId) return;
+    const childChannelId = channelIdOf(childSessionId);
+    const current = this.routes.get(childChannelId);
+    if (!running) {
+      // The middle parent's idle route may already have been retired while a detached grandchild kept
+      // running. The child route was admitted from a valid true edge, so it is the durable IPC proof that
+      // this runner owns the matching false edge and may retract it from the daemon registry.
+      if (current !== entry) return;
+    } else {
+      const parentChannelId = channelIdOf(parentSessionId);
+      if (this.routes.get(parentChannelId) !== entry || (current && current !== entry)) return;
+      this.routes.set(childChannelId, entry);
+    }
+    this.routeTouched.set(childChannelId, Date.now());
+    this.childEdgeSink?.(parentSessionId, childSessionId, running);
   }
 
   /** Attach the live-process change sink. A runner-local spawn/exit/kill/drop reaches the daemon's
@@ -366,7 +393,8 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
         },
       });
       entry = { host, inFlight: 0, saturatedBeats: 0, lastActivityAt: Date.now() };
-      if (this.childEdgeSink) host.attachChildEdgeSink(this.childEdgeSink);
+      host.attachChildEdgeSink((parentSessionId, childSessionId, running) =>
+        this.onChildEdge(entry, parentSessionId, childSessionId, running));
       try {
         await host.start();
       } catch (e) {

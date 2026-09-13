@@ -314,6 +314,119 @@ describe('SubagentRunnerPool — placement and routing', () => {
     h.pool.reset('test over');
   });
 
+  it('keeps direct-child snapshot history and live events on the runner that owns the session', async () => {
+    const h = poolWith();
+    const { run } = await coldStart(h, 'subagent-sub-dlg-1');
+    const child = h.children[0]!;
+    const live: unknown[] = [];
+
+    const pendingTap = h.pool.tapSessionSnapshot(
+      1,
+      'brain-ch-subagent-sub-dlg-1',
+      (event) => live.push(event),
+      { limit: 40 },
+    );
+    await settle();
+    const asked = child.received.find((m): m is Extract<DaemonToRunner, { type: 'tap' }> => m.type === 'tap')!;
+    const snapshot = {
+      type: 'snapshot' as const,
+      cursor: 4,
+      history: [{ id: 'direct-history', role: 'assistant' as const, text: 'direct child history' }],
+      events: [],
+    };
+    child.reply({ type: 'tapped', tapId: asked.tapId, snapshot });
+    const attached = await pendingTap;
+    child.reply({ type: 'tap-event', tapId: asked.tapId, event: { type: 'text', delta: 'direct live' } });
+
+    expect(attached?.snapshot).toEqual(snapshot);
+    expect(live).toEqual([{ type: 'text', delta: 'direct live' }]);
+    attached?.off();
+    child.finish(child.turns()[0]!.turnId);
+    await run;
+    h.pool.reset('test over');
+  });
+
+  it('routes a runner-created grandchild snapshot and live events through the same runner', async () => {
+    const h = poolWith();
+    const edge = vi.fn();
+    h.pool.attachChildEdgeSink(edge);
+    const { run } = await coldStart(h, 'subagent-sub-nest-b');
+    const child = h.children[0]!;
+    const parentSessionId = 'brain-ch-subagent-sub-nest-b';
+    const grandchildSessionId = 'brain-ch-subagent-sub-nest-c';
+    child.reply({ type: 'child', parentSessionId, childSessionId: grandchildSessionId, running: true });
+    child.finish(child.turns()[0]!.turnId);
+    await run;
+    // The middle session can be retired while its detached child keeps running. Retraction must still be
+    // accepted from the runner owning the child's already-established route, or the daemon leaks the edge.
+    const releaseParent = h.pool.release('subagent-sub-nest-b');
+    await settle();
+    const release = child.received.find((m): m is Extract<DaemonToRunner, { type: 'release' }> =>
+      m.type === 'release' && m.channelId === 'subagent-sub-nest-b')!;
+    child.reply({ type: 'released', releaseId: release.releaseId, busy: false });
+    await releaseParent;
+    child.reply({ type: 'child', parentSessionId, childSessionId: grandchildSessionId, running: false });
+    expect(edge.mock.calls).toEqual([
+      [parentSessionId, grandchildSessionId, true],
+      [parentSessionId, grandchildSessionId, false],
+    ]);
+    // The runner still holds the warm child session. Its route survives so the finished transcript remains
+    // visible and a later continuation can stream live.
+    const live: unknown[] = [];
+
+    const pendingTap = h.pool.tapSessionSnapshot(1, grandchildSessionId, (event) => live.push(event), { limit: 40 });
+    await settle();
+    const asked = child.received.find((m): m is Extract<DaemonToRunner, { type: 'tap' }> =>
+      m.type === 'tap' && m.sessionId === grandchildSessionId)!;
+    expect(asked).toMatchObject({ userId: 1, sessionId: grandchildSessionId, history: { limit: 40 } });
+    const snapshot = {
+      type: 'snapshot' as const,
+      cursor: 9,
+      history: [{ id: 'grandchild-history', role: 'user' as const, text: 'inspect the nested failure' }],
+      events: [{ type: 'tool', name: 'Read' } as const],
+    };
+    child.reply({ type: 'tap-event', tapId: asked.tapId, event: { type: 'text', delta: 'racing live suffix' } });
+    child.reply({ type: 'tapped', tapId: asked.tapId, snapshot });
+    const attached = await pendingTap;
+    child.reply({ type: 'tap-event', tapId: asked.tapId, event: { type: 'text', delta: ' after snapshot' } });
+
+    expect(attached?.snapshot).toEqual(snapshot);
+    expect(live).toEqual([
+      { type: 'text', delta: 'racing live suffix' },
+      { type: 'text', delta: ' after snapshot' },
+    ]);
+    attached?.off();
+    h.pool.reset('test over');
+  });
+
+  it('ignores malformed nested edges that do not extend the reporting runner route', async () => {
+    const h = poolWith();
+    const edge = vi.fn();
+    h.pool.attachChildEdgeSink(edge);
+    const { run } = await coldStart(h, 'subagent-sub-nest-b');
+    const child = h.children[0]!;
+
+    child.reply({
+      type: 'child',
+      parentSessionId: 'brain-ch-subagent-unrouted-parent',
+      childSessionId: 'brain-ch-subagent-unrelated-child',
+      running: true,
+    });
+    child.reply({
+      type: 'child',
+      parentSessionId: 'brain-ch-subagent-sub-nest-b',
+      childSessionId: 'brain-ch-subagent-sub-nest-b',
+      running: true,
+    });
+
+    expect(await h.pool.tapSessionSnapshot(1, 'brain-ch-subagent-unrelated-child', () => {})).toBeUndefined();
+    expect(edge).not.toHaveBeenCalled();
+    expect(child.received.some((m) => m.type === 'tap')).toBe(false);
+    child.finish(child.turns()[0]!.turnId);
+    await run;
+    h.pool.reset('test over');
+  });
+
   it('sends abort and release only to the runner actually holding the channel', async () => {
     const h = poolWith();
     const { run } = await coldStart(h, 'subagent-sub-dlg-1');

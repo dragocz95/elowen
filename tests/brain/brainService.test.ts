@@ -5105,6 +5105,7 @@ describe('sub-agent session tap + owner steering', () => {
     d.store.createSession({ id: 'brain-parent', userId: 1, model: 'm' });
     d.store.createSession({
       id: 'brain-ch-subagent-sub-dlg-live', userId: 1, model: 'm', parentSessionId: 'brain-parent',
+      delegatedAccess: { admin: false, owner: true, projectIds: [], permissionBoundary: null },
     });
     const live: unknown[] = [];
 
@@ -9286,6 +9287,31 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
     return { d, svc, sessionId, b, c, abort, sessions };
   }
 
+  it('keeps direct-child history visible and reads grandchild history through the same owner ancestry', async () => {
+    const { d, svc, b, c } = await seedNest();
+    const appendAnswer = (sessionId: string, id: string, text: string) => d.store.appendMessage({
+      id,
+      sessionId,
+      parentId: null,
+      role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop' },
+    });
+    appendAnswer(b, 'nested-b-answer', 'direct child history');
+    appendAnswer(c, 'nested-c-answer', 'grandchild history');
+
+    const direct = await svc.tapSessionSnapshot(1, b, () => {});
+    const grandchild = await svc.tapSessionSnapshot(1, c, () => {});
+
+    expect(direct.snapshot.history).toEqual([
+      expect.objectContaining({ id: 'nested-b-answer', role: 'assistant', text: 'direct child history' }),
+    ]);
+    expect(grandchild.snapshot.history).toEqual([
+      expect.objectContaining({ id: 'nested-c-answer', role: 'assistant', text: 'grandchild history' }),
+    ]);
+    direct.off();
+    grandchild.off();
+  });
+
   it('continues the grandchild by owner drill-in: the durable parent chain authorizes the deepest level', async () => {
     const { svc, b, c } = await seedNest();
     const channel = (svc as unknown as { channelService: { send: ReturnType<typeof vi.fn> } }).channelService;
@@ -9373,6 +9399,30 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
     await expect(svc.sendToSubagent(2, c, 'x')).rejects.toThrow('unknown session');
     await expect(svc.sendToSubagent(1, 'brain-ch-subagent-sub-nest-foreign', 'x')).rejects.toThrow('unknown session');
     await expect(svc.sendToSubagent(1, 'brain-ch-discord-nest', 'x')).rejects.toThrow('not a sub-agent session');
+    await expect(svc.tapSessionSnapshot(1, 'brain-ch-subagent-sub-nest-foreign', () => {}))
+      .rejects.toThrow('unknown session');
+  });
+
+  it('refuses read-only drill-in for a same-owner child rooted in a shared channel', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const root = 'brain-ch-discord-shared-read';
+    const child = 'brain-ch-subagent-shared-read-child';
+    d.store.createSession({ id: root, userId: 1, model: 'm' });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: root, delegatedAccess: SCOPE });
+
+    await expect(svc.tapSessionSnapshot(1, child, () => {}))
+      .rejects.toThrow('delegated session is not rooted in an owner conversation');
+    expect(() => svc.messagesOf(1, child))
+      .toThrow('delegated session is not rooted in an owner conversation');
+  });
+
+  it('fails closed when the durable parent lineage contains a cycle', async () => {
+    const { d, svc, b, c } = await seedNest();
+    d.db.prepare('UPDATE brain_sessions SET parent_session_id = ? WHERE id = ?').run(c, b);
+
+    await expect(svc.tapSessionSnapshot(1, c, () => {})).rejects.toThrow('invalid parent session');
+    expect(() => svc.messagesOf(1, c)).toThrow('invalid parent session');
   });
 
   it('abort on the viewed grandchild stops exactly that child through the channel abort tree', async () => {
