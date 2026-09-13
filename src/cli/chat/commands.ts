@@ -92,13 +92,11 @@ export function parseCommand(text: string, available?: readonly SlashCommandDef[
  *  own renderers answers a published name. A name with no entry gets a notice instead of an empty
  *  chooser — the daemon may publish a picker this build has never drawn.
  *
- *  Every entry names the plugin it was written FOR, and both halves have to match before it is used. The
- *  renderers are not generic choosers: the sandbox one drives the sandbox plugin's own workspace routes,
- *  so drawing it for a `/sandbox` published by some other plugin would point that plugin's command at a
- *  different plugin's endpoints. */
-const PLUGIN_PICKER_RENDERERS: Record<string, { plugin: string; open: (pickers: Pickers) => void }> = {
-  sandbox: { plugin: 'sandbox', open: (pickers) => { pickers.openSandboxModal(); } },
-};
+ *  Every entry names the plugin it was written FOR, and both halves have to match before it is used: a
+ *  renderer drives the routes of the plugin it was written for, so answering a same-named picker
+ *  published by some other plugin would point that plugin's command at a different plugin's endpoints.
+ *  No plugin-declared picker has a terminal renderer in this build, which is why the table is empty. */
+const PLUGIN_PICKER_RENDERERS: Record<string, { plugin: string; open: (pickers: Pickers) => void }> = {};
 
 /** The terminal's renderer for the picker `name` published by `plugin`, or null when this build has none
  *  for that PAIR. A name registered here but owned by a different plugin is deliberately unrenderable:

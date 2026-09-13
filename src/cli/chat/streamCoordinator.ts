@@ -230,7 +230,6 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         const repairTruncatedAtIdle = event.type === 'idle' && truncatedSnapshotPending;
         if (event.type === 'idle') {
           if (event.usage) rt.usage = event.usage;
-          // Tools can change workspace selection even in an already named conversation.
           onTurnSettled();
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:idle'); });
           // The decision follows an explicit ExitPlanMode call in the settled turn — prose that merely
