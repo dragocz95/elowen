@@ -27,9 +27,14 @@ const VIEWPORTS = [
   { width: 320, height: 700 },
 ];
 
-/** Core registers that carry openable rows. `/projects` and `/users` serve empty by default, so they are
- *  seeded below — an empty register renders its empty state and measures nothing. */
-const CORE_REGISTERS = ['/memory', '/projects', '/users'];
+/** Core registers that carry openable ROWS. `/users` serves empty by default, so it is seeded below —
+ *  an empty register renders its empty state and measures nothing.
+ *
+ *  `/projects` is deliberately absent: it is a grid of cards now, and its open control is a real button
+ *  in each card's footer rather than an overlay stretched over a row inside a `role="cell"`. None of the
+ *  four layout assumptions this file measures applies to it, and asserting them there would be asserting
+ *  a contract it does not claim. The card's own geometry is measured in projects.cards.e2e.ts. */
+const CORE_REGISTERS = ['/memory', '/users'];
 /** Registry-owned pages, measured only when the run is pointed at that checkout with `E2E_PLUGIN_DIRS`. */
 const PLUGIN_REGISTERS = ['skills', 'stats', 'cronjob', 'mcp'];
 

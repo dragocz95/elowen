@@ -18,6 +18,9 @@ export type OverrideKey =
   // One project's members, as `GET /projects/:id/users` serves them. Empty by default: the register
   // opens on a project nobody shares, which is the quiet state every other spec was written against.
   | 'projects/members'
+  // The register's own bounded projection: per project, the member sample its card draws as a strip and
+  // the branch its footer names. Empty by default, so a card renders neither unless a spec asks for it.
+  | 'projects/summary'
   | 'activity/pulse'
   // The account directory. `listUsers()` belongs to the onboarding lane and is empty outside it, so a
   // spec that needs the users register to lay out rather than render its empty state seeds one here.

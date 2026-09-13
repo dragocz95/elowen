@@ -66,7 +66,7 @@ test.describe('managed project parity', () => {
 
     const read = app.waitForRequest((request) => request.url().includes('/api/projects/1/git'));
     await app.goto('/projects');
-    await app.locator('[role="row"]', { hasText: 'atelier' }).locator('.data-table-row-open').first().click();
+    await app.locator('[data-project-card]', { hasText: 'atelier' }).locator('[data-project-card-open]').first().click();
 
     // What the register already holds is on screen while the repository read is still in flight.
     await expect(app.getByText('Poznámky k projektu')).toBeVisible();

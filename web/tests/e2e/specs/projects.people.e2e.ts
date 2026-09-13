@@ -44,7 +44,7 @@ async function prepare(page: Page, seed: SeedFixture, skin: 'studio-light' | 'st
 /** Open one project's drawer and switch to its People tab. */
 async function openPeople(page: Page, slug: string): Promise<void> {
   await page.goto('/projects');
-  await page.locator('[role="row"]', { hasText: slug }).locator('.data-table-row-open').first().click();
+  await page.locator('[data-project-card]', { hasText: slug }).locator('[data-project-card-open]').first().click();
   await page.getByRole('radio', { name: 'Lidé' }).click();
   await expect(page.getByRole('button', { name: 'Spravovat' })).toBeVisible();
 }
