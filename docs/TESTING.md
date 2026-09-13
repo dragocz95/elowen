@@ -172,7 +172,7 @@ npm run build:web
 | Store or migration | `npx vitest run tests/store`, then `npm run build` and `npm run test:e2e:migration`. |
 | Web or bundled plugin UI | Focused `npm --prefix web test`, `npm run build:plugins-web`, `npm run build:web`, and browser E2E when the user path changes. Registry plugin UI also requires the registry checkout's tests. |
 | Plugin access, grants, or user config | Focused plugin/API/store tests, `npx vitest run tests/contract`, then `npm run depcruise`. |
-| Sandbox workspaces, paths, or execution | `npx vitest run tests/plugins/sandboxPlugin.test.ts tests/plugins/filesWorkspaceScope.test.ts tests/brain/gitBranch.test.ts`, then the relevant build and real-daemon path. |
+| Sandbox environments, confinement, or branch state | `npx vitest run tests/plugins/sandboxPlugin.test.ts tests/brain/gitBranch.test.ts`, then the relevant build and real-daemon path. |
 | CLI/TUI or terminal | `npx vitest run tests/cli`, the relevant `test:cli-tmux:*` command, and `npm run test:install` for packaging changes. |
 | Delegation, sub-agents, workflow, or MCP | Focused `tests/subagent`/`tests/contract` tests, delegate/workflow E2E, and all relevant parity variants. |
 | Core/plugin API boundary | Contract and plugin tests, `npm run depcruise`, and `npm run languages-check`. |

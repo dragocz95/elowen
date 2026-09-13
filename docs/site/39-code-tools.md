@@ -8,7 +8,7 @@ group: Plugin reference
 
 # Code Tools
 
-Four optional registry plugins each add a different kind of code understanding to a deployment. The language server plugin answers questions about code with the same servers a developer's editor uses. The codebase plugin indexes accessible repositories so they can be searched by meaning. The editor plugin adds a browser surface for browsing, editing, and previewing Project files. The GitHub plugin connects an account's own GitHub identity to a Project and publishes committed Sandbox branches.
+Four optional registry plugins each add a different kind of code understanding to a deployment. The language server plugin answers questions about code with the same servers a developer's editor uses. The codebase plugin indexes accessible repositories so they can be searched by meaning. The editor plugin adds a browser surface for browsing, editing, and previewing Project files. The GitHub plugin connects an account's own GitHub identity to a Project and publishes committed branches.
 
 All four require Elowen 0.28.35 or newer and are installed from **Settings → Plugins → Available**. None of them declares a per-user grant, so once enabled they are available to accounts according to the normal Project and tool permissions. The registry remains authoritative for the current version of each plugin.
 
@@ -119,11 +119,11 @@ The plugin declares no configuration fields. Disabling it removes the editor UI 
 
 ## GitHub (github)
 
-The `github` plugin, version 0.1.15, connects an account's own GitHub identity to Elowen and adds branch publishing, pull requests, reviews, checks, and confirmed merges on top of the Sandbox workflow. The end-to-end workflow, including workspaces, mappings, and the publish flow, is described in [Projects, Sandbox & GitHub](projects-workflow); this page covers the plugin itself.
+The `github` plugin, version 0.1.15, connects an account's own GitHub identity to Elowen and adds branch publishing, pull requests, reviews, checks, and confirmed merges on top of a committed branch. The end-to-end workflow, including worktrees, mappings, and the publish flow, is described in [Projects, Environments & GitHub](projects-workflow); this page covers the plugin itself.
 
 The plugin adds an account panel under **Account settings → GitHub**, where each account connects its own identity and sees connection health, and a **GitHub** tab on each Project for repository mappings and pull requests. There is no main navigation entry. It publishes a `github` runtime control that other plugins can depend on.
 
-A mapping binds one accessible Project to GitHub repositories and belongs to the account that created it. It records a base repository, the target for pull requests, and a push repository, where branches are published; the two may differ to support a fork workflow. **Detect** inspects the Project checkout's remotes to propose values. Publishing needs a connected account, a verified mapping, and an active Sandbox workspace bound to the conversation.
+A mapping binds one accessible Project to GitHub repositories and belongs to the account that created it. It records a base repository, the target for pull requests, and a push repository, where branches are published; the two may differ to support a fork workflow. **Detect** inspects the Project checkout's remotes to propose values. Publishing needs a connected account, a verified mapping, and a committed `HEAD` on an Elowen-created branch.
 
 ### Authentication
 
@@ -136,12 +136,12 @@ There is no personal access token field. Connecting runs the GitHub CLI device l
 | `GithubListPullRequests` | Lists pull request summaries for one mapped Project, filtered by state. |
 | `GithubGetPullRequest` | Reads one pull request with its changed files and submitted reviews. |
 | `GithubPullRequestChecks` | Combines check runs and commit statuses into pending, success, failure, or action required. |
-| `GithubPublishBranch` | Pushes the conversation's active Sandbox workspace branch to the mapped push repository, never force-pushing. |
+| `GithubPublishBranch` | Pushes the conversation's committed branch to the mapped push repository, never force-pushing. |
 | `GithubCreatePullRequest` | Publishes the branch and opens a pull request in the base repository, reusing an existing open pull request with the same base and head. |
 | `GithubSubmitReview` | Submits an approval, a request for changes, or a comment on one pull request. |
 | `GithubMergePullRequest` | Merges one pull request under the strict conditions described below. |
 
-The first five tools only read state. The last four change a remote repository, and each requires an interactive confirmation in a verified conversation: the tool shows a preview of the exact action and proceeds only on Confirm. Delegated, scheduled, and otherwise unattended contexts stay read-only. The plugin never creates or removes Sandbox worktrees, never force-pushes, never deletes branches, and never auto-merges.
+The first five tools only read state. The last four change a remote repository, and each requires an interactive confirmation in a verified conversation: the tool shows a preview of the exact action and proceeds only on Confirm. Delegated, scheduled, and otherwise unattended contexts stay read-only. The plugin never creates or removes Git worktrees, never force-pushes, never deletes branches, and never auto-merges.
 
 - A merge happens only when the pull request is open and not a draft, its head still matches the expected commit exactly, checks are successful, no current review requests changes, and the repository allows the selected method.
 - A confirmation is single use and short lived. When it expires, was used, or the pull request or repository changed in the meantime, the action must be previewed again.

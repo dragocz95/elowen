@@ -8,7 +8,7 @@ group: Plugin reference
 
 # Terminal & Processes
 
-The bundled `terminal` plugin lets Elowen run real shell commands and manage the processes it starts. Where a command runs is not decided by the plugin itself: the Sandbox plugin resolves the filesystem authority, the account HOME, the active workspace, and the confinement for every launch, and a launch is refused when no verified owner can be resolved, except for an instance operator running in explicit direct-host mode.
+The bundled `terminal` plugin lets Elowen run real shell commands and manage the processes it starts. Where a command runs is not decided by the plugin itself: the Sandbox plugin resolves the filesystem authority, the account HOME, and the confinement for every launch, and a launch is refused when no verified owner can be resolved, except for an instance operator running in explicit direct-host mode.
 
 ## Where it appears
 
@@ -37,9 +37,9 @@ Administrators always retain access, and an empty grant selection means the user
 Every launch is resolved through the Sandbox control at the moment it happens, so reloads and configuration changes apply immediately. The resolved plan decides the working directory, the environment, and the confinement:
 
 - In a project conversation, commands run under that project's access policy with the project root as the default working directory.
-- A conversation bound to a Sandbox worktree runs inside that worktree.
+- A conversation a person moved with `/cd` runs in that directory, which may be a `git worktree` of their own.
 - Inside a managed project environment, commands run in the environment through the Sandbox plugin.
-- Without the Sandbox plugin, workspace and managed execution is refused, and only an instance operator may run commands directly on the host in explicit direct-host mode.
+- Without the Sandbox plugin, managed execution is refused, and only an instance operator may run commands directly on the host in explicit direct-host mode.
 
 The working directory persists between successful foreground calls in a session, and an explicit `cwd` argument wins for a single call. Shell variables and functions do not persist between calls. Two shapes are refused outright: a blocking restart of the Elowen daemon from inside the daemon's own service, which can never complete, and the sandbox bypass argument, which is always refused before any process is spawned.
 
@@ -94,4 +94,4 @@ The plugin is user-grantable, so the per-user grant in **Users → Granted plugi
 | Backgrounding | Requires an authenticated conversation; sessionless worker and scheduled turns cannot start or detach background processes |
 | Direct host | Background execution directly on the host requires Linux; non-operator commands are refused without the Sandbox plugin |
 
-[Next: Sandbox & Environments](sandbox-plugin)
+[Next: Sub-agent Plugin](subagent-plugin)

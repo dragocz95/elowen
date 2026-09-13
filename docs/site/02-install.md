@@ -28,7 +28,7 @@ The bootstrap scripts support:
 - npm.
 - `ripgrep` for bounded file-content search. Server `install` can install it on Debian/Ubuntu.
 - `tmux` for delegated agents and integrations that launch external command-line tools. The CLI chat itself does not require `tmux`; local `setup` warns when it is missing and server `install` can install it.
-- Git for Git Projects and Sandbox workspaces.
+- Git for Git Projects and worktrees.
 - On Linux, `bubblewrap` for the Sandbox's confined non-operator execution. Server installation can install it.
 
 ## Bootstrap installation

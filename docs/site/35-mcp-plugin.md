@@ -43,7 +43,7 @@ Instance servers connect when the daemon loads the plugin and reconnect at start
 | `ReadMcpResource` | Reads one resource by server and URI. Text returns as text; binary content is saved to a file path the agent can open with a file tool. |
 | `mcp__<server>__<tool>` | The tools a connected server publishes, bridged under namespaced names the server itself defines. |
 
-How bridged names are built, when tools are deferred behind `ToolSearch`, and how workspace confinement hides MCP tools are described on [MCP](mcp).
+How bridged names are built and when tools are deferred behind `ToolSearch` are described on [MCP](mcp).
 
 ## Enabling the plugin
 
@@ -83,7 +83,6 @@ The resource tools use the same visibility rule. One instance-named pair is avai
 - Binary resource content is saved to disk. Inside a managed project that export is capped at 16 MiB.
 - A personal server is not connected at startup. Its tools are composed from the last successful tool discovery, so a server without a cached discovery advertises nothing until it is reconnected.
 - A stdio server cannot change scope; create it again in the target scope instead. A remote HTTP or SSE server can move only between the instance scope and the acting account's personal scope, never to a third account.
-- Bridged tools are not workspace-safe and are omitted from a session confined to an active Sandbox workspace; see [MCP](mcp).
 - A bridged call that exceeds the call timeout, or a server connection that dies during the call, is raised as an error to the model. A server that answers with its own error content stays a readable result.
 - Older deployments that kept a top-level `servers` array in the plugin configuration are imported once into the managed server list; afterwards the MCP page is the source of truth.
 

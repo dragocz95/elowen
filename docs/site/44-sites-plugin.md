@@ -22,7 +22,7 @@ Opening a publication shows its address, publication kind, last publish, visits,
 
 `SiteCreate` creates a draft and a source folder inside the active Project. Build the site with the normal Project tools, then use `SitePublish` to copy the finished output into an immutable release. Sites performs no separate build.
 
-The address serves the copied files and keeps working while the Project is stopped or its workspace is unavailable. `SiteGet` lists retained releases with file counts, sizes and notes. `SiteRollback` restores an earlier release. Older releases beyond the configured count are removed automatically, while the live release is always retained.
+The address serves the copied files and keeps working while the Project is stopped or the site source folder is unavailable. `SiteGet` lists retained releases with file counts, sizes and notes. `SiteRollback` restores an earlier release. Older releases beyond the configured count are removed automatically, while the live release is always retained.
 
 Static publication accepts browser-facing file types. Unsupported files and symlinks are skipped and reported. A missing top-level `index.html` is reported as a warning.
 

@@ -311,12 +311,12 @@ Reading `plugins/files/index.mjs` side by side, most of the obvious deltas are a
    `include` for the common cases.
 4. **ENOENT "Did you mean ...?" suggestions on Read/Glob/Grep/Edit — P2.** `findSimilarFile` /
    `suggestPathUnderCwd` (e.g. `FileReadTool.ts:639-647`) turn a dead-end error into a self-correcting
-   one. Elowen paths are workspace-confined, so the candidate set is small and the check is cheap;
+   one. Elowen paths are confined by the path guard, so the candidate set is small and the check is cheap;
    port just the "did you mean" suffix, not the macOS screenshot special-case (SKIP below).
 5. **Device-path hardening in Read — P3.** The Elowen `readTextSnapshot` loops to EOF; on a FIFO or
    `/dev/zero` reached through an all-access session that loop never ends. The pure string-set check
    (`BLOCKED_DEVICE_PATHS`, `FileReadTool.ts:98-128`) is ten lines, requires no I/O, and the error text
-   doubles as an explanation. Cheap insurance even under workspace confinement.
+   doubles as an explanation. Cheap insurance even under the path guard.
 6. **NotebookEdit — P2/ADAPT.** Elowen can *read* notebooks but not edit them; the Claude tool is ~490
    lines but the core is ~150 (validate -> JSON-parse -> splice cell -> write with
    `readFileSyncWithMetadata`). Port the shape: `notebook_path/cell_id/new_source/cell_type/edit_mode`,

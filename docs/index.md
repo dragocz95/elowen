@@ -16,11 +16,11 @@ Elowen is a self-hosted AI agent with one daemon, durable SQLite state, a Web UI
 | Web and CLI | [Web UI](site/05-web-ui.md) · [CLI](site/06-cli.md) · [Slash commands](site/07-slash-commands.md) · [CLI keybinds](site/08-cli-keybinds.md) |
 | Conversations | [Brain and chat](site/09-brain-chat.md) · [Memory](site/10-memory.md) · [Usage and costs](site/11-usage-costs.md) · [Account preferences](site/12-account-preferences.md) |
 | Workflows and models | [Sub-agents and workflows](site/13-tasks-missions.md) · [Providers and models](site/14-agents-providers.md) · [Autonomy and safety](site/15-autonomy-safety.md) |
-| Projects and integrations | [Projects, Sandbox, and GitHub](site/16-projects-workflow.md) · [Scheduling](site/17-scheduling.md) · [Channels](site/18-channels.md) · [Plugins](site/23-plugins.md) |
+| Projects and integrations | [Projects, Environments, and GitHub](site/16-projects-workflow.md) · [Scheduling](site/17-scheduling.md) · [Channels](site/18-channels.md) · [Plugins](site/23-plugins.md) |
 | Channels | [Discord](site/19-channels-discord.md) · [Telegram](site/20-channels-telegram.md) · [Microsoft Teams](site/21-channels-teams.md) · [WhatsApp](site/22-channels-whatsapp.md) |
 | Extensions and administration | [Skills](site/24-skills.md) · [MCP](site/25-mcp.md) · [Configuration](site/26-configuration.md) · [Users and access](site/27-users-access.md) |
 | Reference | [Troubleshooting](site/28-troubleshooting.md) · [Glossary](site/29-glossary.md) |
-| Plugin reference | [Files](site/30-files-plugin.md) · [Terminal](site/31-terminal-plugin.md) · [Sandbox](site/32-sandbox-plugin.md) · [Sub-agents](site/33-subagent-plugin.md) · [Web](site/34-web-plugin.md) · [MCP](site/35-mcp-plugin.md) · [Session helpers](site/36-session-helpers.md) · [Chat platforms](site/37-chat-platform-plugins.md) · [Microsoft 365](site/38-microsoft-365-plugin.md) · [Code tools](site/39-code-tools.md) · [Browser](site/40-browser-plugin.md) · [Cron jobs](site/41-cronjob-plugin.md) · [Image tools](site/42-image-tools.md) · [OneDrive](site/43-onedrive-plugin.md) · [Sites](site/44-sites-plugin.md) · [Skills](site/45-skills-plugin.md) · [Stats](site/46-stats-plugin.md) · [Todo](site/47-todo-plugin.md) · [Voice bot](site/48-voice-bot-plugin.md) |
+| Plugin reference | [Files](site/30-files-plugin.md) · [Terminal](site/31-terminal-plugin.md) · [Sub-agents](site/33-subagent-plugin.md) · [Web](site/34-web-plugin.md) · [MCP](site/35-mcp-plugin.md) · [Session helpers](site/36-session-helpers.md) · [Chat platforms](site/37-chat-platform-plugins.md) · [Microsoft 365](site/38-microsoft-365-plugin.md) · [Code tools](site/39-code-tools.md) · [Browser](site/40-browser-plugin.md) · [Cron jobs](site/41-cronjob-plugin.md) · [Image tools](site/42-image-tools.md) · [OneDrive](site/43-onedrive-plugin.md) · [Sites](site/44-sites-plugin.md) · [Skills](site/45-skills-plugin.md) · [Stats](site/46-stats-plugin.md) · [Todo](site/47-todo-plugin.md) · [Voice bot](site/48-voice-bot-plugin.md) |
 
 ## Developer and operator references
 
@@ -32,7 +32,7 @@ Elowen is a self-hosted AI agent with one daemon, durable SQLite state, a Web UI
 | [Concepts](CONCEPTS.md) | Domain vocabulary and the boundaries between conversations, Projects, memory, plugins, and permissions. |
 | [Deployment](DEPLOYMENT.md) | Production installation, services, reverse proxy, and runtime configuration. |
 | [Development](DEVELOPMENT.md) | Local setup, repository layout, build scripts, and contribution conventions. |
-| [Guides](GUIDES.md) | Cross-stack implementation patterns, policy invariants, plugin lifecycle, Sandbox, GitHub, and recovery. |
+| [Guides](GUIDES.md) | Cross-stack implementation patterns, policy invariants, plugin lifecycle, environments, GitHub, and recovery. |
 | [Plugin Development](PLUGIN_DEV.md) | Plugin manifests, registry API, capabilities, browser UI, secrets, and testing. |
 | [Security](SECURITY.md) | Authentication, authorization, path policy, secrets, and operational safeguards. |
 | [Testing](TESTING.md) | Daemon, web, contract, integration, and end-to-end verification. |
@@ -57,8 +57,8 @@ The daemon is the authority for authentication, account ownership, Project acces
 
 - **Conversations and goals** are durable brain sessions in SQLite. A persistent goal reuses the ordinary account, Project, plugin, tool, and permission boundaries.
 - **Delegation and workflows** are provided by the `subagent` plugin. Children and workflow nodes inherit or narrow authority; they cannot widen it.
-- **Projects** register filesystem roots and expose read-only Git state in core. Worktrees, explicit-path commits, branch publication, pull requests, reviews, checks, and merges belong to enabled Sandbox/GitHub integrations. A Project declares its execution target: the host filesystem, or a managed environment that runs in its own persistent container.
-- **Sandbox** is account-scoped. It provides persistent HOME, Git worktrees, process leases, managed project environments, and guarded cleanup; non-operator confinement is enabled by default where supported.
+- **Projects** register filesystem roots and expose read-only Git state in core. Worktrees are created with native `git worktree` in your own checkout, and branch publication, pull requests, reviews, checks, and merges belong to the enabled GitHub plugin. A Project declares its execution target: the host filesystem, or a managed environment that runs in its own persistent container.
+- **Sandbox** is the bundled plugin that owns managed Project environments, process leases and guarded cleanup. Non-operator confinement is enabled by default where supported.
 - **Permissions** combine account/plugin grants, tool allow/deny state, ordered per-call `allow`/`ask`/`deny` rules, Project policy, and execution-time identity checks.
 - **Plugins** own vertical slices and are loaded from manifests. Their tools, routes, services, browser pages, settings, secrets, and lifecycle are not silently recreated by core.
 - **Memory** is account-owned and durable by default, with optional administrator-configured shared Project pools. Recall, categorization, and embeddings are separate capabilities; the browser is only a projection of server state.

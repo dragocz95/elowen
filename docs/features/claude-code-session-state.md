@@ -322,14 +322,15 @@ files a build needs (`utils/worktree.ts:229-504`). A periodic sweep removes stal
 than a cutoff, matched against a strict slug-pattern allowlist and fail-closed on any dirty/unpushed state
 (`utils/worktree.ts:1030-1136`, `cleanupStaleAgentWorktrees`).
 
-**Elowen.** Sandbox workspaces provide isolated Git worktrees for delegated work and user conversations:
-`SandboxCreateWorkspace` creates a branch/worktree, `SandboxUseWorkspace` binds it to the conversation, and
-`resolveDelegatedWorkspace` plus workspace-aware tool composition keep delegated execution on the selected
-workspace. Workspace ownership, leases, commits, and cleanup are durable plugin state; there is no core PR-native mission worktree path.
+**Elowen.** Elowen does not create a worktree per session, per delegation, or per tool. Isolation is native
+`git worktree` in the person's own checkout: the worktree is created there and the conversation is pointed at
+it with `/cd`, or started in that directory. Delegated execution inherits the caller's working directory, and
+there is no automatic per-task worktree or stale-worktree sweep.
 
-**Verdict: SKIP as a direct port.** Elowen now covers isolation where it is needed, but through explicit
-conversation/account-bound Sandbox workspaces rather than an automatic worktree per every session or tool.
-The remaining choice is a product/workflow distinction, not a missing Claude Code primitive.
+**Verdict: SKIP as a direct port.** Elowen now covers the same need through native `git worktree` in the
+person's own checkout rather than an automatic worktree per every session or tool, so there is nothing to
+sweep and nothing to port. The remaining choice is a product/workflow distinction, not a missing Claude Code
+primitive.
 
 ---
 
@@ -366,7 +367,7 @@ system with exactly one writer.
 | 8 | PID-file session discovery | **SKIP** | — | Cross-process discovery problem doesn't exist inside one daemon. |
 | 9 | In-memory cost counter + snapshot-on-exit | **SKIP** | — | Elowen's SQL-derived usage views are already more crash-safe. |
 | 10 | Failsafe-timer graceful shutdown | **SKIP** | — | Elowen's drain-based shutdown is the sounder fit given its continuous-persistence design. |
-| 11 | Per-session/sub-agent git worktrees | **SKIP** | — | Elowen already has the one use case that matters (PR-native missions). |
+| 11 | Per-session/sub-agent git worktrees | **SKIP** | — | Parallel work already uses native `git worktree` in the person's own checkout. |
 | 12 | Config-file lock + freshness watcher | **SKIP** | — | Single-writer SQLite has no multi-process race to guard against. |
 
 ---

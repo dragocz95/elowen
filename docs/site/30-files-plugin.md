@@ -8,7 +8,7 @@ group: Plugin reference
 
 # Files & Repository Tools
 
-The bundled `files` plugin gives Elowen its file toolkit: reading and writing text files, targeted edits, directory listings, content and file-name search, file metadata, and a short Git status. Every operation is confined to the projects and roots the acting conversation is allowed to reach, so the same tools serve a personal chat, a shared project, or a Sandbox worktree.
+The bundled `files` plugin gives Elowen its file toolkit: reading and writing text files, targeted edits, directory listings, content and file-name search, file metadata, and a short Git status. Every operation is confined to the projects and roots the acting conversation is allowed to reach, so the same tools serve a personal chat, a shared project, or a worktree the conversation was pointed at.
 
 ## Where it appears
 
@@ -28,7 +28,7 @@ The plugin contributes no Web UI pages, no account panel, and no slash commands.
 
 ## How paths are confined
 
-Every call resolves its path against the acting conversation's project access policy before touching the filesystem. A path outside the allowed projects and roots is refused with an error the model can act on, and results are reported through display paths so host directory names never leak into the transcript. When a conversation is bound to a Sandbox worktree, all nine tools operate inside that worktree and take workspace-relative paths; a sub-agent confined to one worktree receives exactly this contract. Inside a managed project environment the tools reach files through the Sandbox plugin's file service instead of the host filesystem, and a file that changes between the read and the write is refused rather than half-applied.
+Every call resolves its path against the acting conversation's project access policy before touching the filesystem. A path outside the allowed projects and roots is refused with an error the model can act on, and results are reported through display paths so host directory names never leak into the transcript. Inside a managed project environment the tools reach files through the Sandbox plugin's file service instead of the host filesystem, and a file that changes between the read and the write is refused rather than half-applied.
 
 ## The read-before-write rule
 
@@ -56,7 +56,7 @@ Configuration is instance-wide and edited in the plugin's detail view under **Se
 
 ## Permissions and consent
 
-The plugin is not user-grantable, so authenticated accounts reach its tools according to their normal tool permissions, which can narrow or remove individual tools; see [Users & Access](users-access). Enabling the plugin asks for no capability consent: the manifest declares only that the plugin reads other plugins' controls, and at runtime it looks up the Sandbox control to reach worktrees and managed environments.
+The plugin is not user-grantable, so authenticated accounts reach its tools according to their normal tool permissions, which can narrow or remove individual tools; see [Users & Access](users-access). Enabling the plugin asks for no capability consent: the manifest declares only that the plugin reads other plugins' controls, and at runtime it looks up the Sandbox control to reach managed environments.
 
 `Read`, `Search`, `ListDir`, `FileInfo`, `GitStatus`, `Glob`, and `Grep` are read-only and are treated as safe to run while Elowen is still planning. `Write` and `Edit` mutate files and are not.
 
