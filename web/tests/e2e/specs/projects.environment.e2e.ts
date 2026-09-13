@@ -37,7 +37,7 @@ async function prepare(page: Page, seed: SeedFixture, skin: 'studio-light' | 'st
 
 async function openEnvironment(page: Page): Promise<void> {
   await page.goto('/projects');
-  await page.locator('.data-table-row-open').first().click();
+  await page.locator('[data-project-card-open]').first().click();
   await page.getByRole('radio', { name: 'Prostředí' }).click();
   await expect(page.getByText('Prostředky', { exact: true })).toBeVisible();
 }

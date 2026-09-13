@@ -1024,6 +1024,10 @@ export interface ProjectSummary {
   projectId: number;
   /** Present only for administrators; ordinary users never receive other accounts' assignments. */
   members?: { total: number; samples: Pick<User, 'id' | 'username' | 'name' | 'avatar'>[] };
+  /** The checked-out branch of the project's worktree, read from `.git/HEAD` by the daemon. Absent when
+   *  the project is not a repository, when it runs in a managed environment (there is no host path to
+   *  read) or when the caller's policy does not reach its directory — never a placeholder. */
+  branch?: string;
   indicators: { plugin: string; label: string; value?: string; icon?: string; tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger' }[];
 }
 interface GitStatus { branch: string; head: string; upstream: string | null; ahead: number; behind: number; dirty: number; untracked: number; clean: boolean }

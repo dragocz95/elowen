@@ -8,12 +8,135 @@ import { managedGuestRoot } from '../../shared/projectExecution.js';
 import { parseBody } from '../validation.js';
 import { adoptProjectSchema, createDirectorySchema, createProjectSchema, deleteProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
 import type { ElowenApp, RouteContext } from '../context.js';
-import type { PluginProjectIndicator } from '../../plugins/api.js';
+import type { PluginProjectIndicator, SandboxControl } from '../../plugins/api.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
+import { gitBranch } from '../../brain/service/gitBranch.js';
+import { resolvePolicy } from '../../plugins/policy.js';
 import { PROJECT_ALREADY_MANAGED, PROJECT_LIMIT_REACHED, PROJECT_NOT_ADOPTED, type Project as StoredProject } from '../../store/projectStore.js';
 import type { ProjectMemberView, ProjectView } from '../../shared/wireContract.js';
 
-const MAX_MEMBER_SAMPLES = 3;
+/** How many member identities the register projection carries per project.
+ *
+ *  The card shows them as one overlapping, scrollable strip, so the sample is what a reader can actually
+ *  page through by hand; the authoritative headcount stays `members.total` and the control beside the
+ *  strip names the whole team rather than implying the sample is it.
+ *
+ *  Sixteen is measured rather than chosen: at 22px with a 6px overlap a strip of sixteen is 264px, which
+ *  overflows a card on a 320px phone and still fits a three-column desktop one. Eight — the row's old
+ *  bound, where only three were ever drawn — is 134px and fits everywhere, which would have left the
+ *  strip's scrolling unreachable in practice. Bounded because this is a batch over every project the
+ *  caller may see. */
+const MAX_MEMBER_SAMPLES = 16;
+
+/** How many managed environments are asked for their branch at once.
+ *
+ *  Deliberately far below the filesystem projection's fan-out below. A host branch is a memoized read of
+ *  `.git/HEAD`; a managed one is a COMMAND INSIDE A CONTAINER, with a lease, a heartbeat and a process.
+ *  Four at a time keeps a register of thirty managed projects from opening thirty guest leases at once. */
+const MANAGED_BRANCH_CONCURRENCY = 4;
+/** One managed branch read. A register is a list: a project whose guest is slow to answer loses its
+ *  branch slot for this response rather than holding the whole register behind it. */
+const MANAGED_BRANCH_TIMEOUT_MS = 2_000;
+/** What the whole managed batch may spend, however many projects are in it. Past this the remaining
+ *  projects are simply not asked; their cards render without a branch and the next poll, served from the
+ *  memo below, reaches further. The register never waits on an unbounded fan-out. */
+const MANAGED_BRANCH_BUDGET_MS = 4_000;
+/** How long one managed project's answer is reused. A branch changes rarely, the register is polled, and
+ *  this is what keeps a steady-state page off the container entirely — the same reasoning as
+ *  `GIT_BRANCH_TTL_MS` for a host worktree, with a longer window because the read is far dearer.
+ *
+ *  Keyed by project id alone, which is safe because the branch of a project is the same fact whoever
+ *  asks: every caller reaching this has already been filtered through `canAccess`. */
+const MANAGED_BRANCH_TTL_MS = 30_000;
+/** Bound on remembered projects. A daemon serves a handful; the cap only stops a pathological registry
+ *  from growing the map without limit. */
+const MANAGED_BRANCH_CACHE_LIMIT = 128;
+
+const managedBranchCache = new Map<number, { at: number; branch: string | null }>();
+
+/** One managed project's branch, through the SAME seam `/projects/:id/git` uses for a managed project:
+ *  the environment provider's own state read, then git run inside the guest under the caller's identity.
+ *  Nothing here touches the managed project's host storage, and nothing here starts an environment.
+ *
+ *  Three outcomes, kept apart because two of them are not the same thing:
+ *  - a branch name, or `null` when git itself says there is no branch to name (no repository, unborn
+ *    HEAD). That is a verdict and is worth remembering.
+ *  - `undefined` when the branch could not be DETERMINED: no provider, a refused or failed state read, a
+ *    container that is not running, a guest command that broke. That is not a verdict, so it is neither
+ *    remembered nor reported as "no repository". */
+async function managedBranchOf(
+  ctx: RouteContext,
+  sandbox: SandboxControl,
+  project: StoredProject,
+  accountUserId: number,
+  signal: AbortSignal,
+): Promise<string | null | undefined> {
+  if (signal.aborted) return undefined;
+  // Reading a register must never START anything. A project whose container is cold has no branch to
+  // report right now, and learning that costs one database read.
+  const environment = await sandbox.environmentFor({ project: { kind: 'managed', projectId: project.id }, accountUserId })
+    .catch((error: unknown) => {
+      ctx.log.warn(`project ${project.id} environment state unavailable for the register: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
+  if (!environment || environment.state !== 'running') return undefined;
+  const root = managedGuestRoot(project.slug, project.id);
+  try {
+    const reader = new RealGitReader(async (file, args, options) =>
+      runManagedProjectCommand(sandbox, { kind: 'managed', projectId: project.id }, accountUserId,
+        { type: 'argv', file, args: ['-c', 'core.fsmonitor=false', ...args] },
+        { ...options, cwd: root, timeout: MANAGED_BRANCH_TIMEOUT_MS, signal }), true);
+    return await reader.branch(root);
+  } catch (error) {
+    // ONE project's guest failing is not the register failing. It loses its branch slot; every other
+    // card keeps its own.
+    ctx.log.warn(`project ${project.id} branch unavailable for the register: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
+/** The branch of every managed project in one register response, memoized and bounded. */
+async function managedBranches(
+  ctx: RouteContext,
+  d: RouteContext['d'],
+  projects: StoredProject[],
+  accountUserId: number,
+  now = Date.now(),
+): Promise<Map<number, string>> {
+  const found = new Map<number, string>();
+  const pending: StoredProject[] = [];
+  for (const project of projects) {
+    const hit = managedBranchCache.get(project.id);
+    if (hit && now - hit.at < MANAGED_BRANCH_TTL_MS) {
+      if (hit.branch) found.set(project.id, hit.branch);
+    } else pending.push(project);
+  }
+  if (pending.length === 0) return found;
+  const sandbox = (await d.plugins?.get().catch(() => undefined))?.control('sandbox');
+  // No provider is not an empty answer about the projects: their cards simply carry no branch, exactly as
+  // `/projects/:id/git` answers 503 rather than "not a repository".
+  if (!sandbox) return found;
+  const deadline = AbortSignal.timeout(MANAGED_BRANCH_BUDGET_MS);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const project = pending[next++];
+      if (!project || deadline.aborted) return;
+      const branch = await managedBranchOf(ctx, sandbox, project, accountUserId, deadline);
+      if (branch === undefined) continue;
+      if (managedBranchCache.size >= MANAGED_BRANCH_CACHE_LIMIT && !managedBranchCache.has(project.id)) managedBranchCache.clear();
+      managedBranchCache.set(project.id, { at: now, branch });
+      if (branch) found.set(project.id, branch);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MANAGED_BRANCH_CONCURRENCY, pending.length) }, worker));
+  return found;
+}
+
+/** Test seam: the memo is module state, and a suite that moves between fixtures must not inherit it. */
+export function resetManagedBranchCache(): void {
+  managedBranchCache.clear();
+}
 const MAX_INDICATORS_PER_PLUGIN = 3;
 const MAX_INDICATORS_PER_PROJECT = 8;
 const PROJECT_PATH_PROJECTION_CONCURRENCY = 8;
@@ -139,16 +262,40 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
     }
     const users = admin && d.users ? new Map(d.users.list().filter((item) => !item.is_admin).map((item) => [item.id, item])) : null;
+    // The branch belongs in THIS projection rather than in a request per card. `gitBranch` reads
+    // `.git/HEAD` directly — no `git` fork — and memoizes each directory for a few seconds, which is what
+    // makes one extra read per project affordable here and a register-wide sweep of `/projects/:id/git`,
+    // three git processes per row, not. The caller's own policy is authorization rather than a hint: it
+    // bounds which directories may be walked at all, and it is re-resolved per request.
+    //
+    // A managed project has no host path, so its branch cannot come from the same read. It comes from the
+    // environment provider instead — the same seam `/projects/:id/git` uses — bounded by concurrency, a
+    // per-read timeout, a budget for the whole batch and a memo, because one managed answer is a command
+    // inside a container rather than a file read. A project the provider cannot answer for carries no
+    // branch; nothing here is derived, defaulted or read out of managed host storage.
+    const policy = user && d.userProjects && d.projects
+      ? resolvePolicy({ userProjects: d.userProjects, projects: d.projects }, user.id)
+      : null;
+    const managed = user
+      ? await managedBranches(ctx, d, allowed.filter((project) => project.executionKind === 'managed' && project.lifecycle !== 'deleting'), user.id)
+      : new Map<number, string>();
+    const branchOf = (project: StoredProject): string | null => project.executionKind === 'managed'
+      ? managed.get(project.id) ?? null
+      : (policy && project.path ? gitBranch(project.path, policy) : null);
     return c.json(allowed.map((project) => {
       const assigned = users && d.userProjects
         ? d.userProjects.forProject(project.id).flatMap((id) => users.get(id) ? [users.get(id)!] : [])
         : [];
+      const branch = branchOf(project);
       return {
         projectId: project.id,
         ...(admin ? { members: {
           total: assigned.length,
           samples: assigned.slice(0, MAX_MEMBER_SAMPLES).map(({ id, username, name, avatar }) => ({ id, username, name, avatar })),
         } } : {}),
+        // Absent rather than null when there is nothing to report, so a card draws the branch slot only
+        // for a project that actually is a repository this caller may read.
+        ...(branch ? { branch } : {}),
         indicators: indicatorMap.get(project.id) ?? [],
       };
     }));

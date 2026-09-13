@@ -27,6 +27,10 @@ export function registerCoreRoutes(app: Hono): void {
 
   app.get('/config', (c) => c.json(getResponse('config', config)));
   app.get('/projects', (c) => c.json(getResponse('projects', projects)));
+  // The Project register's batched projection — member samples and the checked-out branch, one entry per
+  // project. It is a separate read from `/projects` because it is a separate authority: membership is
+  // administrator-only and the branch is bounded by the caller's own path policy.
+  app.get('/projects/summary', (c) => c.json(getResponse('projects/summary', [] as unknown[])));
   // The project's membership. The DEFAULT answer is the id list, exactly as the daemon serves it, and
   // `?view=profiles` is the opt-in a surface that names its members asks for — so a spec measures the UI
   // against the real contract rather than against a fake that hands out profiles to anyone.
