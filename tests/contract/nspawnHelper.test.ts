@@ -528,10 +528,7 @@ describe('privileged helper: the four merge constraints', () => {
       'tree-copy', 'tree-sync', 'tree-remove', 'destroy', 'release-uid-range']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
     }
-    // The Sites classification is unchanged for the operations that remain: a read never takes the lock.
-    for (const op of ['status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket']) {
-      expect(helperRequestNeedsMutationLock({ op })).toBe(false);
-    }
+    expect(helperRequestNeedsMutationLock({ op: 'status' })).toBe(false);
     for (const op of ['sync-sites', 'ensure-site', 'remove-site', 'deny']) {
       expect(helperRequestNeedsMutationLock({ op })).toBe(true);
     }

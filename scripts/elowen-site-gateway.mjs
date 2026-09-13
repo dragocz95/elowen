@@ -14,7 +14,6 @@ export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
 export const NGINX_PATH = '/etc/nginx/conf.d/elowen-sites-gateway.conf';
 export const STATE_PATH = '/var/lib/elowen/site-gateway.json';
 const LOCK_PATH = '/var/lib/elowen/site-gateway.lock';
-const RUNTIME_SOCKET_ROOT = '/var/lib/elowen/site-runtime-sockets';
 const ACME_ROOT = '/var/lib/elowen/site-acme';
 const ACME_CONFIG = join(ACME_ROOT, 'config');
 const ACME_WORK = join(ACME_ROOT, 'work');
@@ -526,40 +525,6 @@ function runRequired(runner, file, args, failure) {
   if (!result.ok) fail(failure);
 }
 
-const SAFE_SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-export function runtimeSocketPathFor(siteId) {
-  if (typeof siteId !== 'string' || !SAFE_SITE_ID.test(siteId)) fail('site id is invalid');
-  return join(RUNTIME_SOCKET_ROOT, siteId, 'app.sock');
-}
-
-function runtimeSocketRequest(request) {
-  const socketPath = runtimeSocketPathFor(request.siteId);
-  const socketDir = dirname(socketPath);
-  if (request.op === 'prepare-runtime-socket') {
-    const gid = Number.parseInt(process.env.SUDO_GID || '', 10);
-    if (!Number.isInteger(gid) || gid < 0) fail('the invoking service group cannot be determined');
-    mkdirSync(RUNTIME_SOCKET_ROOT, { recursive: true, mode: 0o755 });
-    rmSync(socketDir, { recursive: true, force: true });
-    mkdirSync(socketDir, { mode: 0o730 });
-    chownSync(socketDir, 0, gid);
-    chmodSync(socketDir, 0o730);
-    return { ok: true, socketPath };
-  }
-  if (request.op === 'seal-runtime-socket') {
-    // Remove directory write permission BEFORE inspecting the entry. The confined process can no longer
-    // replace the socket with a symlink between validation and the daemon's first connection.
-    chmodSync(socketDir, 0o510);
-    if (!lstatSync(socketPath).isSocket()) fail('the runtime endpoint is not a Unix socket');
-    return { ok: true, socketPath };
-  }
-  if (request.op === 'remove-runtime-socket') {
-    rmSync(socketDir, { recursive: true, force: true });
-    return { ok: true, socketPath };
-  }
-  fail('runtime socket operation is not supported');
-}
-
 /* ===========================================================================
  * nspawn domain
  *
@@ -901,10 +866,9 @@ function readStorageRoots(options) {
   return storageRootsFor(serviceUser(options.runner ?? defaultCommandRunner, options.env ?? process.env).home);
 }
 
-/** Every root a machine path may resolve under. Project storage belongs to Sandbox; the runtime socket
- * root remains owned by the published-sites gateway domain of this shared helper. */
+/** The root every machine path may resolve under. Project storage belongs to Sandbox. */
 function trustedRoots(storage) {
-  return [storage.sandboxDataDir, RUNTIME_SOCKET_ROOT];
+  return [storage.sandboxDataDir];
 }
 
 /** Re-validate a path the request names. The runtime derives paths this helper cannot re-derive from an
@@ -2330,9 +2294,6 @@ export async function applyRequest(request, deployment, options = {}) {
   // older daemon can ask for.
   if (request.domain !== undefined && request.domain !== 'sites' && request.domain !== 'nspawn') fail('request domain is invalid');
   if (request.domain === 'nspawn') return applyNspawnRequest(request, options);
-  if (request.op === 'prepare-runtime-socket' || request.op === 'seal-runtime-socket' || request.op === 'remove-runtime-socket') {
-    return runtimeSocketRequest(request);
-  }
   if (request.op === 'status') {
     let active = false;
     let detail;
@@ -2458,9 +2419,7 @@ export function helperRequestNeedsDeployment(request) {
  *  certificate issuance or an apt transaction needs. Execution, freeze/thaw, the fingerprint read and
  *  the status-shaped operations must NOT take it: they are on the hot path of every command run in every
  *  environment, and blocking them behind a certbot renewal would stall the whole instance. */
-const SITES_LOCK_FREE_OPERATIONS = Object.freeze([
-  'status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket',
-]);
+const SITES_LOCK_FREE_OPERATIONS = Object.freeze(['status']);
 const NSPAWN_LOCK_FREE_OPERATIONS = Object.freeze([
   'status', 'exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-sizes', 'tree-verify',
 ]);

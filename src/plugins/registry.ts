@@ -133,7 +133,6 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   github: ['sessionCredential'],
   publishedSitesGateway: [
     'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
-    'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
   ],
   skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
   skillResources: ['resolveResource'],

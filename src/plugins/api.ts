@@ -23,7 +23,7 @@ import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import type { ProjectEnvironmentControl } from './environmentTypes.js';
 export type { ProjectExecutionRef, ManagedProjectRef } from '../shared/projectExecution.js';
 export { GUEST_FILE_CHUNK_BYTES } from './environmentTypes.js';
-export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestExportManifestEntry, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
+export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
 
@@ -1503,12 +1503,6 @@ export interface PublishedSitesGatewayControl {
   removeSite(input: { slug: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
   deny(): Promise<PublishedSitesGatewayStatus>;
   status(): Promise<PublishedSitesGatewayStatus>;
-  /** Create a root-owned, group-writable directory for one confined runtime to bind its pathname socket. */
-  prepareRuntimeSocket(siteId: string): Promise<{ path: string }>;
-  /** Revoke directory write permission and prove the runtime created a socket rather than a symlink. */
-  sealRuntimeSocket(siteId: string): Promise<void>;
-  /** Remove the sealed socket directory after the process group is proven gone. */
-  removeRuntimeSocket(siteId: string): Promise<void>;
 }
 
 /** Core-owned live view of the exact skills the current turn was told it may use. A loader plugin must

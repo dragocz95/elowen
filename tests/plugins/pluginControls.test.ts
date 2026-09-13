@@ -198,9 +198,6 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
       removeSite: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
       deny: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
       status: async () => ({ available: true, active: false, hostnameBase: 'sites.agent.example' }),
-      prepareRuntimeSocket: async () => ({ path: '/var/lib/elowen/site-runtime-sockets/x/app.sock' }),
-      sealRuntimeSocket: async () => {},
-      removeRuntimeSocket: async () => {},
     };
     merged.registerHostControl('publishedSitesGateway', host);
     expect(merged.control('publishedSitesGateway')).toBe(host);

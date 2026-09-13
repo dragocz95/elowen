@@ -24,7 +24,6 @@ export function siteGatewayStorageRoots(home: string): { sandboxDataDir: string 
   const pluginData = `${home}/.config/elowen/plugins-data`;
   return { sandboxDataDir: `${pluginData}/sandbox` };
 }
-export const SITE_RUNTIME_SOCKET_ROOT = '/var/lib/elowen/site-runtime-sockets';
 
 /** Eight decimal digits and a newline, naming the byte length of the JSON request that follows. */
 export const HELPER_FRAME_HEADER_BYTES = 9;

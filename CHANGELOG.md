@@ -32,11 +32,11 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ### Removed
 
-- The separate per-Site systemd-nspawn runtime and its lifecycle, snapshot, image, storage and privileged data
-  paths have been removed. On upgrade, Sandbox verifies and retires any machine still bound to a live historical
-  `kind='site'` row, then keeps the row, snapshots, storage, backups and UID allocation as audit data. Static,
-  command and PHP sites, published gateway routes, runtime socket brokerage and managed Project publication
-  forwarders remain supported.
+- The complete per-Site application runtime has been removed, including command and PHP publication, process
+  supervision, runtime sockets, logs, execution settings and the separate systemd-nspawn lifecycle, snapshot,
+  image, storage and privileged paths. Sites now publishes immutable static releases or forwards to an application
+  already running in a managed Project. On upgrade, Sandbox verifies and retires any machine still bound to a live
+  historical `kind='site'` row, then retains its row, snapshots, storage, backups and UID allocation as audit data.
 
 ### Compatibility
 

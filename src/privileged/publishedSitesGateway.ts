@@ -2,7 +2,6 @@ import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -16,7 +15,6 @@ import {
   SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_ARGV,
   SITE_GATEWAY_HELPER_PATH,
-  SITE_RUNTIME_SOCKET_ROOT,
 } from '../shared/siteGateway.js';
 const execFileAsync = promisify(execFile);
 const SITE_GATEWAY_HELPER_SOURCE = fileURLToPath(new URL('../../scripts/elowen-site-gateway.mjs', import.meta.url));
@@ -38,10 +36,7 @@ export type SiteGatewayHelperRequest =
   | { op: 'remove-site'; slug: string; gatewayToken: string }
   | { op: 'deny' }
   | { op: 'status' }
-  | { domain: 'nspawn'; op: 'provision'; veth?: boolean; user?: string }
-  | { op: 'prepare-runtime-socket'; siteId: string }
-  | { op: 'seal-runtime-socket'; siteId: string }
-  | { op: 'remove-runtime-socket'; siteId: string };
+  | { domain: 'nspawn'; op: 'provision'; veth?: boolean; user?: string };
 
 interface HelperResponse {
   ok: boolean;
@@ -50,7 +45,6 @@ interface HelperResponse {
   ready?: boolean;
   items?: unknown[];
   detail?: string;
-  socketPath?: string;
   slugs?: string[];
 }
 
@@ -256,17 +250,6 @@ export function createPublishedSitesGatewayControl(options: {
     }
   };
 
-  const socketCall = async (op: 'prepare-runtime-socket' | 'seal-runtime-socket' | 'remove-runtime-socket', siteId: string): Promise<string> => {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(siteId)) {
-      throw new Error('site id is invalid');
-    }
-    const expected = join(SITE_RUNTIME_SOCKET_ROOT, siteId, 'app.sock');
-    const result = await invoke({ op, siteId });
-    if (!result.ok) throw new Error(result.detail || 'the site gateway helper refused the runtime socket request');
-    if (result.socketPath !== expected) throw new Error('the site gateway helper returned an unexpected runtime socket path');
-    return expected;
-  };
-
   return {
     hostnameBase: () => base,
     syncSites: async ({ gatewayToken }) => {
@@ -286,8 +269,5 @@ export function createPublishedSitesGatewayControl(options: {
     },
     deny: () => call({ op: 'deny' }),
     status: () => call({ op: 'status' }),
-    prepareRuntimeSocket: async (siteId) => ({ path: await socketCall('prepare-runtime-socket', siteId) }),
-    sealRuntimeSocket: async (siteId) => { await socketCall('seal-runtime-socket', siteId); },
-    removeRuntimeSocket: async (siteId) => { await socketCall('remove-runtime-socket', siteId); },
   };
 }
