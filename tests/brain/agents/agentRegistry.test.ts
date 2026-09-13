@@ -124,6 +124,7 @@ describe('loadAgentRegistry', () => {
     // plan writes its plan file and review runs the real checks: both need the shell, neither edits code.
     expect(reg.get('plan')?.toolsSpec).toBe('inherit');
     expect(reg.get('review')?.toolsSpec).toBe('inherit');
-    expect(reg.get('review')?.body).toContain('you review, you do not fix');
+    expect(reg.get('review')?.body).toContain('Review without changing repositories or system state');
+    expect(reg.get('review')?.body).toContain('Do not edit, commit, stash');
   });
 });

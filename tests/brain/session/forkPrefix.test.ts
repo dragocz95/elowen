@@ -72,10 +72,19 @@ describe('the fork directive prompt', () => {
   // guidance: a worker that reads it delegates the directive onward instead of carrying it out.
   it('tells the child to ignore the parent-facing fork guidance in its system prompt', () => {
     const text = buildForkChildMessage('audit the store');
-    expect(text).toContain(
-      "1. Your system prompt says when to fork. IGNORE IT — that's for the parent. You ARE the fork. "
-      + 'Do NOT delegate further; execute directly with your own tools.',
-    );
+    expect(text).toContain("The system prompt's guidance about when to fork is for the parent.");
+    expect(text).toContain('You are the fork. Do not delegate further; execute directly with your own tools.');
+  });
+
+  it('requires authorization to commit and reports uncommitted changes honestly', () => {
+    const text = buildForkChildMessage('implement without committing');
+    expect(text).toContain('Commit only when authorized');
+    expect(text).toContain('commit hash only if committed');
+    expect(text).not.toContain('commit your changes before reporting');
+    for (const label of ['Scope:', 'Result:', 'Key files:', 'Files changed:', 'Issues:']) {
+      expect(text).toContain(label);
+    }
+    expect(text).toContain('Use tools silently');
   });
 
   it('differs between two children only after the boilerplate', () => {

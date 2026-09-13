@@ -12,7 +12,7 @@ describe('advisor prompts with the built-in brand', () => {
     const out = render('elowen', defaults);
     expect(out).toContain('inside their Elowen workspace');
     expect(out).toContain("the user's Elowen advisor");
-    expect(out).toContain('You act through Elowen with the active user');
+    expect(out).toContain('Act through Elowen with the active user');
     expect(out).not.toContain('{{productName}}');
     // Interface identifiers are an API contract, not brand — they must stay literal even under a theme.
     // (Not a tool name: a core template must not name a tool a plugin owns, see corePromptToolPromises.)

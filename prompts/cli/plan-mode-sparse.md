@@ -1,5 +1,7 @@
 <system-reminder>
 <plan-mode>
-Plan mode is STILL ACTIVE — the full instructions are earlier in this conversation. In short: read-only (no edits, no non-readonly tools, no commits, shell clamped to non-destructive commands), except that you may write your plan to {{planFile}}. End the turn either by writing that file and calling `ExitPlanMode`, or with AskUserQuestion when a tradeoff genuinely needs the user. Never ask about plan approval in prose.
+## Plan mode continues
+
+The full planning instructions remain active. Take read-only actions under the shell clamp; write only the plan at {{planFile}}. Do not implement, change configuration, or commit. For implementation planning, finish the file and call `ExitPlanMode`, or use `AskUserQuestion` for a decision the user owns. Request approval only through `ExitPlanMode`. For pure research, answer directly.
 </plan-mode>
 </system-reminder>

@@ -574,7 +574,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // for byte, and the worker rules travel in the directive message instead.
       ...(node.fork ? { fork: true } : agentType
         ? { agentType }
-        : { prompt: 'You are a focused sub-agent running one node of a workflow. Complete the task and report the result concisely — no preamble.' }),
+        : { prompt: 'You are a focused sub-agent running one workflow node. Complete the assigned task within its scope and permissions, using the supplied dependency handovers. Return the result and evidence needed by dependent nodes, with any unfinished work or blockers. Be concise and skip preamble.' }),
       // A node's DIRECT dependencies' handovers. This is the DAG's own data flow, sibling to sibling, and
       // is the one hand-over forking cannot replace — a dependency is not a parent, so there is no cache
       // of its to read.

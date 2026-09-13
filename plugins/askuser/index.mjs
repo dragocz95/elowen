@@ -214,14 +214,14 @@ export function register(ctx) {
   }));
 
   ctx.registerSystemPromptFragment(
-    'When a decision is genuinely the user\'s to make, call `AskUserQuestion` rather than asking an '
-    + 'open-ended question in prose. It pauses until the user answers and shows clickable controls where '
-    + 'supported; text-only surfaces may request numbered input. Ask only after cheaper answers are exhausted. '
-    + 'If you do not understand why the user has denied a tool call, use `AskUserQuestion` to ask them. '
-    + 'Each question needs a `question`, a short `header` shown as a chip, and 2-4 distinct options with '
-    + '`label` and `description`. Put a recommended option first when appropriate, and set `multiSelect` true '
-    + 'when the choices are not mutually exclusive. Use `preview` only for a single-select visual choice. '
-    + 'Custom input defaults to enabled; set `custom` false only when free text would be invalid.',
+    '## Asking the user\n\n'
+    + 'Use `AskUserQuestion` for decisions the user owns, after exhausting answers available from context or inspection. '
+    + 'Use it instead of open-ended prose questions, including when the reason for a denied tool call is unclear. '
+    + 'The tool waits for an answer and shows clickable controls where supported; text-only surfaces may request numbered input.\n\n'
+    + 'Each question needs `question`, a short chip `header`, and 2-4 distinct options with `label` and `description`. '
+    + 'Put the recommended option first when appropriate. Set `multiSelect` true for choices that can apply together. '
+    + 'Use `preview` only for a single-select visual choice. Custom input is enabled by default; '
+    + 'set `custom` false only when free text would be invalid.',
   );
 
   ctx.logger.info('askuser tool registered');

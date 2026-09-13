@@ -602,7 +602,7 @@ export function register(ctx) {
         // than moving the whole cached prefix.
         ...(fork ? { fork: true } : agentType
           ? { agentType }
-          : { prompt: 'You are a focused sub-agent. Complete the task and report the result concisely — no preamble.' }),
+          : { prompt: 'You are a focused sub-agent. Complete the assigned task within its scope and permissions. Return a concise result supported by observed evidence, and identify any unfinished work or blockers. Skip preamble.' }),
       };
       const emit = ctx.subagentEmitter();
       const emitCompletion = ctx.subagentCompletionEmitter();

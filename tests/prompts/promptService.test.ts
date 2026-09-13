@@ -13,94 +13,52 @@ beforeEach(() => {
 });
 
 describe('PromptService.render', () => {
-  it('ships a structured autonomous owner-chat contract without losing dynamic placeholders', () => {
+  it('ships a Markdown owner-chat contract with dynamic identity and behavior guarantees', () => {
     const template = rawTemplate('elowen');
-    const requiredSections = [
-      'identity',
-      'verification',
-      'harness',
-      'relationship_and_communication',
-      'session_guidance',
-      'control_plane',
-      'memory',
-      'context_management',
-      'delivering_work',
-      'software_engineering',
-      'recovery_and_persistence',
-      'authority_and_safety',
-      'corrections',
-      'working_with_the_user',
-    ];
-
-    expect(template.startsWith('<elowen_advisor>')).toBe(true);
-    expect(template.endsWith('</elowen_advisor>')).toBe(true);
-    for (const section of requiredSections) {
-      expect(template).toContain(`<${section}>`);
-      expect(template).toContain(`</${section}>`);
+    expect(template.startsWith('You are {{agentName}},')).toBe(true);
+    for (const section of [
+      'Reporting outcomes', 'Harness', 'Session guidance', 'Control plane', 'Memory',
+      'Context management', 'Delivering work', 'Software engineering', 'Recovery',
+      'Permissions and safety', 'Writing for the user',
+    ]) {
+      expect(template).toContain(`\n## ${section}\n`);
     }
-    // Occurrence counts, not just presence: the agent name is stated twice on purpose (identity, and the
-    // personality paragraph the configured overlay follows), while a second user name or personality slot
-    // would mean the same text was pasted twice rather than moved.
-    for (const [placeholder, occurrences] of [['{{agentName}}', 2], ['{{userName}}', 1], ['{{personality}}', 1]] as const) {
-      expect(template.split(placeholder)).toHaveLength(occurrences + 1);
-    }
-    const openTags: string[] = [];
-    for (const match of template.matchAll(/<\/?([a-z][a-z0-9_]*)\b[^>]*>/g)) {
-      if (match[0].startsWith('</')) expect(openTags.pop()).toBe(match[1]);
-      else if (!match[0].endsWith('/>')) openTags.push(match[1]!);
-    }
-    expect(openTags).toEqual([]);
+    expect(template).not.toContain('<elowen_advisor>');
+    expect(template).not.toContain('<communication_style>');
     expect(template).toContain('root cause');
     expect(template).toContain('maintained, stable, secure');
     expect(template).toContain('AGENTS.md');
-    expect(template).toMatch(/say so in the first\s+sentence of your report/);
-    // The three chat mechanics kept from the old style list; the rest of the writing guidance is pinned
-    // verbatim against tests/fixtures/promptAdoptedGuidance.md.
+    expect(template).toContain('say so in the first sentence of your report');
     expect(template).toContain('no em-dashes, no parentheticals, no arrows');
-    expect(template).toMatch(/put a measurement or count on its own\s+line or in a short table/);
-    // The note's SHAPE (at most four words, present tense, the user's language, a trailing ellipsis,
-    // authored first) rides every augmented tool schema in REASON_DESC, and Bash's own `description`
-    // argument documents its own wording, so the prompt keeps only the remainder those cannot state:
-    // when a note is worth writing at all, and that it never belongs in the answer.
-    expect(template).toMatch(
-      /Write `_reason`, or Bash's canonical `description` argument, ONLY where the call may take a\s+noticeable moment/,
-    );
-    expect(template).toContain('never part of your answer, so never restate it in your reply');
+    expect(template).toContain('put a measurement or count on its own line or in a short table');
+    expect(template).toContain("Write `_reason`, or Bash's canonical `description` argument, only for calls that may take a noticeable moment");
+    expect(template).toContain('never part of your answer; do not repeat them in your reply');
     expect(template).not.toContain('AT MOST FOUR WORDS');
-    expect(template).not.toContain('When a tool schema offers an optional `_reason`');
-    // When to fork, and the one condition that decides it here: a fork buys the provider's cached prefix,
-    // so a child on another provider or model inherits the context and shares no cache at all. Without
-    // these lines the prompt says nothing about forking and the criterion lives only in a parameter.
-    expect(template).toMatch(/requested with `fork: true` on Delegate/);
-    expect(template).toMatch(
-      /reach for it when research or multi-step implementation work would\s+otherwise fill your context with raw output you won't need again/,
-    );
-    expect(template).toMatch(/The criterion is qualitative, "will\s+I need this output again", not task size/);
-    expect(template).toMatch(
-      /A fork pays off only when the child runs on the SAME provider and model as the parent/,
-    );
-    // The parent-facing criterion, never an unconditional rule — the child boilerplate tells a fork to
-    // ignore this guidance, and a blanket "always fork" would be wrong on every cross-model delegation.
-    expect(template).not.toContain('default to forking');
-    // Superseded by the adopted permission guidance: a standing authorization now carries across turns,
-    // so the old "approval never extends" rule would contradict it if a copy survived anywhere.
+    expect(template).toContain('requested with `fork: true` on Delegate');
+    expect(template).toContain('when you will not need the intermediate output again, rather than by task size');
+    expect(template).toContain("cached prefix only on the same provider and model");
+    expect(template).toContain('If you are the fork, execute directly; do not re-delegate');
+    expect(template).toContain('asynchronous by default');
+    expect(template).toContain('Do not poll status to collect a background result');
     expect(template).not.toContain('Approval in one context does not extend to the next');
+    expect(template).not.toContain('Every tool call accepts an optional `_reason`');
+    expect(template).not.toContain('When a tool schema offers an optional `_reason`');
+    expect(template).not.toContain('default to forking');
     expect(template).not.toContain('Do not ask whether to take a reversible, low-stakes action');
     expect(template).not.toContain('Write either status field');
-    expect(template).not.toContain('Every tool call accepts an optional `_reason`');
     expect(template).not.toContain('Do exactly what was asked — no more, no less');
 
     const rendered = prompts.render('elowen', {
       agentName: 'Elowen',
       userName: 'Alice',
+      productName: 'Elowen',
       personality: 'Communicate as a pragmatic senior engineer.',
     }, 1);
-    // Identity is stated inline rather than in <name>/<user> tags, but both names must still be substituted.
     expect(rendered).toContain('You are Elowen,');
-    expect(rendered).toContain('As Elowen, you are a curious, thoughtful collaborator');
+    expect(rendered).toContain('As Elowen, be a curious, thoughtful collaborator');
     expect(rendered).toContain('for Alice,');
-    expect(rendered).toContain('<communication_style>Communicate as a pragmatic senior engineer.</communication_style>');
-    expect(rendered).not.toMatch(/\{\{(?:agentName|userName|personality)\}\}/);
+    expect(rendered).toContain('\n\nCommunicate as a pragmatic senior engineer.\n\n');
+    expect(rendered).not.toMatch(/\{\{(?:agentName|userName|productName|personality)\}\}/);
   });
 
   it('uses the file default when the user has no override', () => {
@@ -109,7 +67,7 @@ describe('PromptService.render', () => {
 
   it('uses the file default when no userId is given', () => {
     store.set(1, 'elowen', 'CUSTOM {{userName}}');
-    expect(prompts.render('elowen', { userName: 'Bob' })).toContain('<elowen_advisor>'); // default elowen text, not CUSTOM
+    expect(prompts.render('elowen', { userName: 'Bob' })).toBe(rawTemplate('elowen').replaceAll('{{userName}}', 'Bob'));
   });
 
   it("uses the user's CLI prompt override and substitutes vars", () => {
@@ -123,8 +81,7 @@ describe('PromptService.render', () => {
   });
 
   it('renders nested CLI prompt templates', () => {
-    // The plan-mode directive has to NAME the plan file: the model authors the plan as a document, and
-    // it cannot write one to a path it was never told.
+    // The directive must name the document the model is permitted to write.
     expect(prompts.render('cli/plan-mode', { planFile: '/tmp/plans/brave-otter-3f9a.md' }, 1))
       .toContain('/tmp/plans/brave-otter-3f9a.md');
     store.set(1, 'cli/plan-mode', 'CUSTOM PLAN MODE');
