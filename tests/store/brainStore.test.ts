@@ -1041,7 +1041,7 @@ describe('BrainStore', () => {
     /** Append an assistant row carrying the full PI `usage` breakdown (+ a top-level ms `timestamp` and,
      *  when given, the PI `$.model` the row was produced with — the per-row attribution basis). The
      *  optional `durationMs` mirrors the persistence projector's generation-timing stamp. */
-    const usageMsg = (session: string, id: string, u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens: number; cost?: number }, tsMs = Date.now(), model?: string, durationMs?: number, effectiveMs?: number, stopReason?: 'stop' | 'error' | 'aborted') =>
+    const usageMsg = (session: string, id: string, u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens: number; cost?: number }, tsMs = Date.now(), model?: string, durationMs?: number, effectiveMs?: number, stopReason?: 'stop' | 'error' | 'aborted', content: unknown[] = []) =>
       store.appendMessage({
         id, sessionId: session, parentId: null, role: 'assistant',
         content: {
@@ -1050,6 +1050,7 @@ describe('BrainStore', () => {
           ...(durationMs == null ? {} : { durationMs }),
           ...(effectiveMs == null ? {} : { effectiveMs }),
           ...(stopReason == null ? {} : { stopReason }),
+          content,
           usage: {
             input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0,
             reasoning: u.reasoning ?? 0, totalTokens: u.totalTokens, ...(u.cost == null ? {} : { cost: { total: u.cost } }),
@@ -1096,6 +1097,17 @@ describe('BrainStore', () => {
       expect(row!.usage.outputTps).toBeCloseTo(49.02, 1); // (100+50+100) / (1+4+0.1) s — legacy window over ALL stamps
       expect(row!.usage.effectiveMeasuredOutput).toBe(100);
       expect(row!.usage.effectiveTps).toBeCloseTo(50);   // 100 / 2 s — ONLY the effective sample
+    });
+
+    it('excludes tool-call generations from effective speed while retaining billed totals', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+      usageMsg('brain-a', 'tool', { output: 100, totalTokens: 150 }, Date.now(), undefined, undefined, 1000, 'stop', [
+        { type: 'thinking', thinking: 'plan' }, { type: 'toolCall', name: 'Read', arguments: {} },
+      ]);
+      const usage = store.usageByModel(1)[0]!.usage;
+      expect(usage.output).toBe(100);
+      expect(usage.effectiveMeasuredOutput).toBe(0);
+      expect(usage.effectiveTps).toBeNull();
     });
 
     it('keeps an effective stamp without usable output out of the effective figure', () => {

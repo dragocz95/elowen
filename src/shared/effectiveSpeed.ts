@@ -4,9 +4,10 @@
  *  (`src/brain/session/providerRequestRecorder.ts`): a logical model call is timed with a MONOTONIC
  *  clock from its initiation — before the provider's response headers are awaited — to the stream's
  *  terminal event. PI-level auto-retries and their backoff belong to the SAME logical request and are
- *  included; tool execution between model calls is a different seam and is never included. The
- *  numerator is whatever output tokens the provider reports for the delivered response, reasoning and
- *  tool-call tokens included — this is an effective end-to-end rate, NOT a pure decode rate.
+ *  included; tool execution between model calls is a different seam and is never included. A generation
+ *  containing any `toolCall` block is ineligible because provider usage cannot split serialized tool-call
+ *  arguments from model text. Tool-call-free generations use the provider-reported output tokens — this is
+ *  an effective end-to-end rate, NOT a pure decode rate.
  *
  *  This module is mirrored byte-for-byte into `web/lib/effectiveSpeed.ts` (the web cannot import
  *  `src/` — see `tests/contract/codeDiffMirror.test.ts` for why) — edit the source, then copy the

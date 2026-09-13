@@ -12,11 +12,17 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
     ELSE json_extract(${src}, '${path}') END
 END, '')`;
 
+const hasToolCallContent = (src: string): string =>
+  `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(${src}) AND json_type(${src}, '$.content') = 'array'
+                                           THEN json_extract(${src}, '$.content') ELSE '[]' END) AS block
+            WHERE json_extract(block.value, '$.type') = 'toolCall')`;
+
 const successfulEffectiveMessage = (src: string): string =>
-  `COALESCE(json_extract(${src}, '$.stopReason'), '') NOT IN ('error', 'aborted')`;
+  `COALESCE(json_extract(${src}, '$.stopReason'), '') NOT IN ('error', 'aborted')
+   AND NOT ${hasToolCallContent(src)}`;
 
 const trustedEffectiveRollup = (src: string): string =>
-  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 1`;
+  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 2`;
 
 const columns = `source_message_id, bucket_index, session_id, user_id, usage_epoch, provider, model, ts,
   input, output, cache_read, cache_write, total, reasoning, calls, duration_ms, measured_output,
@@ -140,24 +146,30 @@ export function installBrainUsageRollup(db: Db): void {
   const effectivePairVersion = db.prepare(
     'SELECT effective_pair_version AS version FROM brain_usage_rollup_state WHERE id = 1',
   ).get() as { version: number } | undefined;
-  if ((effectivePairVersion?.version ?? 0) < 1) {
-    // The first effective-speed release projected failed retry prefixes as independent samples, even though
-    // the later successful row already timed the whole logical request. Live rows can still be classified
-    // from their source message. Compaction buckets cannot: their source rows are gone and the old bucket
-    // stored no success discriminator, so those historical pairs become honestly unknown.
+  if ((effectivePairVersion?.version ?? 0) < 2) {
+    // Version 1 did not distinguish tool-call generations from model text, so every old pair is ambiguous.
+    // Live rows can be classified from their still-present source message; compaction buckets cannot because
+    // their source rows are gone, so those historical pairs become honestly unknown.
     db.exec(`
       UPDATE brain_usage_rows
-         SET effective_ms = 0, effective_output = 0
-       WHERE bucket_index >= 0
-          OR EXISTS (
-               SELECT 1 FROM brain_messages m
-                WHERE m.id = brain_usage_rows.source_message_id
-                  AND m.role = 'assistant'
-                  AND json_valid(m.content) AND json_type(m.content) = 'object'
-                  AND COALESCE(json_extract(m.content, '$.stopReason'), '') IN ('error', 'aborted')
-             );
+         SET effective_ms = 0, effective_output = 0;
+      UPDATE brain_usage_rows
+         SET effective_ms = CASE WHEN ${successfulEffectiveMessage('m.content')}
+                                      AND ${numeric('m.content', '$.effectiveMs')} > 0
+                                      AND ${numeric('m.content', '$.usage.output')} > 0
+                                 THEN ${numeric('m.content', '$.effectiveMs')} ELSE 0 END,
+             effective_output = CASE WHEN ${successfulEffectiveMessage('m.content')}
+                                          AND ${numeric('m.content', '$.effectiveMs')} > 0
+                                          AND ${numeric('m.content', '$.usage.output')} > 0
+                                     THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END
+        FROM brain_messages m
+       WHERE brain_usage_rows.bucket_index = -1
+         AND m.id = brain_usage_rows.source_message_id
+         AND m.role = 'assistant'
+         AND json_valid(m.content) AND json_type(m.content) = 'object'
+         AND ${successfulEffectiveMessage('m.content')};
       UPDATE brain_usage_rollup_state
-         SET effective_pair_version = 1, generation = generation + 1
+         SET effective_pair_version = 2, generation = generation + 1
        WHERE id = 1;
     `);
   }

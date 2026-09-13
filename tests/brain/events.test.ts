@@ -356,6 +356,35 @@ describe('sessionUsageSnapshot — effective speed', () => {
     expect(usage.effectiveTps).toBeCloseTo(100); // the completed 100/1s call, not the aborted tail
   });
 
+  it('withholds speed for a thinking-only generation that also contains a tool call', () => {
+    const usage = snapshot([msg({ effectiveMs: 1000, content: [{ type: 'thinking', thinking: 'plan' }, { type: 'toolCall', name: 'Read', arguments: {} }] })]);
+    expect(usage.effectiveTps).toBeUndefined();
+  });
+
+  it('withholds speed for text plus a tool call', () => {
+    const usage = snapshot([msg({ effectiveMs: 1000, content: [{ type: 'text', text: 'done' }, { type: 'toolCall', name: 'Read', arguments: {} }] })]);
+    expect(usage.effectiveTps).toBeUndefined();
+  });
+
+  it('keeps first content timing when speed is unknown because of a tool call', () => {
+    const usage = snapshot([msg({ effectiveMs: 1000, firstContentMs: 120, content: [{ type: 'toolCall', name: 'Read', arguments: {} }] })]);
+    expect(usage.effectiveTps).toBeUndefined();
+    expect(usage.firstContentMs).toBe(120);
+  });
+
+  it('does not fall back to a previous rate after the latest call contains a tool call', () => {
+    const usage = snapshot([
+      msg({ effectiveMs: 1000 }),
+      msg({ effectiveMs: 1000, content: [{ type: 'toolCall', name: 'Read', arguments: {} }] }),
+    ]);
+    expect(usage.effectiveTps).toBeUndefined();
+  });
+
+  it('keeps full provider output for thinking and text without tool calls', () => {
+    const usage = snapshot([msg({ effectiveMs: 1000, content: [{ type: 'thinking', thinking: 'plan' }, { type: 'text', text: 'done' }] })]);
+    expect(usage.effectiveTps).toBeCloseTo(100);
+  });
+
   it('reports nothing effective while only legacy-window generations exist', () => {
     const usage = snapshot([msg({ durationMs: 2000 })]);
     expect(usage.effectiveTps).toBeUndefined();  // never reinterpreted as an end-to-end sample

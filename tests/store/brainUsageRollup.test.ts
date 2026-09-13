@@ -1,10 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { BrainUsageStore } from '../../src/store/brainUsageStore.js';
+import { BrainUsageStore, rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
 import { installBrainUsageRollup, rebuildBrainUsageRollup } from '../../src/store/brainUsageRollup.js';
 
 describe('brain usage write-time projection', () => {
+  it('does not fold tool-call output into the effective pair while retaining totals', () => {
+    const rollup = rollupDroppedUsage([{
+      usage_epoch: 0,
+      content: JSON.stringify({
+        role: 'assistant', timestamp: 1, effectiveMs: 1000,
+        content: [{ type: 'thinking', thinking: 'plan' }, { type: 'toolCall', name: 'Read', arguments: {} }],
+        usage: { output: 100, totalTokens: 150 },
+      }),
+    }]);
+    expect(rollup).toMatchObject([{ output: 100, totalTokens: 150, effectiveMs: 0, effectiveOutput: 0 }]);
+  });
+
   it('projects exact call counts for live rows and new compaction day buckets', () => {
     const db = openDb(':memory:');
     db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run();
@@ -90,7 +102,32 @@ describe('brain usage write-time projection', () => {
         { source_message_id: 'summary', effective_ms: 0, effective_output: 0 },
       ]);
     expect(db.prepare('SELECT effective_pair_version FROM brain_usage_rollup_state WHERE id = 1').get())
-      .toEqual({ effective_pair_version: 1 });
+      .toEqual({ effective_pair_version: 2 });
+  });
+
+  it('rebuilds live effective pairs safely and is idempotent after the semantic version bump', () => {
+    const db = openDb(':memory:');
+    db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run();
+    db.prepare("INSERT INTO brain_sessions (id, user_id, model, provider) VALUES ('s1', 1, 'm', 'p')").run();
+    const message = (id: string, content: unknown[]) => db.prepare(
+      'INSERT INTO brain_messages (id, session_id, role, content, usage_epoch) VALUES (?, ?, ?, ?, 0)',
+    ).run(id, 's1', 'assistant', JSON.stringify({ model: 'm', provider: 'p', timestamp: 1, effectiveMs: 1000,
+      content, usage: { output: 10, totalTokens: 10 } }));
+    message('eligible', [{ type: 'text', text: 'done' }]);
+    message('tool', [{ type: 'toolCall', name: 'Read', arguments: {} }]);
+    db.prepare('UPDATE brain_usage_rows SET effective_ms = 1000, effective_output = 10').run();
+    db.prepare('UPDATE brain_usage_rollup_state SET effective_pair_version = 1 WHERE id = 1').run();
+
+    installBrainUsageRollup(db);
+    expect(db.prepare('SELECT source_message_id, effective_ms, effective_output FROM brain_usage_rows ORDER BY source_message_id').all())
+      .toEqual([
+        { source_message_id: 'eligible', effective_ms: 1000, effective_output: 10 },
+        { source_message_id: 'tool', effective_ms: 0, effective_output: 0 },
+      ]);
+    expect(db.prepare('SELECT generation FROM brain_usage_rollup_state WHERE id = 1').get()).toEqual({ generation: 4 });
+    installBrainUsageRollup(db);
+    expect(db.prepare('SELECT generation, effective_pair_version FROM brain_usage_rollup_state WHERE id = 1').get())
+      .toEqual({ generation: 4, effective_pair_version: 2 });
   });
 
   it('backfills legacy provider attribution once and removes brain_messages from usage reads', () => {

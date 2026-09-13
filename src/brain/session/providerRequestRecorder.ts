@@ -37,7 +37,9 @@ export interface ProviderRequestRecorderOptions {
  *  - `effectiveMs`: the whole logical request, monotonic ms. Includes the wait for the provider's
  *    response headers (prompt processing, queueing, and — for a buffered delivery — the entire
  *    server-side generation that never streams), plus every auto-retry and its backoff. Excludes tool
- *    execution between model calls, which happens outside any single request.
+ *    execution between model calls, which happens outside any single request. The speed pair is used only
+ *    when the terminal assistant content has no `toolCall` block, because provider usage cannot split those
+ *    serialized arguments from model text.
  *  - `firstContentMs`: single-attempt calls only, from initiation to the FIRST streamed content event
  *    (thinking, text, or a tool call). A retried call has no honest single wait-to-first-content, so
  *    the field is absent there rather than faked. It is NOT a time-to-first-hidden-token figure. */
