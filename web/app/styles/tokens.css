@@ -364,6 +364,11 @@
   --z-sticky: 20;
   --z-fab: 40;
   --z-nav-drawer: 80;
+  /* An intercepted ROUTE presented as an overlay — Settings opened over the surface that linked to it.
+     It stands in for the page, so it ranks under every drawer and dialog raised from inside it, exactly
+     as the canonical page does. Without a band of its own it took the modal one and painted over the
+     drawers it opened. */
+  --z-page-overlay: 85;
   --z-drawer: 90;
   --z-modal: 100;
   --z-menu: 120;

@@ -55,9 +55,11 @@ const dialogOverlayVariants = cva('fixed inset-0 flex', {
       sheet: 'items-stretch justify-stretch p-0',
       fullscreen: 'items-stretch justify-stretch p-0',
     },
-    // The classes assign --z-drawer and --z-modal from tokens.css (app/styles/components/primitives.css);
-    // no overlay in this app may name a band with a literal.
+    // The classes assign the bands from tokens.css (app/styles/components/primitives.css); no overlay in
+    // this app may name a band with a literal. `page` is the lowest of the three: an intercepted route
+    // presented as an overlay stands in for its page, so it ranks UNDER the drawers and dialogs it opens.
     layer: {
+      page: 'overlay-layer-page',
       drawer: 'overlay-layer-drawer',
       modal: 'overlay-layer-modal',
     },

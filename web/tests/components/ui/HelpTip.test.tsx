@@ -31,6 +31,24 @@ describe('HelpTip', () => {
     expect(trigger).toHaveClass('pointer-coarse:h-[var(--touch-target)]', 'pointer-coarse:w-[var(--touch-target)]');
   });
 
+  // A MOUSE needs one too. The 16px box was the whole target on a fine pointer, and where the mark floats
+  // over another control — a settings navigation record, whose button is stretched across the row — every
+  // near miss activated that control instead. The hit area grows to 24x24 through a transparent
+  // pseudo-element inset by -0.25rem, which leaves the glyph and the layout exactly as they were. jsdom
+  // computes no Tailwind geometry, so the classes ARE the mechanism to assert.
+  it('offers a 24x24 hit area without growing the 16px mark', () => {
+    const trigger = renderTip().container.querySelector('button')!;
+    expect(trigger).toHaveClass('h-4', 'w-4', 'relative', 'before:absolute', 'before:-inset-1', "before:content-['']");
+  });
+
+  it('takes the name of the record it belongs to when it is one of many', () => {
+    render(
+      <LanguageProvider><HelpTip label="Help: System">Helpful context</HelpTip></LanguageProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'Help: System' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Help' })).toBeNull();
+  });
+
   it('never intercepts a click meant for the control it floats over', async () => {
     renderTip();
     fireEvent.mouseEnter(screen.getByRole('button', { name: 'Help' }));

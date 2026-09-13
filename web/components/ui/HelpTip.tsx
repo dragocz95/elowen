@@ -19,8 +19,12 @@ const CLOSE_DELAY_MS = 120;
  *
  *  What Radix now owns is the placement (below the trigger, aligned to the side `align` asks for,
  *  flipped above and shifted inward when it would leave the viewport) and dismissal on Escape or an
- *  outside press. What stays here is the app's policy: which gestures open it, and the close debounce. */
-export function HelpTip({ children, align = 'right' }: { children: ReactNode; align?: 'left' | 'right' }) {
+ *  outside press. What stays here is the app's policy: which gestures open it, and the close debounce.
+ *
+ *  `label` names the trigger when the mark belongs to a NAMED record rather than to the field it sits
+ *  beside. A list of records otherwise presents a column of buttons all called "Help": the label is what
+ *  a screen reader's element list and voice control have to tell them apart. */
+export function HelpTip({ children, align = 'right', label }: { children: ReactNode; align?: 'left' | 'right'; label?: string }) {
   const [open, setOpen] = useState(false);
   const tooltipId = useId();
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -48,15 +52,22 @@ export function HelpTip({ children, align = 'right' }: { children: ReactNode; al
       onMouseLeave={scheduleClose}
     >
       <Tooltip open={open} onOpenChange={(next) => { cancelClose(); setOpen(next); }}>
+        {/* The glyph is 16px and stays 16px — it is a quiet mark beside a label, and growing the BOX
+            would push whatever sits next to it. What grows is the hit area alone: a transparent
+            pseudo-element inset by -0.25rem on every side, so the target is 24x24 with no layer of the
+            layout moving. Below that size a near miss lands on whatever is underneath, which in a
+            navigation record is the control stretched over the whole row. The pseudo-element belongs to
+            this button, so it inherits its place in the paint order and keeps that control from taking
+            the press. A coarse pointer still gets the full --touch-target box. */}
         <TooltipAnchor asChild>
           <button
             type="button"
-            aria-label={t.common.help}
+            aria-label={label ?? t.common.help}
             aria-describedby={open ? tooltipId : undefined}
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); show(); }}
             onFocus={show}
             onBlur={scheduleClose}
-            className="inline-flex h-4 w-4 items-center justify-center text-muted-foreground transition-colors hover:text-foreground pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]"
+            className="relative inline-flex h-4 w-4 items-center justify-center text-muted-foreground transition-colors before:absolute before:-inset-1 before:content-[''] hover:text-foreground pointer-coarse:h-[var(--touch-target)] pointer-coarse:w-[var(--touch-target)]"
           >
             <HelpCircle size={14} aria-hidden />
           </button>

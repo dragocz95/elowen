@@ -199,6 +199,7 @@ export const sk = {
     notifications: 'Oznámenia ({hotkey})',
     loading: 'Načítava sa…',
     help: 'Pomocník',
+    helpFor: 'Pomocník: {label}',
     actions: 'Akcie',
     success: 'Úspech',
     error: 'Chyba',
