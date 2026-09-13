@@ -20,8 +20,12 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ### Changed
 
+- Core, platform, scheduled, CLI mode and delegated-agent guidance now uses concise Markdown sections with explicit
+  runtime contracts, while preserving every template placeholder, permission boundary and continuity rule.
 - Managed Project environment limits and networking now save directly from the settings drawer and show the
   shared autosave state instead of requiring a separate submit action.
+- Editor 0.4.4 keeps the toolbar focused on controls and shows the complete active file path with a storage icon in
+  the bottom status bar.
 
 ### Fixed
 
