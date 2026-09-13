@@ -606,6 +606,11 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column:has(> .settings-row .segmented) {
   grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(min-content, 20rem) auto;
 }
+/* Provider cards have no control slot. Collapse it so the fixed value column cannot consume the provider
+   name inside the narrower Settings reading frame. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .brain-provider-row) {
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 26rem) 0 auto;
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
   gap: 0.75rem 1rem;
   padding: 0.75rem clamp(1rem, 1.6vw, 1.25rem);

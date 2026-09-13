@@ -1117,6 +1117,38 @@ async function seedBrainSettings(seed: Seed): Promise<void> {
   });
 }
 
+test('Studio keeps Settings controls on the right without hiding provider names', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  await useSkin(app, seed, 'studio-oled');
+  await seedBrainSettings(seed);
+  // This leaves the settings content about as wide as the intercepted reading frame after its 15rem nav.
+  await app.setViewportSize({ width: 1100, height: 800 });
+  await openStudio(app, '/settings?cat=dashboard');
+
+  const inline = await app.locator('.settings-row:visible[data-trailing="inline"]:has(.settings-row__control):not(:has(.settings-row__actions))')
+    .evaluateAll((rows) => rows.map((row) => {
+      const rowBox = row.getBoundingClientRect();
+      const control = row.querySelector<HTMLElement>('.settings-row__control')!.getBoundingClientRect();
+      return {
+        label: row.querySelector<HTMLElement>('.settings-row__title')?.textContent?.trim() ?? '',
+        gap: Math.round(rowBox.right - parseFloat(getComputedStyle(row).paddingRight) - control.right),
+      };
+    }));
+  expect(inline.length).toBeGreaterThan(2);
+  for (const row of inline) expect(row.gap, `${row.label} leaves an empty action column`).toBeLessThanOrEqual(1);
+
+  await openStudio(app, '/settings?cat=brain');
+  const provider = await app.locator('.brain-provider-row:visible').first().evaluate((row) => {
+    const label = row.querySelector<HTMLElement>('.settings-row__label')!.getBoundingClientRect();
+    const status = row.querySelector<HTMLElement>('.settings-row__status')!.getBoundingClientRect();
+    const overlaps = label.left < status.right - 0.5 && status.left < label.right - 0.5
+      && label.top < status.bottom - 0.5 && status.top < label.bottom - 0.5;
+    return { labelWidth: Math.round(label.width), overlaps };
+  });
+  expect(provider.labelWidth).toBeGreaterThan(40);
+  expect(provider.overlaps).toBe(false);
+});
+
 // A phone rendering of Settings → Elowen AI, reported from an iPhone: in "Connected accounts" the
 // account name, the "Connected" badge, the usage window labels and their percentages were all drawn on
 // top of one another and the meters were not visible at all; in "Providers" the entry's own name and

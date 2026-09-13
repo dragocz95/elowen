@@ -63,26 +63,17 @@ describe('PageOverlay', () => {
     expect(settingsFrame.presentation).toBe('fullscreen');
   });
 
-  /** THE ONE AXIS THE TWO PAGES DIFFER ON, pinned from both sides so neither drifts into the other.
-   *
-   *  Settings asks for the reading measure: its records read as a label at one edge of the frame and a
-   *  control at the other, and the data-window size grows to 90rem by 88dvh, which on a wide screen puts
-   *  most of a desk between them. Account did not ask, so it keeps the frame it has always had — the
-   *  point of making the measure opt-in rather than a property of "being an intercepted page".
-   *
-   *  The width is asserted as the shared `--content-max` token rather than as a length: a cap restated
-   *  as a number here is exactly what that token exists to prevent, and a skin is allowed to move it. */
-  it('gives Settings the reading measure and leaves Account on the shared window', () => {
-    const settings = render(<SettingsOverlay />, { wrapper: Wrapper });
-    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
-    expect(settingsDialog).toHaveClass('max-w-[var(--content-max)]', 'h-[min(88dvh,50rem)]');
-    expect(settingsDialog).not.toHaveClass('max-w-[90rem]');
-    settings.unmount();
-
-    render(<AccountOverlay />, { wrapper: Wrapper });
-    const accountDialog = screen.getByRole('dialog', { name: en.account.title });
-    expect(accountDialog).toHaveClass('max-w-[90rem]', 'h-[88dvh]');
-    expect(accountDialog).not.toHaveClass('max-w-[var(--content-max)]');
+  /** Both intercepted settings pages are one reading surface. A different width makes Account feel like a
+   *  separate application and moves the same row grammar between two unrelated measures. The width is the
+   *  shared `--content-max` token rather than a repeated number, so a skin still owns its reading measure. */
+  it('gives Settings and Account the same reading measure', () => {
+    for (const [overlay, name] of [[<SettingsOverlay key="s" />, 'Settings'], [<AccountOverlay key="a" />, en.account.title]] as const) {
+      const { unmount } = render(overlay, { wrapper: Wrapper });
+      const dialog = screen.getByRole('dialog', { name });
+      expect(dialog).toHaveClass('max-w-[var(--content-max)]', 'h-[min(88dvh,50rem)]');
+      expect(dialog).not.toHaveClass('max-w-[90rem]', 'h-[88dvh]');
+      unmount();
+    }
   });
 
   /** A phone takes the whole screen either way, so the measure has nothing to say there. Stated because

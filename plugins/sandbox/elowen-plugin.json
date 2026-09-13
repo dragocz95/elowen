@@ -119,7 +119,7 @@
     "settings": [
       {
         "id": "host-runtime",
-        "label": "Host runtime",
+        "label": "Host",
         "icon": "Server",
         "placement": "pluginDetail"
       }

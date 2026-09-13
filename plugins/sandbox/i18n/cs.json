@@ -41,7 +41,7 @@
   },
   "web": {
     "settings": {
-      "host-runtime": "Runtime hostitele"
+      "host-runtime": "Hostitel"
     },
     "user": {
       "environment": "Vývojové prostředí"

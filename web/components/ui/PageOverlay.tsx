@@ -17,11 +17,10 @@ import { useMobileViewport } from '../../lib/useMobile';
  *  (`standsInForPage`, see components/ui/Modal.tsx), and closing by walking back through history to
  *  wherever the reader came from.
  *
- *  `frame` is the ONE axis on which the two are allowed to differ, and it is opt-in so that adding a
- *  third intercepted page cannot silently inherit a measure chosen for Settings. `window` is the frame
- *  both pages have always had. `reading` caps the centered window at the shared content measure and at a
- *  fixed height, for a page whose content is a stack of records read left to right — Settings, whose
- *  label and control sit at opposite edges of the frame. A caller that does not ask, does not get it. */
+ *  `frame` is an explicit content choice rather than an inference from the route. `window` is the broad
+ *  data frame. `reading` caps the centered window at the shared content measure and a fixed height for a
+ *  page whose content is a stack of records read left to right. Settings and Account both use that same
+ *  reading frame; a future intercepted data page can still choose the broader window deliberately. */
 export function PageOverlay({ title, icon, children, frame = 'window', 'data-testid': testId }: {
   title: string;
   icon: LucideIcon;

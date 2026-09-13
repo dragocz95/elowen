@@ -99,43 +99,37 @@ describe('settings row layout contract', () => {
     expect(block(block(studio, PHONE), ".settings-row[data-trailing='inline'] .settings-row__trailing {")).toMatch(/flex-wrap:\s*nowrap/);
   });
 
-  /** THE TRAILING BAND. A card's records share their trailing columns, which is the only way a switch can
-   *  sit under the switch above it when the record between them carries a status pill and an action. Flex
-   *  sizes every row from its own content, so this has to be a grid taking its tracks from the stack — and
-   *  the three slots have to be PLACED, because a record may omit any of them and auto-placement would put
-   *  the next one in the missing one's column. */
-  it('gives the trailing side one shared band: status, control, actions in fixed columns', () => {
+  /** An inline row has no stacked status block, so reserving the actions track in every record leaves its
+   *  control visibly stranded to the left whenever another row carries an action. The inline wrapper spans
+   *  the control and actions tracks as one right-aligned flex band; stacked rows keep explicit shared slots. */
+  it('uses the whole trailing band for inline controls and fixed slots for stacked records', () => {
     const stack = block(core, '.settings-group__body:has(> .settings-row),\n.settings-group__column {');
     expect(stack).toMatch(/grid-template-columns:\s*minmax\(10rem,\s*1fr\)\s+minmax\(0,\s*auto\)\s+minmax\(0,\s*1\.05fr\)\s+auto/);
-    // Studio's control ceiling is capped against the card as well as in rem — a bare length is no ceiling
-    // on a surface narrower than the length. See tests/styles/settingsControlTrack.test.ts for why.
     expect(studio).toMatch(/minmax\(0,\s*1fr\)\s+minmax\(0,\s*auto\)\s+minmax\(0,\s*min\(20rem,\s*50%\)\)\s+auto/);
 
-    // The cell spans every trailing track it is given, so a skin may retune them without touching the DOM.
     expect(block(core, '\n.settings-row__trailing {')).toMatch(/grid-column:\s*2\s*\/\s*-1/);
-    // ONE grid owns the widths: the stack declares the four tracks and every record borrows them. Without
-    // this the records size their own columns and nothing lines up down the card.
     expect(block(core, '.settings-group__column > .settings-row {')).toMatch(/grid-template-columns:\s*subgrid/);
 
-    // Both layouts take the band. `stack` says what a record does when the card gets NARROW; on a wide
-    // card it has the same three slots as everything else, and leaving it out was what kept the one row
-    // with a badge, a switch and a button off the alignment it needed most.
-    // THE CELL DISSOLVES. A wrapper that is itself a subgrid is a SECOND grid, and a nested subgrid only
-    // shares the tracks it spans: measured on a 1440px Recap card, the one row carrying an action opened
-    // an action column no other row had and its own switch sat 273px to the left of every other switch.
-    // `display: contents` leaves exactly one grid sizing all four columns for every row at once, so the
-    // action column exists at the same width even in a row that has no action.
-    expect(block(core, '.settings-row[data-trailing] .settings-row__trailing {')).toMatch(/display:\s*contents/);
-    expect(core).not.toMatch(/\.settings-row__trailing \{[^}]*grid-template-columns:\s*subgrid/);
+    const inline = block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing {");
+    expect(inline).toMatch(/display:\s*flex/);
+    expect(inline).toMatch(/grid-column:\s*3\s*\/\s*-1/);
+    expect(inline).toMatch(/justify-content:\s*flex-end/);
+    expect(inline).toMatch(/flex-wrap:\s*nowrap/);
 
+    expect(block(core, ".settings-row[data-trailing='stack'] .settings-row__trailing {")).toMatch(/display:\s*contents/);
     for (const [slot, column] of [['status', '2'], ['control', '3'], ['actions', '4']] as const) {
-      const rule = block(core, `.settings-row[data-trailing] .settings-row__trailing > .settings-row__${slot} {`);
+      const rule = block(core, `.settings-row[data-trailing='stack'] .settings-row__trailing > .settings-row__${slot} {`);
       expect(rule, `${slot} must be placed explicitly`).toMatch(new RegExp(`grid-column:\\s*${column}`));
     }
-    // An inline record's control ends at its own track's edge, so a bare switch lands on the column edge
-    // every switch above it lands on while a select still spans the track through its full-width class.
-    expect(block(core, '.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions {')).toMatch(/justify-self:\s*end/);
+    expect(block(core, ".settings-row[data-trailing='stack'] .settings-row__trailing > .settings-row__actions {")).toMatch(/justify-self:\s*end/);
     expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control {")).toMatch(/justify-content:\s*flex-end/);
+  });
+
+  it('keeps provider labels measurable by collapsing their unused control track', () => {
+    const coreProviders = block(core, '.settings-group__body:has(> .brain-provider-row) {');
+    expect(coreProviders).toMatch(/grid-template-columns:\s*minmax\(10rem,\s*1fr\)\s+minmax\(0,\s*26rem\)\s+0\s+auto/);
+    const studioProviders = block(studio, ":root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .brain-provider-row) {");
+    expect(studioProviders).toMatch(/grid-template-columns:\s*minmax\(10rem,\s*1fr\)\s+minmax\(0,\s*26rem\)\s+0\s+auto/);
   });
 
   /** WHERE THE SHORT STATUS READS. An inline record's status is a reading about the setting, so it sits on

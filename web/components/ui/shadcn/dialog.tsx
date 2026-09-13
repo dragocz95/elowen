@@ -138,10 +138,9 @@ const dialogSurfaceVariants = cva('overlay-surface flex flex-col focus:outline-n
   compoundVariants: [
     { presentation: 'center', size: 'lg', class: 'h-[88dvh] w-[92vw] max-w-[90rem]' },
     // The READING frame, taken by an intercepted page that is a stack of records rather than a data
-    // surface — `PageOverlay frame="reading"`, which Settings asks for and Account does not. `lg` beside
-    // it is the DATA window that wants every pixel a monitor has (a log table, a diagnostics run), so it
-    // grows to 90rem by 88dvh, and on a wide screen that leaves a settings record's label and its
-    // control most of a desk apart.
+    // surface — both Settings and Account ask for `PageOverlay frame="reading"`. `lg` beside it is the DATA
+    // window that wants every pixel a monitor has (a log table, a diagnostics run), so it grows to 90rem by
+    // 88dvh.
     //
     // The width is not a number of its own. `--content-max` (app/styles/tokens.css) is the single
     // authority for how wide a workspace may grow; every shell and content surface already reads it and

@@ -91,6 +91,10 @@
   text-transform: uppercase;
 }
 .page-filters__field-control { min-width: 0; }
+/* A filter panel is a bounded column, not a horizontal toolbar. Segmented controls normally stay on one
+   connected line, but a category axis can carry seven labelled choices and must wrap inside this panel
+   instead of drawing through its right edge. The filter shell owns this presentation exception. */
+.page-filters__field-control .segmented[aria-orientation='horizontal'] { display: flex; width: 100%; flex-wrap: wrap; }
 
 /* The chips are a line of their own under the row. They name WHICH filter is on and reset it; a chip is
    therefore a control, not a label, and it wears a control's hover and focus. */

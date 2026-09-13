@@ -12,7 +12,7 @@ import { AccountView } from './AccountView';
 export function AccountOverlay() {
   const { t } = useTranslation();
   return (
-    <PageOverlay title={t.account.title} icon={UserCog} data-testid="account-overlay">
+    <PageOverlay title={t.account.title} icon={UserCog} frame="reading" data-testid="account-overlay">
       <AccountView surface="overlay" />
     </PageOverlay>
   );

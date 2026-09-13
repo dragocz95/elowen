@@ -152,6 +152,12 @@
 .settings-group__column:has(> .settings-row .segmented) {
   grid-template-columns: minmax(8rem, 1fr) minmax(0, auto) minmax(min-content, 0.85fr) auto;
 }
+/* A provider row has no control slot. Leaving the shared fractional control track open gives it hundreds
+   of empty pixels and can reduce the provider's own label track to zero inside the Settings overlay. Keep
+   the same status/action anatomy, but collapse the slot this card never uses. */
+.settings-group__body:has(> .brain-provider-row) {
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 26rem) 0 auto;
+}
 
 /* A padded body for grouped content that is a free block (pill lists, log tails, config field grids)
    rather than a stack of records — inset matched to the card header. */
@@ -244,37 +250,28 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    when a record carries more than one trailing value. It spans the status/control/action tracks of the
    shared subgrid; skins may retune the tracks without changing the DOM contract. */
 .settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / -1; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
-/* THE TRAILING BAND. On a wide card a record's trailing cell takes the three trailing tracks rather than
-   being a flex line of its own. That is the difference between a card that lines up and the one this
-   replaced: flex sizes each row from its own content, so a record with a trailing action ended somewhere
-   else again. Sharing the tracks puts every switch in one column and every action against one right
-   edge, without a single call site having to know about it.
-   BOTH layouts take the band. `stack` is about what a record does when the card gets NARROW — it is the
-   opt-out for a record carrying several trailing values that cannot share a phone's value column — and a
-   stacked record on a wide card has exactly the three slots every other record has. Excluding it was what
-   left the one row with a badge, a switch and a button out of the very alignment it needed most. */
-/* THE CELL DISSOLVES rather than becoming a grid of its own. A wrapper that is itself a subgrid is a
-   SECOND grid nested in the record, and a nested subgrid only shares the tracks it spans — measured on a
-   1440px Recap card, the one row carrying "Regenerate now" opened an action column 270px wide that no
-   other row had, and its switch sat at x≈897 while every other switch sat at x≈1170. `display: contents`
-   removes the box entirely: status, control and actions become direct items of the record, the record is
-   a subgrid of the card's stack, and there is exactly ONE grid deciding all four column widths for every
-   row at once. That is what makes the actions column exist, at the same width, even in a row with no
-   action — so a switch never slides right to fill it. */
-.settings-row[data-trailing] .settings-row__trailing { display: contents; }
-/* `flex-wrap: nowrap` is not dead: the phone fold below returns this cell to flex, and that is the width
-   at which an inline record must still refuse to become three lines. */
-.settings-row[data-trailing='inline'] .settings-row__trailing { flex-wrap: nowrap; }
-/* The slots are placed EXPLICITLY, in the RECORD's own tracks. A record may omit any of the three, and
-   auto-placement would then slide its control into the status column — which is the misalignment this
-   whole band exists to fix. */
-.settings-row[data-trailing] .settings-row__trailing > .settings-row__status { grid-column: 2; }
-.settings-row[data-trailing] .settings-row__trailing > .settings-row__control { grid-column: 3; }
-.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions { grid-column: 4; justify-self: end; }
-/* An inline record's control ends at its track's edge, which is how a bare switch lands in the same
-   column as the switch above it while a select or an input still fills the track through its own
-   full-width class. Its STATUS is not here at all: it reads on the label's line (see the title rule
-   above), so an inline record's band is [control][actions] and nothing sizes the status track. */
+/* THE TRAILING BAND. An inline record has no block status in the middle track. Its wrapper therefore
+   spans control + actions as one right-aligned flex line: a row without actions reaches the card's right
+   edge, while a row with an action keeps the control immediately before it. Reserving an action column
+   in every row was the visible defect: every select and switch stopped far left of otherwise empty space.
+   A stacked record still needs the explicit status/control/action tracks because its values are separate
+   blocks that align with the other stacked records in its card. */
+.settings-row[data-trailing='inline'] .settings-row__trailing {
+  display: flex;
+  grid-column: 3 / -1;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
+}
+.settings-row[data-trailing='stack'] .settings-row__trailing { display: contents; }
+/* The stacked slots are placed explicitly. A record may omit any of them, and auto-placement would then
+   slide the next value into the missing one's column. */
+.settings-row[data-trailing='stack'] .settings-row__trailing > .settings-row__status { grid-column: 2; }
+.settings-row[data-trailing='stack'] .settings-row__trailing > .settings-row__control { grid-column: 3; }
+.settings-row[data-trailing='stack'] .settings-row__trailing > .settings-row__actions { grid-column: 4; justify-self: end; }
+/* A bare switch reaches the end of the value band while an input or select can fill that band through its
+   own full-width class. The inline status is not here at all; it reads on the label line above. */
 .settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; }
 .settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
 .settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
