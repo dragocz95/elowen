@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
+import { revealHorizontalItem } from '../../components/ui/horizontalScroll';
 import type { AccountSection, AccountSectionDescriptor } from './sections';
 import { accountSectionHref } from './sections';
 
@@ -28,8 +30,31 @@ export function AccountNavigation({ label, sections, active, layout, onNavigate,
   className?: string;
 }) {
   const tabs = layout === 'tabs';
+  const trackRef = useRef<HTMLElement>(null);
+  const activeItemRef = useRef<HTMLButtonElement>(null);
+  /** Keep the section on screen visible on the phone's one line.
+   *
+   *  The strip is narrower than its own contents, so a section near the end — the terminal, or whatever a
+   *  plugin contributes — is off to the right until it is scrolled to. Arriving on it through a deep link
+   *  or the shell's menu would otherwise show a tab row with nothing marked in it.
+   *
+   *  `revealHorizontalItem` is the shared idiom (components/ui/horizontalScroll.ts): it moves the track's
+   *  own `scrollLeft` by the measured shortfall, so no ancestor scroller is asked to move the page
+   *  vertically and there is no animation for a reduced-motion preference to have an opinion about.
+   *
+   *  Keyed on what the strip SHOWS rather than on the array it was handed: the list is rebuilt on every
+   *  render of the page, while a plugin's section arrives from a live query a commit later. */
+  const sectionKey = sections.map((section) => section.id).join('\u0001');
+  useEffect(() => {
+    if (!tabs) return;
+    const track = trackRef.current;
+    const item = activeItemRef.current;
+    if (!track || !item) return;
+    revealHorizontalItem(track, item);
+  }, [active, sectionKey, tabs]);
   return (
     <nav
+      ref={trackRef}
       aria-label={label}
       data-testid={tabs ? 'account-navigation-tabs' : 'account-navigation-sidebar'}
       className={tabs
@@ -42,6 +67,7 @@ export function AccountNavigation({ label, sections, active, layout, onNavigate,
         return (
           <button
             key={section.id}
+            ref={current ? activeItemRef : undefined}
             type="button"
             aria-current={current ? 'page' : undefined}
             onClick={() => onNavigate(accountSectionHref(section.id), section.id)}

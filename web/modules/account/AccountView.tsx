@@ -52,6 +52,7 @@ import {
 } from './sections';
 import { UserPluginConfigSection } from './UserPluginConfigSection';
 import { rowAnchor } from '../../lib/rowAnchors';
+import { announceLocation } from '../../lib/sameDocumentNavigation';
 import { useRowAnchor } from '../../lib/useRowAnchor';
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
@@ -127,25 +128,20 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
     if (cat !== null && isAccountSection(cat)) return;
     const url = new URL(window.location.href);
     url.searchParams.set('cat', section);
-    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    announceLocation(`${url.pathname}${url.search}${url.hash}`);
   }, [addressReady, section]);
   // …and `?row=<anchor>` beside it: the record the palette named is scrolled into view and blinked once
   // as soon as its section is on screen.
   useRowAnchor();
   /** Move to another section from the navigation this page carries in its overlay presentation.
    *
-   *  The address is rewritten DIRECTLY rather than through the Next router, exactly as on `/settings`:
-   *  this route is statically optimized and `router.replace()` does not reliably update it. The popstate
-   *  that follows is what the effects above, the shell's own highlight and the row-anchor listener read,
-   *  so a section switch from here is indistinguishable from one arriving through the menu.
-   *
-   *  `replaceState`, not push: a section is not a step in the reader's history, and Back has to return to
-   *  the surface the overlay was opened from instead of walking back through every section visited. */
+   *  The address is rewritten DIRECTLY rather than through the Next router — the one announcement the
+   *  shell's rows make too (lib/sameDocumentNavigation.ts). The popstate that follows is what the effects
+   *  above, the shell's own highlight and the row-anchor listener read, so a section switch from here is
+   *  indistinguishable from one arriving through the menu, and it never re-enters interception. */
   const navigateToAccount = (href: string, next: AccountSection) => {
     setSection(next);
-    window.history.replaceState(window.history.state, '', href);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    announceLocation(href);
   };
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
