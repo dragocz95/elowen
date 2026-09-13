@@ -12,11 +12,29 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
     ELSE json_extract(${src}, '${path}') END
 END, '')`;
 
+const safeJson = (src: string): string => `CASE WHEN json_valid(${src}) THEN ${src} ELSE '{}' END`;
+const safeContentArray = (src: string): string =>
+  `CASE WHEN json_type(${safeJson(src)}, '$.content') = 'array'
+          THEN json_extract(${safeJson(src)}, '$.content') ELSE '[]' END`;
+
+const hasInvalidEffectiveContent = (src: string): string =>
+  `(COALESCE(json_type(${safeJson(src)}, '$.content'), '') <> 'array'
+    OR EXISTS (SELECT 1 FROM json_each(${safeContentArray(src)}) AS block
+                 WHERE block.type <> 'object'))`;
+
+const hasToolCallContent = (src: string): string =>
+  `(EXISTS (SELECT 1 FROM json_each(${safeContentArray(src)}) AS block
+              WHERE CASE WHEN block.type = 'object'
+                         THEN json_extract(block.value, '$.type') = 'toolCall'
+                         ELSE 0 END))`;
+
 const successfulEffectiveMessage = (src: string): string =>
-  `COALESCE(json_extract(${src}, '$.stopReason'), '') NOT IN ('error', 'aborted')`;
+  `COALESCE(json_extract(${safeJson(src)}, '$.stopReason'), '') NOT IN ('error', 'aborted')
+   AND NOT ${hasInvalidEffectiveContent(src)}
+   AND NOT ${hasToolCallContent(src)}`;
 
 const trustedEffectiveRollup = (src: string): string =>
-  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 1`;
+  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 2`;
 
 const columns = `source_message_id, bucket_index, session_id, user_id, usage_epoch, provider, model, ts,
   input, output, cache_read, cache_write, total, reasoning, calls, duration_ms, measured_output,
@@ -137,30 +155,10 @@ export function installBrainUsageRollup(db: Db): void {
   if (!stateColumns.has('effective_pair_version')) {
     db.exec('ALTER TABLE brain_usage_rollup_state ADD COLUMN effective_pair_version INTEGER NOT NULL DEFAULT 0');
   }
-  const effectivePairVersion = db.prepare(
-    'SELECT effective_pair_version AS version FROM brain_usage_rollup_state WHERE id = 1',
-  ).get() as { version: number } | undefined;
-  if ((effectivePairVersion?.version ?? 0) < 1) {
-    // The first effective-speed release projected failed retry prefixes as independent samples, even though
-    // the later successful row already timed the whole logical request. Live rows can still be classified
-    // from their source message. Compaction buckets cannot: their source rows are gone and the old bucket
-    // stored no success discriminator, so those historical pairs become honestly unknown.
-    db.exec(`
-      UPDATE brain_usage_rows
-         SET effective_ms = 0, effective_output = 0
-       WHERE bucket_index >= 0
-          OR EXISTS (
-               SELECT 1 FROM brain_messages m
-                WHERE m.id = brain_usage_rows.source_message_id
-                  AND m.role = 'assistant'
-                  AND json_valid(m.content) AND json_type(m.content) = 'object'
-                  AND COALESCE(json_extract(m.content, '$.stopReason'), '') IN ('error', 'aborted')
-             );
-      UPDATE brain_usage_rollup_state
-         SET effective_pair_version = 1, generation = generation + 1
-       WHERE id = 1;
-    `);
-  }
+  // Version 1 pairs are deliberately left untouched here. Their correction can be exact only by reading
+  // source messages, and that scan belongs to the explicit rebuild seam below, not startup's write lock.
+  // Until rebuild completes, BrainUsageStore uses the legacy reader, whose live-message SQL fails closed and
+  // whose old compaction buckets already require version 2 before contributing an effective pair.
   // Trigger SQL is versioned with the projection shape. Recreate it on every boot so an additive column is
   // populated immediately without rewriting the historical projection or scanning brain_messages.
   db.exec(`
@@ -179,8 +177,11 @@ export function installBrainUsageRollup(db: Db): void {
       ${insertTriggerBody('NEW')}
     END;
   `);
-  db.prepare(`UPDATE brain_usage_rollup_state SET ready = 1
-               WHERE id = 1 AND ready = 0 AND NOT EXISTS (SELECT 1 FROM brain_messages)`).run();
+  db.prepare(`UPDATE brain_usage_rollup_state
+                 SET ready = 1, effective_pair_version = 2
+               WHERE id = 1
+                 AND NOT EXISTS (SELECT 1 FROM brain_messages)
+                 AND NOT EXISTS (SELECT 1 FROM brain_usage_rows)`).run();
 }
 
 /** Rebuild historical rows once, under one IMMEDIATE transaction. This is deliberately not called by
@@ -217,7 +218,9 @@ export function rebuildBrainUsageRollup(db: Db): { rows: number; generation: num
     // One materialized provider lookup feeds both halves. Running these as separate INSERTs would rebuild
     // the expensive legacy attribution CTE twice during the migration for no semantic benefit.
     db.exec(`WITH ${sameModel} INSERT INTO brain_usage_rows (${columns}) ${liveBackfill} UNION ALL ${rollupBackfill}`);
-    db.prepare('UPDATE brain_usage_rollup_state SET ready = 1, generation = generation + 1 WHERE id = 1').run();
+    db.prepare(`UPDATE brain_usage_rollup_state
+                   SET ready = 1, effective_pair_version = 2, generation = generation + 1
+                 WHERE id = 1`).run();
     const row = db.prepare(`SELECT (SELECT COUNT(*) FROM brain_usage_rows) AS rows, generation
                               FROM brain_usage_rollup_state WHERE id = 1`).get() as { rows: number; generation: number };
     return row;

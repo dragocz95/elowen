@@ -13,10 +13,16 @@ function useOverlayDepth(): number {
 
 /** Wraps an overlay's own children so anything opened from inside it counts as one level deeper.
  *  A React portal keeps its owner's context, so this stays accurate even though every overlay renders
- *  into document.body rather than where it was written. */
-export function OverlayDepthProvider({ children }: { children: ReactNode }) {
+ *  into document.body rather than where it was written.
+ *
+ *  `standsInForPage` is the one exception, and it is not a nesting exemption: it says the overlay IS a
+ *  page — an intercepted route rendered over whatever linked to it, as `/settings` is — rather than a
+ *  step taken from one. Everything inside such a surface has to resolve exactly as it does on the
+ *  canonical page, so the first editor opened from it is still a right-hand drawer instead of a centered
+ *  window. Counting it as depth 1 turned every nested Settings editor into a centered dialog at once. */
+export function OverlayDepthProvider({ children, standsInForPage = false }: { children: ReactNode; standsInForPage?: boolean }) {
   const depth = useOverlayDepth();
-  return <OverlayDepthContext.Provider value={depth + 1}>{children}</OverlayDepthContext.Provider>;
+  return <OverlayDepthContext.Provider value={standsInForPage ? 0 : depth + 1}>{children}</OverlayDepthContext.Provider>;
 }
 
 /** What the overlay is FOR, which is the only thing a call site knows that the rule below cannot work

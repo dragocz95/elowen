@@ -64,6 +64,36 @@ export function sparedChildSessionIds(
   return spared;
 }
 
+const MAX_SPARED_SESSION_ANCESTRY_HOPS = 64;
+
+/** Whether `sessionId` is at or below a durable background edge the canonical parent-teardown rule
+ *  spares. Channel prompt refresh applies this to every top-level registry entry, including a foreground
+ *  grandchild whose background parent is independently registered. The durable chain is strict and
+ *  bounded: missing rows, malformed/cross-owner edges, cycles, and overlong ancestry all retain the
+ *  destructive reset. A stale durable `running` row can therefore preserve an old-prompt session until
+ *  existing lifecycle recovery or live-session eviction retires it; prompt refresh deliberately adds no
+ *  second timer for that accepted caveat. */
+export function isSparedChildSession(
+  store: Pick<BrainStore, 'getSession' | 'getSubagentRuns' | 'getWorkflowRuns'>,
+  sessionId: string,
+): boolean {
+  const seen = new Set<string>([sessionId]);
+  let currentSessionId = sessionId;
+  let current = store.getSession(currentSessionId);
+  for (let hop = 0; hop < MAX_SPARED_SESSION_ANCESTRY_HOPS; hop += 1) {
+    if (!current) return false;
+    const parentSessionId = current.parent_session_id;
+    if (typeof parentSessionId !== 'string' || parentSessionId.length === 0 || seen.has(parentSessionId)) return false;
+    seen.add(parentSessionId);
+    const parent = store.getSession(parentSessionId);
+    if (!parent || parent.user_id !== current.user_id) return false;
+    if (sparedChildSessionIds(store, parentSessionId).has(currentSessionId)) return true;
+    currentSessionId = parentSessionId;
+    current = parent;
+  }
+  return false;
+}
+
 /** Whether this conversation has WORK in flight — a running turn, anything queued behind it, a parked
  *  question, a still-running child/workflow/background job, or an armed goal continuation. Deliberately
  *  FAIL-CLOSED: every uncertain signal counts as busy, because each caller either destroys a live

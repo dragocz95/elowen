@@ -163,6 +163,80 @@ describe('the Account deck as a sub-menu', () => {
   });
 });
 
+/** THE ROW FOR A SECTION OF THE PAGE THE READER IS ALREADY ON.
+ *
+ *  `/settings` and `/account` are presented as intercepted page overlays, and interception answers a
+ *  CLIENT navigation whatever surface it was made from. So on a hard-loaded canonical page these rows
+ *  used to raise a SECOND copy of the deck in an overlay above the page they were meant to move.
+ *
+ *  The shell's answer is one decision for every link it draws (components/shell/ShellLink.tsx): a
+ *  navigation to the pathname the document is already on is announced in the document instead of routed.
+ *  The page follows that announcement, and so does this column. */
+describe('a section row on the deck page the reader is standing on', () => {
+  /** Click a row and report whether the shell answered it IN THE DOCUMENT — the announcement every
+   *  surface that cares about the address listens for. `next/link` cancels the event either way, so the
+   *  announcement is the signal rather than `defaultPrevented`; the document-level listener additionally
+   *  keeps jsdom from attempting a navigation for the rows that are left to the router. */
+  const clickRow = (link: HTMLElement): boolean => {
+    let announced = false;
+    const heard = () => { announced = true; };
+    const stop = (event: Event) => event.preventDefault();
+    window.addEventListener('popstate', heard);
+    document.addEventListener('click', stop);
+    fireEvent.click(link);
+    document.removeEventListener('click', stop);
+    window.removeEventListener('popstate', heard);
+    return announced;
+  };
+  const rowFor = (parent: string, href: string): HTMLElement => {
+    const disclosure = screen.getByRole('button', { name: parent });
+    // The route already opens its own parent; clicking it there would fold the sub-menu shut.
+    if (disclosure.getAttribute('aria-expanded') === 'false') fireEvent.click(disclosure);
+    return screen.getAllByRole('link').find((link) => link.getAttribute('href') === href)!;
+  };
+  const markedHref = () => screen.getAllByRole('link')
+    .find((link) => link.getAttribute('aria-current') === 'page')
+    ?.getAttribute('href');
+
+  it('moves the account page in the document rather than navigating into an overlay over it', () => {
+    location.pathname = '/account';
+    location.search = '?cat=profile';
+    window.history.replaceState(null, '', '/account?cat=profile');
+    mount();
+    const entries = window.history.length;
+
+    expect(clickRow(rowFor('Account', accountSectionHref('security')))).toBe(true);
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/account?cat=security');
+    // Announced, not pushed: Back still leaves the account rather than walking its sections.
+    expect(window.history.length).toBe(entries);
+    // And the column read the same announcement the page does.
+    expect(markedHref()).toBe(accountSectionHref('security'));
+  });
+
+  it('does the same on Settings, because the rule is the document and not the route', () => {
+    location.pathname = '/settings';
+    location.search = '?cat=system';
+    window.history.replaceState(null, '', '/settings?cat=system');
+    mount();
+
+    expect(clickRow(rowFor('Settings', settingsSectionHref('models')))).toBe(true);
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/settings?cat=models');
+    expect(markedHref()).toBe(settingsSectionHref('models'));
+  });
+
+  /** The other half of the same rule: from anywhere else the row is an ordinary link, which is what the
+   *  interception it is about depends on. */
+  it('leaves a row that leads to another page to the router', () => {
+    location.pathname = '/dash';
+    window.history.replaceState(null, '', '/dash');
+    mount();
+
+    expect(clickRow(rowFor('Account', accountSectionHref('security')))).toBe(false);
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/dash');
+  });
+});
+
 describe('a plugin\'s settings sections as a sub-menu', () => {
   it('lists them under the plugin\'s own world, at the addresses the host route serves', () => {
     mount();

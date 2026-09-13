@@ -681,13 +681,12 @@ const MACHINE_INTERFACE = 've-+';
  *  it promised would have been imaginary. The DHCP exception has to precede the guard, because the host
  *  runs the address server for the link.
  *
- *  Forwarding needs both directions named. Measured on a Docker host against a bare IP: with the outbound
- *  accept alone the request left and the connection timed out after ten seconds, and with the return-path
- *  rule beside it the same request answered 200. A reply arrives as `-i eth0 -o ve-+`, which matches
- *  neither the outbound accept nor anything in Docker's own chains, and falls through to the FORWARD DROP
- *  policy Docker installs. A machine that can send and never receive looks like a name-resolution fault
- *  and is not one. The two DOCKER-USER rules do not overlap, so their order relative to each other is
- *  free; the DHCP exception and stateful native-DNAT return path still have to precede the INPUT guard.
+ *  Forwarding needs both directions named in the native FORWARD chain. The request leaves through `ve-+`
+ *  and its reply returns to `ve-+`; either direction can otherwise fall through to a host DROP policy or
+ *  a later framework-owned chain. Fixed positions 1 and 2 keep both accepts ahead of those rules on hosts
+ *  with or without Docker. The return path is conntrack-scoped, so it admits no connection the machine did
+ *  not establish. The DHCP exception and stateful native-DNAT return path still have to precede the INPUT
+ *  guard.
  *
  *  IPv6 needs the same stateful return rule before its guard. Measured, this host carries no global IPv6
  *  address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets nothing but a link-local address on
@@ -700,19 +699,19 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     id: 'firewall:forward-out',
     label: 'Machine forwarding',
     binary: '/usr/sbin/iptables',
-    chain: 'DOCKER-USER',
+    chain: 'FORWARD',
     insertAt: 1,
     spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-forward-out', '-j', 'ACCEPT']),
-    why: 'Docker sets the FORWARD policy to DROP, so without it a machine reaches nothing',
+    why: 'without the native forwarding rule a host policy or later framework chain can block every machine request',
   }),
   Object.freeze({
     id: 'firewall:forward-back',
     label: 'Machine return path',
     binary: '/usr/sbin/iptables',
-    chain: 'DOCKER-USER',
+    chain: 'FORWARD',
     insertAt: 2,
     spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-forward-back', '-j', 'ACCEPT']),
-    why: 'a reply comes back the other way round and matches neither the rule above nor any chain Docker owns, so a machine sends and never receives',
+    why: 'without the conntrack-scoped native return rule a machine can send traffic but never receive its replies',
   }),
   Object.freeze({
     id: 'firewall:machine-dhcp',
@@ -764,6 +763,8 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
 const RETIRED_NSPAWN_FIREWALL_RULES = Object.freeze([
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']) }),
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-forward-out', '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-forward-back', '-j', 'ACCEPT']) }),
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-j', 'ACCEPT']) }),
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']) }),
   Object.freeze({ binary: '/usr/sbin/ip6tables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']) }),

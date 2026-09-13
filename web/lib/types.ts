@@ -1162,12 +1162,11 @@ export interface TokenUsage {
    *  buckets by this (their seconds are measuredOutput / outputTps), never by `output`. 0 when nothing was
    *  measured; absent on older daemons, which makes the bucket unweightable → keep it out of the average. */
   measuredOutput?: number;
-  /** EFFECTIVE tokens/sec: provider-reported output tokens (reasoning and tool-call tokens included)
-   *  over the WHOLE logical model request, measured from its initiation — before the provider's
-   *  response headers were awaited — to the complete response, retries and backoff included, tool
-   *  execution excluded. An end-to-end rate the client experienced, not a pure decode rate. Only
-   *  successful generations carrying the recorder's effective stamp count. Failed retry prefixes,
-   *  unversioned compaction rollups and older history remain unknown (null = nothing effective measured). */
+  /** EFFECTIVE tokens/sec: provider-reported output tokens over the whole logical model request, measured
+   *  from initiation to complete response, with retries and backoff included and tool execution excluded.
+   *  Generations containing toolCall blocks are ineligible because provider usage cannot split their
+   *  serialized arguments from model text. Only successful tool-call-free generations with effective timing
+   *  count; failed prefixes, ambiguous compacted rollups and older history remain unknown. */
   effectiveTps?: number | null;
   /** The output tokens `effectiveTps` was measured over — same contract as `measuredOutput` over the
    *  end-to-end window. Effective-speed averages use this pair. */

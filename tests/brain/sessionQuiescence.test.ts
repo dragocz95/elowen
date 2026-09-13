@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
 import {
+  isSparedChildSession,
   sessionHasWorkInFlight,
   sparedChildSessionIds,
   type SessionQuiescenceDeps,
@@ -126,5 +127,60 @@ describe('sparedChildSessionIds', () => {
       { status: 'running', background: true, nodes: [{ status: 'running', sessionId: 'node-1' }, { status: 'done', sessionId: 'node-2' }] },
       { status: 'running', background: false, nodes: [{ status: 'running', sessionId: 'fg-node' }] },
     ]), 'p')).toEqual(new Set(['node-1']));
+  });
+
+  const durableStore = (
+    sessions: Record<string, { parent_session_id: unknown; user_id: number }>,
+    runs: Record<string, { status: string; background?: boolean; autoDeliver?: boolean; sessionId: string }[]> = {},
+  ) => ({
+    getSession: (sessionId: string) => sessions[sessionId],
+    getSubagentRuns: (parentSessionId: string) => runs[parentSessionId] ?? [],
+    getWorkflowRuns: () => [],
+  }) as unknown as Parameters<typeof isSparedChildSession>[0];
+
+  it('recognizes every descendant beneath a spared background edge for top-level channel resets', () => {
+    const storeWithAncestry = durableStore({
+      root: { parent_session_id: null, user_id: 1 },
+      bg: { parent_session_id: 'root', user_id: 1 },
+      foregroundGrandchild: { parent_session_id: 'bg', user_id: 1 },
+    }, {
+      root: [{ status: 'running', background: true, sessionId: 'bg' }],
+      bg: [{ status: 'running', sessionId: 'foregroundGrandchild' }],
+    });
+
+    expect(isSparedChildSession(storeWithAncestry, 'bg')).toBe(true);
+    expect(isSparedChildSession(storeWithAncestry, 'foregroundGrandchild')).toBe(true);
+    expect(isSparedChildSession(storeWithAncestry, 'root')).toBe(false);
+  });
+
+  it('fails closed for missing, malformed, cross-owner, cyclic, or overlong ancestry', () => {
+    expect(isSparedChildSession(durableStore({
+      orphan: { parent_session_id: 'missing', user_id: 1 },
+    }), 'orphan')).toBe(false);
+    expect(isSparedChildSession(durableStore({
+      malformed: { parent_session_id: 42, user_id: 1 },
+    }), 'malformed')).toBe(false);
+    expect(isSparedChildSession(durableStore({
+      parent: { parent_session_id: null, user_id: 1 },
+      foreign: { parent_session_id: 'parent', user_id: 2 },
+    }, {
+      parent: [{ status: 'running', background: true, sessionId: 'foreign' }],
+    }), 'foreign')).toBe(false);
+    expect(isSparedChildSession(durableStore({
+      a: { parent_session_id: 'b', user_id: 1 },
+      b: { parent_session_id: 'a', user_id: 1 },
+    }), 'a')).toBe(false);
+
+    let reads = 0;
+    const endless = {
+      getSession: (sessionId: string) => {
+        reads += 1;
+        return { parent_session_id: `${sessionId}.parent`, user_id: 1 };
+      },
+      getSubagentRuns: () => [],
+      getWorkflowRuns: () => [],
+    } as unknown as Parameters<typeof isSparedChildSession>[0];
+    expect(isSparedChildSession(endless, 'leaf')).toBe(false);
+    expect(reads).toBeLessThan(100);
   });
 });

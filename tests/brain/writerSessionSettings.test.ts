@@ -180,11 +180,15 @@ describe('a room composes its session from the writer, not from whoever opened i
     await t.turn(3, 'Sabina asks something'); // owned by 2, composed for 3
 
     // Michal saving his instructions must not respawn a room whose prompt is built from Sabina's.
-    await t.svc.resetChannels('user instructions changed', (settingsUserId) => settingsUserId === 2);
+    await t.svc.resetChannels('user instructions changed', {
+      settingsFilter: (settingsUserId) => settingsUserId === 2,
+    });
     expect(t.registry.channelGet(t.channelId)).toBeDefined();
 
     // Sabina saving hers must, or the room keeps rendering the instructions she just replaced.
-    await t.svc.resetChannels('user instructions changed', (settingsUserId) => settingsUserId === 3);
+    await t.svc.resetChannels('user instructions changed', {
+      settingsFilter: (settingsUserId) => settingsUserId === 3,
+    });
     expect(t.registry.channelGet(t.channelId)).toBeUndefined();
   });
 });
@@ -295,7 +299,7 @@ describe('the session-settings contract', () => {
     // those instructions, which is not the same set as the rooms that account opened.
     const channels = modules().find((m) => m.path === 'brain/channels.ts')!.code;
     const reset = channels.slice(channels.indexOf('async resetChannels('));
-    expect(/settingsFilter\(ch\.settingsUserId\)/.test(reset)).toBe(true);
+    expect(/options\.settingsFilter\(ch\.settingsUserId\)/.test(reset)).toBe(true);
     expect(/getSession\(ch\.sessionId\)\?\.user_id/.test(reset.slice(0, reset.indexOf('\n  }')))).toBe(false);
   });
 });

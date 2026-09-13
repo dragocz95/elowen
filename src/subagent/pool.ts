@@ -38,7 +38,7 @@ import { logger } from '../shared/logger.js';
 import type { BrainEvent } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
 import type { ProcessInfo, ProcessSweepResult } from '../brain/processRegistry.js';
-import { channelSessionId, channelIdOf } from '../brain/sessionId.js';
+import { channelSessionId, channelIdOf, isSubagentSession } from '../brain/sessionId.js';
 import { SubagentRunnerUnavailable, type DelegatedTurnRequest, type DelegatedTurnRunner } from '../brain/delegatedTurn.js';
 import { SubagentRunnerHost, type RunnerHeartbeat, type SubagentRunnerHostDeps } from './runnerHost.js';
 import { FairQueue } from './fairQueue.js';
@@ -171,7 +171,49 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
 
   attachChildEdgeSink(sink: (parentSessionId: string, childSessionId: string, running: boolean) => void): void {
     this.childEdgeSink = sink;
-    for (const r of this.runners) r.host.attachChildEdgeSink(sink);
+  }
+
+  /** Accept a nested edge only from the runner already routed for its parent. The edge then becomes the
+   *  route for the child session as well, so drill-in snapshots, live events, steering and teardown reach
+   *  the process that owns its LiveBrain. A malformed frame cannot claim an unrelated session, create a
+   *  cycle or steal a route from another runner: every level must extend this runner's existing route. */
+  private onChildEdge(
+    entry: PooledRunner,
+    parentSessionId: string,
+    childSessionId: string,
+    running: boolean,
+  ): void {
+    const refused = (reason: string): void => log.debug('refused nested child edge', {
+      reason, parentSessionId, childSessionId, running,
+    });
+    if (!isSubagentSession(parentSessionId) || !isSubagentSession(childSessionId)
+      || parentSessionId === childSessionId) {
+      refused('malformed lineage');
+      return;
+    }
+    const childChannelId = channelIdOf(childSessionId);
+    const current = this.routes.get(childChannelId);
+    if (!running) {
+      // Reset clears routes before SIGTERM settles the host's mirrored edges. An absent route is therefore
+      // a valid terminal retraction; only a PRESENT route owned by another runner proves this frame foreign.
+      if (current && current !== entry) {
+        refused('child routed to another runner');
+        return;
+      }
+    } else {
+      const parentChannelId = channelIdOf(parentSessionId);
+      if (this.routes.get(parentChannelId) !== entry) {
+        refused('parent not routed to reporting runner');
+        return;
+      }
+      if (current && current !== entry) {
+        refused('child routed to another runner');
+        return;
+      }
+      this.routes.set(childChannelId, entry);
+    }
+    this.routeTouched.set(childChannelId, Date.now());
+    this.childEdgeSink?.(parentSessionId, childSessionId, running);
   }
 
   /** Attach the live-process change sink. A runner-local spawn/exit/kill/drop reaches the daemon's
@@ -366,7 +408,8 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
         },
       });
       entry = { host, inFlight: 0, saturatedBeats: 0, lastActivityAt: Date.now() };
-      if (this.childEdgeSink) host.attachChildEdgeSink(this.childEdgeSink);
+      host.attachChildEdgeSink((parentSessionId, childSessionId, running) =>
+        this.onChildEdge(entry, parentSessionId, childSessionId, running));
       try {
         await host.start();
       } catch (e) {

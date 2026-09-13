@@ -42,6 +42,12 @@ interface ModalProps {
   closeLabel?: string;
   /** Blocks header, Escape, and backdrop dismissal while an owned async save is in flight. */
   closeDisabled?: boolean;
+  /** This dialog IS a page rather than a step taken from one: an intercepted route (`/settings`)
+   *  presented over the surface that linked to it. Two things follow, and they are the same statement.
+   *  Anything opened from inside it resolves at the depth the canonical page would give it, so the first
+   *  editor raised from Settings is still a right-hand drawer; and the surface itself takes the page band
+   *  BELOW those drawers, because a stand-in that outranked what it opens would paint over it. */
+  standsInForPage?: boolean;
   /** Widens a drawer for content that genuinely needs the room (log tables, diagnostics). Defaults to
    *  wide for `size="lg"`, so a dialog that already declared it needs a large frame keeps that room
    *  when it renders as a drawer instead. Ignored by the other presentations, which take `size`. */
@@ -70,15 +76,16 @@ interface ModalProps {
  *   - the backdrop press, which must stop at the backdrop it was aimed at so a nested dialog cannot also
  *     close its parent. Radix's own outside-press dismissal is turned off for that reason, rather than
  *     left running as a second way to close the same dialog. */
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', drawerWidth, closeLabel, closeDisabled = false, 'aria-busy': busy, 'data-testid': testId }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', standsInForPage = false, drawerWidth, closeLabel, closeDisabled = false, 'aria-busy': busy, 'data-testid': testId }: ModalProps) {
   const requestClose = () => { if (!closeDisabled) onClose(); };
   const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
   const automatic = useOverlayPresentation(intent);
   const resolved = presentation === 'auto' ? automatic : presentation;
   // The resolved SHAPE owns the z-band. Only a top-level drawer belongs under modal dialogs; an inspect
   // surface forced or nested into a centered/fullscreen presentation must stay on the modal band, or it
-  // paints underneath the dialog that opened it.
-  const layer = resolved === 'drawer' ? 'drawer' : 'modal';
+  // paints underneath the dialog that opened it. A page stand-in is the exception the shape cannot state:
+  // it ranks below both, because everything it opens is opened FROM it.
+  const layer = standsInForPage ? 'page' : resolved === 'drawer' ? 'drawer' : 'modal';
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
@@ -161,7 +168,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
             onClose={requestClose}
           />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <OverlayDepthProvider>{children}</OverlayDepthProvider>
+            <OverlayDepthProvider standsInForPage={standsInForPage}>{children}</OverlayDepthProvider>
           </div>
         </DialogContent>
       </DialogOverlay>

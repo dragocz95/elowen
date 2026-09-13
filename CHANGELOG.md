@@ -74,10 +74,11 @@ This file is the full technical log. The notes users read in the app are the cur
   conversation has a durable completion sink. Explicit `background: false` remains blocking, including a false
   value stored in a workflow file, while a surface that cannot receive a later completion stays in the
   foreground so no result is lost.
-- Effective tokens per second now means the provider output over the complete successful logical request,
-  including response-header wait, prompt processing, queueing, retries and backoff. Failed or aborted retry
-  prefixes, unversioned compacted history and legacy post-header samples remain unknown and are not mixed into
-  the effective figure or its duration-weighted average.
+- Effective tokens per second now means provider output from a successful, tool-call-free generation over the
+  complete logical request, including response-header wait, prompt processing, queueing, retries and backoff.
+  Generations containing tool calls are excluded because provider usage cannot separate their serialized
+  arguments from model text. Failed or aborted retry prefixes, ambiguous compacted history and legacy
+  post-header samples remain unknown and are not mixed into the effective figure or its duration-weighted average.
 - Plugin controls are now two-sided dependencies. Enabling a consumer still requires a provider, and disabling
   or removing the last provider is refused while an enabled consumer depends on it, with the blocking plugin
   named in the administration UI.
@@ -191,12 +192,12 @@ Version 0.28.41 has no section of its own; the changes it carried are included b
   same disk and reporting its progress as receipts. Both are administrator-only, are refused when their
   preconditions do not hold, reverse their ownership pass on failure, and have no reverse operation once they
   succeed.
-- Added an effective tokens-per-second measure. It divides the provider's own output token count, reasoning
-  and tool-call tokens included, by the whole logical request measured on a monotonic clock from the moment
-  the request is initiated to the stream's terminal event, so the provider's header wait, prompt processing,
-  queueing and every automatic retry with its backoff are inside the figure while tool execution between
-  model calls is not. Compaction requests are never stamped. The figure reported is the latest completed
-  model call rather than a session blend, and a call that ended in an error or was aborted is skipped. It
+- Added an effective tokens-per-second measure. It divides provider output by the whole logical request
+  measured on a monotonic clock from initiation to the stream's terminal event, so header wait, prompt
+  processing, queueing and automatic retries with backoff are inside the figure while tool execution between
+  model calls is not. Generations containing tool calls are excluded because provider usage cannot separate
+  their serialized arguments from model text. Compaction requests are never stamped. The figure reported is
+  the latest completed model call rather than a session blend, and error or aborted calls are skipped. It
   appears as `tok/s` in the CLI statusline and its per-model table, as "Effective speed" and "Avg effective
   speed" in the web stats view, and as `effectiveTps` on the usage API, beside a new "first content" reading
   that names every wait before the first streamed content.
