@@ -84,7 +84,7 @@ type Call = { file: string; args: string[] };
  *  is what makes a convergence claim testable — provisioning is run twice against the same host. */
 function runnerFixture(options: {
   installed?: boolean; polkit?: string; polkitMode?: number; unit?: string; unitMode?: number;
-  unitLoaded?: boolean; firewall?: boolean; forwarding?: boolean; networkd?: boolean; deployment?: string;
+  unitLoaded?: boolean; firewall?: boolean; dockerChain?: boolean; forwarding?: boolean; networkd?: boolean; deployment?: string;
   firewallUnit?: string; firewallEnabled?: boolean; sysctl?: string; networkdEnabled?: boolean;
 } = {}) {
   const calls: Call[] = [];
@@ -97,6 +97,7 @@ function runnerFixture(options: {
     unitMode: options.unitMode ?? 0o644,
     unitLoaded: options.unitLoaded ?? false,
     firewall: options.firewall ?? false,
+    dockerChain: options.dockerChain ?? true,
     firewallUnit: options.firewallUnit ?? '',
     firewallUnitMode: 0o644,
     firewallEnabled: options.firewallEnabled ?? false,
@@ -150,6 +151,9 @@ function runnerFixture(options: {
       if (!state.firewall) return { ok: false, stderr: 'No chain/target/match by that name' };
       if (args[0] === '-S') {
         const chain = args[1];
+        if (file === '/usr/sbin/iptables' && chain === 'DOCKER-USER' && !state.dockerChain) {
+          return { ok: false, stderr: 'No chain/target/match by that name' };
+        }
         const stdout = NSPAWN_FIREWALL_RULES
           .filter((rule) => rule.binary === file && rule.chain === chain)
           .sort((left, right) => left.insertAt - right.insertAt)
@@ -904,12 +908,26 @@ describe('privileged helper: host artefacts and readiness', () => {
   });
 
 
+  it('provisions forwarding on a host where Docker and its private chain are absent', async () => {
+    const fixture = runnerFixture({ firewall: false, firewallEnabled: false, dockerChain: false });
+
+    const applied = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+
+    expect(applied.ready, applied.items.filter((item) => !item.ok).map((item) => `${item.id}: ${item.detail}`).join('; ')).toBe(true);
+    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule) => rule.id === 'firewall:forward-out' || rule.id === 'firewall:forward-back');
+    expect(forwarding.map((rule) => rule.chain)).toEqual(['FORWARD', 'FORWARD']);
+    expect(fixture.calls.filter((call) => call.file === '/usr/sbin/iptables' && call.args[0] === '-S')
+      .every((call) => call.args[1] !== 'DOCKER-USER')).toBe(true);
+    const retiredDockerCommands = MACHINE_FIREWALL_UNIT.split('\n').filter((line) => line.includes('DOCKER-USER'));
+    expect(retiredDockerCommands).toHaveLength(4);
+    expect(retiredDockerCommands.every((line) => line.includes(' -D DOCKER-USER ') && !line.includes(' -I DOCKER-USER '))).toBe(true);
+  });
+
   it('names both directions of forwarding, because a machine that only sends looks like a DNS fault', () => {
-    // Measured on a Docker host against a bare IP: with the outbound accept alone the connection timed
-    // out after ten seconds; with the return-path rule beside it the same request answered 200. A reply
-    // arrives as `-i eth0 -o ve-+`, matches neither the outbound accept nor any chain Docker owns, and
-    // dies on the FORWARD DROP policy Docker installs.
-    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'DOCKER-USER');
+    // A request leaves through the machine link and its reply returns to it. Both rules live directly in
+    // the native chain so a host does not need Docker's private chain, and fixed leading positions keep a
+    // framework jump or host DROP rule from intercepting either direction first.
+    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'FORWARD');
     expect(forwarding.map((rule: { id: string }) => rule.id)).toEqual(['firewall:forward-out', 'firewall:forward-back']);
     expect(forwarding.map((rule) => rule.insertAt)).toEqual([1, 2]);
     expect(forwarding.map((rule) => firewallRuleCommand(rule)).every((command) => command.includes('--comment elowen-machine-'))).toBe(true);
