@@ -44,12 +44,6 @@
     "Read",
     "ReconnectMcpServer",
     "RemoveMcpServer",
-    "SandboxCommit",
-    "SandboxCreateWorkspace",
-    "SandboxListWorkspaces",
-    "SandboxReleaseWorkspace",
-    "SandboxRemoveWorkspace",
-    "SandboxUseWorkspace",
     "Search",
     "ToolSearch",
     "WorkflowAddNodes",
@@ -61,7 +55,7 @@
     "mcp__parity__echo_text",
     "mcp__parity__sum_numbers"
   ],
-  "toolCount": 58,
+  "toolCount": 52,
   "firstUserMessage": "<context placement=\"before-user\">\nCurrent date & time: <WEEKDAY>, <LONGDATE>, <TIME> (Europe/Prague, <DAYPART>).\nYou are speaking with an unverified sender with no linked Elowen account, on subagent, in a delegated sub-agent run, which has no conversation of its own.\n</context>\n\nPARITY-TASK-4c8e1 — answer with anything",
   "requestKeys": [
     "max_completion_tokens",
