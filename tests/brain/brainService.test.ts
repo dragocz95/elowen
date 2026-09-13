@@ -282,10 +282,15 @@ describe('BrainService', () => {
     reg.liveWebSockets.add({ plugin: 'demo', close: (code, reason) => { closed.push([code, reason]); } });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
+    const channelReset = vi.spyOn((svc as unknown as {
+      channelService: { resetChannels(reason: string, options?: unknown): Promise<void> };
+    }).channelService, 'resetChannels').mockResolvedValue();
     await svc.start(1);
 
     expect(await svc.reloadPlugins()).toBe(true);
     expect(closed).toEqual([[1001, 'plugin reloaded']]);
+    expect(channelReset).toHaveBeenCalledWith('plugins reloaded');
+    expect(channelReset.mock.calls[0]).toHaveLength(1);
   });
 
   it('hangs up plugin WebSockets on the terminal shutdown drain', async () => {
@@ -4433,6 +4438,28 @@ describe('BrainService user-instruction layering', () => {
     const svc = new BrainService(d as never);
     await svc.channelSend({ channelId: 'disc-p', ownerUserId: 1, policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] } }, 'ahoj');
     expect(seen).toContain(1); // owner id — the one global persona, identical on every platform
+  });
+
+  it('wires prompt-refresh reset intent for user instructions and brand changes', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const channelService = (svc as unknown as {
+      channelService: { resetChannels(reason: string, options?: unknown): Promise<void> };
+    }).channelService;
+    const reset = vi.spyOn(channelService, 'resetChannels').mockResolvedValue();
+    vi.spyOn(svc, 'restart').mockResolvedValue();
+
+    await svc.applyUserInstructionsChange(7);
+    await svc.applyBrandChange();
+
+    expect(reset).toHaveBeenNthCalledWith(1, 'user instructions changed', {
+      intent: 'prompt_refresh',
+      settingsFilter: expect.any(Function),
+    });
+    const userFilter = (reset.mock.calls[0]![1] as { settingsFilter(id: number): boolean }).settingsFilter;
+    expect(userFilter(7)).toBe(true);
+    expect(userFilter(8)).toBe(false);
+    expect(reset).toHaveBeenNthCalledWith(2, 'brand changed', { intent: 'prompt_refresh' });
   });
 
   it('applyUserInstructionsChange restarts the owner session AND disposes channel sessions', async () => {

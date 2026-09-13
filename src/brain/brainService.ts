@@ -2579,7 +2579,10 @@ export class BrainService {
   async applyUserInstructionsChange(userId: number): Promise<void> {
     await this.serial(`user-instructions-${userId}`, async () => {
       await this.restart(userId);
-      await this.channelService.resetChannels('user instructions changed', (settingsUserId) => settingsUserId === userId);
+      await this.channelService.resetChannels('user instructions changed', {
+        intent: 'prompt_refresh',
+        settingsFilter: (settingsUserId) => settingsUserId === userId,
+      });
     });
   }
 
@@ -2594,7 +2597,7 @@ export class BrainService {
   async applyBrandChange(): Promise<void> {
     await this.serial('plugins-reload', async () => {
       for (const userId of this.sessions.activeUserIds()) await this.restart(userId);
-      await this.channelService.resetChannels('brand changed');
+      await this.channelService.resetChannels('brand changed', { intent: 'prompt_refresh' });
     });
   }
 

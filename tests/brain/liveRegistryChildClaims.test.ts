@@ -65,6 +65,22 @@ describe('LiveSessionRegistry — delegated-child liveness claims', () => {
     expect(r.hasActiveChildren('parent')).toBe(false);
   });
 
+  it('clearChildren can preserve every source claim on spared children while removing the rest', () => {
+    const r = registry();
+    r.setChildRunning('parent', 'spared', true);
+    r.setChildRunning('parent', 'spared', true, 'progress');
+    r.setChildRunning('parent', 'doomed', true, 'progress');
+
+    r.clearChildren('parent', new Set(['spared']));
+
+    expect(r.childrenOf('parent')).toEqual(['spared']);
+    expect(r.isActiveChild('doomed')).toBe(false);
+    r.setChildRunning('parent', 'spared', false);
+    expect(r.isActiveChild('spared')).toBe(true); // the independent progress claim survived
+    r.setChildRunning('parent', 'spared', false, 'progress');
+    expect(r.isActiveChild('spared')).toBe(false);
+  });
+
   it('releasing an unknown claim is a no-op and never invents registrations', () => {
     const r = registry();
     r.setChildRunning('parent', 'child', false, 'progress');
