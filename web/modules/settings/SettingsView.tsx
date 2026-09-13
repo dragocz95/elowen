@@ -1,7 +1,7 @@
 'use client';
 import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { ArrowLeft, SlidersHorizontal, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer, ToggleRight } from 'lucide-react';
+import { SlidersHorizontal, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer, ToggleRight } from 'lucide-react';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { groupBrainModelsByProvider } from '../../components/ui/brainModelSelection';
 import { ModelLimitsModal, DEFAULT_MAX_OUTPUT_TOKENS } from '../../modules/settings/ModelLimitsModal';
@@ -112,9 +112,6 @@ function SettingsPanel({ id, active, visited, children }: {
 
 export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay' }) {
   const [navigationQuery, setNavigationQuery] = useState('');
-  const [mobilePane, setMobilePane] = useState<'navigation' | 'content'>('content');
-  const navigationSearchRef = useRef<HTMLInputElement>(null);
-  const contentPaneRef = useRef<HTMLElement>(null);
   const config = useConfig();
   const update = useUpdateConfig();
   const system = useSystem();
@@ -210,7 +207,6 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
   // blinks it once. It reads the same three sources this section state does and consumes the parameter.
   useRowAnchor();
   const navigateToSettings = (href: string, next: string) => {
-    const returningFromMobileNavigation = mobilePane === 'navigation';
     setCategoryState(next);
     // Rewrite the canonical Settings URL directly (the Next router's replace() doesn't reliably update
     // this statically optimized route), then fire popstate so the shell highlight and row-anchor listener
@@ -218,8 +214,6 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     // returns to the surface that opened Settings.
     window.history.replaceState(window.history.state, '', href);
     window.dispatchEvent(new PopStateEvent('popstate'));
-    setMobilePane('content');
-    if (returningFromMobileNavigation) queueMicrotask(() => contentPaneRef.current?.focus({ preventScroll: true }));
   };
   const setCategory = (next: string) => navigateToSettings(settingsSectionHref(next), next);
 
@@ -862,45 +856,45 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     </>
   );
 
-  // THE OVERLAY'S TWO COLUMNS. 15rem, not 18rem: every navigation record is one line now and the
-  // longest localized section name fits inside it, so the three extra rem were empty column taken
-  // from the content beside them.
+  // THE OVERLAY'S WAY BETWEEN SECTIONS, in the two shapes the two viewports have room for — the same
+  // arrangement `/account` uses, so the two intercepted pages are navigated the same way.
+  //
+  // A secondary column where there is width for it. 15rem, not 18rem: every navigation record is one
+  // line now and the longest localized section name fits inside it, so the three extra rem were empty
+  // column taken from the content beside them.
+  //
+  // One line of sections above the content on a phone, PERSISTENTLY. It used to be a master/detail pane
+  // switch: the content pane carried a "back" button that swapped the whole screen for the list, so the
+  // section the reader had just opened disappeared behind the way back to it and moving between two
+  // sections cost four taps. The strip keeps both on screen and never hides the current section.
   if (surface === 'overlay') {
+    const navigation = (layout: 'sidebar' | 'tabs', className?: string) => (
+      <SettingsNavigation
+        t={t}
+        sections={deckSections}
+        pluginEntries={pluginEntries}
+        active={category}
+        query={navigationQuery}
+        layout={layout}
+        className={className}
+        onQueryChange={setNavigationQuery}
+        onNavigate={navigateToSettings}
+        onOpenPlugin={(href) => href.startsWith('/settings?')
+          ? navigateToSettings(href, 'plugins')
+          : router.replace(href)}
+      />
+    );
     return (
       <div data-testid="settings-overlay-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[15rem_minmax(0,1fr)]">
-        <aside className={`${mobilePane === 'navigation' ? 'flex' : 'hidden'} min-h-0 flex-col border-border md:flex md:border-r`}>
-          <SettingsNavigation
-            t={t}
-            sections={deckSections}
-            pluginEntries={pluginEntries}
-            active={category}
-            query={navigationQuery}
-            searchRef={navigationSearchRef}
-            onQueryChange={setNavigationQuery}
-            onNavigate={navigateToSettings}
-            onOpenPlugin={(href) => href.startsWith('/settings?')
-              ? navigateToSettings(href, 'plugins')
-              : router.replace(href)}
-          />
+        <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
+          {navigation('sidebar')}
         </aside>
         <section
-          ref={contentPaneRef}
           role="region"
           aria-label={activeSection.label}
-          tabIndex={-1}
-          className={`${mobilePane === 'content' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 focus:outline-none md:flex md:px-6 md:pb-4 md:pt-3`}
+          className="flex min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 md:px-6 md:pb-4 md:pt-3"
         >
-          <button
-            type="button"
-            onClick={() => {
-              setMobilePane('navigation');
-              queueMicrotask(() => navigationSearchRef.current?.focus({ preventScroll: true }));
-            }}
-            className="mb-3 inline-flex h-9 shrink-0 items-center gap-2 self-start rounded-md px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 md:hidden"
-          >
-            <ArrowLeft size={16} aria-hidden />
-            {t.settings.navigationBack}
-          </button>
+          {navigation('tabs', 'md:hidden')}
           {settingsWorkspace}
         </section>
       </div>

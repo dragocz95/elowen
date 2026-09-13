@@ -491,7 +491,6 @@ export const sk = {
     navigationLabel: 'Kategórie nastavení',
     navigationSearch: 'Hľadať v nastaveniach',
     navigationNoMatches: 'Vyhľadávaniu nezodpovedá žiadne nastavenie.',
-    navigationBack: 'Všetky nastavenia',
     modelsSectionHint: 'Určte, ktorý model plní ktorú úlohu tejto inštancie, a ktoré modely sú vôbec dostupné.',
     brainSectionHint: 'Spravujte identitu asistenta, prepojené AI účty, poskytovateľov a runtime limity.',
     // Settings → Models → Model roles: every instance-level answer to "which model does what", in one

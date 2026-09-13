@@ -531,7 +531,6 @@ export const en = {
     navigationLabel: 'Settings categories',
     navigationSearch: 'Search settings',
     navigationNoMatches: 'No setting matches this search.',
-    navigationBack: 'All settings',
     modelsSectionHint: 'Decide which model performs each task for this instance, and which models are available at all.',
     brainSectionHint: 'Manage the assistant identity, connected AI accounts, providers and runtime limits.',
     // Settings → Models → Model roles: every instance-level answer to "which model does what", in one

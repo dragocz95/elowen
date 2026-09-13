@@ -429,7 +429,10 @@ describe('SettingsPage', () => {
     const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
-    expect(screen.getByRole('navigation', { name: en.settings.navigationLabel })).toBeInTheDocument();
+    // Both shapes of the one list are in the DOM; the stylesheet shows exactly one of them per viewport,
+    // so they share an accessible name the way `/account`'s two do. The searchable one is the column.
+    expect(screen.getByTestId('settings-navigation-sidebar')).toHaveAccessibleName(en.settings.navigationLabel);
+    expect(screen.getByTestId('settings-navigation-tabs')).toBeInTheDocument();
     expect(container.querySelector('[data-testid="settings-overlay-layout"]')).toBeInTheDocument();
     expect(container.querySelector('[data-module="settings"]')).toBeNull();
 
@@ -441,7 +444,11 @@ describe('SettingsPage', () => {
     expect(window.location.search).toBe('?cat=system');
   });
 
-  it('switches between category navigation and content on the mobile overlay', async () => {
+  /** THE PHONE KEEPS BOTH ON SCREEN. The overlay used to be a master/detail pair here: the content pane
+   *  carried a "back" control that swapped the whole screen for the category list, so the section just
+   *  opened disappeared behind the way back to it. It is one persistent strip above the content now, the
+   *  same arrangement `/account` uses — the column is simply the wide-viewport shape of the same list. */
+  it('navigates the mobile overlay from a persistent section strip above the content', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
@@ -450,17 +457,20 @@ describe('SettingsPage', () => {
     const layout = container.querySelector('[data-testid="settings-overlay-layout"]')!;
     const navigationPane = layout.querySelector('aside')!;
     const contentPane = layout.querySelector('section')!;
-    expect(navigationPane).toHaveClass('hidden');
+    // The column is the wide shape only; the content pane is never traded away for it.
+    expect(navigationPane).toHaveClass('hidden', 'md:flex');
     expect(contentPane).toHaveClass('flex');
+    expect(contentPane.className).not.toMatch(/\bhidden\b/);
 
-    fireEvent.click(screen.getByRole('button', { name: en.settings.navigationBack }));
-    expect(navigationPane).toHaveClass('flex');
-    expect(contentPane).toHaveClass('hidden');
-    await waitFor(() => expect(screen.getByRole('searchbox', { name: en.settings.navigationSearch })).toHaveFocus());
+    const strip = screen.getByTestId('settings-navigation-tabs');
+    expect(strip).toHaveClass('md:hidden');
+    expect(contentPane.contains(strip)).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: /^Models/ }));
-    expect(contentPane).toHaveClass('flex');
+    fireEvent.click(within(strip).getByRole('button', { name: 'Models' }));
     expect(window.location.search).toBe('?cat=models');
-    await waitFor(() => expect(contentPane).toHaveFocus());
+    await screen.findByRole('heading', { level: 1, name: 'Models' });
+    // The strip stays, and now marks the section the reader arrived on.
+    expect(within(screen.getByTestId('settings-navigation-tabs')).getByRole('button', { name: 'Models' }))
+      .toHaveAttribute('aria-current', 'page');
   });
 });
