@@ -465,13 +465,41 @@ export class NspawnClient {
     return number;
   }
 
-  /** Measured over the environment's whole disk directory, not its rootfs alone. `workspace`, `home` and
-   *  `data` are separate components beside the rootfs, and they are where a project's own files actually
-   *  land — a figure taken from the rootfs reports the base image and calls a full workspace empty. The
-   *  directory is the live persistent disk exactly: snapshots are a sibling tree under the resource root,
-   *  so they stay out of it without being subtracted. */
+  /** The LIVE trees of one environment's disk, named by the disk record itself.
+   *
+   *  The rootfs is one component beside `workspace`, `home` and `data`, and the project's own files land in
+   *  those three — a figure taken from the rootfs reports the base image and calls a full workspace empty.
+   *  Measuring `dirname(rootfsPath)` instead was right only for a disk whose components sit beside its
+   *  rootfs. A MIGRATED disk carries `componentGeneration`, and `createEnvironmentDiskSpec` then roots its
+   *  components at `<project>/storage/<generation>/` — outside the disk directory entirely. Those
+   *  environments reported their base image and nothing else, which is the larger half of what a managed
+   *  project actually occupies.
+   *
+   *  The list is the rootfs plus the disk record's own components and nothing else, so a snapshot or a
+   *  backup is excluded BY CONSTRUCTION rather than subtracted: neither is named by the live disk record,
+   *  whichever sibling tree it happens to occupy. Each path is checked against the host storage boundary,
+   *  duplicates are dropped, and a tree already contained in another retained tree is dropped with them so
+   *  no byte is counted twice. Sorted, so the helper request and the cache are order-stable. */
+  #diskTrees(spec) {
+    const checked = [spec.disk.rootfsPath, ...spec.disk.components.map((component) => component.path)]
+      .map((path) => checkedHostPath(path));
+    const unique = [...new Set(checked)].sort();
+    return unique.filter((path) => !unique.some((other) => other !== path && path.startsWith(`${other}/`)));
+  }
+
+  /** One cached batch over every live tree of every visible environment, summed back per disk.
+   *
+   *  A disk whose own paths do not stand up is unavailable ALONE: its validation failure used to be thrown
+   *  out of the shared flight and reported every OTHER environment on the page as unavailable too. */
   async #diskUsageFor(specs, now) {
-    const paths = [...new Set(specs.map((spec) => this.#diskDirectory(spec)))];
+    const trees = new Map();
+    for (const spec of specs) {
+      const key = spec.disk.rootfsPath;
+      if (trees.has(key)) continue;
+      try { trees.set(key, this.#diskTrees(spec)); }
+      catch { trees.set(key, null); }
+    }
+    const paths = [...new Set([...trees.values()].filter(Boolean).flat())].sort();
     for (const [path, cached] of this.#diskUsageCache) {
       if (now - cached.at > this.#diskUsageTtlMs * 2) this.#diskUsageCache.delete(path);
     }
@@ -482,7 +510,7 @@ export class NspawnClient {
       }
       const stale = paths.filter((path) => !this.#diskUsageCache.has(path) || now - this.#diskUsageCache.get(path).at >= this.#diskUsageTtlMs);
       const flight = (async () => {
-        const reply = await this.#helper('tree-sizes', { paths: stale.map((path) => checkedHostPath(path)) }, { timeoutMs: 20_000 });
+        const reply = await this.#helper('tree-sizes', { paths: stale }, { timeoutMs: 20_000 });
         if (!Array.isArray(reply?.usages) || reply.usages.length !== stale.length) throw new Error('Invalid disk usage report');
         const expected = new Set(stale);
         for (const item of reply.usages) {
@@ -497,11 +525,18 @@ export class NspawnClient {
       try { await flight; }
       finally { if (this.#diskUsageFlight === flight) this.#diskUsageFlight = null; }
     }
-    return new Map(paths.map((path) => {
-      const bytes = this.#diskUsageCache.get(path)?.bytes ?? null;
-      return [path, bytes === null
-        ? { state: 'unavailable', usedBytes: null, limitBytes: null }
-        : { state: 'ready', usedBytes: bytes, limitBytes: null }];
+    const unavailable = { state: 'unavailable', usedBytes: null, limitBytes: null };
+    return new Map([...trees].map(([key, list]) => {
+      if (!list) return [key, unavailable];
+      let total = 0;
+      for (const path of list) {
+        // One unmeasurable tree makes the SUM unknown, not smaller. Reporting the rest as the total would
+        // be a figure that is quietly wrong rather than a gap the reader can see.
+        const bytes = this.#diskUsageCache.get(path)?.bytes ?? null;
+        if (bytes === null) return [key, unavailable];
+        total += bytes;
+      }
+      return [key, { state: 'ready', usedBytes: total, limitBytes: null }];
     }));
   }
 
@@ -515,7 +550,7 @@ export class NspawnClient {
       if (now - sample.at > 600_000) this.#cpuSamples.delete(machine);
     }
     const normalized = entries.map((entry) => ({ spec: this.#assertScope(entry?.spec), state: entry?.state }));
-    let disk = new Map(normalized.map(({ spec }) => [this.#diskDirectory(spec), { state: 'unavailable', usedBytes: null, limitBytes: null }]));
+    let disk = new Map(normalized.map(({ spec }) => [spec.disk.rootfsPath, { state: 'unavailable', usedBytes: null, limitBytes: null }]));
     try { disk = await this.#diskUsageFor(normalized.map((entry) => entry.spec), now); }
     catch { /* Every disk result remains explicitly unavailable. */ }
     return normalized.map(({ spec, state }) => {
@@ -538,7 +573,7 @@ export class NspawnClient {
         try { memory = { state: 'ready', usedBytes: this.#cgroupValue(machine, 'memory.current'), limitBytes: spec.limits.memoryMb * 1024 * 1024 }; }
         catch { memory = { state: 'unavailable', usedBytes: null, limitBytes: spec.limits.memoryMb * 1024 * 1024 }; }
       } else this.#cpuSamples.delete(machine);
-      return { cpu, memory, disk: disk.get(this.#diskDirectory(spec)) };
+      return { cpu, memory, disk: disk.get(spec.disk.rootfsPath) };
     });
   }
 
