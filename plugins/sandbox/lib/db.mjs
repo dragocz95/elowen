@@ -101,6 +101,36 @@ export function initSandboxDb(ctx) {
           ON p_sandbox_execution_leases(workspace_id, expires_at);
       `);
     },
+  }, {
+    version: 7,
+    // The account-owned Git workspaces are gone: their rows described worktrees a removed subsystem cut,
+    // so nothing reads them and leaving them behind would only misdescribe what this plugin owns. The
+    // state that DOES survive is migrated rather than discarded — the lease table is copied across again
+    // (the same reason its version-2 and version-3 rebuilds copied theirs: these rows are live leases of
+    // processes that may still be running), losing only the column that named a workspace.
+    up(m) {
+      m.exec(`
+        DROP TABLE IF EXISTS p_sandbox_session_bindings;
+        DROP TABLE IF EXISTS p_sandbox_workspaces;
+        CREATE TABLE p_sandbox_execution_leases_v3 (
+          id TEXT PRIMARY KEY, user_id INTEGER, home_generation INTEGER,
+          outer_pid INTEGER NOT NULL, runner_identity TEXT NOT NULL, kind TEXT NOT NULL,
+          heartbeat_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          resource_kind TEXT, resource_id TEXT, runtime_generation INTEGER, execution_id TEXT,
+          cancel_requested INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO p_sandbox_execution_leases_v3
+          (id,user_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at,created_at,
+           resource_kind,resource_id,runtime_generation,execution_id,cancel_requested)
+          SELECT id,user_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at,created_at,
+                 resource_kind,resource_id,runtime_generation,execution_id,cancel_requested
+          FROM p_sandbox_execution_leases;
+        DROP TABLE p_sandbox_execution_leases;
+        ALTER TABLE p_sandbox_execution_leases_v3 RENAME TO p_sandbox_execution_leases;
+        CREATE INDEX p_sandbox_execution_leases_user ON p_sandbox_execution_leases(user_id,home_generation,expires_at);
+        CREATE INDEX p_sandbox_execution_leases_resource ON p_sandbox_execution_leases(resource_kind,resource_id,runtime_generation);
+      `);
+    },
   }, environmentMigration, guestFileMigration, environmentProgressMigration, environmentPublicationMigration]);
   return db;
 }
@@ -168,14 +198,13 @@ export function createExecutionLease(db, input) {
   const now = Date.now();
   const runnerIdentity = processIdentity() ?? `unverifiable:${randomUUID()}`;
   db.prepare(`INSERT INTO p_sandbox_execution_leases
-    (id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, input.accountUserId, input.workspaceId, input.homeGeneration, process.pid, runnerIdentity, input.kind, now, now + EXECUTION_LEASE_MS);
+    (id, user_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, input.accountUserId, input.homeGeneration, process.pid, runnerIdentity, input.kind, now, now + EXECUTION_LEASE_MS);
   let released = false;
   return {
     id,
     accountUserId: input.accountUserId,
-    workspaceId: input.workspaceId,
     homeGeneration: input.homeGeneration,
     // Repair an absent row under the same identity, but never renew or replace another owner's row.
     // Expiry alone no longer removes a live lease; explicit release permanently disables renewal.
@@ -187,9 +216,9 @@ export function createExecutionLease(db, input) {
         .run(at, at + EXECUTION_LEASE_MS, id, process.pid, runnerIdentity).changes;
       if (changes > 0) return;
       db.prepare(`INSERT OR IGNORE INTO p_sandbox_execution_leases
-        (id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.accountUserId, input.workspaceId, input.homeGeneration, process.pid, runnerIdentity, input.kind, at, at + EXECUTION_LEASE_MS);
+        (id, user_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.accountUserId, input.homeGeneration, process.pid, runnerIdentity, input.kind, at, at + EXECUTION_LEASE_MS);
     },
     release() {
       if (released) return;
@@ -205,9 +234,8 @@ export function activeExecutionLeases(db, input = {}) {
   const clauses = ['1 = 1'];
   const params = [];
   if (input.accountUserId !== undefined) { clauses.push('user_id IS ?'); params.push(input.accountUserId); }
-  if (input.workspaceId !== undefined) { clauses.push('workspace_id IS ?'); params.push(input.workspaceId); }
   if (input.homeGeneration !== undefined) { clauses.push('home_generation IS ?'); params.push(input.homeGeneration); }
-  return db.prepare(`SELECT id, user_id, workspace_id, home_generation, outer_pid, kind, heartbeat_at, expires_at
+  return db.prepare(`SELECT id, user_id, home_generation, outer_pid, kind, heartbeat_at, expires_at
     FROM p_sandbox_execution_leases WHERE ${clauses.join(' AND ')} ORDER BY created_at`).all(...params);
 }
 

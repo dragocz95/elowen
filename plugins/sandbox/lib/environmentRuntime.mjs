@@ -606,7 +606,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       released = true;
     };
     return {
-      id: lease.id, accountUserId: lease.user_id, workspaceId: null, homeGeneration: null,
+      id: lease.id, accountUserId: lease.user_id, homeGeneration: null,
       projectId: row.project_id, runtimeGeneration: row.generation,
       async heartbeat() {
         if (released) return;
