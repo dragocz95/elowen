@@ -235,6 +235,39 @@ describe('sandbox contribution to the Project register rows', () => {
     expect(disk.getAttribute('title')).toContain(strings.usageLimitUnknown);
   });
 
+  // The Resources column is wide-only, so on a tablet and a phone the same meters have to travel with
+  // the identity cell — otherwise the one thing a managed row is worth opening for disappears with the
+  // column. Both copies are the same snapshot, and neither of them may overflow its track.
+  it('carries the meters in their own column when wide and inside the identity cell when not', async () => {
+    mount();
+    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
+    await waitFor(() => expect(row.querySelectorAll('[data-project-row-metrics]')).toHaveLength(2));
+    const [identity, wide] = [...row.querySelectorAll('[data-project-row-metrics]')] as HTMLElement[];
+
+    expect(identity).toHaveAttribute('data-compact', 'true');
+    expect(identity.closest('[data-priority="wide"]')).toBeNull();
+    expect(identity.parentElement?.className).toContain('@min-[56rem]:hidden');
+    expect(wide).not.toHaveAttribute('data-compact');
+    expect(wide.closest('[data-priority="wide"]')).not.toBeNull();
+
+    // Three equal tracks that may shrink, and every reading clipped inside its own track rather than
+    // pushing the row wider.
+    for (const group of [identity, wide]) {
+      expect(group.className).toContain('grid-cols-3');
+      expect(group.className).toContain('min-w-0');
+      for (const metric of group.querySelectorAll('[data-metric]')) {
+        expect(metric.className).toContain('min-w-0');
+        expect(metric.querySelector('.truncate')).not.toBeNull();
+      }
+    }
+
+    // The register's own tracks: identity, team, resources, state, actions, chevron when wide; the
+    // identity column alone plus those three narrow tracks when not.
+    const table = screen.getByTestId('projects-register');
+    expect(table.style.getPropertyValue('--data-table-columns').trim().split(/\s+(?![^(]*\))/)).toHaveLength(6);
+    expect(table.style.getPropertyValue('--data-table-compact-columns').trim().split(/\s+(?![^(]*\))/)).toHaveLength(4);
+  });
+
   it('uses a calm foreground-only polling policy', () => {
     expect(PROJECT_USAGE_QUERY_POLICY).toEqual({
       staleTime: 25_000,

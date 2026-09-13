@@ -399,10 +399,17 @@ describe('ProjectsView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
     const row = await screen.findByText('elowen');
-    expect(await screen.findByText('Connected')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Summary' })).toBeInTheDocument();
+    // The register's columns are identity, team and resources. A plugin indicator pill is NOT one of
+    // them: the summary column repeated the same "GitHub @…" chip on every row and told the reader
+    // nothing that distinguished one project from another. The GitHub connection itself is untouched —
+    // it is reported by its own surfaces, and `/projects/summary` still serves the indicator.
+    expect(await screen.findByRole('columnheader', { name: 'Team' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Resources' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Summary' })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Path' })).toBeNull();
+    expect(screen.queryByText('Connected')).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Pilot info' })).toBeNull();
-    expect(screen.getByLabelText('1 assigned users')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '1 assigned users' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open project elowen' }));
     expect(await screen.findByText('master')).toBeTruthy();
     expect(await screen.findByText('feat: x')).toBeTruthy();
@@ -417,7 +424,10 @@ describe('ProjectsView', () => {
     expect(within(rail).getAllByRole('heading', { name: 'elowen' })).toHaveLength(1);
   });
 
-  it('shows a missing-directory pill in both wide and compact path presentations only for explicit false', async () => {
+  // The path itself moved behind the identity mark, but a directory that is GONE is a fact about the
+  // row rather than a detail to go looking for, so the warning stays on the row at every width — and it
+  // is now stated once instead of duplicated across a wide column and a compact line.
+  it('states a missing directory on the row itself, only for explicit false', async () => {
     server.use(http.get('*/api/projects', () => HttpResponse.json([
       { id: 1, slug: 'elowen', path: '/var/www/elowen', pathExists: false, notes: '', icon: '' },
       { id: 2, slug: 'legacy', path: '/var/www/legacy', notes: '', icon: '' },
@@ -427,9 +437,10 @@ describe('ProjectsView', () => {
 
     await screen.findByText('legacy');
     const warnings = screen.getAllByText('Directory missing');
-    expect(warnings).toHaveLength(2);
-    expect(warnings.some((warning) => warning.closest('[data-priority="wide"]'))).toBe(true);
-    expect(warnings.some((warning) => warning.closest('[data-project-compact-path]'))).toBe(true);
+    expect(warnings).toHaveLength(1);
+    // In the always-visible identity cell, so it survives the wide-only columns disappearing.
+    expect(warnings[0]!.closest('[data-priority="wide"]')).toBeNull();
+    expect(warnings[0]!.closest('[role="row"]')).toHaveAttribute('data-project-row', '1');
     expect(screen.getByRole('button', { name: 'Open project legacy' }).closest('[role="row"]')).not.toHaveTextContent('Directory missing');
   });
 

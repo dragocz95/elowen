@@ -1,9 +1,9 @@
 'use client';
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, RefreshCw, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, HardDrive, MoreHorizontal, Code2, Copy, Pencil, RefreshCw, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, useProjectEnvironmentState, usePluginPresent, useMe } from '../../lib/queries';
 import { useAdoptProject, useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
@@ -37,6 +37,7 @@ import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation
 import { requestEnvironmentAction } from '../../lib/environmentActions';
 import { usePluginProjectRows, type PluginProjectRowMetric, type PluginProjectRowMetrics, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
 import { Progress } from '../../components/ui/shadcn/progress';
+import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
 import { usageProgressClass } from '../settings/OAuthUsageRail';
 import type { ProjectSummary } from '../../lib/types';
 
@@ -161,37 +162,125 @@ function ProjectResourcePanel({ metrics, title }: { metrics: PluginProjectRowMet
   );
 }
 
-function ProjectSummaryCell({ summary, membersLabel }: { summary?: ProjectSummary; membersLabel: string }) {
-  const members = summary?.members;
-  const indicators = summary?.indicators ?? [];
-  if ((!members || members.total === 0) && indicators.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
+/** How many faces the stack shows before it starts counting. Three keeps the column narrow enough to
+ *  leave the resources their width on a tablet, and a fourth face is worth less than the number is. */
+const TEAM_AVATARS_VISIBLE = 3;
+
+/** Who works on this project, as one overlapping stack naming its people on hover, focus or tap.
+ *
+ *  Membership is served to administrators only, so a client that received no list says nothing about it:
+ *  "no one assigned" for a reader who was simply not told would be this component's guess. An empty list
+ *  IS an answer, and it gets the quiet one. */
+function ProjectTeamCell({ members, labels }: {
+  members?: ProjectSummary['members'];
+  labels: { count: string; empty: string; more: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const tooltipId = useId();
+  if (!members) return null;
+  if (members.total === 0) {
+    return (
+      <span className="text-xs text-muted-foreground" data-project-team="empty">
+        <span className="sr-only">{labels.empty}</span>
+        <span aria-hidden>—</span>
+      </span>
+    );
+  }
+  const visible = members.samples.slice(0, TEAM_AVATARS_VISIBLE);
+  const overflow = Math.max(0, members.total - visible.length);
   return (
-    <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-      {members && members.total > 0 ? (
-        <div className="flex shrink-0 items-center" aria-label={membersLabel.replace('{n}', String(members.total))}>
-          <div className="flex -space-x-1.5">
-            {members.samples.map((user) => <span key={user.id} className="rounded-full ring-2 ring-card" title={user.name || user.username}><Avatar user={user} size={22} /></span>)}
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipAnchor asChild>
+        {/* One control, not one per face: a button per avatar inside a row that is itself openable is
+            the nested-interactive problem, and voice control would offer four unnamed targets where
+            there is one piece of information. */}
+        <button
+          type="button"
+          data-project-team="stack"
+          aria-label={labels.count.replace('{n}', String(members.total))}
+          aria-describedby={open ? tooltipId : undefined}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onClick={(event) => { event.stopPropagation(); setOpen(true); }}
+          className="inline-flex max-w-full items-center gap-1.5 rounded-full px-0.5 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+        >
+          <span className="flex shrink-0 -space-x-1.5">
+            {visible.map((user) => (
+              <span key={user.id} className="rounded-full ring-2 ring-card"><Avatar user={user} size={20} /></span>
+            ))}
+          </span>
+          {overflow > 0 ? (
+            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">+{overflow}</span>
+          ) : null}
+        </button>
+      </TooltipAnchor>
+      <TooltipContent id={tooltipId} align="start" className="w-56">
+        <ul className="flex flex-col gap-1">
+          {visible.map((user) => (
+            <li key={user.id} className="truncate">
+              <span className="text-foreground">{user.name || user.username}</span>
+              <span className="ml-1.5 text-muted-foreground">@{user.username}</span>
+            </li>
+          ))}
+          {overflow > 0 ? <li className="text-muted-foreground">{labels.more.replace('{n}', String(overflow))}</li> : null}
+        </ul>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Where the project actually LIVES, behind one quiet mark instead of a column of paths.
+ *
+ *  A host path and a managed environment's guest root are both long, both monospaced and both read the
+ *  same at a glance, which is what made the old Path column the widest and least useful thing in the
+ *  register. The mark is named for the project it belongs to, so an element list reads "Host directory
+ *  of elowen" rather than a column of buttons all called "Path". */
+function ProjectLocationTip({ project, labels }: {
+  project: Project;
+  labels: { host: string; managed: string; hostTitle: string; guestRoot: string; adoptedFrom: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const tooltipId = useId();
+  const managed = project.executionKind === 'managed';
+  const Icon = managed ? HardDrive : Folder;
+  return (
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipAnchor asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          data-project-location={managed ? 'managed' : 'host'}
+          className="h-6 w-6 shrink-0 text-muted-foreground"
+          aria-label={(managed ? labels.managed : labels.host).replace('{slug}', project.slug)}
+          aria-describedby={open ? tooltipId : undefined}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onClick={(event) => { event.stopPropagation(); setOpen(true); }}
+        >
+          <Icon size={12} aria-hidden />
+        </Button>
+      </TooltipAnchor>
+      <TooltipContent id={tooltipId} align="start" className="w-64">
+        <dl className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-0.5">
+            <dt className="uppercase tracking-[0.08em]">{managed ? labels.guestRoot : labels.hostTitle}</dt>
+            <dd className="break-all font-mono text-foreground">{managed ? (project.guestRoot ?? '/') : project.path}</dd>
           </div>
-          <span className="ml-1.5 text-[11px] font-semibold text-muted-foreground">{members.total}</span>
-        </div>
-      ) : null}
-      {indicators.length > 0 ? (
-        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-          {indicators.map((indicator, index) => {
-            const Icon = pluginLucideIcon(indicator.icon);
-            return (
-              <span key={`${indicator.plugin}:${indicator.label}:${index}`} title={indicator.value ? `${indicator.label}: ${indicator.value}` : indicator.label}>
-                <Badge tone={indicator.tone ?? 'muted'}>
-                  <Icon size={11} className="mr-1" aria-hidden />
-                  <span className="max-w-28 truncate">{indicator.label}</span>
-                  {indicator.value ? <span className="ml-1 font-semibold">{indicator.value}</span> : null}
-                </Badge>
-              </span>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
+          {/* A managed project converted from a host directory keeps that directory on record, and it is
+              the only remaining way to recognise where its contents came from. */}
+          {project.adoptedPath ? (
+            <div className="flex flex-col gap-0.5">
+              <dt className="uppercase tracking-[0.08em]">{labels.adoptedFrom}</dt>
+              <dd className="break-all font-mono text-foreground">{project.adoptedPath}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -479,11 +568,17 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.15fr) minmax(14rem,1.35fr) minmax(12rem,1fr) minmax(13rem,1.05fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
+                    /* Identity, team and resources. The Path column is gone: two thirds of the register's
+                       width went to monospaced strings that read the same at a glance, and the one
+                       genuinely useful thing about a path — knowing it exactly — is served better by the
+                       mark in the identity cell than by an ellipsised column. The plugin indicator pills
+                       went with it; a repository connection is a fact about the project's tools, which
+                       its drawer already reports, and thirteen identical "GitHub @…" chips said nothing
+                       that distinguished one row from another. */
+                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(14rem,1.5fr) minmax(6rem,0.45fr) minmax(15rem,1.2fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
                       <DataTableRow header>
                         <DataTableCell header lines={1}>{t.projects.columnProject}</DataTableCell>
-                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnPath}</DataTableCell>
-                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnSummary}</DataTableCell>
+                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnTeam}</DataTableCell>
                         <DataTableCell header priority="wide" lines={1}>{t.projects.columnResources}</DataTableCell>
                         {/* The state track carries a glyph, not a name of its own: each row's glyph is
                             named by the state label the plugin itself reports. */}
@@ -514,31 +609,39 @@ export function ProjectsView() {
                               if (event.key === 'End') { event.preventDefault(); navigateProject(project, 'end'); }
                             }}
                           >
-                            {/* Wide layouts keep the path in its own column. Compact layouts surface the
-                                same path under the slug so a missing-directory warning never disappears
-                                with the wide-only column. The existing icon height preserves row rhythm. */}
-                            <DataTableCell lines="auto" title={project.path} className="flex items-center gap-3">
+                            {/* The identity cell carries the whole row on a phone: the slug, the mark that
+                                holds the exact location, the missing-directory warning, and the meters,
+                                which the wide-only Resources column cannot show there. The warning is NOT
+                                behind the mark — a directory that is gone is a fact about the row, not a
+                                detail someone has to go looking for. */}
+                            <DataTableCell lines="auto" className="flex items-center gap-3">
                               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
                                 <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-muted-foreground" />
                               </span>
                               <div className="flex min-w-0 flex-1 flex-col">
-                                <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
-                                <span data-project-compact-path className="flex min-w-0 items-center gap-1.5 @min-[56rem]:hidden">
-                                  <Folder size={10} className="shrink-0 text-muted-foreground" aria-hidden />
-                                  <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.executionKind === 'managed' ? s.managed : project.path}</span>
+                                <span className="flex min-w-0 items-center gap-1.5">
+                                  <span className="min-w-0 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
+                                  <ProjectLocationTip
+                                    project={project}
+                                    labels={{
+                                      host: t.projects.locationHost,
+                                      managed: t.projects.locationManaged,
+                                      hostTitle: t.projects.locationHostTitle,
+                                      guestRoot: t.projects.locationGuestRoot,
+                                      adoptedFrom: t.projects.locationAdoptedFrom,
+                                    }}
+                                  />
                                   {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                                 </span>
                                 <div className="@min-[56rem]:hidden"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} compact /></div>
                               </div>
                             </DataTableCell>
-                            <DataTableCell priority="wide" lines="auto" title={project.path} className="font-mono text-xs text-muted-foreground">
-                              <span className="flex min-w-0 items-center gap-1.5">
-                                <Folder size={11} className="shrink-0" aria-hidden />
-                                <span className="min-w-0 flex-1 truncate">{project.executionKind === 'managed' ? s.managed : project.path}</span>
-                                {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
-                              </span>
+                            <DataTableCell priority="wide" lines="auto" onClick={(event) => event.stopPropagation()}>
+                              <ProjectTeamCell
+                                members={summariesByProject.get(project.id)?.members}
+                                labels={{ count: t.projects.membersCount, empty: t.projects.teamEmpty, more: t.projects.teamMore }}
+                              />
                             </DataTableCell>
-                            <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} /></DataTableCell>
                             {/* The state glyph sits at the row's far end, one narrow track left of the row
                                 actions. A row whose plugin says nothing leaves the track empty, so the
