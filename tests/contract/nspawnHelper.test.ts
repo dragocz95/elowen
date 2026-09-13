@@ -15,6 +15,7 @@ import {
   commandOptionsFor,
   defaultCommandRunner,
   MACHINE_UNIT_PATH,
+  MACHINE_STORAGE_RECEIPT_PATH,
   MACHINE_FIREWALL_UNIT,
   MACHINE_FIREWALL_UNIT_NAME,
   MACHINE_FIREWALL_UNIT_PATH,
@@ -49,7 +50,8 @@ import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PA
 // @ts-expect-error the bundled Sandbox storage owner is plain ESM without declarations
 import { SNAPSHOT_TREE_FORMAT } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import {
-  siteGatewayStorageRoots,
+  MACHINE_STORAGE_RECEIPT_PATH as SHARED_MACHINE_STORAGE_RECEIPT_PATH,
+  siteGatewayPluginDataDir,
   encodeHelperRequest, HELPER_FRAME_HEADER_BYTES, SITE_GATEWAY_HELPER_ARGV, SITE_GATEWAY_HELPER_PATH,
 } from '../../src/shared/siteGateway.js';
 
@@ -60,8 +62,8 @@ const MACHINE = 'elowen-project-54-g3';
 const UNIT = `elowen-exec-g3-${'a'.repeat(32)}.service`;
 const environment = { SUDO_USER: 'azureuser', SUDO_UID: '1000', SUDO_GID: '1000' };
 const scratch = mkdtempSync(join(tmpdir(), 'elowen-nspawn-contract-'));
-// Exactly as the helper derives them in production: from the passwd home of the account sudo reports,
-// and from nothing a caller can reach.
+// The compatibility-default roots the helper derives from the passwd HOME when no root-owned custom
+// storage receipt is installed. No runtime request can name or widen them.
 const storage = storageRootsFor(scratch);
 /** How the runtime names an environment on the wire: the resource kind and its id in the string form
  *  the disk layout uses as a path segment. */
@@ -429,32 +431,100 @@ describe('privileged helper: host path derivation', () => {
     expect(paths.identity.startsWith(`${paths.directory}/`)).toBe(true);
   });
 
-  it('derives the storage roots from the invoking account, so a planted record cannot move them', async () => {
-    // They used to be read out of the deployment record, and that was a hole. The record is installed
-    // through a sudoers-pinned command whose source path is fixed and writable by the service user, and a
-    // sudoers grant binds to a USER, not to the code path it was written for. Anything running as the
-    // service account could therefore stage a record naming `/etc/systemd` as a storage root, run the
-    // pinned install, and every path check here would agree from the next request onwards — which is a
-    // tar unpacked as root, or a tree deleted as root, anywhere it liked.
+  it('keeps the passwd HOME storage layout as the default', async () => {
+    // An older install has no machine-storage receipt. Its path remains derived from the authenticated
+    // service user's passwd HOME, and a runtime request still has no field that can move the root.
     const home = join(scratch, 'derived-home');
     const derived = storageRootsFor(home);
+    const pluginDataDir = `${home}/.config/elowen/plugins-data`;
     expect(derived).toEqual({
-      sandboxDataDir: `${home}/.config/elowen/plugins-data/sandbox`,
+      pluginDataDir,
+      sandboxDataDir: `${pluginDataDir}/sandbox`,
+      sitesDataDir: `${pluginDataDir}/sites`,
     });
-    // The installer makes the same derivation for its own purposes, in a file that cannot import this one.
-    expect(derived).toEqual(siteGatewayStorageRoots(home));
+    // The installer makes the same plugin-root derivation in code the standalone helper cannot import.
+    expect(derived.pluginDataDir).toBe(siteGatewayPluginDataDir(home));
 
-    // End to end, with no storage handed in: the roots follow the passwd home sudo reports and nothing
-    // else, and a path a record might have blessed is still refused.
+    expect(MACHINE_STORAGE_RECEIPT_PATH).toBe(SHARED_MACHINE_STORAGE_RECEIPT_PATH);
+
+    // End to end, with no receipt or storage handed in: the roots follow the passwd home sudo reports and
+    // nothing else, and an arbitrary host path is still refused.
     const runner = (file: string) => (file === '/usr/bin/getent'
       ? { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` }
       : { ok: true, stdout: '' });
     const doomed = join(derived.sandboxDataDir, 'projects', '54', 'stale');
     mkdirSync(doomed, { recursive: true });
-    await applyRequest({ domain: 'nspawn', op: 'tree-remove', path: doomed }, undefined, { runner, env: environment });
+    const noReceipt = () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+    await applyRequest({ domain: 'nspawn', op: 'tree-remove', path: doomed }, undefined, { runner, env: environment, lstat: noReceipt });
     expect(existsSync(doomed)).toBe(false);
-    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: '/etc/systemd/nspawn' }, undefined, { runner, env: environment }))
+    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: '/etc/systemd/nspawn' }, undefined, { runner, env: environment, lstat: noReceipt }))
       .rejects.toThrow(/outside the trusted storage roots/);
+  });
+
+  it('accepts a custom Sandbox root only from a root-provisioned machine storage receipt', async () => {
+    const home = join(scratch, 'receipt-home');
+    const pluginDataDir = join(scratch, 'custom-state', 'plugins-data');
+    const sandboxDataDir = join(pluginDataDir, 'sandbox');
+    const doomed = join(sandboxDataDir, 'projects', '54', 'stale');
+    const siblingSite = join(pluginDataDir, 'sites', 'retained');
+    mkdirSync(doomed, { recursive: true });
+    mkdirSync(siblingSite, { recursive: true });
+    const receiptPath = MACHINE_STORAGE_RECEIPT_PATH;
+    const receipt = `${JSON.stringify({ pluginDataDir })}\n`;
+    const runner = (file: string) => (file === '/usr/bin/getent'
+      ? { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` }
+      : { ok: true, stdout: '' });
+    const lstat = (path: string) => ({
+      uid: 0, gid: 0, mode: path === receiptPath ? 0o100644 : 0o040755,
+      isSymbolicLink: () => false,
+      isDirectory: () => path !== receiptPath,
+      isFile: () => path === receiptPath,
+    });
+
+    const options = {
+      runner, env: environment, lstat,
+      readText: (path: string) => path === receiptPath ? receipt : '',
+    };
+    await applyRequest({ domain: 'nspawn', op: 'tree-remove', path: doomed }, undefined, options);
+
+    expect(existsSync(doomed)).toBe(false);
+    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: siblingSite }, undefined, options))
+      .rejects.toThrow(/outside the trusted storage roots/);
+    expect(existsSync(siblingSite)).toBe(true);
+    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: '/etc/systemd/nspawn' }, undefined, options))
+      .rejects.toThrow(/outside the trusted storage roots/);
+  });
+
+  it('fails closed on an unsafe or malformed machine storage receipt', async () => {
+    const home = join(scratch, 'unsafe-receipt-home');
+    const pluginDataDir = join(scratch, 'unsafe-receipt-state', 'plugins-data');
+    const target = join(pluginDataDir, 'sandbox', 'projects', '54', 'stale');
+    mkdirSync(target, { recursive: true });
+    const runner = (file: string) => (file === '/usr/bin/getent'
+      ? { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` }
+      : { ok: true, stdout: '' });
+    const attempt = (variant: 'owner' | 'mode' | 'symlink' | 'directory-symlink' | 'json') => applyRequest({
+      domain: 'nspawn', op: 'tree-remove', path: target,
+    }, undefined, {
+      runner, env: environment,
+      readText: () => variant === 'json' ? '{' : `${JSON.stringify({ pluginDataDir })}\n`,
+      lstat: (path: string) => ({
+        uid: variant === 'owner' && path === MACHINE_STORAGE_RECEIPT_PATH ? 1000 : 0,
+        gid: 0,
+        mode: path === MACHINE_STORAGE_RECEIPT_PATH
+          ? (variant === 'mode' ? 0o100664 : 0o100644)
+          : 0o040755,
+        isSymbolicLink: () => variant === 'symlink' && path === MACHINE_STORAGE_RECEIPT_PATH
+          || variant === 'directory-symlink' && path === dirname(MACHINE_STORAGE_RECEIPT_PATH),
+        isDirectory: () => path !== MACHINE_STORAGE_RECEIPT_PATH,
+        isFile: () => path === MACHINE_STORAGE_RECEIPT_PATH,
+      }),
+    });
+
+    for (const variant of ['owner', 'mode', 'symlink', 'directory-symlink', 'json'] as const) {
+      await expect(attempt(variant), variant).rejects.toThrow(/machine storage receipt/);
+    }
+    expect(existsSync(target)).toBe(true);
   });
 
   it('changes a mount point it just created through the descriptor, never through the name again', () => {
@@ -793,9 +863,9 @@ describe('privileged helper: host artefacts and readiness', () => {
     // The service account may not name another account: sudo already states the provisioning owner.
     await expect(applyRequest({ domain: 'nspawn', op: 'status', user: 'somebody-else' }, undefined, fixture.options))
       .rejects.toThrow(/does not match the invoking account/);
-    // And the storage roots keep coming from the account sudo reports, from nothing a request carries.
+    // And the default plugin root still comes from the account sudo reports, from nothing a request carries.
     expect(helperRequestNeedsDeployment({ domain: 'nspawn', op: 'provision', user: 'azureuser' })).toBe(false);
-    expect(storageRootsFor('/home/azureuser')).toEqual(siteGatewayStorageRoots('/home/azureuser'));
+    expect(storageRootsFor('/home/azureuser').pluginDataDir).toBe(siteGatewayPluginDataDir('/home/azureuser'));
   });
 
   it('removes only the exact retired polkit grant and still repairs a drifted unit', async () => {
@@ -1562,14 +1632,17 @@ describe('privileged helper: the disk identity record', () => {
 });
 
 describe('privileged helper: legacy Site retirement', () => {
-  function legacySiteFixture() {
+  function legacySiteFixture(customPluginData = false) {
     const home = join(scratch, `legacy-site-${randomUUID()}`);
     const resource = 'retired-site';
     const generation = 4;
     const diskId = 'b'.repeat(32);
     const machine = `elowen-site-${resource}-g${generation}`;
     const unit = `elowen-machine@${machine}.service`;
-    const sitesDataDir = join(home, '.config', 'elowen', 'plugins-data', 'sites');
+    const pluginDataDir = customPluginData
+      ? join(scratch, `legacy-custom-state-${randomUUID()}`, 'plugins-data')
+      : join(home, '.config', 'elowen', 'plugins-data');
+    const sitesDataDir = join(pluginDataDir, 'sites');
     const directory = join(sitesDataDir, resource, 'environment', 'disks', diskId);
     const rootfs = join(directory, 'rootfs');
     const identityPath = join(directory, '.elowen', 'identity.json');
@@ -1605,9 +1678,27 @@ describe('privileged helper: legacy Site retirement', () => {
     };
     const request = { domain: 'nspawn', op: 'retire-legacy-site', resource, generation, diskId, expectedId };
     const options = { env: environment, runner, nspawnSettingsRoot, systemdRoot, machineUnitPath,
+      readText: (path: string) => path === MACHINE_STORAGE_RECEIPT_PATH
+        ? `${JSON.stringify({ pluginDataDir })}\n`
+        : readFileSync(path, 'utf8'),
+      lstat: (path: string) => {
+        if (!customPluginData && path === MACHINE_STORAGE_RECEIPT_PATH) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        return { uid: 0, gid: 0, mode: path === MACHINE_STORAGE_RECEIPT_PATH ? 0o100644 : 0o040755,
+          isSymbolicLink: () => false, isDirectory: () => path !== MACHINE_STORAGE_RECEIPT_PATH, isFile: () => path === MACHINE_STORAGE_RECEIPT_PATH };
+      },
       readOwner: (path: string) => path === rootfs ? UID_RANGE_BASE : 0 };
-    return { request, options, calls, settingsPath, dropInPath, rootfs, identityPath, snapshot, backup, machine, unit };
+    return { request, options, calls, settingsPath, dropInPath, rootfs, identityPath, snapshot, backup, machine, unit, home, pluginDataDir, sitesDataDir };
   }
+
+  it('retires a legacy Site from the custom receipt sites root rather than passwd HOME', async () => {
+    const fixture = legacySiteFixture(true);
+
+    await expect(applyRequest(fixture.request, undefined, fixture.options)).resolves.toMatchObject({
+      machine: fixture.machine, retired: true,
+    });
+    expect(fixture.rootfs.startsWith(`${fixture.pluginDataDir}/sites/`)).toBe(true);
+    expect(fixture.rootfs.startsWith(`${fixture.home}/.config/elowen/plugins-data/sites/`)).toBe(false);
+  });
 
   it('stops and retires one owned legacy Site envelope exactly once without touching retained data', async () => {
     const fixture = legacySiteFixture();

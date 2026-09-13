@@ -8,6 +8,7 @@ import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/insta
 import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs, provisionSiteGatewayHelper } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import { provisionMachineRuntime } from '../../../src/privileged/publishedSitesGateway.js';
+import { MACHINE_STORAGE_RECEIPT_PATH, siteGatewayPluginDataDir } from '../../../src/shared/siteGateway.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
 function runner(over: Partial<Runner> = {}): Runner {
@@ -360,7 +361,10 @@ describe('install/provisionSiteGatewayHelper', () => {
       calls,
       r: runner({
         writeFile: async (path: string, content: string) => { writes.push({ path, content }); },
-        exec: async (cmd: string, args: string[]) => { calls.push({ cmd, args }); return { code: 0, stdout: '', stderr: '' }; },
+        exec: async (cmd: string, args: string[]) => {
+          calls.push({ cmd, args });
+          return { code: 0, stdout: cmd === 'mktemp' ? '/etc/elowen/.machine-storage.A1b2C3\n' : '', stderr: '' };
+        },
       }),
     };
   }
@@ -370,20 +374,86 @@ describe('install/provisionSiteGatewayHelper', () => {
   // unconditional; only the domain half of the record is conditional.
   it('installs the helper even without a published-sites domain deployment', async () => {
     const { r, writes, calls } = recordingRunner();
-    expect(await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' })).toBe(true);
+    const home = '/home/elowen';
+    expect(await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' }, home)).toBe(true);
     expect(calls.some(({ cmd, args }) => cmd === 'install' && args.includes('/usr/local/libexec/elowen-site-gateway'))).toBe(true);
-    const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
+    const record = JSON.parse(writes.find(({ path }) => path.endsWith('site-gateway.json'))!.content);
     expect(record.appHost).toBeUndefined();
-    // The record carries what Sites needs and nothing the root helper decides with. The storage roots
-    // used to live here, and the helper trusting them was how a record staged under a writable path could
-    // move what root would touch; the helper derives them from the invoking account instead.
-    expect(record.storage).toBeUndefined();
+    const receipt = JSON.parse(writes.find(({ path }) => path.startsWith('/etc/elowen/.machine-storage.'))!.content);
+    expect(receipt).toEqual({ pluginDataDir: siteGatewayPluginDataDir(home) });
+    const temp = '/etc/elowen/.machine-storage.A1b2C3';
+    expect(calls).toContainEqual({ cmd: 'install', args: ['-d', '-o', 'root', '-g', 'root', '-m', '0755', '/etc/elowen'] });
+    expect(calls).toContainEqual({ cmd: 'mktemp', args: ['/etc/elowen/.machine-storage.XXXXXX'] });
+    expect(calls).toContainEqual({ cmd: 'chown', args: ['root:root', temp] });
+    expect(calls).toContainEqual({ cmd: 'chmod', args: ['0600', temp] });
+    expect(calls).toContainEqual({
+      cmd: 'install',
+      args: ['-o', 'root', '-g', 'root', '-m', '0644', temp, MACHINE_STORAGE_RECEIPT_PATH],
+    });
+    expect(calls).toContainEqual({ cmd: 'rm', args: ['-f', '--', temp] });
+  });
+
+  it('never stages the trust-bearing receipt at a predictable attacker-owned path', async () => {
+    const attackerPath = '/tmp/elowen-machine-storage.json';
+    const secureTemp = '/etc/elowen/.machine-storage.Z9y8X7';
+    const files = new Map([[attackerPath, '{"pluginDataDir":"/etc"}\n']]);
+    const calls: { cmd: string; args: string[] }[] = [];
+    const r = runner({
+      writeFile: async (path: string, content: string) => { files.set(path, content); },
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        return { code: 0, stdout: cmd === 'mktemp' ? `${secureTemp}\n` : '', stderr: '' };
+      },
+    });
+
+    await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' }, '/home/elowen');
+
+    expect(files.get(attackerPath)).toBe('{"pluginDataDir":"/etc"}\n');
+    expect(files.get(secureTemp)).toBe(`${JSON.stringify({ pluginDataDir: '/home/elowen/.config/elowen/plugins-data' }, null, 2)}\n`);
+    expect(calls.some(({ args }) => args.includes(attackerPath))).toBe(false);
+  });
+
+  it('rejects a temp path outside the protected receipt directory before writing or cleaning it', async () => {
+    const attackerPath = '/tmp/elowen-machine-storage.json';
+    let attackerTouched = false;
+    const calls: { cmd: string; args: string[] }[] = [];
+    const r = runner({
+      writeFile: async (path: string) => { if (path === attackerPath) attackerTouched = true; },
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        return { code: 0, stdout: cmd === 'mktemp' ? `${attackerPath}\n` : '', stderr: '' };
+      },
+    });
+
+    await expect(provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' }, '/home/elowen'))
+      .rejects.toThrow(/mktemp returned an invalid machine storage receipt path/);
+    expect(attackerTouched).toBe(false);
+    expect(calls.some(({ cmd, args }) => (cmd === 'rm' || cmd === 'install') && args.includes(attackerPath))).toBe(false);
+  });
+
+  it('cleans the validated root-owned temp when receipt installation fails', async () => {
+    const temp = '/etc/elowen/.machine-storage.Q1w2E3';
+    const calls: { cmd: string; args: string[] }[] = [];
+    const r = runner({
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        if (cmd === 'mktemp') return { code: 0, stdout: `${temp}\n`, stderr: '' };
+        if (cmd === 'install' && args.at(-1) === MACHINE_STORAGE_RECEIPT_PATH) {
+          return { code: 1, stdout: '', stderr: 'receipt install failed' };
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    await expect(provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' }, '/home/elowen'))
+      .rejects.toThrow(/receipt install failed/);
+    expect(calls).toContainEqual({ cmd: 'rm', args: ['-f', '--', temp] });
   });
 
   it('adds the domain record only when the deployment has one', async () => {
     const { r, writes } = recordingRunner();
-    await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' });
-    const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
+    await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' }, '/home/elowen');
+    const record = JSON.parse(writes.find(({ path }) => path.endsWith('site-gateway.json'))!.content);
     expect(record).toEqual({ appHost: 'agent.example.com', daemonPort: 4400 });
   });
 });

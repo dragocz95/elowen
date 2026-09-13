@@ -157,8 +157,8 @@ describe('install/systemdUnits.elowenSudoers', () => {
     // No grant may install a file whose SOURCE the service user can write, beyond the helper itself,
     // whose bytes are compared against the packaged copy first. Pinning the argv fixes the words, not the
     // bytes behind them, and a grant binds to a user rather than to the code path it was written for: a
-    // grant for the deployment record would have let that user choose what the root helper treats as a
-    // trusted storage root.
+    // grant for either root-owned record would let that user choose what the helper trusts.
     expect(s).not.toContain('/etc/elowen/site-gateway.json');
+    expect(s).not.toContain('/etc/elowen/machine-storage.json');
   });
 });

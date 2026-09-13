@@ -131,6 +131,7 @@ describe('cli/uninstall — order of operations', () => {
     expect(deny).toBeGreaterThanOrEqual(0);
     expect(remove).toBeGreaterThan(deny);
     expect(f).toContain('rm -f /etc/elowen/site-gateway.json');
+    expect(f).toContain('rm -f /etc/elowen/machine-storage.json');
     expect(h.out.join('\n')).toContain('deny tombstone for stale wildcard DNS');
   });
 
@@ -144,6 +145,7 @@ describe('cli/uninstall — order of operations', () => {
     expect(await runUninstall(['--yes'], h.deps)).toBe(1);
     const f = flat(h);
     expect(f).not.toContain('rm -f /etc/elowen/site-gateway.json');
+    expect(f).not.toContain('rm -f /etc/elowen/machine-storage.json');
     expect(f).not.toContain('rm -f /usr/local/libexec/elowen-site-gateway');
   });
 
