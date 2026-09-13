@@ -180,8 +180,7 @@ describe('the Sandbox plugin migration that retires the workspace tables', () =>
     liveInstance(db);
     const before = fingerprint(db);
     const leaseRowBefore = db.prepare('SELECT * FROM p_sandbox_execution_leases').get();
-    const sandboxSteps = SANDBOX_MIGRATIONS as { version: number }[];
-    const retirement = sandboxSteps.filter((step) => step.version === 7);
+    const retirement = SANDBOX_MIGRATIONS.filter((step: { version: number }) => step.version === 7);
     expect(retirement).toHaveLength(1);
 
     makePluginDb(db, 'sandbox', { canMigrate: true }).migrate(retirement);
