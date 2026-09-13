@@ -20,7 +20,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 /** A complete host-side envelope for one machine: the disk with its identity record, the two root-owned
  *  configuration files, and a `systemctl show` answer that matches all of them. Each test then breaks
  *  exactly one of those facts and asserts that the ownership proof refuses. */
-function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean, outputLimitBytes?: number, network?: any, now?: () => number, diskUsageTtlMs?: number } = {}) {
+function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean, outputLimitBytes?: number, network?: any, now?: () => number, diskUsageTtlMs?: number, componentGeneration?: number } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-test-'));
   roots.push(root);
   const configRoot = join(root, 'config');
@@ -29,7 +29,7 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
   const resource = { kind: 'project' as const, id: 7 };
   const image = 'localhost/elowen-project-base:test';
   const generation = options.generation ?? 2;
-  const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' }, paths, 'a'.repeat(32));
+  const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' }, paths, 'a'.repeat(32), options.componentGeneration);
   const spec: any = createContainerSpec({ resource, workspaceTarget: '/demo', generation, image, disk, limits: options.limits,
     ...(options.network ? { network: options.network } : {}), ...(options.previewBroker ? { previewBroker: true } : {}) }, paths);
   mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
@@ -109,8 +109,16 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
     ...(options.outputLimitBytes === undefined ? {} : { outputLimitBytes: options.outputLimitBytes }),
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.diskUsageTtlMs === undefined ? {} : { diskUsageTtlMs: options.diskUsageTtlMs }) });
-  return { root, configRoot, cgroupRoot, machineCgroup, writeCgroup, paths, spec, disk: spec.disk, diskDirectory, identityPath, identity, writeIdentity,
-    envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, executor, artifacts, blob, client, rootfs };
+  const storageRoot = join(paths.sandboxDataDir, 'projects', '7');
+  /** Answer `tree-sizes` with a size per tree, so a sum over several trees is distinguishable from any
+   *  one of them. A path the fixture did not name answers zero, which makes a measurement that reaches
+   *  the wrong tree show up as a wrong total rather than as an error. */
+  const sizeTrees = (sizes: Record<string, number>) => {
+    helperReply['tree-sizes'] = (request: { paths: string[] }) => ({ ok: true,
+      usages: request.paths.map((path) => ({ path, allocatedBytes: sizes[path] ?? 0 })) });
+  };
+  return { root, configRoot, cgroupRoot, machineCgroup, writeCgroup, paths, spec, disk: spec.disk, diskDirectory, storageRoot, identityPath, identity, writeIdentity,
+    envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, sizeTrees, executor, artifacts, blob, client, rootfs };
 }
 
 /** The shape the systemd guest protocol answers with; the tombstone reads exactly these four fields. */
@@ -253,11 +261,13 @@ describe('nspawn resource telemetry', () => {
     writeFileSync(join(state.machineCgroup, 'supervisor', 'cpu.stat'), 'usage_usec 999999999\n');
     writeFileSync(join(state.machineCgroup, 'supervisor', 'memory.current'), String(999 * 1024 * 1024));
 
+    // The fixture answers 512 MiB per tree and the disk has four of them — rootfs, workspace, home and
+    // data — so the reported figure is their sum.
     const first = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
     expect(first).toEqual([{
       cpu: { state: 'sampling', usedCpus: null, percent: null },
       memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
-      disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+      disk: { state: 'ready', usedBytes: 4 * 512 * 1024 * 1024, limitBytes: null },
     }]);
     expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1);
 
@@ -267,7 +277,7 @@ describe('nspawn resource telemetry', () => {
     expect(second[0]).toMatchObject({
       cpu: { state: 'ready', usedCpus: 0.5, percent: 50 },
       memory: { state: 'ready', usedBytes: 384 * 1024 * 1024 },
-      disk: { state: 'ready', usedBytes: 512 * 1024 * 1024 },
+      disk: { state: 'ready', usedBytes: 4 * 512 * 1024 * 1024 },
     });
     expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1);
 
@@ -277,9 +287,79 @@ describe('nspawn resource telemetry', () => {
     expect(stopped[0]).toEqual({
       cpu: { state: 'stopped', usedCpus: null, percent: null },
       memory: { state: 'stopped', usedBytes: null, limitBytes: 1024 * 1024 * 1024 },
-      disk: { state: 'ready', usedBytes: 768 * 1024 * 1024, limitBytes: null },
+      disk: { state: 'ready', usedBytes: 4 * 768 * 1024 * 1024, limitBytes: null },
     });
     expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(2);
+  });
+
+  /** The rootfs is one component of the disk beside `workspace`, `home` and `data`, and the project's own
+   *  files live in those. Measuring the rootfs alone reported the base image and called a full workspace
+   *  empty. The measurement names the trees the disk record itself names, and sums them. */
+  it('measures every live component tree of the disk and reports their sum', async () => {
+    const state = fixture();
+    const component = (name: string) => state.spec.disk.components.find((entry: any) => entry.component === name)!.path;
+    state.sizeTrees({
+      [state.spec.disk.rootfsPath]: 100 * 1024 * 1024,
+      [component('workspace')]: 40 * 1024 * 1024,
+      [component('home')]: 20 * 1024 * 1024,
+      [component('data')]: 5 * 1024 * 1024,
+    });
+
+    const observed = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    expect(observed[0].disk).toEqual({ state: 'ready', usedBytes: 165 * 1024 * 1024, limitBytes: null });
+    const measured = state.requests.filter((request) => request.op === 'tree-sizes');
+    expect(measured).toHaveLength(1);
+    expect([...measured[0].paths].sort()).toEqual([state.spec.disk.rootfsPath, component('data'), component('home'), component('workspace')].sort());
+  });
+
+  /** A MIGRATED disk carries `componentGeneration`, and its workspace, HOME and data are then rooted at
+   *  `projects/<id>/storage/<generation>/` — beside the disks directory rather than inside it. Measuring
+   *  `dirname(rootfsPath)` covered exactly the base image for those environments and none of the files the
+   *  project put there, which is the larger half of what it occupies. */
+  it('measures a migrated disk whose components live outside its disk directory', async () => {
+    const state = fixture({ componentGeneration: 4 });
+    const component = (name: string) => state.spec.disk.components.find((entry: any) => entry.component === name)!.path;
+    const migratedRoot = join(state.storageRoot, 'storage', '4');
+    expect(component('workspace')).toBe(join(migratedRoot, 'workspace'));
+    expect(component('workspace').startsWith(`${state.diskDirectory}/`)).toBe(false);
+
+    // A snapshot of this environment is a sibling tree the live disk record never names, so it is out of
+    // the measurement by construction rather than by being subtracted from it.
+    const snapshot = join(state.storageRoot, 'snapshots', 'e'.repeat(32));
+    mkdirSync(join(snapshot, 'workspace'), { recursive: true });
+    state.sizeTrees({
+      [state.spec.disk.rootfsPath]: 512 * 1024 * 1024,
+      [component('workspace')]: 256 * 1024 * 1024,
+      [component('home')]: 64 * 1024 * 1024,
+      [component('data')]: 8 * 1024 * 1024,
+      [snapshot]: 900 * 1024 * 1024,
+      [migratedRoot]: 328 * 1024 * 1024,
+    });
+
+    const observed = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    expect(observed[0].disk).toEqual({ state: 'ready', usedBytes: 840 * 1024 * 1024, limitBytes: null });
+    const measured = state.requests.filter((request) => request.op === 'tree-sizes');
+    expect(measured).toHaveLength(1);
+    expect([...measured[0].paths].sort()).toEqual([state.spec.disk.rootfsPath, component('data'), component('home'), component('workspace')].sort());
+    for (const path of measured[0].paths) expect(path.startsWith(`${snapshot}`)).toBe(false);
+    // The generation root itself is never asked for: it would count the three components a second time.
+    expect(measured[0].paths).not.toContain(migratedRoot);
+  });
+
+  /** One environment whose own paths do not stand up used to be thrown out of the shared flight, which
+   *  reported every OTHER environment on the page as unavailable with it. */
+  it('confines a disk whose own trees cannot be validated to that disk', async () => {
+    const healthy = fixture();
+    const broken = fixture();
+    rmSync(broken.spec.disk.components[0].path, { recursive: true });
+    healthy.sizeTrees({ [healthy.spec.disk.rootfsPath]: 1024 });
+
+    const observed = await healthy.client.resourceUsageBatch([
+      { spec: healthy.spec, state: 'running' },
+      { spec: broken.spec, state: 'running' },
+    ]);
+    expect(observed[0].disk).toMatchObject({ state: 'ready', usedBytes: 1024 });
+    expect(observed[1].disk).toEqual({ state: 'unavailable', usedBytes: null, limitBytes: null });
   });
 
   it('shares one in-flight disk refresh between concurrent readers', async () => {

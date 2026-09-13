@@ -17,13 +17,23 @@ export interface EnvironmentState {
   migrationCollision: boolean;
 }
 
-interface QueryResult<T> { data?: T; isLoading: boolean; isError: boolean; error?: unknown; refetch(): void }
+/** `isFetching` covers a re-read over data that is already there, which `isLoading` deliberately does
+ *  not: the two together are how a surface tells "nothing measured yet" from "measured, checking again",
+ *  and only the second one may keep the figures on screen. */
+interface QueryResult<T> { data?: T; isLoading: boolean; isFetching: boolean; isError: boolean; error?: unknown; refetch(): void }
 interface MutationResult<TVars, TData = unknown> {
   mutate(vars: TVars, callbacks?: { onSuccess?: (data: TData) => void; onError?: (error: unknown) => void }): void;
   mutateAsync(vars: TVars): Promise<TData>;
   isPending: boolean;
 }
-interface QueryClient { invalidateQueries: (input: { queryKey: unknown[] }) => Promise<void> }
+interface QueryClient {
+  /** The second argument is React Query's own refetch options. `cancelRefetch: false` is the one this
+   *  bundle needs: the default aborts a read already in flight and starts another. */
+  invalidateQueries: (input: { queryKey: unknown[] }, options?: { cancelRefetch?: boolean }) => Promise<void>;
+  /** Drops cache entries outright, matched by predicate. A refused account's figures are removed, not
+   *  merely left unread. */
+  removeQueries: (input: { predicate: (query: { queryKey: unknown }) => boolean }) => void;
+}
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'pending' | 'error';
 interface RuntimeHooks {
   usePluginStrings(plugin: string): Record<string, string>;
@@ -94,7 +104,17 @@ type PluginProjectComponent = ComponentType<{ plugin: string; panelId: string; p
  *  a state per project, the actions that state allows, and the dialogs those actions raise. */
 type PluginProjectRowsHook = (input: { projects: Project[] }) => {
   status?: Record<number, { label: string; icon?: string; tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }>;
-  metrics?: Record<number, { label: string; items: { id: string; label: string; value: string; valueText?: string; percent?: number; state?: 'ready' | 'loading' | 'stopped' | 'unavailable' | 'unknown' }[] }>;
+  /** One resource snapshot per project, shared by the register row and the project drawer. `percent` is
+   *  carried only by `ready`; `absolute` is a real figure with no configured ceiling to divide by. */
+  metrics?: Record<number, {
+    label: string;
+    items: { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'loading' | 'stopped' | 'unavailable' }[];
+    refreshing?: boolean;
+    stale?: boolean;
+    staleLabel?: string;
+    onRefresh?: () => void;
+    refreshLabel?: string;
+  }>;
   actions?: Record<number, { id: string; label: string; icon?: string; disabled?: boolean; tone?: 'danger'; onSelect: () => void }[]>;
   overlay?: unknown;
 };

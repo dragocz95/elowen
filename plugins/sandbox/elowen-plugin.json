@@ -234,6 +234,8 @@
       "usageUnavailable": "Unavailable",
       "usageStopped": "Stopped",
       "usageLimitUnknown": "No project disk limit is configured.",
+      "usageRefresh": "Refresh resources",
+      "usageStale": "Last known figures",
       "networking": "Networking",
       "networkingHint": "Outbound access and the small set of host ports forwarded into this Project. Applying a change briefly stops the environment and returns it to its previous state.",
       "networkMode": "Network mode",

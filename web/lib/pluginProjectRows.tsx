@@ -34,18 +34,53 @@ export interface PluginProjectRowStatus {
   busy?: boolean;
 }
 
-interface PluginProjectRowMetric {
+/** What one measured resource IS. Read as a closed set, because each member draws differently:
+ *
+ *  - `ready` is a measurement against a real ceiling, and only it carries `percent`. It is the only
+ *    state a meter may be drawn for.
+ *  - `absolute` is an equally real measurement with NO configured ceiling to divide by — a managed
+ *    environment has no disk quota, so its disk figure is a true number of bytes and nothing else.
+ *    It reads as the figure alone. It used to be reported as `1.2 GiB / ?`, which put a denominator
+ *    on screen that does not exist, and as a percentage it would have had to be invented outright.
+ *  - `loading` is a sample on its way, `stopped` is a resource that is not running to be measured, and
+ *    `unavailable` is a measurement that could not be taken. None of the three carries a figure, and
+ *    none of them is zero. */
+type PluginProjectRowMetricState = 'ready' | 'absolute' | 'loading' | 'stopped' | 'unavailable';
+
+export interface PluginProjectRowMetric {
   id: string;
   label: string;
+  /** The compact reading: `42%`, `1.2 GiB / 4 GiB`, `1.2 GiB`, or the plugin's word for a state that
+   *  has no figure. */
   value: string;
+  /** The full sentence, for the tooltip and the meter's `aria-valuetext`. */
   valueText?: string;
+  /** Present only on `ready`. A percentage on anything else is a fabricated denominator. */
   percent?: number;
-  state?: 'ready' | 'loading' | 'stopped' | 'unavailable' | 'unknown';
+  state: PluginProjectRowMetricState;
 }
 
+/** ONE resource snapshot of ONE project, shared by the register row and the project drawer.
+ *
+ *  It is a snapshot rather than a query result on purpose: the drawer opens over a row whose figures are
+ *  already on screen, so it hydrates from this same frame and shows them immediately instead of throwing
+ *  them away for a spinner. `refreshing` and `stale` describe what is happening AROUND the figures; the
+ *  figures themselves stay the last ones actually measured, in every state. */
 export interface PluginProjectRowMetrics {
   label: string;
   items: PluginProjectRowMetric[];
+  /** A revalidation is in flight over figures that are still the last known ones. The host indicates it
+   *  quietly and keeps every value on screen. */
+  refreshing?: boolean;
+  /** The last read failed and these figures are older than the plugin would like. They are still real
+   *  measurements, so they stay — marked, never replaced with zeros. */
+  stale?: boolean;
+  /** Names the stale mark, in the plugin's own vocabulary. */
+  staleLabel?: string;
+  /** Asks the owning plugin for a fresh sample. The host draws a Refresh control only when the plugin
+   *  offers both the callback and its label. Must stay callable across renders. */
+  onRefresh?: () => void;
+  refreshLabel?: string;
 }
 
 /** One plugin-owned entry of a project row's action menu. */
@@ -92,7 +127,11 @@ export interface PluginProjectRows {
 const EMPTY: (PluginProjectRowAction & { plugin: string })[] = [];
 
 /** What the host must re-render for. Closures are excluded on purpose: their identity changes on every
- *  bundle render and none of it is visible, while a label, an icon, a tone or a disabled flag is. */
+ *  bundle render and none of it is visible, while a label, an icon, a tone or a disabled flag is.
+ *
+ *  A snapshot's `onRefresh` is a closure and therefore drops out of `JSON.stringify` by itself, which is
+ *  exactly right — whether a refresh is OFFERED is visible and is carried by `refreshLabel`, while the
+ *  identity of the callback is not. */
 function signatureOf(contributions: Map<string, PluginProjectRowContribution>): string {
   return JSON.stringify([...contributions].map(([plugin, contribution]) => [
     plugin,

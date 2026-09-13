@@ -144,6 +144,8 @@
       "usageUnavailable": "Nedostupné",
       "usageStopped": "Zastaveno",
       "usageLimitUnknown": "Projekt nemá nastavený limit disku.",
+      "usageRefresh": "Aktualizovat prostředky",
+      "usageStale": "Poslední známé hodnoty",
       "networking": "Síť",
       "networkingHint": "Odchozí přístup a malá sada portů hostitele přesměrovaných do tohoto Projektu. Použití změny prostředí krátce zastaví a vrátí do předchozího stavu.",
       "networkMode": "Síťový režim",
