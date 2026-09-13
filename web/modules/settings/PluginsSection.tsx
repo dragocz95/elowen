@@ -209,7 +209,7 @@ function pluginLocation(name: string | null): string {
  *  downloaded), each toggling enable live and opening a rich detail view; user plugins can be updated (when
  *  the registry has a newer version) or uninstalled. **Available** browses the curated GitHub registry for
  *  plugins not yet installed and installs them with one click. A search box + category pills narrow both. */
-export function PluginsSection() {
+export function PluginsSection({ historyMode = 'push' }: { historyMode?: 'push' | 'replace' }) {
   const { data, isLoading } = usePlugins();
   const marketplace = useMarketplace();
   // Enabling a plugin that claims power over stored state is refused by the daemon until the operator
@@ -270,13 +270,16 @@ export function PluginsSection() {
     setDetail(null);
     setDetailFromUrl(false);
   }, [isLoading, urlDetailIsValid, urlReady]);
+  const writeDetailLocation = historyMode === 'replace'
+    ? window.history.replaceState.bind(window.history)
+    : window.history.pushState.bind(window.history);
   const openDetail = (name: string) => {
-    window.history.pushState(null, '', pluginLocation(name));
+    writeDetailLocation(null, '', pluginLocation(name));
     setDetailFromUrl(false);
     setDetail(name);
   };
   const closeDetail = () => {
-    window.history.pushState(null, '', pluginLocation(null));
+    writeDetailLocation(null, '', pluginLocation(null));
     setDetailFromUrl(false);
     setDetail(null);
   };

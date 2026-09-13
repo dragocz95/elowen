@@ -6,6 +6,10 @@ import { en } from '../../../lib/i18n/dictionaries/en';
 import { interpolate } from '../../../lib/i18n';
 import type { CliSettings, PermissionSettings, BrainModelOption } from '../../../lib/types';
 
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...props }: { href: string; children: React.ReactNode }) => <a href={href} data-next-link {...props}>{children}</a>,
+}));
+
 const saveCli = vi.fn(async (patch: Record<string, unknown>) => ({ ...state.cli, ...patch }));
 const savePermissions = vi.fn();
 vi.mock('../../../lib/mutations', () => ({
@@ -140,6 +144,7 @@ describe('Account → Models — Model roles', () => {
     renderSection();
     expect(screen.getByText(en.cli.instanceModelsTitle)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: en.cli.openSettings })).toHaveAttribute('href', '/settings?cat=models');
+    expect(screen.getByRole('link', { name: en.cli.openSettings })).toHaveAttribute('data-next-link');
   });
 
   /** BLOCKER 1a. `/brain/models` strips models outside `allowed_execs` for a member, but the RUNTIME

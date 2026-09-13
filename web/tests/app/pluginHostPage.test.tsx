@@ -15,9 +15,10 @@ const SHELL_CSS = readFileSync(
 );
 
 const route = vi.hoisted(() => ({ plugin: 'skills', rest: [] as string[] }));
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 vi.mock('next/navigation', () => ({
   useParams: () => route,
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => router,
 }));
 
 // The bundle load is a network fetch of the plugin's own JS; the registration it produces is what this
@@ -49,7 +50,13 @@ function MastheadProbe() {
 }
 
 const fullRegistration = registration.value;
-beforeEach(() => { route.rest = []; registration.value = fullRegistration; });
+beforeEach(() => {
+  route.plugin = 'skills';
+  route.rest = [];
+  router.push.mockReset();
+  router.replace.mockReset();
+  registration.value = fullRegistration;
+});
 
 describe('plugin host route', () => {
   // The route hands a settings section the page column and the page's identity, and nothing else: the
@@ -218,9 +225,32 @@ describe('plugin host route', () => {
     expect(screen.queryByText(en.pluginUi.pageMissing)).toBeNull();
   });
 
+  it.each([
+    ['the bare plugin route', []],
+    ['an old explicit settings route', ['settings', 'host-runtime']],
+  ])('redirects an internal plugin-detail section from %s to its owning deck', async (_label, rest) => {
+    route.plugin = 'sandbox';
+    route.rest = rest;
+    registration.value = {
+      pages: {},
+      settings: { 'host-runtime': () => <div data-testid="internal-section">runtime</div> },
+    } as unknown as PluginUiRegistration;
+    mount({ listing: [{
+      name: 'sandbox',
+      label: 'Sandbox',
+      url: '/plugins/sandbox/web/index.js',
+      apiVersion: 1,
+      nav: [],
+      settings: [{ id: 'host-runtime', label: 'Host runtime', placement: 'pluginDetail' }],
+    }] });
+
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/settings?cat=plugins&plugin=sandbox#plugin-section:host-runtime'));
+    expect(screen.queryByTestId('internal-section')).toBeNull();
+  });
+
   // `/p/skills/settings/skills` repeats the plugin's name back at the reader, so the bare route resolves
   // to the section when that section is the plugin's whole UI.
-  it('serves the only settings section at the bare plugin route', async () => {
+  it('serves the only page-placed settings section at the bare plugin route', async () => {
     registration.value = { pages: {}, settings: { skills: () => <div data-testid="section">section</div> } } as unknown as PluginUiRegistration;
     const { container } = mount();
     await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
