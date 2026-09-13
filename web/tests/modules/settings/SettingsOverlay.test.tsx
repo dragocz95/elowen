@@ -25,6 +25,9 @@ describe('SettingsOverlay', () => {
     expect(dialog).toHaveAttribute('data-presentation', 'center');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
     expect(dialog).toHaveTextContent('Settings content');
+    // It stands in for `/settings`, so it ranks below every drawer and dialog raised from inside it
+    // rather than on the modal band above them.
+    expect(dialog.parentElement).toHaveClass('overlay-layer-page');
 
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(state.back).toHaveBeenCalledOnce();

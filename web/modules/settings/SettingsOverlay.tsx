@@ -25,6 +25,10 @@ export function SettingsOverlay() {
       size="lg"
       intent="inspect"
       presentation={mobile ? 'fullscreen' : 'center'}
+      // This overlay IS `/settings`, not a dialog raised from it. So the editors it opens resolve exactly
+      // as they do on the canonical page — right-hand drawers — and this surface takes the band beneath
+      // them. See `standsInForPage` in components/ui/Modal.tsx.
+      standsInForPage
       closeLabel={t.common.close}
       onClose={() => router.back()}
       data-testid="settings-overlay"

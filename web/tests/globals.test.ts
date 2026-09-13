@@ -157,6 +157,24 @@ describe('design tokens', () => {
     expect(components).toMatch(/\.control-surface-document\s*\{[^}]*background:[^;}]*var\(--color-document\)/);
   });
 
+  // `--color-document` is the ground BETWEEN the canvas and a card, so it is stated relative to the
+  // canvas. Carried unchanged into an overlay it grounded a stack of settings cards at #030303 inside a
+  // #151515 window — near-black blocks on a distinctly lighter surface, and the relation inverts on the
+  // light skin. Re-basing it on the overlay's own ground at the one place the overlay is painted is what
+  // lifts those inner surfaces for every skin; a takeover is excluded because it IS the page.
+  it('re-bases the document ground on the overlay it is rendered in, takeovers excepted', () => {
+    expect(components).toMatch(
+      /\.overlay-surface:not\(\.workspace-takeover\)\s*\{[^}]*--color-document:\s*var\(--color-popover\)/,
+    );
+  });
+
+  // An intercepted route presented as an overlay stands in for its page, so it ranks under the drawers
+  // and dialogs it raises. Both halves are one statement: the band and the class that assigns it.
+  it('gives a page stand-in a band of its own beneath the drawer band', () => {
+    expect(css).toContain('--z-page-overlay: 85');
+    expect(components).toMatch(/\.overlay-layer-page\s*\{\s*z-index:\s*var\(--z-page-overlay\)/);
+  });
+
   it('collapses the hero metrics into a compact strip in a narrow hero', () => {
     // The metric row is the hero's heaviest block, and at phone width a multi-column grid of it pushed
     // the first record of the register roughly two screens down. It becomes ONE horizontally scrolling

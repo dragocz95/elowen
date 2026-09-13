@@ -38,6 +38,9 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
    rather than against it. `.overlay-fab` below is the launcher itself, layer and placement together. */
 .overlay-layer-fab { z-index: var(--z-fab); }
 .overlay-layer-nav-drawer { z-index: var(--z-nav-drawer); }
+/* An intercepted route standing in for its page (see --z-page-overlay): under the drawers and dialogs
+   it raises, above the shell it covers. */
+.overlay-layer-page { z-index: var(--z-page-overlay); }
 .overlay-layer-drawer { z-index: var(--z-drawer); }
 .overlay-layer-modal { z-index: var(--z-modal); }
 .overlay-layer-menu { z-index: var(--z-menu); }
@@ -61,6 +64,21 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   border-color: var(--color-border);
   background: var(--color-popover);
   box-shadow: var(--shadow-raised);
+}
+
+/* …AND what a surface INSIDE it is made of. `--color-document` is this app's ground between the canvas
+   and a card (tokens.css) — the tone a settings section card, a register and the sticky tint derived
+   from it all paint themselves. It is defined RELATIVE to the page canvas, so carried unchanged into an
+   overlay it grounds those cards on a tone that has nothing to do with the surface they are actually
+   sitting on. The built-in design reads document at #030303 and popover at #151515, which put a stack of
+   near-black cards inside a distinctly lighter window; the same relation inverts on the light skin.
+   Re-basing the ground onto the overlay's own is what lifts those inner surfaces, and it holds for every
+   skin by construction rather than by a second palette: a card is still read by its border, its top tint
+   and its shadow, which is exactly how the Studio designs already read one on the page.
+   A TAKEOVER is excluded because it is not a surface raised over the page — it IS the page, painted on
+   the canvas (see the takeover rule below), so its cards keep the canvas-relative ground. */
+.overlay-surface:not(.workspace-takeover) {
+  --color-document: var(--color-popover);
 }
 
 /* ── Presentation ───────────────────────────────────────────────────────────────────────────────────

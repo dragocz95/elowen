@@ -107,6 +107,27 @@ describe('Modal', () => {
     expect(second).toHaveClass('max-w-lg');
   });
 
+  /** An intercepted route presented as an overlay — Settings over whatever linked to it — is a PAGE, not
+   *  a step taken from one. Counting it as a level turned every editor opened from Settings into a
+   *  centered dialog; and a stand-in left on the modal band would have painted over the drawers it
+   *  opens, so the two halves are asserted together. */
+  it('keeps a page stand-in below the drawers it opens and resolves them at page depth', () => {
+    render(
+      <Modal title="Settings" size="lg" presentation="center" standsInForPage onClose={vi.fn()}>
+        <Modal title="Runtime limits" size="md" onClose={vi.fn()}><span>limits</span></Modal>
+      </Modal>,
+      { wrapper: W },
+    );
+
+    // Through the DOM: the stand-in is correctly inert once the editor opens.
+    const [standIn, editor] = Array.from(document.querySelectorAll('[data-elowen-modal]'));
+    expect(editor).toHaveAttribute('data-presentation', 'drawer');
+    expect(editor).toHaveClass('animate-drawer-in');
+    expect(editor).not.toHaveClass('max-w-lg');
+    expect(editor.parentElement).toHaveClass('overlay-layer-drawer');
+    expect(standIn.parentElement).toHaveClass('overlay-layer-page');
+  });
+
   it('gives a drawer the room a large centered dialog would have had', () => {
     render(
       <Modal title="Wide" size="lg" onClose={vi.fn()}><span>table</span></Modal>,
