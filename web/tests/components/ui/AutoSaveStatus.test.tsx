@@ -14,11 +14,18 @@ describe('AutoSaveStatus', () => {
     expect(screen.getByRole('status')).toHaveTextContent(text);
   });
 
-  it('keeps a successful autosave silent', () => {
+  it('keeps a successful autosave silent by default', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><AutoSaveStatus status="saved" /></Wrapper>);
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('can show a compact successful state for settings that need confirmation', () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><AutoSaveStatus status="saved" showSaved /></Wrapper>);
+    expect(screen.getByRole('status')).toHaveTextContent('Saved');
+    expect(screen.getByRole('status')).toHaveClass('min-w-[7rem]', 'min-h-5');
   });
 
   it('keeps a failed save actionable in an alert', () => {

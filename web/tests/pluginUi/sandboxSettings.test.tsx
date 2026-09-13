@@ -10,7 +10,7 @@ import { ProjectEnvironmentSettings } from '../../../plugins/sandbox/web-src/Pro
 import { HostRuntimeSettings } from '../../../plugins/sandbox/web-src/HostRuntimeSettings';
 import { ensurePluginUiRuntime } from '../../lib/pluginUi';
 import { ToastProvider } from '../../components/ui/Toast';
-import { createWrapper } from '../test-utils';
+import { createWrapper, setViewport } from '../test-utils';
 import { onUnhandledRequest } from '../msw';
 import { en } from '../../lib/i18n/dictionaries/en';
 
@@ -47,7 +47,7 @@ const server = setupServer(
   http.get('*/api/plugins/sandbox/api/environment', () => HttpResponse.json(environment)),
 );
 beforeAll(() => server.listen({ onUnhandledRequest }));
-afterEach(() => { server.resetHandlers(); localStorage.clear(); });
+afterEach(() => { server.resetHandlers(); localStorage.clear(); setViewport(false); });
 afterAll(() => server.close());
 
 function mount(node: ReactNode) {
@@ -139,7 +139,15 @@ describe('managed environment lifecycle', () => {
   const project = { id: 1, slug: 'demo', path: '', executionKind: 'managed' as const };
   const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, network: { mode: 'shared', inboundPorts: [] } };
   const detail = { environment, operations: [], snapshots: [{ id: 'complete', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Before change', completeProject: true }, { id: 'partial', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Incomplete', completeProject: false }] };
-  const setup = () => server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })), http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(detail)));
+  const setup = () => server.use(
+    http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
+    http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(detail)),
+    http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json(null)),
+    http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
+      const body = await request.json() as any;
+      return HttpResponse.json({ id: 'op-default', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: body.action, status: 'succeeded', error: null });
+    }),
+  );
 
   // Idempotency across a lost response is covered where the lifecycle actions now live, in
   // tests/pluginUi/sandboxProjectRows.test.tsx; what this drawer still dispatches is limits, restore and
@@ -175,7 +183,7 @@ describe('managed environment lifecycle', () => {
     let submitted: unknown;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
-      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-limits', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'limits' }, status: 'pending', error: null }); }),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-limits', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'limits' }, status: 'succeeded', error: null }); }),
     );
     mount(<ProjectEnvironmentSettings project={project} />);
     const memory = await screen.findByRole('slider', { name: strings.memoryLimit });
@@ -188,7 +196,7 @@ describe('managed environment lifecycle', () => {
     );
   });
 
-  it('adds an inbound port and submits one durable network action', async () => {
+  it('debounces a valid inbound port edit and sends one durable network action', async () => {
     setup();
     let submitted: any;
     server.use(
@@ -196,7 +204,7 @@ describe('managed environment lifecycle', () => {
       http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
         submitted = await request.json();
         return HttpResponse.json({ id: 'op-network', requestId: submitted.requestId, projectId: 1, generation: 2, accountUserId: 1,
-          action: submitted.action, status: 'pending', error: null });
+          action: submitted.action, status: 'succeeded', error: null });
       }),
     );
     mount(<ProjectEnvironmentSettings project={project} />);
@@ -204,24 +212,126 @@ describe('managed environment lifecycle', () => {
     fireEvent.click(await screen.findByRole('button', { name: strings.addInboundPort }));
     fireEvent.change(screen.getByRole('spinbutton', { name: strings.hostPort }), { target: { value: '9080' } });
     fireEvent.change(screen.getByRole('spinbutton', { name: strings.guestPort }), { target: { value: '3000' } });
-    fireEvent.click(screen.getByRole('button', { name: strings.applyNetworking }));
 
     await waitFor(() => expect(submitted).toMatchObject({ action: { kind: 'network', network: { mode: 'shared', inboundPorts: [
       { protocol: 'tcp', hostPort: 9080, guestPort: 3000 },
-    ] } }, expectedGeneration: 2, requestId: expect.any(String) }));
+    ] } }, expectedGeneration: 2, requestId: expect.any(String) }), { timeout: 4000 });
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(submitted.action.network.inboundPorts).toHaveLength(1);
+  });
+
+  it('does not write an incomplete port row, then retries after the value becomes valid', async () => {
+    setup();
+    let submitted: unknown;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-network', requestId: (submitted as any).requestId, projectId: 1, generation: 2, accountUserId: 1, action: (submitted as any).action, status: 'succeeded', error: null }); }),
+    );
+    mount(<ProjectEnvironmentSettings project={project} />);
+    fireEvent.click(await screen.findByRole('button', { name: strings.addInboundPort }));
+    const hostPort = screen.getByRole('spinbutton', { name: strings.hostPort });
+    fireEvent.change(hostPort, { target: { value: '' } });
+    fireEvent.blur(hostPort);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(submitted).toBeUndefined();
+    fireEvent.change(hostPort, { target: { value: '9080' } });
+    await waitFor(() => expect(submitted).toMatchObject({ action: { kind: 'network' } }), { timeout: 4000 });
+  });
+
+  it('removes a valid inbound port through autosave', async () => {
+    const withPort = { ...detail, environment: { ...environment, network: { mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] } } };
+    let submitted: any;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(withPort)),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-network', requestId: submitted.requestId, projectId: 1, generation: 2, accountUserId: 1, action: submitted.action, status: 'succeeded', error: null }); }),
+    );
+    mount(<ProjectEnvironmentSettings project={project} />);
+    fireEvent.click(await screen.findByRole('button', { name: strings.removeInboundPort }));
+    await waitFor(() => expect(submitted).toMatchObject({ action: { kind: 'network', network: { mode: 'shared', inboundPorts: [] } } }), { timeout: 4000 });
+  });
+
+  it('keeps a failed network draft and retries it without a toast', async () => {
+    setup();
+    const requests: any[] = [];
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
+        const body = await request.json();
+        requests.push(body);
+        if (requests.length === 1) return HttpResponse.json({ error: 'network_busy' }, { status: 503 });
+        return HttpResponse.json({ id: 'op-network', requestId: (body as any).requestId, projectId: 1, generation: 2, accountUserId: 1, action: (body as any).action, status: 'succeeded', error: null });
+      }),
+    );
+    mount(<ProjectEnvironmentSettings project={project} />);
+    fireEvent.click(await screen.findByRole('button', { name: strings.addInboundPort }));
+    await screen.findByText(/Couldn.t save|Nepodařilo se uložit|Nepodarilo sa uložiť/);
+    expect(screen.queryByText('network_busy')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Retry|Znovu/ }));
+    await waitFor(() => expect(requests).toHaveLength(2), { timeout: 4000 });
+    expect(requests[0].requestId).toBe(requests[1].requestId);
+  });
+
+  it('shows the explanation through HelpTip and keeps the ordinary network controls button-free', async () => {
+    setup();
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })));
+    mount(<ProjectEnvironmentSettings project={project} />);
+    const heading = await screen.findByRole('heading', { name: strings.networking });
+    fireEvent.click(within(heading).getByRole('button', { name: 'Help' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent(strings.networkingHint!);
+    expect(screen.queryByRole('button', { name: /apply networking/i })).toBeNull();
+    expect(screen.getByText(strings.noInboundPorts!)).toBeInTheDocument();
   });
 
   it('removes inbound rows when isolated mode is selected', async () => {
     const isolatedDetail = { ...detail, environment: { ...environment, network: { mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] } } };
+    let submitted: any;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
       http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(isolatedDetail)),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { const body = await request.json() as any; submitted = body; return HttpResponse.json({ id: 'op-network', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: body.action, status: 'succeeded', error: null }); }),
     );
     mount(<ProjectEnvironmentSettings project={project} />);
     const mode = await screen.findByRole('combobox', { name: strings.networkMode });
     fireEvent.keyDown(mode, { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('option', { name: strings.networkIsolated }));
     expect(screen.queryByRole('spinbutton', { name: strings.hostPort })).toBeNull();
+    await waitFor(() => expect(submitted).toMatchObject({ action: { kind: 'network', network: { mode: 'isolated', inboundPorts: [] } } }), { timeout: 4000 });
+  });
+
+  it('serializes network writes and sends the latest value once the first write settles', async () => {
+    setup();
+    const bodies: any[] = [];
+    const gates: (() => void)[] = [];
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
+        const body = await request.json();
+        bodies.push(body);
+        await new Promise<void>((resolve) => { gates.push(resolve); });
+        return HttpResponse.json({ id: `op-network-${bodies.length}`, requestId: (body as any).requestId, projectId: 1, generation: 2, accountUserId: 1, action: (body as any).action, status: 'succeeded', error: null });
+      }),
+    );
+    mount(<ProjectEnvironmentSettings project={project} />);
+    fireEvent.click(await screen.findByRole('button', { name: strings.addInboundPort }));
+    await waitFor(() => expect(bodies).toHaveLength(1), { timeout: 4000 });
+    const hostPort = screen.getByRole('spinbutton', { name: strings.hostPort });
+    fireEvent.change(hostPort, { target: { value: '9001' } });
+    fireEvent.change(hostPort, { target: { value: '9002' } });
+    gates.splice(0).forEach((release) => release());
+    await waitFor(() => expect(bodies).toHaveLength(2), { timeout: 5000 });
+    expect(bodies[1].action.network.inboundPorts[0].hostPort).toBe(9002);
+  });
+
+  it('keeps autosave and snapshot actions compact on a mobile drawer', async () => {
+    setViewport(true);
+    setup();
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })));
+    mount(<ProjectEnvironmentSettings project={project} />);
+    const heading = await screen.findByRole('heading', { name: strings.networking });
+    expect(heading.closest('[data-settings-group]')?.querySelector('.settings-group__actions')).toHaveClass('settings-group__actions');
+    expect(screen.getByRole('combobox', { name: strings.snapshots }).closest('.flex-nowrap')).not.toBeNull();
+    expect(screen.getByRole('status', { name: strings.state_stopped! })).toBeInTheDocument();
   });
 
   it('keeps the sent slider value until the refreshed environment reports it', async () => {

@@ -47,6 +47,8 @@ export function SettingsDocument({ children, className = '' }: { children: React
 export type SettingsGroupProps = {
   title?: string;
   description?: string;
+  /** Long-form guidance for the group heading, kept behind the shared HelpTip. */
+  hint?: string;
   icon?: LucideIcon;
   actions?: ReactNode;
   tone?: SettingsTone;
@@ -101,7 +103,7 @@ function PersistedSettingsGroup({ storageKey, defaultOpen = true, onOpenChange, 
   return <SettingsGroupView {...rest} collapsible open={stored === 'open'} onOpenChange={handleOpenChange} />;
 }
 
-function SettingsGroupView({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, rowId, collapsible = false, defaultOpen, open, onOpenChange, children, className = '' }: SettingsGroupProps) {
+function SettingsGroupView({ title, description, hint, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, rowId, collapsible = false, defaultOpen, open, onOpenChange, children, className = '' }: SettingsGroupProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen ?? false);
   const isOpen = open ?? uncontrolledOpen;
   // Radix's trigger drops `aria-controls` while closed (its content is unmounted); ours is force-mounted
@@ -120,7 +122,7 @@ function SettingsGroupView({ title, description, icon: Icon, actions, tone = 'de
             <div className="settings-group__heading">
               {Icon ? <span className="settings-group__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span> : null}
               <div className="min-w-0">
-                {title ? <h2>{title}</h2> : null}
+                {title ? <h2 className="flex items-center gap-1.5">{title}{hint ? <HelpTip align="left">{hint}</HelpTip> : null}</h2> : null}
                 {description ? <p>{description}</p> : null}
               </div>
             </div>
@@ -145,7 +147,7 @@ function SettingsGroupView({ title, description, icon: Icon, actions, tone = 'de
               <div className="settings-group__heading">
                 {Icon ? <span className="settings-group__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span> : null}
                 <div className="min-w-0">
-                  {title ? <h2>{title}</h2> : null}
+                  {title ? <h2 className="flex items-center gap-1.5">{title}{hint ? <HelpTip align="left">{hint}</HelpTip> : null}</h2> : null}
                   {description ? <p>{description}</p> : null}
                 </div>
               </div>
