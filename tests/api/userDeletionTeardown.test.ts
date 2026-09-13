@@ -82,11 +82,10 @@ describe('DELETE /users/:id tears down what is running before it deletes what is
     expect(users.get(carol.id)).not.toBeNull();
   });
 
-  it('returns 409 and preserves the user while a plugin reports an active durable lease', async () => {
-    const active = Object.assign(new Error('active lease'), { status: 409, code: 'account_in_use' });
-    const { app, users, carol, adminTok } = setup(() => { throw active; }, async () => 1);
+  it('returns 500 and preserves the user when a plugin cannot clean up its data', async () => {
+    const { app, users, carol, adminTok } = setup(() => { throw new Error('cleanup refused'); }, async () => 1);
 
-    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(409);
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(500);
     expect(users.get(carol.id)).not.toBeNull();
   });
 
