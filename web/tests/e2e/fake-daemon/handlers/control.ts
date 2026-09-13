@@ -12,7 +12,7 @@ import type { BrainMessage } from '../../../../lib/types.ts';
 import type { OverrideKey } from '../overrides.ts';
 import { setResponseOverride, setMessagesOverride, resetOverrides } from '../overrides.ts';
 import { setSetupMode, needsSetup, resetSetup } from '../setup.ts';
-import { sandboxCalls, resetSandbox } from './sandbox.ts';
+import { resetSandbox } from './sandbox.ts';
 import { localizeListing, realPlugins } from '../realPlugins.ts';
 
 export function registerControlRoutes(app: Hono): void {
@@ -58,10 +58,6 @@ export function registerControlRoutes(app: Hono): void {
   // Inspect the non-send control calls the UI has posted (the /model switch, the Stop abort), so a spec
   // can assert the exact upstream payload the web sent.
   app.get('/__test/calls', (c) => c.json({ calls: recordedControlCalls() }));
-
-  // The sandbox plugin's writes (create / use / remove-preview / remove), so a spec can assert the exact
-  // workspace and conversation ids the drawer posted rather than merely that the row moved.
-  app.get('/__test/sandbox-calls', (c) => c.json({ calls: sandboxCalls() }));
 
   // Arm/disarm the fresh-install lane: while on (and no admin created yet) `GET /setup` reports
   // needsSetup:true and `POST /users` bootstraps the first admin. Returns the resulting probe value.

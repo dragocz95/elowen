@@ -4,7 +4,6 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import manifest from '../../../plugins/sandbox/elowen-plugin.json';
-import { WorkspacesSettings } from '../../../plugins/sandbox/web-src/WorkspacesSettings';
 import { EnvironmentSettings } from '../../../plugins/sandbox/web-src/EnvironmentSettings';
 import { ProjectEnvironmentSettings } from '../../../plugins/sandbox/web-src/ProjectEnvironmentSettings';
 import { HostRuntimeSettings } from '../../../plugins/sandbox/web-src/HostRuntimeSettings';
@@ -22,18 +21,6 @@ const targetUser = {
   name: 'Bob', email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false,
 };
 
-const overview = {
-  projects: [{ id: 1, slug: 'demo', path: '/repo' }],
-  sessions: [{ id: 'brain-1', title: 'Demo conversation', updatedAt: '2026-08-26T06:00:00Z' }],
-  workspaces: [{
-    id: 'ws_1', userId: 1, projectId: 1, label: 'Feature Alpha', path: '/data/ws_1', branch: 'elowen/u1/feature-alpha-a1b2c3d4', baseRef: 'main',
-    lifecycle: 'active', orphanReason: null, createdAt: '2026-08-26T05:00:00Z', updatedAt: '2026-08-26T05:30:00Z', lastUsedAt: '2026-08-26T06:00:00Z',
-    accessible: true, status: { branch: 'elowen/u1/feature-alpha-a1b2c3d4', head: 'abc', upstream: null, ahead: 1, behind: 0, dirty: 1, untracked: 0, clean: false },
-    files: [{ path: 'src/app.ts', code: ' M', untracked: false }], uniqueCommits: 1, activeProcesses: 0,
-    bindings: [{ sessionId: 'brain-1', updatedAt: '2026-08-26T06:00:00Z' }],
-  }],
-};
-
 const environment = {
   mode: 'confined', probe: { available: true, reason: null }, networkAvailable: true,
   home: { path: '/data/users/1/home', generation: 2, bytes: 2048, entries: 4, truncated: false, activeProcesses: 0 },
@@ -42,8 +29,6 @@ const environment = {
 
 const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json(listing)),
-  http.get('*/api/plugins/sandbox/api/overview', () => HttpResponse.json(overview)),
-  http.post('*/api/plugins/sandbox/api/workspaces/diff', () => HttpResponse.json({ diff: 'diff --git a/src/app.ts b/src/app.ts\n+change' })),
   http.get('*/api/plugins/sandbox/api/environment', () => HttpResponse.json(environment)),
 );
 beforeAll(() => server.listen({ onUnhandledRequest }));
@@ -82,7 +67,7 @@ describe('Sandbox host runtime', () => {
   });
 });
 
-describe('sandbox Project workspaces', () => {
+describe('sandbox project environment panel', () => {
   // The project surface reports the PROJECT's environment, never the account's HOME. Starting and
   // stopping it belongs to the project's row in the register now — see sandboxProjectRows.test.tsx —
   // so what this panel still owns is the state, the resources and the snapshots.
@@ -92,46 +77,13 @@ describe('sandbox Project workspaces', () => {
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
       http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment, snapshots: [], operations: [] })),
     );
-    mount(<WorkspacesSettings surface="project" project={{ ...overview.projects[0]!, executionKind: 'managed' }} />);
+    mount(<ProjectEnvironmentSettings project={{ id: 1, slug: 'demo', path: '/repo', executionKind: 'managed' }} />);
     expect(await screen.findByText(strings.state_stopped!)).toBeInTheDocument();
     expect(screen.getByText(strings.resources!)).toBeInTheDocument();
     for (const label of [strings.startEnvironment, strings.stopEnvironment, strings.restartEnvironment, strings.snapshotEnvironment]) {
       expect(screen.queryByRole('button', { name: label })).toBeNull();
     }
     expect(screen.queryByText('Account HOME')).toBeNull();
-  });
-  it('opens a row through its single named control and renders the live patch in a Project modal', async () => {
-    mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
-    // Opening a row is the row contract: ONE real button spanning it, carrying a short accessible name
-    // rather than the row's whole text. It is a native button, so Enter and Space come from the
-    // platform instead of a key handler the row has to re-implement.
-    const open = await screen.findByRole('button', { name: strings.openWorkspace!.replace('{name}', 'Feature Alpha') });
-    fireEvent.click(open);
-    const detail = await screen.findByRole('dialog', { name: 'Feature Alpha' });
-    expect(within(detail).getByText((_text, element) => element?.tagName === 'LI' && element.textContent?.includes('src/app.ts') === true)).toBeInTheDocument();
-    expect(await within(detail).findByText('+change')).toBeInTheDocument();
-    expect(within(detail).getByText(strings.active!)).toBeInTheDocument();
-  });
-
-  it('creates a workspace with an explicit Project, label and base ref', async () => {
-    let submitted: unknown;
-    server.use(http.post('*/api/plugins/sandbox/api/workspaces/create', async ({ request }) => {
-      submitted = await request.json();
-      return HttpResponse.json({ workspace: overview.workspaces[0] }, { status: 201 });
-    }));
-    mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
-    fireEvent.click(await screen.findByRole('button', { name: strings.create }));
-    const dialog = within(await screen.findByRole('dialog', { name: strings.createTitle }));
-    fireEvent.change(dialog.getByPlaceholderText(strings.labelPlaceholder!), { target: { value: 'Fix checkout' } });
-    fireEvent.change(dialog.getByPlaceholderText(strings.baseRefPlaceholder!), { target: { value: 'develop' } });
-    fireEvent.click(dialog.getByRole('button', { name: strings.save }));
-    await waitFor(() => expect(submitted).toEqual({ projectId: '1', label: 'Fix checkout', baseRef: 'develop' }));
-  });
-
-  it('shows the error state instead of a loading skeleton after the request fails', async () => {
-    server.use(http.get('*/api/plugins/sandbox/api/overview', () => HttpResponse.json({ error: 'broken' }, { status: 500 })));
-    mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
-    expect(await screen.findByText(strings.loadError!)).toBeInTheDocument();
   });
 });
 

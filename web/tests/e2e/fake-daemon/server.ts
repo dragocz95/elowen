@@ -48,8 +48,8 @@ registerMemoryRoutes(app);
 // Plugin-owned endpoints the real bundles read. Registered after the core handlers so a core route
 // always wins, and before the catch-all — which is what used to answer these with a bare `[]`.
 registerPluginSurfaceRoutes(app);
-// The sandbox plugin's own routes. Stateful rather than canned (the drawer writes), so they live apart
-// from the canned plugin surfaces above.
+// The sandbox plugin's own routes. Stateful rather than canned (the environment panels write), so they
+// live apart from the canned plugin surfaces above.
 registerSandboxRoutes(app);
 
 // Anything the shell polls that we haven't modeled: answer 200 [] rather than 404, so an unmodeled
