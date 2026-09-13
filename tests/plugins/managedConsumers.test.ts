@@ -29,8 +29,7 @@ function fixture(plugin: typeof files, provider: unknown) {
     config: {}, registerTool: (tool: Tool) => tools.push(tool), registerHook() {}, registerControl() {}, registerCleanup() {}, emitCard() {},
     logger: { info() {}, warn() {}, error() {} }, currentAccess: () => access, currentAccountUserId: () => 1,
     currentSessionId: () => `managed-${Math.random()}`, defaultCwd: () => '/workspace',
-    assertPathAllowed: hostGuard, displayPath: (path: string) => path, pathStateKey: (path: string) => path,
-    sanitizePathOutput: (text: string) => text, control: () => provider, callApprovedByAsk: () => false,
+    assertPathAllowed: hostGuard, control: () => provider, callApprovedByAsk: () => false,
     currentIdentity: () => ({ conversation: 'own' }), processes: new ProcessRegistry(),
   };
   // Each fixture is one stable conversation, so reads authorize that fixture's subsequent edits.
