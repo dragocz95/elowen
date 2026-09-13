@@ -4,14 +4,13 @@ import {
   chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync,
   renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { activeExecutionLeases, createExecutionLease, withRepoLease } from './db.mjs';
+import { provenLegacyWorktrees, pruneLegacyWorktreeMetadata } from './legacyWorktrees.mjs';
 
 const BWRAP = '/usr/bin/bwrap';
 const CMD_VAR = 'ELOWEN_SANDBOX_CMD';
 const EPHEMERAL_HOME = '/tmp/elowen-home';
-const WORKSPACE_GUEST_ROOT = '/workspace';
-const WORKSPACE_GUEST_HOME = '/home/elowen';
 const GENERATION_FILE = '.home-generation';
 const ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'];
 // A connected GitHub identity reaches the child through its ENVIRONMENT and nothing else.
@@ -74,7 +73,19 @@ function ensurePrivateDir(path) {
 
 export function userRoot(dataDir, userId) { return join(dataDir, 'users', String(userId)); }
 export function userHome(dataDir, userId) { return join(userRoot(dataDir, userId), 'home'); }
-export function userWorkspacesRoot(dataDir, userId) { return join(userRoot(dataDir, userId), 'workspaces'); }
+
+/** Every account the plugin still holds data for, by the one directory that outlives a single feature.
+ *  A numeric name is an account root; anything else in that directory is not account data. */
+export function listUserRoots(dataDir) {
+  const usersRoot = join(dataDir, 'users');
+  if (!existsSync(usersRoot)) return [];
+  const ids = [];
+  for (const entry of readdirSync(usersRoot)) {
+    const match = /^(\d+)$/.exec(entry);
+    if (match) ids.push(Number(match[1]));
+  }
+  return ids;
+}
 
 function generationPath(dataDir, userId) { return join(userRoot(dataDir, userId), GENERATION_FILE); }
 
@@ -90,9 +101,8 @@ export function homeGeneration(dataDir, userId) {
 }
 
 export function ensureUserHome(dataDir, userId) {
-  const root = ensurePrivateDir(userRoot(dataDir, userId));
-  ensurePrivateDir(join(root, 'workspaces'));
-  const home = ensurePrivateDir(join(root, 'home'));
+  ensurePrivateDir(userRoot(dataDir, userId));
+  const home = ensurePrivateDir(join(userRoot(dataDir, userId), 'home'));
   const generation = homeGeneration(dataDir, userId);
   return { home, generation };
 }
@@ -112,7 +122,6 @@ export function migrateLegacyHomes(dataDir) {
       const userId = Number(match[1]);
       const target = userHome(dataDir, userId);
       ensurePrivateDir(userRoot(dataDir, userId));
-      ensurePrivateDir(userWorkspacesRoot(dataDir, userId));
       if (existsSync(target)) { collisions.push({ userId, source, target }); continue; }
       renameSync(source, target);
       chmodSync(target, 0o700);
@@ -132,7 +141,7 @@ function bindableRoots(roots) {
     try {
       const real = realpathSync(root);
       if (!out.includes(real)) out.push(real);
-    } catch { /* stale project/workspace path */ }
+    } catch { /* stale project path */ }
   }
   return out;
 }
@@ -258,56 +267,7 @@ function githubCredential(ctx, accountUserId, state) {
   return { token, login: typeof credential.login === 'string' ? credential.login : '' };
 }
 
-function workspaceGitStub(dataDir, workspace) {
-  const dir = ensurePrivateDir(join(userRoot(dataDir, workspace.userId), 'git-stubs'));
-  const file = join(dir, `${workspace.id}.git`);
-  writeFileSync(file, 'gitdir: /run/elowen-git-unavailable\n', { mode: 0o600 });
-  return file;
-}
-
-function buildWorkspaceBubblewrap(command, hostCwd, workspace, home, gitStub) {
-  const root = realpathSync(workspace.path);
-  const rel = relative(root, hostCwd);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('execution cwd is outside the assigned workspace');
-  const guestCwd = rel ? join(WORKSPACE_GUEST_ROOT, rel) : WORKSPACE_GUEST_ROOT;
-  const args = [
-    '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
-    '--die-with-parent', '--new-session',
-    '--ro-bind', '/usr', '/usr',
-    '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib',
-    '--symlink', 'usr/lib64', '/lib64', '--symlink', 'usr/sbin', '/sbin',
-    '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home',
-    ...etcBinds(),
-    '--bind', root, WORKSPACE_GUEST_ROOT,
-    // A Git worktree's .git file contains a host-absolute pointer outside the worktree. Hide it completely;
-    // GitStatus is served through Sandbox's constrained Git seam instead of exposing repository metadata.
-    '--ro-bind', gitStub, `${WORKSPACE_GUEST_ROOT}/.git`,
-    '--bind', home, WORKSPACE_GUEST_HOME,
-    '--setenv', 'HOME', WORKSPACE_GUEST_HOME,
-    '--chdir', guestCwd,
-    '--',
-  ];
-  const env = confinedEnv(WORKSPACE_GUEST_HOME);
-  if (command.type === 'shell') {
-    env[CMD_VAR] = command.command;
-    const full = [...args, '/bin/bash', '-c'];
-    return {
-      launch: { type: 'shell', command: `exec ${BWRAP} ${full.map(shellWord).join(' ')} "$${CMD_VAR}"`, env },
-      guestCwd,
-    };
-  }
-  return { launch: { type: 'argv', file: BWRAP, args: [...args, command.file, ...command.args], env }, guestCwd };
-}
-
-export function workspaceForCwd(workspaces, accountUserId, cwd) {
-  if (accountUserId === null) return null;
-  const real = resolve(cwd);
-  return workspaces
-    .filter((workspace) => workspace.userId === accountUserId && workspace.lifecycle === 'active')
-    .find((workspace) => within(real, resolve(workspace.path))) ?? null;
-}
-
-export function createExecutionService({ ctx, db, dataDir, listWorkspaces, managedRuntime }) {
+export function createExecutionService({ ctx, db, dataDir, managedRuntime }) {
   const githubSeam = { warned: false };
   const prepare = async (input, options = {}) => {
     const access = ctx.currentAccess();
@@ -316,29 +276,21 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces, manag
       if (!managedRuntime) throw new Error('managed environment provider is unavailable');
       return await managedRuntime.prepareExecution({ ...input, projectRef }, options.accountUserId ?? ctx.currentAccountUserId());
     }
-    const explicitWorkspace = options.workspace ?? null;
-    const accountUserId = explicitWorkspace?.userId ?? (options.accountUserId !== undefined
+    const accountUserId = options.accountUserId !== undefined
       ? options.accountUserId
-      : ctx.currentAccountUserId());
+      : ctx.currentAccountUserId();
     const owner = options.owner !== undefined ? options.owner === true : access.owner === true;
-    const configuredRoots = explicitWorkspace ? [explicitWorkspace.path] : options.roots ?? ctx.allowedRoots();
-    const roots = bindableRoots([...new Set(configuredRoots.map(String))]);
+    const roots = bindableRoots([...new Set((options.roots ?? ctx.allowedRoots()).map(String))]);
     const cwd = realpathSync(input.cwd);
-    if (explicitWorkspace) {
-      if (!roots[0] || !within(cwd, roots[0])) throw new Error('execution cwd is outside the assigned workspace');
-    } else if (!owner && !roots.some((root) => within(cwd, root))) {
-      throw new Error('execution cwd is outside the current account’s accessible project and workspace roots');
+    if (!owner && !roots.some((root) => within(cwd, root))) {
+      throw new Error('execution cwd is outside the current account’s accessible project roots');
     }
-    const workspace = explicitWorkspace ?? workspaceForCwd(listWorkspaces(), accountUserId, cwd);
-    const confinedWorkspace = explicitWorkspace ?? (input.leaseKind === 'terminal' ? workspace : null);
 
     let home = process.env.HOME || '/';
     let generation = null;
     if (accountUserId !== null) {
       const state = ensureUserHome(dataDir, accountUserId);
-      home = explicitWorkspace
-        ? ensurePrivateDir(join(userRoot(dataDir, accountUserId), 'workspace-homes', explicitWorkspace.id))
-        : state.home;
+      home = state.home;
       generation = state.generation;
     } else if (!owner) {
       home = EPHEMERAL_HOME;
@@ -348,18 +300,6 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces, manag
     let launch;
     let displayCwd = cwd;
     let sanitizeOutput = (text) => String(text);
-    // A terminal launched from a Sandbox workspace is pinned into that worktree even for an operator. The
-    // dedicated GitHub/Sandbox controls keep their existing constrained Git seams; only an interactive shell
-    // needs this implicit workspace confinement when the host did not supply an explicit workspace ref.
-    if (confinedWorkspace) {
-      const probe = bubblewrapProbe();
-      if (!probe.available) throw new Error(`confined execution is unavailable: ${probe.reason || 'bubblewrap probe failed'}`);
-      const prepared = buildWorkspaceBubblewrap(input.command, cwd, confinedWorkspace, home, workspaceGitStub(dataDir, confinedWorkspace));
-      mode = 'confined';
-      launch = prepared.launch;
-      displayCwd = prepared.guestCwd;
-      const prefixes = [realpathSync(confinedWorkspace.path), resolve(confinedWorkspace.path)];
-      sanitizeOutput = (text) => prefixes.reduce((value, prefix) => value.split(prefix).join(WORKSPACE_GUEST_ROOT), String(text));
     // `forceConfined` is what a plugin's background work asks for, and it overrides BOTH shortcuts into
     // direct execution — the operator turn it may happen to run inside, and the instance-wide
     // `confineNonOperators: false`. Neither is a statement about the plugin: the first is about who is
@@ -367,7 +307,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces, manag
     // A long-lived process a plugin supervises is neither, so it either gets a namespace or it does not
     // start — refusing is the honest answer, silently running it with the daemon's whole environment is
     // not.
-    } else if (!options.forceConfined && (owner || (accountUserId !== null && ctx.config.confineNonOperators === false))) {
+    if (!options.forceConfined && (owner || (accountUserId !== null && ctx.config.confineNonOperators === false))) {
       mode = 'direct';
       launch = input.command.type === 'shell'
         ? { type: 'shell', command: input.command.command, env: cleanHostEnv(home) }
@@ -396,7 +336,6 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces, manag
 
     const mintLease = () => createExecutionLease(db, {
       accountUserId,
-      workspaceId: workspace?.id ?? null,
       homeGeneration: generation,
       kind: input.leaseKind,
     });
@@ -415,14 +354,6 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces, manag
       home,
       roots,
       launch,
-      workspace: workspace ? {
-        workspaceId: workspace.id,
-        projectId: workspace.projectId,
-        path: workspace.path,
-        label: workspace.label,
-        branch: workspace.branch,
-        baseRef: workspace.baseRef,
-      } : null,
       lease,
       sanitizeOutput,
     };
@@ -456,9 +387,9 @@ export async function runPrepared(prepared, opts = {}) {
     child.stdin.end(prepared.stdin);
     const result = await new Promise((resolveResult, reject) => {
       child.once('error', reject);
-      // Sanitised HERE rather than at each call site: the same transform hides workspace host paths and
-      // an injected credential, and a caller that forgets it would put a token into an API response or an
-      // error message. It is idempotent, so a caller that sanitises again on its own is unaffected.
+      // Sanitised HERE rather than at each call site: the transform hides an injected credential, and a
+      // caller that forgets it would put a token into an API response or an error message. It is
+      // idempotent, so a caller that sanitises again on its own is unaffected.
       child.once('close', (code, signal) => resolveResult({ code: code ?? -1, signal, output: prepared.sanitizeOutput(output) }));
     });
     settled = true;
@@ -513,15 +444,20 @@ export function resetUserHome({ db, dataDir, userId, expectedGeneration }) {
   return { generation: nextGeneration };
 }
 
-export function removeUserData(dataDir, userId) {
+/** Remove everything this plugin holds for one account, including what an older release left here.
+ *
+ *  The retired account-owned workspaces were REAL Git worktrees cut from the person's own Project
+ *  repositories, so deleting their directories also has to clear the administrative entry each repository
+ *  still holds for them. Which repositories those are is PROVEN while the trees are still there — after
+ *  the deletion nothing is left to prove it against — and only those are pruned, once their directories
+ *  are gone. A prune that cannot be completed is reported, not thrown: the account's data is already
+ *  deleted, and refusing the deletion afterwards would leave an account that can never be removed. */
+export async function removeUserData(dataDir, userId, opts = {}) {
+  const proven = provenLegacyWorktrees(join(userRoot(dataDir, userId), 'workspaces'));
   rmSync(userRoot(dataDir, userId), { recursive: true, force: true });
-}
-
-export function assertRelativePath(value) {
-  const normalized = String(value).trim().replaceAll('\\', '/');
-  if (!normalized || isAbsolute(normalized) || normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
-    throw new Error(`invalid workspace-relative path: ${value}`);
+  const failures = await pruneLegacyWorktreeMetadata(proven, { timeoutMs: opts.pruneTimeoutMs });
+  for (const failure of failures) {
+    opts.warn?.(`legacy workspace metadata for account ${userId} could not be pruned in ${failure.commonDir}: ${failure.message}`);
   }
-  return normalized.replace(/^\.\//, '');
 }
 

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ChevronRight, GitBranch, SquareTerminal, Users } from 'lucide-react';
+import { ChevronRight, SquareTerminal, Users } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
@@ -74,11 +74,6 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
 
         <div className="mt-3">
           <div className="flex items-start gap-1.5">
-            {agent.workspaceId ? (
-              <span className="mt-0.5 shrink-0" title={t.agents.sandboxed}>
-                <GitBranch size={12} className="text-muted-foreground" aria-hidden />
-              </span>
-            ) : null}
             <div className="min-w-0">
               {agent.name ? (
                 <div className="truncate font-mono text-[10px] text-muted-foreground" title={t.agents.name}>{agent.name}</div>
@@ -220,11 +215,6 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                   <DataTableCell lines="auto" title={agent.task}>
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-center gap-1.5">
-                        {agent.workspaceId ? (
-                          <span className="shrink-0" title={t.agents.sandboxed}>
-                            <GitBranch size={12} className="text-muted-foreground" aria-hidden />
-                          </span>
-                        ) : null}
                         {/* The short name the delegation runs under, ahead of the task rather than
                             instead of it: this is the one view whose job is to show what was delegated,
                             and the name is how every other surface refers to the same child. */}

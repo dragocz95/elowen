@@ -118,8 +118,7 @@ it.skipIf(blockers.length > 0)('runs the real file and shell tools against a man
         logger: { info() {}, warn() {}, error() {} },
         currentAccess: () => ({ admin: true, owner: true, accountUserId: ACTOR, projectRef }),
         currentAccountUserId: () => ACTOR, currentSessionId: () => session, defaultCwd: () => '/workspace',
-        assertPathAllowed: hostGuard, displayPath: (p: string) => p, pathStateKey: (p: string) => p,
-        sanitizePathOutput: (t: string) => t, callApprovedByAsk: () => false,
+        assertPathAllowed: hostGuard, callApprovedByAsk: () => false,
         currentIdentity: () => ({ conversation: 'own' }), processes: new ProcessRegistry(),
         control: () => provider,
       };

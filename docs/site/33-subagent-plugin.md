@@ -52,7 +52,6 @@ A child inherits the caller's model, reasoning level, working directory and effe
 - `tools` names an exact toolset drawn from the caller's own tools. An empty list is rejected, and a tool the caller does not hold is refused by name.
 - `subagent_type` runs the child as a typed role from the catalog. Three types ship built in: `explore`, which is read-only, and `plan` and `review`, which keep the caller's full toolset so they can run real checks and write their plan or report, while changing no repository. Administrators add more in the **Agents** panel, and an unknown type is refused with the valid names.
 - `model` and `thinkingLevel` choose a configured model and reasoning effort for this delegation only. `DelegateModels` lists the valid values; by default the child inherits the caller's model.
-- `workspaceId` confines the child to one Git Sandbox worktree as its logical filesystem root.
 
 `DelegateContinue` can lift a read-only child that the caller itself started back into full write access. The child then resumes with its full context under the caller's current permissions, and an explicit tool list from the original call is lifted with it.
 
@@ -62,7 +61,7 @@ With `fork: true` the child starts from the current conversation's own system pr
 
 ### Workflows
 
-A workflow definition is a JSON file the delegating conversation writes first and passes by path; nodes cannot be passed inline. The file is either a node array or an object with optional `title`, `fork` and `background` beside its `nodes`. Each node carries a unique short `id` and a complete self-contained `task`, and may set `deps`, `model`, `thinkingLevel`, `fork`, `read_only`, `tools`, `subagent_type` and `workspaceId`. At least one node must have no dependencies, dependency ids must exist, and cycles are rejected.
+A workflow definition is a JSON file the delegating conversation writes first and passes by path; nodes cannot be passed inline. The file is either a node array or an object with optional `title`, `fork` and `background` beside its `nodes`. Each node carries a unique short `id` and a complete self-contained `task`, and may set `deps`, `model`, `thinkingLevel`, `fork`, `read_only`, `tools` and `subagent_type`. At least one node must have no dependencies, dependency ids must exist, and cycles are rejected.
 
 A node whose task needs an earlier result must be reachable through the dependency chain, because a dependent node receives only a short handover from each direct dependency, at most 4,000 characters, and nothing from further upstream. The handover is the section the node wrote under a `## Handover` heading, or the tail of its result when it wrote none.
 

@@ -504,16 +504,19 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   }));
 
-  // Download one of the caller's OWN conversations as a self-contained HTML transcript (`?format=html`,
-  // the default) or a JSONL session file (`?format=jsonl`). Owner-scoped exactly like /brain/messages —
-  // ownership is enforced in exportSession via the store row's user_id. Rendered into a private temp dir
-  // through PI's own exporter, streamed as a download attachment, then the temp dir is removed. Distinct
-  // path segment (`/export`) so it never collides with the `:id` delete/patch handlers above.
+  // Download an authorized transcript as self-contained HTML (`?format=html`, the default) or JSONL.
+  // Ownership/admin oversight is exactly the /brain/messages read policy; export never grants write access.
+  // Rendered into a private temp dir, streamed as a download attachment, then removed. Distinct path
+  // segment (`/export`) so it never collides with the `:id` delete/patch handlers above.
   app.get('/brain/sessions/:id/export', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     const format = c.req.query('format') === 'jsonl' ? 'jsonl' : 'html';
     let out;
-    try { out = await d.brain.exportSession(c.get('user').id, c.req.param('id'), format); }
+    try {
+      out = await d.brain.exportSession(c.get('user').id, c.req.param('id'), format, {
+        anyOwner: !!c.get('user')?.is_admin,
+      });
+    }
     catch (e) {
       // Only a genuine ownership/lookup miss is a 404 — a render/parse failure must surface as 500 with a
       // log line, not be masked as "unknown session" (which hides real bugs and leaves nothing to debug).

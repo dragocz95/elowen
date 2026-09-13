@@ -76,8 +76,8 @@ export function buildShareFileTool(deps: ShareFileDeps) {
   async function managed(rawPath: string, toolDeps: ShareFileDeps): Promise<StoredChatFile | string | null> {
     // The ambient execution target decides the BRANCH — explicitly, never by matching a refusal string.
     // Only a NON-managed turn answers from the host branch; the shared guest read below validates the
-    // context (legacy workspace scope, missing linked account, session) and then the path, and every
-    // failure is a managed refusal — the host path guard is never consulted, whatever the input looks like.
+    // context (missing linked account, session) and then the path, and every failure is a managed
+    // refusal — the host path guard is never consulted, whatever the input looks like.
     if (!isManagedProjectTurn()) return null;
     const artifact = await readManagedGuestArtifact(toolDeps.sandbox, rawPath, MAX_BYTES);
     if (typeof artifact === 'string') return `ShareFile: ${artifact}`;

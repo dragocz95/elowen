@@ -33,9 +33,9 @@ The terms used by Elowen in the Web UI, CLI, channels, and documentation.
 | Term | Meaning |
 | --- | --- |
 | **project** | A registered directory and access boundary. Project access determines which files and paths an account and its delegated work may use. |
-| **Sandbox** | Elowen's account-scoped execution and workspace boundary. It prevents a turn from silently using another account's workspace. |
-| **workspace** | An account-owned Git worktree created from a Project, usually on a generated branch. |
-| **worktree** | A Git working directory attached to a repository and branch. Sandbox workspaces are worktrees. |
+| **Sandbox** | The bundled plugin that owns persistent managed Project environments and confines non-operator commands on the host. |
+| **working directory** | The directory a conversation's turns actually run in. `/cd` reports and changes it, and a delegated child inherits it. |
+| **worktree** | A Git working directory attached to a repository and branch, created with `git worktree` in your own checkout. |
 | **tool** | A callable action exposed to the brain, such as reading a file, running a command, searching code, or calling a plugin API. Tool calls pass through permission checks. |
 | **terminal** | The interactive shell and pseudo-terminal surface. Terminal sessions use `tmux`; embedded chat does not need `tmux` for ordinary answers. |
 | **plan mode** | A mode that proposes an approach before implementation. Its write and shell restrictions are execution guardrails, not filesystem isolation. |

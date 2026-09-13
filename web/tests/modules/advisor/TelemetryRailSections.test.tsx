@@ -9,7 +9,6 @@ import { BrainChat } from '../../../modules/advisor/BrainChat';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { TelemetryPanel } from '../../../modules/advisor/TelemetryPanel';
 import type { ProcessInfo } from '../../../lib/types';
-import { en } from '../../../lib/i18n/dictionaries/en';
 
 // The rail is the web's answer to the CLI telemetry panel: what runs RIGHT NOW (goal, workflows,
 // sub-agents, background processes) must be visible without opening the transcript, and it must survive
@@ -112,17 +111,16 @@ const subagentEvents = (over: {
   sessionId: string; status: 'running' | 'done'; task: string; id: string; name?: string;
   detail?: string; model?: string; tokens?: number; thinkingLabel?: string;
   background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged';
-  tools?: number; seconds?: number; workspaceId?: string;
+  tools?: number; seconds?: number;
 }) => ([
   { type: 'tool', name: 'Delegate', id: over.id },
   { type: 'subagent', tools: 1, seconds: 2, ...over },
 ]);
 
-const workflowEvents = (status: 'running' | 'done', workspaceRef?: { workspaceId: string; projectId: number }) => ([
+const workflowEvents = (status: 'running' | 'done') => ([
   { type: 'tool', name: 'WorkflowStart', id: 'w-call' },
   {
     type: 'workflow', id: 'wf-1', toolCallId: 'w-call', title: 'Rail parity', status,
-    ...(workspaceRef ? { workspaceRef } : {}),
     nodes: [
       { id: 'a', task: 'prozkoumat', status: 'done', deps: [] },
       { id: 'b', task: 'napsat', status: 'running', deps: ['a'] },
@@ -394,32 +392,6 @@ describe('telemetry rail — live work sections', () => {
     expect(section.textContent).toContain('hledá volající');
   });
 
-  it('marks a sandbox-scoped sub-agent with the workspace icon on the rail and in the agents table', async () => {
-    const es = await renderRail();
-    es.emit('snapshot', snapshot({
-      events: [
-        ...subagentEvents({ id: 't1', sessionId: 'child-1', status: 'running', task: 'staví v sandboxu', workspaceId: 'ws_abc123' }),
-        ...subagentEvents({ id: 't2', sessionId: 'child-2', status: 'running', task: 'bez sandboxu' }),
-      ],
-    }));
-    const section = await screen.findByTestId('telemetry-agents');
-    expect(within(section).getAllByTitle('Running in an isolated sandbox')).toHaveLength(1);
-    const sandboxedRow = within(section).getByTitle('Running in an isolated sandbox').closest('li');
-    expect(sandboxedRow).not.toBeNull();
-
-    await act(async () => { fireEvent.click(within(sandboxedRow as HTMLElement).getByRole('button')); });
-    const dialog = await screen.findByRole('dialog', { name: 'Agents' });
-    // Same signal in the drill-in table: exactly the sandboxed row gets the icon, the plain one does not.
-    expect(within(dialog).getAllByTitle('Running in an isolated sandbox')).toHaveLength(1);
-  });
-
-  it('marks a sandbox-scoped workflow with the workspace icon on the rail', async () => {
-    const es = await renderRail();
-    for (const event of workflowEvents('running', { workspaceId: 'ws_abc123', projectId: 1 })) es.emit(event.type, event);
-    const section = await screen.findByTestId('telemetry-workflow');
-    expect(within(section).getByTitle('Running in an isolated sandbox')).toBeInTheDocument();
-  });
-
   // The rail is dragged between 240px and 560px on desktop and pinned to the phone's width in the drawer,
   // so nothing in it may assume a width. Whenever a row could not shrink to the current one — a branch
   // name, a heading, a process command beside its fixed-size icon — the rail answered with a horizontal
@@ -439,37 +411,6 @@ describe('telemetry rail — live work sections', () => {
     const section = await screen.findByTestId('telemetry-project');
     // A branch name is one unbreakable token, so without a truncation of its own it has no smaller width.
     expect(classesOf(within(section).getByTitle(LONG_BRANCH))).toEqual(expect.arrayContaining(['min-w-0', 'truncate']));
-  });
-
-  // A conversation bound to a Sandbox workspace runs every shell command in that worktree's container, so
-  // the foot has to say so beside the directory — and explain, behind the shared help affordance, what
-  // that changes and how to leave. Nothing is shown when no workspace is bound.
-  it('shows the workspace badge with the workspace label when the daemon reports a bound workspace', async () => {
-    server.use(http.get('*/api/brain/status', () => HttpResponse.json({
-      running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
-      project: {
-        cwd: '/var/www/elowen', branch: 'main',
-        workspace: { workspaceId: 'ws_1', label: 'lease-fixes', branch: 'elowen/u1/lease-fixes', path: '/data/sandbox/users/1/workspaces/lease-fixes', confined: true },
-      },
-    })));
-    await renderRail();
-    const badge = await screen.findByTestId('telemetry-workspace');
-    // The badge's own dictionary entry, so the assertion tracks the shipped label.
-    expect(badge.textContent).toContain(en.telemetry.workspaceBadge);
-    expect(badge.textContent).toContain('lease-fixes');
-    expect(within(badge).getByRole('button', { name: 'Help' })).toBeInTheDocument();
-    // The client's own directory is still the one shown; the worktree lives under the badge.
-    expect(within(screen.getByTestId('telemetry-project')).getByTitle('/var/www/elowen')).toBeInTheDocument();
-  });
-
-  it('shows no Sandbox badge for a conversation with no bound workspace', async () => {
-    server.use(http.get('*/api/brain/status', () => HttpResponse.json({
-      running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
-      project: { cwd: '/var/www/elowen', branch: 'main', workspace: null },
-    })));
-    await renderRail();
-    await screen.findByTestId('telemetry-project');
-    expect(screen.queryByTestId('telemetry-workspace')).toBeNull();
   });
 
   it('lets a section heading and its live rows shrink with the rail', async () => {

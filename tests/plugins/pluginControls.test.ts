@@ -8,21 +8,18 @@ import type { KnownControls, PluginCapabilities, PluginControl } from '../../src
 import { ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
 import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
-import type { WorkspacePathView } from '../../src/plugins/pathView.js';
 import { GUEST_WRITE_OP_BYTES } from '../../src/brain/managedArtifacts.js';
 import { managedGuestFs, PROJECT } from '../helpers/managedGuest.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const fakeLsp = (): KnownControls['lsp'] => ({ diagnosticsEnabled: () => true });
 const fakeGitHub = (): KnownControls['github'] => ({ sessionCredential: () => ({ token: 'secret', login: 'octocat' }) });
-// The complete Sandbox contract: the workspace and managed Project environment methods. Built from the
-// exported method list so a new required method lands here too. Refusal of an incomplete control has its
-// own test below.
-const SANDBOX_WORKSPACE_METHODS = [
-  'workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution',
-] as const;
+// The complete Sandbox contract: process launch plus the managed Project environment methods. Built from
+// the exported method list so a new required method lands here too. Refusal of an incomplete control has
+// its own test below.
+const SANDBOX_LAUNCH_METHODS = ['prepareExecution'] as const;
 const fakeSandbox = (): KnownControls['sandbox'] => Object.fromEntries(
-  [...SANDBOX_WORKSPACE_METHODS, ...ENVIRONMENT_CONTROL_METHODS]
+  [...SANDBOX_LAUNCH_METHODS, ...ENVIRONMENT_CONTROL_METHODS]
     .map((name) => [name, () => undefined]),
 ) as unknown as KnownControls['sandbox'];
 const fakeWorkflow = (): KnownControls['workflow'] => ({
@@ -107,7 +104,7 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
   it('refuses an incomplete known control', () => {
     const merged = new PluginRegistry();
     ownerMerges(merged, 'workflow', 'workflow', { activeCount: () => 0 } as unknown as PluginControl);
-    ownerMerges(merged, 'sandbox', 'sandbox', { workspaceRoots: () => [] } as unknown as PluginControl);
+    ownerMerges(merged, 'sandbox', 'sandbox', { prepareExecution: () => undefined } as unknown as PluginControl);
     expect(contextOver(merged, { reads: ['controls'] }).control('workflow')).toBeUndefined();
     expect(contextOver(merged, { reads: ['controls'] }).control('sandbox')).toBeUndefined();
   });
@@ -158,36 +155,6 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     expect(merged.control('workflow')).toBeUndefined();
   });
 
-  /** The delegating plugins are NOT approved consumers of the Sandbox control, and must not become ones:
-   *  it carries process-launch authority. They still have to assign workspaces to the children they spawn,
-   *  so the registry serves that one operation itself. Reaching for the control instead is what made every
-   *  live WorkflowStart with a workspaceId fail while the plugin's own tests passed. */
-  it('serves the subagent plugin a workspace resolver instead of the Sandbox control it is refused', () => {
-    const merged = new PluginRegistry();
-    ownerMerges(merged, 'sandbox', 'sandbox', {
-      ...fakeSandbox(),
-      workspacesFor: () => [{ workspaceId: 'ws_1', projectId: 7, path: '/host/ws_1', label: 'ws', branch: 'b', baseRef: 'main' }],
-      resolveWorkspace: ({ workspace }) => ({ ...workspace, accountUserId: 1, path: '/host/ws_1' }),
-    } as KnownControls['sandbox']);
-    const warnings: string[] = [];
-    const ctx = contextOver(merged, { reads: ['controls'] }, (message) => warnings.push(message), 'subagent');
-
-    expect(ctx.control('sandbox')).toBeUndefined();
-    expect(warnings.join('\n')).toContain('not an approved consumer');
-    expect(ctx.resolveWorkspaceScope({ admin: false, projectIds: [7], accountUserId: 1 }, 'ws_1'))
-      .toEqual({ workspaceId: 'ws_1', projectId: 7 });
-    // Nothing requested and nothing inherited is the ordinary project-scoped turn, not an error.
-    expect(ctx.resolveWorkspaceScope({ admin: false, projectIds: [7], accountUserId: 1 })).toBeUndefined();
-    // An account-less turn is refused rather than resolved against whoever owns the rows.
-    expect(() => ctx.resolveWorkspaceScope({ admin: true, projectIds: [], accountUserId: null }, 'ws_1'))
-      .toThrow(/requires a linked Elowen account/);
-    // It answers "does this workspace id belong to this account", so it rides the same deny-by-default
-    // grant as the control it replaces rather than being open to every enabled plugin.
-    expect(() => contextOver(merged, {}, undefined, 'stranger')
-      .resolveWorkspaceScope({ admin: false, projectIds: [7], accountUserId: 1 }, 'ws_1'))
-      .toThrow(/reads:\['controls'\] capability/);
-  });
-
   it('lets a core-owned privileged control replace a plugin claim on its reserved key', () => {
     const merged = new PluginRegistry();
     ownerMerges(merged, 'untrusted-plugin', 'publishedSitesGateway', { hostnameBase: () => 'evil.test' });
@@ -212,12 +179,6 @@ describe('ctx.readManagedProjectFile — the guest read the registry performs fo
   const OWNER: TurnIdentity = { platform: 'web', userId: '1', admin: true, owner: true, elowenUserId: 1, conversation: 'own' };
   /** A shared-channel turn with no linked Elowen account: the provider has no membership to authorize. */
   const UNLINKED: TurnIdentity = { platform: 'discord', userId: '77', admin: true, owner: false, conversation: 'shared' };
-  const WORKSPACE_VIEW: WorkspacePathView = {
-    kind: 'workspace',
-    workspace: { workspaceId: 'w', projectId: 7 },
-    root: '/worktrees/main',
-    resolve: (p) => p, display: (p) => p, stateKey: (p) => p, sanitize: (p) => p,
-  };
 
   /** A COMPLETE Sandbox control whose projectFiles is the guest-contract stand-in, so the registry's own
    *  completeness check passes and the read reaches a provider that enforces the real bounds. */
@@ -229,7 +190,6 @@ describe('ctx.readManagedProjectFile — the guest read the registry performs fo
     projectRef?: { kind: 'managed'; projectId: number } | null;
     identity?: TurnIdentity;
     sessionId?: string;
-    pathView?: WorkspacePathView;
   }
 
   function read(
@@ -248,7 +208,6 @@ describe('ctx.readManagedProjectFile — the guest read the registry performs fo
         identity: scope.identity ?? OWNER,
         ...(scope.projectRef === null ? {} : { projectRef: scope.projectRef ?? PROJECT }),
         ...(scope.sessionId === undefined ? { sessionId: 'brain-1' } : scope.sessionId ? { sessionId: scope.sessionId } : {}),
-        ...(scope.pathView ? { pathView: scope.pathView } : {}),
       },
     );
   }
@@ -304,14 +263,6 @@ describe('ctx.readManagedProjectFile — the guest read the registry performs fo
     const { fs, merged } = withGuest({ '/workspace/wf.json': 'x' });
     await expect(read(merged, '/workspace/wf.json', { sessionId: '' }))
       .rejects.toThrow(/require a conversation/);
-    expect(fs.calls()).toBe(0);
-  });
-
-  // A workspace-scoped delegated child is narrower than the project and must not widen back into it.
-  it('refuses a turn already narrowed to a legacy exact workspace', async () => {
-    const { fs, merged } = withGuest({ '/workspace/wf.json': 'x' });
-    await expect(read(merged, '/workspace/wf.json', { pathView: WORKSPACE_VIEW }))
-      .rejects.toThrow(/exact workspace cannot widen into a managed project/);
     expect(fs.calls()).toBe(0);
   });
 

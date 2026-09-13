@@ -17,13 +17,13 @@ The source checkout currently bundles `askuser`, `changelog`, `elowen-docs`, `fi
 
 What each bundled plugin contributes:
 
-- `askuser` registers `AskUserQuestion`, which is workspace-safe and plan-safe.
+- `askuser` registers `AskUserQuestion`, which is plan-safe.
 - `changelog` registers no tools. It serves the entries, seen-state, and asset API routes plus a web page, ships Elowen's release notes as Markdown so an update carries the new notes to every instance, and shows each account an unread count on its navigation entry until the page is opened.
 - `elowen-docs` registers `DocsSearch`, semantic search over the product documentation.
 - `files` registers the file tools `Read`, `Write`, `Edit`, `ListDir`, `Search`, `FileInfo`, `GitStatus`, `Glob`, and `Grep`; all are plan-safe except `Write` and `Edit`.
 - `mcp` manages external MCP servers through `AddMcpServer`, `ListMcpServers`, `RemoveMcpServer`, `ReconnectMcpServer`, `ListMcpResources`, `ReadMcpResource`, and the dynamic `mcp__*` tool family, with the two resource tools deferred into `ToolSearch`.
 - `runtime-context` registers no tools. It injects date, time, timezone, sender, and chat type into every turn, in the user message so the prompt cache is preserved.
-- `sandbox` registers the Sandbox and Environment tool family and publishes the `sandbox` control; see "Managed projects and environments" below.
+- `sandbox` registers the Environment tool family and publishes the `sandbox` control; see "Managed projects and environments" below.
 - `statusline` registers no tools. It renders context, token totals, speed, and cost below the conversation.
 - `subagent` registers the delegation and workflow tools, from `Delegate` and its status and result helpers to `WorkflowStart` and the other workflow controls.
 - `terminal` registers `Bash`, `ListProcesses`, `ProcessOutput`, and `KillProcess`, and is `userGrantable`.
@@ -75,7 +75,6 @@ The file must be named `elowen-plugin.json`:
     "controls": ["my-domain"]
   },
   "requiresControls": ["shared-domain"],
-  "workspaceSafe": true,
   "icons": {
     "MyTool": "🔧"
   },
@@ -181,7 +180,7 @@ Capabilities are deny-by-default:
 
 `mutates` values currently include `prompt`, `turnContext`, `tools`, `memory`, `events`, `workflow-dag`, and `users`. The host requires explicit, all-or-nothing acknowledgement when enabling or re-enabling a plugin that declares `tools`, `memory`, `events`, `workflow-dag`, or `users` mutation authority. A warning badge is not consent; turning a plugin off needs no acknowledgement.
 
-`reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data. `workspaceSafe: true` is a positive declaration that every registered tool is safe inside an exact delegated workspace; omit it for mixed or unsafe plugins, or mark individual tools with `workspaceSafe: true`. Even a workspace-safe plugin cannot grant host-filesystem tools to an explicitly workspace-scoped child; the spawner withholds tools such as `WorkflowStart` whose definitions use the host workflow directory.
+`reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data.
 
 ## Entry point and tools
 
@@ -213,7 +212,7 @@ export function register(ctx) {
 
 Use PI's `defineTool` and TypeBox parameter schemas. Return a normal PI tool result. Validate external input inside the handler and keep side effects explicit.
 
-`registerTool` takes options alongside the tool: `ownerUserId` scopes the tool to one account, `hostFilesystem` marks a tool whose implementation can see the daemon host filesystem outside the path view (workspace-scoped children then omit it fail-closed), `workspaceSafe` declares it safe inside an exact delegated workspace, and `projectId` binds the tool's declaration to one managed Project. Omit the scoping options for an instance-wide contribution:
+`registerTool` takes options alongside the tool: `ownerUserId` scopes the tool to one account and `projectId` binds the tool's declaration to one managed Project. Omit the scoping options for an instance-wide contribution:
 
 ```javascript
 ctx.registerTool(tool, { ownerUserId });
@@ -286,7 +285,7 @@ const spill = await ctx.persistToolOutput({ toolCallId, text: fullOutput });
 const note = spill ? `full output saved to ${spill.path} (${spill.bytes} bytes), read it with the Read tool` : '';
 ```
 
-`toolCallId` is the first argument PI passes to a tool's `execute`, and the host encodes it for the filesystem. The text lands in the host's existing tool-result spill directory for the current conversation, so the session reads it back through the ordinary path guard and it is removed when that conversation is cleared or deleted. Do not build a second store or a plugin-private directory for this. The call resolves `null` whenever no readable path can be produced: outside a prompt turn, inside a workspace-confined turn, and when a different file already occupies the name. It rejects, loudly rather than truncating, on a real write failure or on text above the maximum size, because the excerpt promises the complete output. Handle both outcomes instead of assuming a path.
+`toolCallId` is the first argument PI passes to a tool's `execute`, and the host encodes it for the filesystem. The text lands in the host's existing tool-result spill directory for the current conversation, so the session reads it back through the ordinary path guard and it is removed when that conversation is cleared or deleted. Do not build a second store or a plugin-private directory for this. The call resolves `null` whenever no readable path can be produced: outside a prompt turn, and when a different file already occupies the name. It rejects, loudly rather than truncating, on a real write failure or on text above the maximum size, because the excerpt promises the complete output. Handle both outcomes instead of assuming a path.
 
 ### Secrets
 
@@ -563,7 +562,7 @@ Host events are a separate seam from hooks. `publishEvent`, `deleteEventsForTarg
 `tools.call.after` is the only channel through which one plugin learns that another wrote a file; the `files` plugin broadcasts nothing of its own. A subscriber sees `{ tool, params, result }` after a permitted execute resolves:
 
 - Act on `tool === 'Edit'` or `tool === 'Write'`, and only when `result.details.ok === true`. A failed or guard-refused Edit resolves with an error result instead of throwing, so the event fires for it too and `ok` is the only thing separating a real write from nothing having happened. A call the permission gate denied never reaches the hook at all.
-- Resolve the path with `ctx.assertPathAllowed(params.file_path)`. The hook runs inside the tool's turn scope, so a workspace-relative path resolves exactly as it did for the tool. `result.details.path` is a display path, not a filesystem path.
+- Resolve the path with `ctx.assertPathAllowed(params.file_path)`. The hook runs inside the tool's turn scope, so the path resolves exactly as it did for the tool. `result.details.path` is a display path, not a filesystem path.
 - Do not assume the bytes on disk are final. Subscribers for one hook name run concurrently, and one of them may still rewrite the file; a formatter does exactly that. Prefer invalidating what you cached over capturing content here.
 - Do no slow work. The tool result waits for this hook, so notify or invalidate and return; anything that has to run long belongs behind a subsequent tool call.
 
@@ -594,7 +593,7 @@ if (!sandbox) {
   throw new Error('Sandbox is unavailable');
 }
 
-const roots = sandbox.workspaceRoots({ projectIds: [projectId] });
+const environment = await sandbox.environmentFor({ project, accountUserId });
 ```
 
 Never cache the result across calls: a plugin reload replaces the live generation. Treat `undefined` as a legitimate disabled or unavailable dependency. Do not return fabricated empty domain state.
@@ -609,11 +608,11 @@ A Project's execution target is declared in the shared wire contract, never infe
 
 A managed Project runs in its own persistent environment that survives across turns: a systemd-nspawn machine driven through a root-owned privileged helper, on a persistent environment disk filled from a published, content-addressed root filesystem artifact. The artifact is built once in the release pipeline, downloaded by the host and verified against a pinned sha256 digest, so nothing is built on the host and there is no image store to consult; `plugins/sandbox/lib/rootfsCatalog.mjs` holds the catalogue (references read like `project-base@1`) and `plugins/sandbox/lib/rootfsArtifacts.mjs` performs the download and verification. Three volumes are mounted read-write: the project itself under its own name (`/kolin` for a project with the slug `kolin`, which is also the working directory), a home directory, and a data volume at `/data`. Elowen's own guest artifacts (plan mirrors, tool-result spills) live under `/data/.elowen`, off the project tree. Each execution runs inside the machine as a transient systemd unit. Networking is either shared with the host with loopback denied, or none. Default limits are 1 CPU, 1024 MB of memory, and 512 pids. Machine specs are frozen and host-derived; a caller-authored mount list is not an execution capability. Every machine gets its own uid range and is confined with dropped capabilities, a seccomp policy, `DevicePolicy=closed` and read-only binds.
 
-Plugins reach this machinery through the `sandbox` control, subject to the consumer allowlist described above. The control's workspace half exposes workspace roots and listings, the active workspace for a conversation and Project, workspace resolution that refuses stale, orphaned, foreign, path-mismatched, or inaccessible workspaces, delegation lease acquisition, and `prepareExecution`. `prepareExecution` takes a closed set of lease kinds (`terminal`, `github`, `sites`, `files`, `editor`, `lsp`, `mcp`, `browser`, `cron`) and offers no way to ask for unconfined execution: an explicit request always runs under bubblewrap. Its result carries a mode of `confined`, `direct`, or `managed`, a host working directory beside the logical display directory a workspace-scoped model sees, the home, the roots, the launch shape, bounded stdin, completion metadata, cancel, the workspace, the lease, and an output sanitizer.
+Plugins reach this machinery through the `sandbox` control, subject to the consumer allowlist described above. Besides the environment half below, it exposes delegation lease acquisition and `prepareExecution`. `prepareExecution` takes a closed set of lease kinds (`terminal`, `github`, `sites`, `files`, `editor`, `lsp`, `mcp`, `browser`, `cron`) and offers no way to ask for unconfined execution: an explicit request always runs under bubblewrap. Its result carries a mode of `confined`, `direct`, or `managed`, the host working directory and home, the roots, the launch shape, bounded stdin, completion metadata, cancel, the lease, and an output sanitizer.
 
 The control's environment half exposes environment lookup and provisioning requests, environment operations, guest project files, access revocation, snapshots, logs, managed worktrees, and preview bindings. Environment state is one of `unprovisioned`, `starting`, `running`, `stopped`, `failed`, `deleting`, or `deleted`, and desired state is one of `running`, `stopped`, or `deleted`. Actions are start, stop, restart, delete, snapshot, restore, and limits. Guest file operations are a closed union that includes chunked writes, and an upload handle is bound to the original account, Project, generation, target, and version.
 
-An execution lease is durable and persisted in shared SQLite, so the daemon and forked runners observe the same blockers. The caller owns the process lifecycle: heartbeat while alive, transfer the handle when foreground work detaches, and release only on spawn failure or a real exit. Releasing a conversation's workspace bindings is refused with HTTP 409 while a lease is held, and a managed lease cancels and verifies guest processes, not merely the outer runtime client. The optional `SandboxControl` methods `activeSessionWorkspace` and `releaseSessionWorkspaces` do not exist on an older Sandbox build, so feature-detect them and degrade.
+An execution lease is durable and persisted in shared SQLite, so the daemon and forked runners observe the same blockers. The caller owns the process lifecycle: heartbeat while alive, transfer the handle when foreground work detaches, and release only on spawn failure or a real exit. A managed lease cancels and verifies guest processes, not merely the outer runtime client.
 
 ## Browser UI
 

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
 import { createBootRecovery } from '../../src/brain/recovery/providers.js';
-import type { KnownControls, PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
+import type { PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
@@ -282,10 +282,15 @@ describe('BrainService', () => {
     reg.liveWebSockets.add({ plugin: 'demo', close: (code, reason) => { closed.push([code, reason]); } });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
+    const channelReset = vi.spyOn((svc as unknown as {
+      channelService: { resetChannels(reason: string, options?: unknown): Promise<void> };
+    }).channelService, 'resetChannels').mockResolvedValue();
     await svc.start(1);
 
     expect(await svc.reloadPlugins()).toBe(true);
     expect(closed).toEqual([[1001, 'plugin reloaded']]);
+    expect(channelReset).toHaveBeenCalledWith('plugins reloaded');
+    expect(channelReset.mock.calls[0]).toHaveLength(1);
   });
 
   it('hangs up plugin WebSockets on the terminal shutdown drain', async () => {
@@ -3777,68 +3782,6 @@ describe('BrainService', () => {
     expect(hist?.text).toContain('1× image');
   });
 
-  it.each(['owner', 'channel'])('resolves %s workspace switches within the same turn without changing the spawned cwd', async (surface) => {
-    const d = fakeDeps();
-    const project = tmpDir('owner-project');
-    const workspace = tmpDir('owner-workspace');
-    d.db.prepare('INSERT INTO projects (id, slug, path) VALUES (7, ?, ?)').run('owner-project', project);
-    (d as unknown as { projects: ProjectStore }).projects = new ProjectStore(d.db);
-    (d as unknown as { policy: () => unknown }).policy = () => ({
-      allowedProjectIds: new Set([7]),
-      allowedPaths: () => [project, workspace],
-    });
-    const reg = new PluginRegistry();
-    let selected = true;
-    reg.contextFor('sandbox', {}, { info() {}, warn() {}, error() {} }).registerControl('sandbox', {
-      workspaceRoots: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace }],
-      workspacesFor: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }],
-      activeWorkspace: () => selected ? ({ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }) : null,
-      resolveWorkspace: async () => ({ ref: { workspaceId: 'ws-owner', projectId: 7 }, path: workspace, accountId: 1, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
-      acquireDelegationLease: async () => ({ heartbeat: () => {}, release: () => {} }),
-      prepareExecution: async () => ({}),
-      // This turn-level test never reaches a managed environment, so any real call is unexpected.
-      // An incomplete control would resolve as no provider and quietly test the fallback path instead.
-      environmentFor: async () => { throw new Error('environmentFor is not expected in this fixture'); },
-      requestEnvironment: async () => { throw new Error('requestEnvironment is not expected in this fixture'); },
-      environmentOperation: async () => { throw new Error('environmentOperation is not expected in this fixture'); },
-      projectFiles: async () => { throw new Error('projectFiles is not expected in this fixture'); },
-      revokeProjectAccess: async () => { throw new Error('revokeProjectAccess is not expected in this fixture'); },
-      environmentSnapshots: async () => { throw new Error('environmentSnapshots is not expected in this fixture'); },
-      environmentLogs: async () => { throw new Error('environmentLogs is not expected in this fixture'); },
-      managedWorktrees: async () => { throw new Error('managedWorktrees is not expected in this fixture'); },
-      projectPreviewBinding: async () => { throw new Error('projectPreviewBinding is not expected in this fixture'); },
-      // A publication is a durable transport of a published Site, which this turn-level fixture never
-      // has: an incomplete control would resolve as no provider at all and silently turn this into a
-      // test of the fallback path.
-      projectPublicationBinding: async () => { throw new Error('projectPublicationBinding is not expected in this fixture'); },
-      projectPublicationRelease: async () => { throw new Error('projectPublicationRelease is not expected in this fixture'); },
-      releaseAdoptedWorkspace: async () => { throw new Error('releaseAdoptedWorkspace is not expected in this fixture'); },
-    } satisfies KnownControls['sandbox'] as never);
-    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
-    let scopedCwd: string | undefined;
-    d.session.prompt.mockImplementationOnce(async (text: string, options?: { preflightResult?: (success: boolean) => void }) => {
-      scopedCwd = currentWorkDir();
-      selected = false;
-      expect(currentWorkDir()).toBe(project);
-      selected = true;
-      expect(currentWorkDir()).toBe(workspace);
-      options?.preflightResult?.(true);
-      d.session.messages.push({ role: 'user', content: text }, { role: 'assistant', content: 'ok' });
-    });
-    const svc = new BrainService(d as never);
-    const { sessionId } = await svc.start(1, { cwd: project });
-    if (surface === 'owner') await svc.send({ userId: 1, text: 'work here', clientCwd: project, session: sessionId });
-    else await svc.channelSend({ channelId: 'workspace-context', ownerUserId: 1, writerUserId: 1, clientCwd: project,
-      identity: { platform: 'discord', userId: 'linked', elowenUserId: 1, admin: false, owner: false, conversation: 'shared' },
-      policy: { allowedProjectIds: new Set([7]), allowedPaths: () => [project, workspace] },
-    }, 'work here');
-
-    expect(scopedCwd).toBe(workspace);
-    const prompt = d.session.prompt.mock.calls.at(-1)![0] as string;
-    expect(prompt).toContain(`effective working directory for this turn is ${workspace}`);
-    expect(d.store.getSession(sessionId)?.work_dir).toBe(project);
-  });
-
   it('places volatile turn-context around the owner text, resolves each provider once, and keeps history clean', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
@@ -4433,6 +4376,28 @@ describe('BrainService user-instruction layering', () => {
     const svc = new BrainService(d as never);
     await svc.channelSend({ channelId: 'disc-p', ownerUserId: 1, policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] } }, 'ahoj');
     expect(seen).toContain(1); // owner id — the one global persona, identical on every platform
+  });
+
+  it('wires prompt-refresh reset intent for user instructions and brand changes', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const channelService = (svc as unknown as {
+      channelService: { resetChannels(reason: string, options?: unknown): Promise<void> };
+    }).channelService;
+    const reset = vi.spyOn(channelService, 'resetChannels').mockResolvedValue();
+    vi.spyOn(svc, 'restart').mockResolvedValue();
+
+    await svc.applyUserInstructionsChange(7);
+    await svc.applyBrandChange();
+
+    expect(reset).toHaveBeenNthCalledWith(1, 'user instructions changed', {
+      intent: 'prompt_refresh',
+      settingsFilter: expect.any(Function),
+    });
+    const userFilter = (reset.mock.calls[0]![1] as { settingsFilter(id: number): boolean }).settingsFilter;
+    expect(userFilter(7)).toBe(true);
+    expect(userFilter(8)).toBe(false);
+    expect(reset).toHaveBeenNthCalledWith(2, 'brand changed', { intent: 'prompt_refresh' });
   });
 
   it('applyUserInstructionsChange restarts the owner session AND disposes channel sessions', async () => {
@@ -5105,6 +5070,7 @@ describe('sub-agent session tap + owner steering', () => {
     d.store.createSession({ id: 'brain-parent', userId: 1, model: 'm' });
     d.store.createSession({
       id: 'brain-ch-subagent-sub-dlg-live', userId: 1, model: 'm', parentSessionId: 'brain-parent',
+      delegatedAccess: { admin: false, owner: true, projectIds: [], permissionBoundary: null },
     });
     const live: unknown[] = [];
 
@@ -9286,6 +9252,31 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
     return { d, svc, sessionId, b, c, abort, sessions };
   }
 
+  it('keeps direct-child history visible and reads grandchild history through the same owner ancestry', async () => {
+    const { d, svc, b, c } = await seedNest();
+    const appendAnswer = (sessionId: string, id: string, text: string) => d.store.appendMessage({
+      id,
+      sessionId,
+      parentId: null,
+      role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop' },
+    });
+    appendAnswer(b, 'nested-b-answer', 'direct child history');
+    appendAnswer(c, 'nested-c-answer', 'grandchild history');
+
+    const direct = await svc.tapSessionSnapshot(1, b, () => {});
+    const grandchild = await svc.tapSessionSnapshot(1, c, () => {});
+
+    expect(direct.snapshot.history).toEqual([
+      expect.objectContaining({ id: 'nested-b-answer', role: 'assistant', text: 'direct child history' }),
+    ]);
+    expect(grandchild.snapshot.history).toEqual([
+      expect.objectContaining({ id: 'nested-c-answer', role: 'assistant', text: 'grandchild history' }),
+    ]);
+    direct.off();
+    grandchild.off();
+  });
+
   it('continues the grandchild by owner drill-in: the durable parent chain authorizes the deepest level', async () => {
     const { svc, b, c } = await seedNest();
     const channel = (svc as unknown as { channelService: { send: ReturnType<typeof vi.fn> } }).channelService;
@@ -9373,6 +9364,76 @@ describe('owner drill-in through the durable ancestry (nested A→B→C)', () =>
     await expect(svc.sendToSubagent(2, c, 'x')).rejects.toThrow('unknown session');
     await expect(svc.sendToSubagent(1, 'brain-ch-subagent-sub-nest-foreign', 'x')).rejects.toThrow('unknown session');
     await expect(svc.sendToSubagent(1, 'brain-ch-discord-nest', 'x')).rejects.toThrow('not a sub-agent session');
+    await expect(svc.tapSessionSnapshot(1, 'brain-ch-subagent-sub-nest-foreign', () => {}))
+      .rejects.toThrow('unknown session');
+  });
+
+  it('keeps an orphaned child readable through history, paging, stream snapshot and export', async () => {
+    const { d, svc, sessionId, b } = await seedNest();
+    d.store.appendMessage({
+      id: 'orphan-answer', sessionId: b, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'preserved orphan transcript' }], stopReason: 'stop' },
+    });
+    d.store.deleteSession(sessionId);
+    expect(d.store.getSession(b)?.parent_session_id).toBeNull();
+
+    expect(svc.messagesOf(1, b)).toEqual([
+      expect.objectContaining({ id: 'orphan-answer', text: 'preserved orphan transcript' }),
+    ]);
+    expect(svc.messagesPage(1, b, { limit: 20 }).items).toEqual([
+      expect.objectContaining({ id: 'orphan-answer', text: 'preserved orphan transcript' }),
+    ]);
+    const tapped = await svc.tapSessionSnapshot(1, b, () => {});
+    expect(tapped.snapshot.history).toEqual([
+      expect.objectContaining({ id: 'orphan-answer', text: 'preserved orphan transcript' }),
+    ]);
+    tapped.off();
+    const exported = await svc.exportSession(1, b, 'jsonl');
+    try { expect(exported.filename).toContain('brain-ch-subagent-sub-nest-b'); }
+    finally { exported.cleanup(); }
+  });
+
+  it('keeps channel, cron, workflow-rooted, legacy no-scope and cyclic child transcripts readable', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const cases = [
+      { root: 'brain-ch-discord-shared-read', child: 'brain-ch-subagent-shared-read-child', scope: SCOPE },
+      { root: 'brain-ch-cron-nightly-read', child: 'brain-ch-subagent-cron-read-child', scope: SCOPE },
+      { root: 'brain-ch-subagent-wf-wf-read-n1-abc', child: 'brain-ch-subagent-workflow-read-child', scope: SCOPE },
+      { root: 'brain-1', child: 'brain-ch-subagent-legacy-read-child', scope: undefined },
+    ] as const;
+    for (const item of cases) {
+      if (!d.store.getSession(item.root)) d.store.createSession({ id: item.root, userId: 1, model: 'm' });
+      d.store.createSession({
+        id: item.child, userId: 1, model: 'm', parentSessionId: item.root,
+        ...(item.scope ? { delegatedAccess: item.scope } : {}),
+      });
+      d.store.appendMessage({
+        id: `${item.child}-answer`, sessionId: item.child, parentId: null, role: 'assistant',
+        content: { role: 'assistant', content: [{ type: 'text', text: item.child }], stopReason: 'stop' },
+      });
+      expect(svc.messagesOf(1, item.child)).toEqual([
+        expect.objectContaining({ text: item.child }),
+      ]);
+      const tapped = await svc.tapSessionSnapshot(1, item.child, () => {});
+      expect(tapped.snapshot.history).toEqual([expect.objectContaining({ text: item.child })]);
+      tapped.off();
+    }
+
+    const cyclicA = 'brain-ch-subagent-cyclic-read-a';
+    const cyclicB = 'brain-ch-subagent-cyclic-read-b';
+    d.store.createSession({ id: cyclicA, userId: 1, model: 'm', parentSessionId: 'brain-1', delegatedAccess: SCOPE });
+    d.store.createSession({ id: cyclicB, userId: 1, model: 'm', parentSessionId: cyclicA, delegatedAccess: SCOPE });
+    d.db.prepare('UPDATE brain_sessions SET parent_session_id = ? WHERE id = ?').run(cyclicB, cyclicA);
+    d.store.appendMessage({
+      id: 'cyclic-answer', sessionId: cyclicB, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'cyclic transcript' }], stopReason: 'stop' },
+    });
+    expect(svc.messagesOf(1, cyclicB)).toEqual([expect.objectContaining({ text: 'cyclic transcript' })]);
+    const cyclicTap = await svc.tapSessionSnapshot(1, cyclicB, () => {});
+    expect(cyclicTap.snapshot.history).toEqual([expect.objectContaining({ text: 'cyclic transcript' })]);
+    cyclicTap.off();
   });
 
   it('abort on the viewed grandchild stops exactly that child through the channel abort tree', async () => {
@@ -9619,13 +9680,40 @@ describe('BrainService admin oversight of a foreign conversation', () => {
     attached.off();
   });
 
+  it('applies the same admin oversight policy to foreign child history, paging, stream and export', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    const child = 'brain-ch-subagent-foreign-oversight';
+    d.store.createSession({ id: child, userId: 2, model: 'm', parentSessionId: 'brain-2' });
+    d.store.appendMessage({
+      id: 'foreign-child-answer', sessionId: child, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'foreign child transcript' }], stopReason: 'stop' },
+    });
+
+    expect(svc.messagesOf(1, child, { anyOwner: true })).toEqual([
+      expect.objectContaining({ text: 'foreign child transcript' }),
+    ]);
+    expect(svc.messagesPage(1, child, { limit: 20 }, { anyOwner: true }).items).toEqual([
+      expect.objectContaining({ text: 'foreign child transcript' }),
+    ]);
+    const attached = await svc.tapSessionSnapshot(1, child, () => {}, undefined, undefined, undefined, { anyOwner: true });
+    expect(attached.snapshot.history).toEqual([expect.objectContaining({ text: 'foreign child transcript' })]);
+    attached.off();
+    const exported = await svc.exportSession(1, child, 'jsonl', { anyOwner: true });
+    exported.cleanup();
+  });
+
   it('refuses a foreign conversation when the caller is not an admin', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(2);
 
-    // No anyOwner ⇒ the ordinary ownership check decides, and it fails closed.
+    // No anyOwner ⇒ the ordinary ownership check decides, and it fails closed everywhere.
+    expect(() => svc.messagesOf(1, 'brain-2')).toThrow('unknown session');
+    expect(() => svc.messagesPage(1, 'brain-2', { limit: 20 })).toThrow('unknown session');
     await expect(svc.tapSessionSnapshot(1, 'brain-2', () => {})).rejects.toThrow('unknown session');
+    expect(() => svc.exportSession(1, 'brain-2', 'jsonl')).toThrow('unknown session');
   });
 
   it('still gives an admin a real live tap on their OWN conversation', async () => {

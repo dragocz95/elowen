@@ -1,11 +1,11 @@
 import { registerSandboxUi } from './runtime';
-import { WorkspacesSettings } from './WorkspacesSettings';
+import { ProjectEnvironmentPanel } from './ProjectEnvironmentPanel';
 import { EnvironmentSettings } from './EnvironmentSettings';
 import { HostRuntimeSettings } from './HostRuntimeSettings';
 import { useProjectRowContribution } from './projectRows';
 
 registerSandboxUi({
-  // 8: the workspace register renders the host's DataTableChevronCell.
+  // The UI API version the environment drawer and the account drawer were written against.
   requiresApiVersion: 8,
   settings: {
     'host-runtime': HostRuntimeSettings,
@@ -14,7 +14,7 @@ registerSandboxUi({
     environment: EnvironmentSettings,
   },
   project: {
-    workspaces: WorkspacesSettings,
+    environment: ProjectEnvironmentPanel,
   },
   // What a managed project's row in the core register says it is doing, and what may be done to it.
   projectRows: useProjectRowContribution,

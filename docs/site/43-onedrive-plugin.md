@@ -8,11 +8,11 @@ group: Plugin reference
 
 # OneDrive Mirror
 
-The `onedrive` plugin mirrors a Project between Elowen and each person's own OneDrive in both directions. Files the agent produces appear in the person's OneDrive without being handed over in chat, and files edited in OneDrive come back into the Project. A Sandbox workspace can be mirrored instead of the project itself, into its own separate folder.
+The `onedrive` plugin mirrors a Project between Elowen and each person's own OneDrive in both directions. Files the agent produces appear in the person's OneDrive without being handed over in chat, and files edited in OneDrive come back into the Project.
 
 ## Where it appears
 
-The plugin adds no top-level navigation entry and no slash commands. It appears in **Settings → Plugins** as an installed plugin, and its working surface is a **OneDrive** tab in the Project view. The tab shows the sync status, the mapped OneDrive folder, the sandbox workspaces being mirrored, and the conflict list. A status pill on the Project card reports the mirror at a glance and counts unresolved conflicts. The tab is offered only when the account's Microsoft identity is linked; everyone else sees nothing, because a panel that cannot possibly work is worse than no panel.
+The plugin adds no top-level navigation entry and no slash commands. It appears in **Settings → Plugins** as an installed plugin, and its working surface is a **OneDrive** tab in the Project view. The tab shows the sync status, the mapped OneDrive folder, and the conflict list. A status pill on the Project card reports the mirror at a glance and counts unresolved conflicts. The tab is offered only when the account's Microsoft identity is linked; everyone else sees nothing, because a panel that cannot possibly work is worse than no panel.
 
 The tab's status line moves between the states a mirror can be in: **In sync**, **Syncing**, **Paused**, **Waiting for the first sync**, **Waiting for your decision** when conflicts wait, **Waiting for confirmation** when a deletion needs an answer, and **Needs attention** when a cycle could not finish its work.
 
@@ -28,11 +28,7 @@ Checking whether an account is linked reads the provider's local directory rathe
 
 Connecting asks for two choices: which OneDrive account to use, and which folder to mirror. The whole project can be mirrored, or a single folder inside it. The chosen folder is the boundary: its files and subfolders are mirrored continuously in both directions, and the rest of the project is not. The mirror binds itself to that OneDrive drive for its lifetime; if the account is later connected to a different drive, the mirror stops rather than apply its baseline to the wrong files.
 
-The remote layout keeps projects and workspaces apart, as siblings under the configured root:
-
-- Each project mirrors into a `projects` subfolder of the root.
-- Each sandbox workspace mirrors into a `workspaces` subfolder, in a folder named for the workspace and including its id, so two same-named workspaces cannot overwrite each other.
-- A narrowed mirror keeps the folder it covers in its remote path, so two subfolder mirrors of one project cannot collide in OneDrive.
+The remote layout keeps one folder per mirror: each project mirrors into a `projects` subfolder of the configured root, and a narrowed mirror keeps the folder it covers in its remote path, so two subfolder mirrors of one project cannot collide in OneDrive.
 
 The project's own `.gitignore` is respected. A hard floor excludes version control internals, dependencies, `.env` files, private keys, credential stores, and the mirror's own trash in every case, and these protections cannot be turned off. The plugin settings can exclude further paths on top.
 
@@ -40,7 +36,7 @@ The project's own `.gitignore` is respected. A hard floor excludes version contr
 
 The OneDrive tab pauses and resumes the mirror, and **Sync now** runs an immediate cycle instead of waiting for the interval. Sync cycles are coalesced: a second request joins the run already in progress rather than starting a competing one, and cycles over the same project folder are serialized across accounts.
 
-The mirror pauses itself, with a reason on screen, when the folder it mirrors is no longer available: the worktree was removed, the project was re-pointed, or the account lost access to the project. **Disconnect** stops mirroring; files already in OneDrive stay where they are. Removing a project or an account removes its mirror, and the remote folder is deliberately left untouched, because deleting somebody's OneDrive files is not the plugin's decision to make. If the daemon restarts while a cycle was running, the mirror releases the stale claim at startup, so nothing stays locked after a crash.
+The mirror pauses itself, with a reason on screen, when the folder it mirrors is no longer available: the project was re-pointed, or the account lost access to the project. **Disconnect** stops mirroring; files already in OneDrive stay where they are. Removing a project or an account removes its mirror, and the remote folder is deliberately left untouched, because deleting somebody's OneDrive files is not the plugin's decision to make. If the daemon restarts while a cycle was running, the mirror releases the stale claim at startup, so nothing stays locked after a crash.
 
 ## How a cycle works
 
@@ -72,7 +68,7 @@ Configuration is instance-wide and edited in the plugin's detail view under **Se
 
 | Field | Key | Type | Default | What it does |
 | --- | --- | --- | --- | --- |
-| OneDrive folder | `rootFolder` | string | Elowen | Top-level folder created in each person's own OneDrive. Projects and sandbox workspaces are mirrored into separate subfolders of it. |
+| OneDrive folder | `rootFolder` | string | Elowen | Top-level folder created in each person's own OneDrive. Each mirrored project becomes a subfolder of it. |
 | Sync interval | `intervalSeconds` | number | 30 | How often a connected mirror is checked, in seconds. Lower values react faster and cost more Microsoft Graph calls. The effective floor is 10 seconds. |
 | Largest file | `maxFileMb` | number | 100 | Files above this size are skipped in both directions and reported, rather than silently held back. |
 | Additional ignored paths | `extraIgnore` | tokenList | empty list | Glob patterns excluded on top of the project's own `.gitignore`. Version control internals, dependencies and credentials are always excluded and cannot be re-enabled here. |
@@ -95,7 +91,7 @@ The plugin is user-grantable, so non-admin accounts need the grant described in 
 | Expired sign-in | A mirror whose Microsoft sign-in has lapsed reports Needs attention instead of silently skipping |
 | Trash | Lives at `.elowen-trash` inside the project and is ignored by the mirror, so trashed copies never travel back up |
 | Concurrency | One cycle per account at a time; one cycle per project folder across all accounts sharing it |
-| Folder names | Project and workspace names become OneDrive folders, so characters OneDrive refuses are replaced |
+| Folder names | Project and folder names become OneDrive folders, so characters OneDrive refuses are replaced |
 | Remote folder on removal | Deleting the project or the account removes the mirror and leaves the OneDrive folder in place |
 
 [Next: Sites](sites-plugin)

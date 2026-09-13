@@ -311,8 +311,8 @@ export function ensurePluginUiRuntime(): void {
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       // The one environment-operation progress window. It is published rather than reimplemented in the
-      // sandbox bundle because both sides drive the SAME durable operation row: the chat picker and the
-      // project register raise it from core, the environment settings raise it from the plugin, and a
+      // sandbox bundle because both sides drive the SAME durable operation row: the project register
+      // raises it from core, the environment settings raise it from the plugin, and a
       // second copy would be two answers to "what is this container doing".
       ConfirmDialog, OperationProgressDialog, LiveTail,
       SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, TimeSeriesChart, PluginConfigEditor, DirectoryPicker, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,

@@ -2,7 +2,7 @@ import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import type { PluginHostPush, PluginUserView } from '../plugins/api.js';
-import { currentContributionUserId, currentSessionId, currentTurnModel, runWithContributionUser } from '../plugins/policyContext.js';
+import { currentContributionUserId, currentSessionId, currentTurnModel } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
 import { withOriginUsage } from '../inference/originUsage.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
@@ -114,8 +114,8 @@ export function createDelegatedChildren(
       if (!brain) throw new Error('the brain is not available on this deployment');
       return brain.readSubagent(parentSessionId, childSessionId);
     },
-    continue: (parentSessionId, childSessionId, text, access, onEvent, model, promote, workspaceId) => brain
-      ? brain.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote, workspaceId)
+    continue: (parentSessionId, childSessionId, text, access, onEvent, model, promote) => brain
+      ? brain.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote)
       : Promise.reject(new Error('the brain is not available on this deployment')),
     stop: (parentSessionId, childSessionId) => brain
       ? brain.stopSubagent(parentSessionId, childSessionId)
@@ -281,12 +281,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     canExecuteHost: () => accountUserId !== undefined && users.isAdmin(accountUserId),
     allowedPaths: () => {
       const currentIds = accountUserId === undefined ? ids : ids.filter((id) => userProjects.canAccess(accountUserId, id));
-      const roots = currentIds.map((id) => projects.get(id)).filter((project) => project?.executionKind !== 'managed' && project?.lifecycle !== 'deleting').map((project) => project?.path).filter((p): p is string => !!p);
-      if (accountUserId === undefined) return roots;
-      for (const workspace of sandboxWorkspaceRoots(accountUserId, currentIds)) {
-        if (!roots.includes(workspace.path)) roots.push(workspace.path);
-      }
-      return roots;
+      return currentIds.map((id) => projects.get(id)).filter((project) => project?.executionKind !== 'managed' && project?.lifecycle !== 'deleting').map((project) => project?.path).filter((p): p is string => !!p);
     },
   });
   // WHO a platform sender is. Driven entirely by the identity descriptors (src/shared/platformIdentity.ts)
@@ -444,14 +439,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     },
     log,
   });
-  /** Resolve Sandbox roots from the LIVE merged registry. A missing/invalid control contributes nothing;
-   * callers retain the registered Project roots and never widen from a stale plugin generation. */
-  function sandboxWorkspaceRoots(accountUserId: number, projectIds: readonly number[]): { projectId: number; path: string }[] {
-    const control = loadedPluginRegistry?.control('sandbox');
-    if (!control) return [];
-    try { return runWithContributionUser(accountUserId, () => control.workspaceRoots({ projectIds })); }
-    catch { return []; }
-  }
   // Same late binding for the push transport: the PushSender is a bootstrap construct (it needs the
   // subscriptions store + web-push keys wired there).
   let hostPush: PluginHostPush | undefined;
@@ -861,7 +848,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         }),
         plugins: pluginProvider,
         hookAudit,
-        policy: (userId) => resolvePolicy({ userProjects, projects, supplementalPaths: sandboxWorkspaceRoots }, userId),
+        policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
         fastMode: (userId) => userSettings.fastMode(userId),
         setFastMode: (userId, on) => on === undefined ? userSettings.toggleFastMode(userId) : userSettings.setFastMode(userId, on),

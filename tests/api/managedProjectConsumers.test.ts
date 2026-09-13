@@ -31,7 +31,6 @@ function setup(environmentState: 'running' | 'stopped' | 'unprovisioned' = 'runn
   registry.controls.set('sandbox', {
     ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS
       .map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
-    workspaceRoots: () => [], resolveWorkspace() {}, acquireDelegationLease() {}, workspacesFor: () => [], activeWorkspace: () => null,
     prepareExecution() { throw new Error('unexpected execution'); }, projectFiles,
     // A cheap state read that provisions nothing — what a Git inspection consults before it decides
     // whether entering the environment is even possible.
@@ -39,10 +38,10 @@ function setup(environmentState: 'running' | 'stopped' | 'unprovisioned' = 'runn
   } as never);
   registry.controlOwner.set('sandbox', 'sandbox');
   const prepareExecution = vi.fn<SandboxControl['prepareExecution']>(async (input) => ({
-    mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace', home: '/root', roots: ['/'], workspace: null,
+    mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace', home: '/root', roots: ['/'],
     launch: { type: 'argv', file: process.execPath, args: ['-e', `process.stdout.write("/${project.slug}/assets/logo.png\\0")`], env: {} },
     stdin: undefined, cancel: async () => {},
-    lease: { id: 'icon-test', accountUserId: member.id, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
+    lease: { id: 'icon-test', accountUserId: member.id, homeGeneration: null, heartbeat() {}, release() {} },
     sanitizeOutput: text => text,
   }));
   (registry.controls.get('sandbox') as SandboxControl).prepareExecution = prepareExecution;
@@ -256,10 +255,10 @@ function managedExecutionFixture(input: Parameters<SandboxControl['prepareExecut
       : `process.stdout.write(${JSON.stringify(gitFixtureOutput(args))})`);
   return {
     mode: 'managed' as const, projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace',
-    home: '/root', roots: ['/workspace'], workspace: null,
+    home: '/root', roots: ['/workspace'],
     launch: { type: 'argv' as const, file: process.execPath, args: ['-e', script], env: {} },
     stdin: undefined, cancel: async () => {},
-    lease: { id: 'git-test', accountUserId, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
+    lease: { id: 'git-test', accountUserId, homeGeneration: null, heartbeat() {}, release() {} },
     sanitizeOutput: (text: string) => text,
   };
 }

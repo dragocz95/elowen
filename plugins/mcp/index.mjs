@@ -549,7 +549,6 @@ async function withProjectClient(ctx, spec, operation, signal, management = fals
   const selected = ctx.currentAccess().projectRef;
   const projectRef = spec.projectRef ? projectBinding(spec.projectRef) : selected;
   if (spec.projectRef && !management && (selected?.kind !== 'managed' || selected.projectId !== projectRef.projectId)) throw new Error('MCP server belongs to a different project');
-  if (ctx.currentAccess().workspaceRef) throw new Error('a legacy exact workspace cannot widen into a managed project');
   const sandbox = ctx.control('sandbox');
   if (!sandbox) throw new Error('managed project MCP is unavailable because it requires the Sandbox plugin');
   const prepared = await sandbox.prepareExecution({
@@ -748,7 +747,6 @@ function registerBridgedTool(ctx, getClient, spec, tool) {
     },
   }), {
     ...(spec.ownerUserId == null ? {} : { ownerUserId: spec.ownerUserId }),
-    ...(transportKind(spec) === 'stdio' ? { hostFilesystem: true } : {}),
     // A bound server's tool name, description and schema are read from inside the project, so the
     // DECLARATION is project data. Owner scoping cannot carry that: a bound stdio server is admin-only
     // and may be stored at instance scope, where there is no owner to scope to. The host composes these

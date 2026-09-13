@@ -1,7 +1,7 @@
 import { posix } from 'node:path';
 import type { GuestFileOperation, GuestFileResult, GuestFileStat, ProjectEnvironmentControl } from '../plugins/environmentTypes.js';
 import type { ManagedProjectRef } from '../shared/projectExecution.js';
-import { currentAccountUserId, currentPathView, currentProjectRef, currentSessionId } from '../plugins/policyContext.js';
+import { currentAccountUserId, currentProjectRef, currentSessionId } from '../plugins/policyContext.js';
 import { fsSafeSegment } from '../shared/paths.js';
 import { planSlug } from '../shared/planSlug.js';
 
@@ -51,16 +51,12 @@ export function isManagedProjectTurn(): boolean {
 /** Ambient check only — no provider I/O and no host path handling. Returns a refusal reason when the
  *  current turn may not use managed artifacts at all:
  *  - not a managed project turn (the whole feature is behind the selected execution target);
- *  - a legacy EXACT workspace scope is present (`currentPathView`): a workspace-scoped delegated child
- *    must never widen into the managed project — the same rule Sandbox's `prepareExecution` enforces
- *    (`workspace_pinned`), restated here because file consumers resolve BEFORE any execution is prepared;
  *  - no linked account: the provider validates membership per account, and a caller with no account has
  *    none to validate;
  *  - no conversation: the plan/spill paths are per-session artifacts. */
 export function managedArtifactTurn(): ManagedArtifactTurn | string {
   const projectRef = currentProjectRef();
   if (projectRef?.kind !== 'managed') return 'managed project artifacts require a managed project turn';
-  if (currentPathView()) return 'a legacy exact workspace cannot widen into a managed project';
   const accountUserId = currentAccountUserId();
   if (accountUserId === null || !Number.isSafeInteger(accountUserId) || accountUserId < 1) {
     return 'managed project artifacts require a linked account';
@@ -112,7 +108,7 @@ async function resolveFor(
 
 /** Explicit-identity variant for the central consumers that run OUTSIDE a prompt turn's scope — the
  *  cold turn-start pass reads no ambient context at all. Same pattern as Sandbox's
- *  `workspacesFor`/`prepareExecution` options: the CALLER owns the tenancy rule for the identity it
+ *  `prepareExecution` options: the CALLER owns the tenancy rule for the identity it
  *  names (here: the session's stored execution kind and its owner account), and this validates the
  *  request shape plus the live provider, nothing else. */
 export async function resolveManagedArtifactsFor(

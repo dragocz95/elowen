@@ -137,7 +137,7 @@ export async function readPlanForTurn(
   sessionId: string,
 ): Promise<PlanRead> {
   // Explicit branch on the execution target: only a NON-managed turn may read the central file. A
-  // managed turn whose context is incomplete (no linked account, legacy workspace scope) or whose
+  // managed turn whose context is incomplete (no linked account, no resolvable project scope) or whose
   // provider is unreachable surfaces the error — it never quietly degrades to the central copy.
   if (!isManagedProjectTurn()) return { plan: readPlan(sessionId) };
   const resolved = await resolveManagedArtifactTurn(resolver);

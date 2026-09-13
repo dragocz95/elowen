@@ -22,9 +22,8 @@ export interface ProcessHandle {
   /** Legacy owner field retained for handles registered by an older plugin generation. New callers write
    * `accountUserId`; session ownership is only the final fallback when neither explicit field exists. */
   userId?: number | null;
-  /** Sandbox workspace and account-HOME generation captured at launch. Cleanup/reset consult the durable
+  /** Account-HOME generation captured at launch. Cleanup/reset consult the durable
    * lease carrying the same tuple; the in-memory handle keeps process UI/caps aligned with it. */
-  workspaceId?: string | null;
   homeGeneration?: number | null;
   projectRef?: ProjectExecutionRef;
   runtimeGeneration?: number;
@@ -79,7 +78,6 @@ export interface ProcessInfo {
    *  `process` event pushed to client streams, and the token is the secret the terminal plugin redacts out
    *  of command output for exactly that reason. It stays on {@link ProcessHandle}, which never leaves the
    *  process that owns it; the runner reports a separate daemon-private containment snapshot instead. */
-  workspaceId?: string | null;
   homeGeneration?: number | null;
   projectRef?: ProjectExecutionRef;
   runtimeGeneration?: number;
@@ -91,7 +89,6 @@ const toInfo = (h: ProcessHandle): ProcessInfo => ({
   running: h.running(), exitCode: h.exitCode(),
   completionMode: h.completionMode,
   ...(h.blockedRead ? { blockedRead: true } : {}),
-  workspaceId: h.workspaceId ?? null,
   homeGeneration: h.homeGeneration ?? null,
   ...(h.projectRef ? { projectRef: h.projectRef } : {}),
   ...(h.runtimeGeneration !== undefined ? { runtimeGeneration: h.runtimeGeneration } : {}),
@@ -269,7 +266,7 @@ export class ProcessRegistry {
   }
 
   /** Kill a process and drop it from the registry ONLY once the stop is confirmed. The terminal
-   *  plugin's kill awaits guest cancellation (workspace/managed children can take moments), so
+   *  plugin's kill awaits guest cancellation (managed children can take moments), so
    *  returning before it settles reported a stopped process that was still running — with its handle
    *  already gone, leaving nothing to retry. On failure the handle is RETAINED (it stays listed and
    *  stoppable) and the error propagates to every caller. Returns false when the id is unknown. */

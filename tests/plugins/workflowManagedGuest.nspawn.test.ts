@@ -139,11 +139,9 @@ it.skipIf(blockers.length > 0)('runs a managed-project workflow from a guest def
      *  below reads these: the CHILD session must be the one that read the marker, on the actor's account,
      *  against this project. */
     const guestOps: { session: string | undefined; accountUserId: number; projectId: number; kind: string; path: string }[] = [];
-    const unreachable = (name: string) => () => { throw new Error(`${name} is a host-worktree operation and must not be reached in a managed turn`); };
     // The control the daemon's sandbox plugin registers, with its managed half REAL (the runtime above)
-    // and its host-worktree half answering as it does for an account with no worktrees: none to list, none
-    // active. Those methods stand outside the managed path; the ones that would bind a worktree throw, so
-    // reaching them is a failure rather than a silent detour.
+    // and its session half answering as it does for an account with no worktrees: none active, none to
+    // release. Those methods stand outside the managed path.
     const sandboxControl = {
       ...runtime.control,
       projectFiles: (input: any) => {
@@ -155,13 +153,8 @@ it.skipIf(blockers.length > 0)('runs a managed-project workflow from a guest def
         if (projectRef?.kind !== 'managed') throw new Error('host execution is not available in the managed workflow harness');
         return runtime!.prepareExecution({ ...input, projectRef }, options?.accountUserId ?? currentAccountUserId());
       },
-      workspaceRoots: () => [],
-      workspacesFor: () => [],
-      activeWorkspace: () => null,
       activeSessionWorkspace: () => null,
       releaseSessionWorkspaces: () => ({ released: 0 }),
-      resolveWorkspace: unreachable('resolveWorkspace'),
-      acquireDelegationLease: unreachable('acquireDelegationLease'),
     } as unknown as KnownControls['sandbox'];
     registry.contextFor('sandbox', {}, { info() {}, warn() {}, error() {} }).registerControl('sandbox', sandboxControl as unknown as PluginControl);
     expect(registry.control('sandbox')).toBe(sandboxControl);

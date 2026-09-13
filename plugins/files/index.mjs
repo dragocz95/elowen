@@ -738,7 +738,7 @@ export function seedReadStateFromHistory(sessionId, messages) {
       || typeof d.path !== 'string' || typeof d.contentHash !== 'string') continue;
     const key = d.projectRef?.kind === 'managed' && Number.isSafeInteger(d.projectRef.projectId)
       ? `managed:${d.projectRef.projectId}\0${d.path}`
-      : typeof d.workspaceId === 'string' && d.workspaceId ? `${d.workspaceId}\0${d.path}` : d.path;
+      : d.path;
     recordEntry(files, key, { hash: d.contentHash });
     seeded++;
   }
@@ -958,12 +958,12 @@ function similarSibling(target) {
 
 /** The one missing-path message for Read, Glob and Grep: what is missing, where the tool is looking, and
  *  the neighbour the caller probably meant. `lead` names the thing so each tool keeps its own noun. */
-export function pathNotFoundMessage(lead, target, cwd, display = (p) => p) {
+export function pathNotFoundMessage(lead, target, cwd) {
   const suggestion = similarSibling(target);
   return [
     lead,
-    `Note: your current working directory is ${display(cwd)}.`,
-    ...(suggestion ? [`Did you mean ${display(suggestion)}?`] : []),
+    `Note: your current working directory is ${cwd}.`,
+    ...(suggestion ? [`Did you mean ${suggestion}?`] : []),
   ].join(' ');
 }
 
@@ -1220,18 +1220,12 @@ export function register(ctx) {
   const pathMeta = (abs, hostOwned = false) => {
     const access = ctx.currentAccess();
     if (!hostOwned && access.projectRef?.kind === 'managed') return { path: abs, projectRef: access.projectRef };
-    const path = hostOwned ? abs : ctx.displayPath(abs);
-    const workspaceId = hostOwned ? undefined : access.workspaceRef?.workspaceId;
-    return { path, ...(workspaceId ? { workspaceId } : {}) };
+    return { path: abs };
   };
   const statePath = (abs, hostOwned = false) => !hostOwned && ctx.currentAccess().projectRef?.kind === 'managed'
-    ? `managed:${ctx.currentAccess().projectRef.projectId}\0${abs}` : ctx.pathStateKey(abs);
-  const safeError = (error) => new Error(ctx.sanitizePathOutput(error instanceof Error ? error.message : String(error)));
-  const sanitizeResult = (result, abs, hostOwned = false) => ({
+    ? `managed:${ctx.currentAccess().projectRef.projectId}\0${abs}` : abs;
+  const withPathMeta = (result, abs, hostOwned = false) => ({
     ...result,
-    content: result.content?.map((item) => item?.type === 'text'
-      ? { ...item, text: ctx.sanitizePathOutput(item.text) }
-      : item),
     details: { ...(result.details ?? {}), ...pathMeta(abs, hostOwned) },
   });
 
@@ -1243,15 +1237,6 @@ export function register(ctx) {
     run: (payload) => { seedReadStateFromHistory(payload?.sessionId, payload?.messages); },
   });
 
-  // Every path tool below is declared `workspaceSafe`, which is what lets a sub-agent confined to one
-  // Sandbox worktree have file tools at all. The declaration is not a promise made here — it states that
-  // these tools route their paths through the host's workspace machinery instead of touching disk on
-  // their own: `ctx.assertPathAllowed` resolves through the active PathView BEFORE the admin all-access
-  // branch (so an admin parent cannot widen a confined child), `ctx.defaultCwd` is the workspace root,
-  // and results leave through displayPath/pathStateKey/sanitizePathOutput so no host prefix crosses the
-  // boundary. The spawner rewrites their "path must be absolute" wording and path parameters into
-  // the workspace-relative contract, so the descriptions stay true in both modes.
-  // Without the declaration the spawner drops them fail-closed and the child has no file access at all.
   ctx.registerTool(defineTool({
     name: 'Read', label: 'Read file',
     description: [
@@ -1315,7 +1300,7 @@ export function register(ctx) {
         // Both checks are on the PATH and run before any I/O: opening a blocking device to find out that it
         // blocks is the failure they exist to prevent, and a binary file has nothing to show either way.
         if (isBlockedDevicePath(abs)) {
-          return fail('Read', new Error(`Cannot read '${ctx.displayPath(abs)}': this device file would block or produce infinite output.`), readMeta());
+          return fail('Read', new Error(`Cannot read '${abs}': this device file would block or produce infinite output.`), readMeta());
         }
         const binaryExt = binaryExtensionOf(abs);
         if (binaryExt) {
@@ -1330,9 +1315,9 @@ export function register(ctx) {
         let opened = null;
         if (reader) {
           try { opened = await reader.open(abs); }
-          catch (e) { return fail('Read', safeError(e), readMeta()); }
+          catch (e) { return fail('Read', e, readMeta()); }
         } else if (!existsSync(abs)) {
-          return fail('Read', new Error(pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value))), readMeta());
+          return fail('Read', new Error(pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd())), readMeta());
         }
         const probe = opened ? opened.bytes.subarray(0, FILE_PROBE_BYTES) : readFileProbe(abs);
         // An existing empty file is not a failed read: the reference answers it with a warning and marks
@@ -1349,7 +1334,7 @@ export function register(ctx) {
         if (isPdf(probe)) {
           const snapshot = reader ? await reader.read(abs, MAX_EDIT_BYTES, opened) : null;
           const raw = snapshot ? snapshot.bytes : readFileSync(abs);
-          const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages, reader), abs, hostOwned);
+          const result = withPathMeta(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages, reader), abs, hostOwned);
           if (reader && (await reader.stat(abs))?.version !== snapshot.version) {
             throw new Error('file changed while it was being converted; retry the Read');
           }
@@ -1364,7 +1349,7 @@ export function register(ctx) {
         }
         if (extname(abs).toLowerCase() === '.ipynb') {
           const raw = reader ? (await reader.read(abs, MAX_EDIT_BYTES, opened)).bytes : readFileSync(abs);
-          const result = sanitizeResult(readNotebook(raw, supportsImages, readCap), abs, hostOwned);
+          const result = withPathMeta(readNotebook(raw, supportsImages, readCap), abs, hostOwned);
           if (!result.details?.ok) return result;
           // Same rule as the PDF branch: a truncated render, or one whose images the model cannot see, is
           // not a read of the notebook and must not vouch for overwriting it.
@@ -1465,9 +1450,9 @@ export function register(ctx) {
         }
         recordTextRead(sessionId, key, snapshot.contentHash, start, p.limit);
         return ok('Read', text, details);
-      } catch (e) { return fail('Read', safeError(e)); }
+      } catch (e) { return fail('Read', e); }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'Write', label: 'Write file',
@@ -1511,7 +1496,6 @@ export function register(ctx) {
           } else {
             try { beforeBuf = readFileSync(abs); } catch { /* new file */ }
           }
-          const display = ctx.displayPath(abs);
           const guard = readGuardError(sessionId, statePath(abs), beforeBuf);
           if (guard) return ok('Write', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           // Create the parent tree the way the reference does, so writing into a new directory costs no
@@ -1528,18 +1512,18 @@ export function register(ctx) {
           markFileRead(sessionId, statePath(abs), written);
           const base = beforeBuf?.toString('utf-8') ?? '';
           const diff = displayDiff(base, p.content);
-          const patch = unifiedPatch(display, base, p.content);
+          const patch = unifiedPatch(abs, base, p.content);
           const summary = beforeBuf === null
-            ? `File created successfully at: ${display}`
-            : `The file ${display} has been updated successfully.`;
+            ? `File created successfully at: ${abs}`
+            : `The file ${abs} has been updated successfully.`;
           return ok('Write', summary, {
             ...pathMeta(abs), bytes: Buffer.byteLength(p.content), contentHash: hashOf(written),
             ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
           });
         });
-      } catch (e) { return fail('Write', safeError(e)); }
+      } catch (e) { return fail('Write', e); }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'Edit', label: 'Edit file',
@@ -1574,7 +1558,6 @@ export function register(ctx) {
           // silent overwrite; Write, with its read-before-overwrite gate, remains the only way to replace
           // content that is already there.
           if (p.old_string === '') {
-            const display = ctx.displayPath(abs);
             if (p.new_string === '') {
               return ok('Edit', 'Error: No changes to make: old_string and new_string are exactly the same.', { ok: false, ...pathMeta(abs) });
             }
@@ -1589,8 +1572,8 @@ export function register(ctx) {
             const created = Buffer.from(p.new_string, 'utf-8');
             markFileRead(sessionId, statePath(abs), created);
             const newDiff = displayDiff('', p.new_string);
-            const newPatch = unifiedPatch(display, '', p.new_string);
-            return ok('Edit', `File created successfully at: ${display}`, {
+            const newPatch = unifiedPatch(abs, '', p.new_string);
+            return ok('Edit', `File created successfully at: ${abs}`, {
               ...pathMeta(abs), replacements: 1, contentHash: hashOf(created),
               ...(newDiff ? { diff: newDiff } : {}), ...(newPatch ? { patch: newPatch } : {}),
             });
@@ -1614,9 +1597,7 @@ export function register(ctx) {
             }
           }
           if (!guest && !existsSync(abs)) {
-            return ok('Edit', `Error: ${pathNotFoundMessage(
-              'File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value),
-            )}`, { ok: false, ...pathMeta(abs) });
+            return ok('Edit', `Error: ${pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd())}`, { ok: false, ...pathMeta(abs) });
           }
           if (!guest && statSync(abs).size > MAX_EDIT_BYTES) {
             return ok('Edit', `Error: File is too large to edit (${formatSize(statSync(abs).size)}). Maximum editable file size is 1 GB.`,
@@ -1625,7 +1606,6 @@ export function register(ctx) {
           const beforeBuf = snapshot ? snapshot.bytes : readFileSync(abs);
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
           // old_string still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
-          const display = ctx.displayPath(abs);
           const guard = readGuardError(sessionId, statePath(abs), beforeBuf);
           if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           const before = beforeBuf.toString('utf-8');
@@ -1645,14 +1625,14 @@ export function register(ctx) {
           const written = Buffer.from(plan.after, 'utf-8');
           markFileRead(sessionId, statePath(abs), written);
           const diff = displayDiff(plan.content, plan.newContent);
-          const patch = unifiedPatch(display, plan.content, plan.newContent);
-          return ok('Edit', `Edited ${display} (${plan.count > 1 ? `${plan.count} replacements` : '1 replacement'})`, {
+          const patch = unifiedPatch(abs, plan.content, plan.newContent);
+          return ok('Edit', `Edited ${abs} (${plan.count > 1 ? `${plan.count} replacements` : '1 replacement'})`, {
             ...pathMeta(abs), replacements: plan.count, contentHash: hashOf(written), ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
           });
         });
-      } catch (e) { return fail('Edit', safeError(e)); }
+      } catch (e) { return fail('Edit', e); }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'ListDir', label: 'List directory',
@@ -1679,9 +1659,9 @@ export function register(ctx) {
           try { return statSync(join(abs, n)).isDirectory() ? `${n}/` : n; } catch { return n; }
         });
         return ok('ListDir', entries.join('\n') || '(empty)', { ...pathMeta(abs), count: entries.length });
-      } catch (e) { return fail('ListDir', safeError(e)); }
+      } catch (e) { return fail('ListDir', e); }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'Search', label: 'Search files',
@@ -1733,11 +1713,11 @@ export function register(ctx) {
         const text = [formatted || 'No matches found.', ...notices].join('\n\n');
         return ok('Search', text, { ...pathMeta(abs), mode: 'content', matches: lines.length, total, truncated });
       } catch (e) {
-        if (isTransportFailure(e)) throw safeError(e);
-        return fail('Search', safeError(e));
+        if (isTransportFailure(e)) throw e;
+        return fail('Search', e);
       }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'FileInfo', label: 'File info',
@@ -1755,9 +1735,9 @@ export function register(ctx) {
         if (!s) throw new Error(`Path does not exist: ${abs}`);
         const info = { ...pathMeta(abs), type: guest ? s.kind : s.isDirectory() ? 'directory' : s.isFile() ? 'file' : 'other', bytes: s.size, modifiedAt: guest ? s.modifiedAt : s.mtime.toISOString() };
         return ok('FileInfo', JSON.stringify(info, null, 2), info);
-      } catch (e) { return fail('FileInfo', safeError(e)); }
+      } catch (e) { return fail('FileInfo', e); }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'GitStatus', label: 'Git status',
@@ -1771,7 +1751,6 @@ export function register(ctx) {
       try {
         const guest = managedFiles(ctx, _signal);
         const abs = guest ? guest.resolve(p.path) : ctx.assertPathAllowed(p.path);
-        const access = ctx.currentAccess();
         if (guest) {
           const entry = await guest.stat(abs);
           if (!entry) throw new Error(`Path does not exist: ${abs}`);
@@ -1786,20 +1765,6 @@ export function register(ctx) {
             ...pathMeta(abs), root, branch, dirtyFiles: lines.length, truncated: lines.length > 120,
           });
         }
-        if (access.workspaceRef) {
-          const sandbox = ctx.control('sandbox');
-          if (!sandbox?.gitStatus || !Number.isSafeInteger(access.contributionUserId)) {
-            throw new Error('GitStatus is unavailable because Sandbox workspace Git support is not loaded');
-          }
-          const status = await sandbox.gitStatus({
-            accountUserId: access.contributionUserId,
-            workspace: access.workspaceRef,
-            path: ctx.displayPath(abs),
-          });
-          const lines = status.lines;
-          const out = [`branch ${status.branch}`, 'root .', lines.length ? '' : 'clean', ...lines.slice(0, 120)];
-          return ok('GitStatus', out.join('\n'), { root: '.', workspaceId: access.workspaceRef.workspaceId, branch: status.branch, dirtyFiles: lines.length, truncated: lines.length > 120 });
-        }
         const cwd = statSync(abs).isDirectory() ? abs : dirname(abs);
         const run = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
         const root = run(['rev-parse', '--show-toplevel']);
@@ -1809,9 +1774,9 @@ export function register(ctx) {
         const lines = porcelain.split('\n').filter(Boolean);
         const out = [`branch ${branch}`, `root ${root}`, lines.length ? '' : 'clean', ...lines.slice(0, 120)];
         return ok('GitStatus', out.join('\n'), { root, branch, dirtyFiles: lines.length, truncated: lines.length > 120 });
-      } catch (e) { return fail('GitStatus', safeError(e)); }
+      } catch (e) { return fail('GitStatus', e); }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'Glob', label: 'Find files by pattern',
@@ -1841,7 +1806,7 @@ export function register(ctx) {
         // Resolving WHERE to search, before any searching happens: an unusable path, a root this turn may
         // not search, or a managed project with no filesystem provider behind it. Every file tool answers
         // these the same way, and that shared contract is deliberately not what F5 changes.
-        return fail('Glob', safeError(e));
+        return fail('Glob', e);
       }
       try {
         // Both refusals below are settled BEFORE anything is traversed. The fs-root one can only fire
@@ -1860,14 +1825,10 @@ export function register(ctx) {
         // reports anyway, and it cost a container round trip to do so.
         const guestWalk = guest ? await guest.walk(searchRoot, WALK_CAP + 1, SKIP_DIRS) : null;
         if (guest && guestWalk.rootKind === null) {
-          return ok('Glob', `Error: ${pathNotFoundMessage(
-            `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
-          )}`, { ok: false, ...pathMeta(searchRoot) });
+          return ok('Glob', `Error: ${pathNotFoundMessage(`Directory does not exist: ${searchRoot}.`, searchRoot, ctx.defaultCwd())}`, { ok: false, ...pathMeta(searchRoot) });
         }
         if (!guest && !existsSync(searchRoot)) {
-          return ok('Glob', `Error: ${pathNotFoundMessage(
-            `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
-          )}`, { ok: false, ...pathMeta(searchRoot) });
+          return ok('Glob', `Error: ${pathNotFoundMessage(`Directory does not exist: ${searchRoot}.`, searchRoot, ctx.defaultCwd())}`, { ok: false, ...pathMeta(searchRoot) });
         }
         // A path that is not a directory is matched from its parent, as it always has been; the guest
         // resolved that itself, so both sides agree without a second look.
@@ -1915,10 +1876,10 @@ export function register(ctx) {
         // or unreachable managed environment, a guest protocol fault — and returning that as a successful
         // result with an error sentence inside is what let a broken Glob be persisted, and re-read on the
         // next turn, as though it had found no files.
-        throw safeError(e);
+        throw e;
       }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'Grep', label: 'Search file contents',
@@ -1962,9 +1923,7 @@ export function register(ctx) {
         const entry = guest ? await guest.stat(target) : null;
         if (guest && !entry) throw new Error(`Path does not exist: ${target}`);
         if (!guest && !existsSync(target)) {
-          return ok('Grep', `Error: ${pathNotFoundMessage(
-            `Path does not exist: ${ctx.displayPath(target)}.`, target, ctx.defaultCwd(), (value) => ctx.displayPath(value),
-          )}`, { ok: false, ...pathMeta(target) });
+          return ok('Grep', `Error: ${pathNotFoundMessage(`Path does not exist: ${target}.`, target, ctx.defaultCwd())}`, { ok: false, ...pathMeta(target) });
         }
         const isDir = guest ? entry.kind === 'directory' : statSync(target).isDirectory();
         const root = isDir ? target : dirname(target);
@@ -2028,11 +1987,11 @@ export function register(ctx) {
           ...pathMeta(root), pattern: p.pattern, outputMode, matches: rows.length, total, offset, truncated,
         });
       } catch (e) {
-        if (isTransportFailure(e)) throw safeError(e);
-        return fail('Grep', safeError(e));
+        if (isTransportFailure(e)) throw e;
+        return fail('Grep', e);
       }
     },
-  }), { workspaceSafe: true });
+  }));
 
   ctx.logger.info('registered Read, Write, Edit, ListDir, Search, FileInfo, GitStatus, Glob, Grep');
 }

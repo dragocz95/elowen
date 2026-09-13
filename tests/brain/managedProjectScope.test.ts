@@ -29,6 +29,5 @@ describe('managed execution boundary', () => {
     expect(normalizeDelegatedExecutionScope(scope)?.projectRef).toEqual(projectRef);
     expect(normalizeDelegatedExecutionScope({ ...scope, projectRef: { kind: 'managed', projectId: 8 } })).toBeUndefined();
     expect(normalizeDelegatedExecutionScope({ ...scope, projectRef: { kind: 'host' } })).toBeUndefined();
-    expect(normalizeDelegatedExecutionScope({ ...scope, workspaceRef: { workspaceId: 'old', projectId: 7 } })).toBeUndefined();
   });
 });

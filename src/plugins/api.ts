@@ -1,12 +1,10 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ZodTypeAny } from 'zod';
 import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel, WorkflowCompletionEmitter, WorkflowEmitter } from './policyContext.js';
-import type { AskAnswer, AskQuestion, BrainCard, BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion, WorkflowUpdate, WorkflowWorkspaceRef } from '../brain/events.js';
+import type { AskAnswer, AskQuestion, BrainCard, BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion, WorkflowUpdate } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface } from '../brain/slashCommands.js';
-import type { SandboxWorkspaceBinding, SandboxWorkspaceRef } from './workspaceTypes.js';
-export type { SandboxWorkspaceBinding, SandboxWorkspaceRef } from './workspaceTypes.js';
 import type { PlatformSurface } from '../shared/platformIdentity.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -62,7 +60,6 @@ interface DelegatingTurnAccessContract {
   planMode?: boolean;
   principal?: string;
   contributionUserId?: number | null;
-  workspaceRef?: SandboxWorkspaceRef;
   projectRef?: ProjectExecutionRef;
 }
 
@@ -80,7 +77,6 @@ export interface DelegatedChildBridge {
      *  Refused unless the child was spawned read-only BY CHOICE and by this same principal — see
      *  promoteDelegatedScope, which owns every rule. */
     promote?: boolean,
-    workspaceId?: string,
   ): Promise<DelegatedContinueResult>;
   stop(parentSessionId: string, childSessionId: string): Promise<{ stopped: boolean }>;
 }
@@ -280,12 +276,8 @@ export interface SessionSource {
     permissionBoundary?: NoninteractivePermissionBoundary | null;
     /** Delegated channel session's durable parent conversation. Host validates owner + existence. */
     parentSessionId?: string;
-    /** Legacy inherited host cwd. Explicit workspace-scoped delegations never set or persist this. */
+    /** Legacy inherited host cwd. */
     cwd?: string;
-    /** Public explicit workspace assignment from Delegate/Workflow. Resolved by the host before persistence. */
-    workspaceId?: string;
-    /** Internal inherited durable ref for nested delegation from an already workspace-scoped child. */
-    workspaceRef?: SandboxWorkspaceRef;
     projectRef?: ProjectExecutionRef;
     /** Chosen built-in/custom sub-agent type (a `subagent_type` on the delegate call). The host resolves
      *  it against the agent registry into the child's role prompt, tool allow-list and (for a read-only
@@ -302,7 +294,7 @@ export interface SessionSource {
     /** Spawn this child as a FORK of the delegating conversation: same system prompt, same tool schemas and
      *  the parent's whole history, so the provider can read the parent's warm prompt cache instead of
      *  paying for the prefix again. The host refuses it outright for anything that would change that
-     *  prefix — `readOnly`, `agentType`, `workspaceId`, a planning parent — and for a parent that is not an
+     *  prefix — `readOnly`, `agentType`, a planning parent — and for a parent that is not an
      *  owner conversation, which is also the recursion guard. It never widens what the child may RUN. */
     fork?: boolean;
     /** The `readOnly` above originates in the delegating turn's own PLAN mode rather than in what it asked
@@ -318,8 +310,9 @@ export interface SessionSource {
      * current turn, not guessed from the durable room owner. */
     contributionUserId?: number | null;
     /** The ACCOUNT the delegating turn acts as — `ctx.currentAccess().accountUserId`, the host's ONE
-     *  resolver (contribution owner, else the verified identity). An explicit workspace assignment is
-     *  resolved against THIS, so a turn that can CREATE a Sandbox workspace can also delegate into it.
+     *  resolver (contribution owner, else the verified identity). A delegated child's account-owned state
+     *  is resolved against THIS, so a turn that may reach an account's projects and environment can also
+     *  delegate into them.
      *  Kept beside `contributionUserId`, which retains its narrower "whose personal contributions" meaning. */
     accountUserId?: number | null;
     /** Additional per-turn tool denies supplied by a platform. This can only NARROW the resolved account
@@ -1179,9 +1172,9 @@ export interface WorkflowExpansionCallerAccess {
   toolPolicy?: { allow?: string[]; deny?: string[] };
   permissionBoundary: NoninteractivePermissionBoundary | null;
   readOnly?: boolean;
-  /** The ACCOUNT the calling node acts as, so a node it adds can name the workspace the run is already in.
-   *  A delegated child carries no account identity, so this is its inherited contribution owner — the same
-   *  value `currentAccountUserId()` resolves inside the child's own turn. */
+  /** The ACCOUNT the calling node acts as, so a node it adds keeps the same account-owned scope the run
+   *  already has. A delegated child carries no account identity, so this is its inherited contribution
+   *  owner — the same value `currentAccountUserId()` resolves inside the child's own turn. */
   accountUserId?: number | null;
 }
 
@@ -1211,9 +1204,6 @@ export interface WorkflowRecoveryControl {
     workflowId: string;
     parentSessionId: string;
     toolCallId: string;
-    /** Trusted anchors loaded from brain_workflows, outside the agent-writable recovery journal. */
-    trustedWorkspaceRef?: WorkflowWorkspaceRef;
-    trustedNodeWorkspaceRefs?: Record<string, WorkflowWorkspaceRef>;
     hooks: {
       emit: (update: WorkflowUpdate) => void;
       complete: (completion: WorkflowCompletion) => void;
@@ -1260,19 +1250,6 @@ export interface LspStateControl {
   diagnosticsEnabled(): boolean;
 }
 
-/** One account-owned Sandbox worktree root. Core consumes only the ownership tuple needed to extend the
- * canonical path policy; richer Git state stays live in the owning plugin. */
-export interface SandboxWorkspaceRoot extends SandboxWorkspaceRef {
-  path: string;
-}
-
-/** The active workspace metadata another domain (notably GitHub) needs without reading Sandbox tables. */
-export interface SandboxWorkspace extends SandboxWorkspaceRoot {
-  label: string;
-  branch: string;
-  baseRef: string;
-}
-
 /** A durable execution lease minted before a child is spawned. The caller owns its actual process lifecycle:
  * heartbeat while the child is alive, transfer the same handle when foreground work detaches, and release it
  * only on spawn failure or real exit/error/kill. Implementations persist the row in shared SQLite so daemon
@@ -1280,7 +1257,6 @@ export interface SandboxWorkspace extends SandboxWorkspaceRoot {
 export interface SandboxExecutionLease {
   id: string;
   accountUserId: number | null;
-  workspaceId: string | null;
   homeGeneration: number | null;
   projectId?: number;
   runtimeGeneration?: number;
@@ -1299,7 +1275,7 @@ export type SandboxExecutionCommand =
 export interface SandboxPreparedExecution {
   mode: 'confined' | 'direct' | 'managed';
   projectRef?: ProjectExecutionRef;
-  /** Host cwd used only by the process launcher. Never render it to a workspace-scoped model. */
+  /** Host cwd used only by the process launcher. */
   cwd: string;
   /** Logical cwd visible inside the guest namespace and in tool results. */
   displayCwd: string;
@@ -1314,7 +1290,6 @@ export interface SandboxPreparedExecution {
    * Bound to the originating account, Project and generation; never inferred from command stdout. */
   completionMetadata?: () => Promise<{ cwd: string | null }>;
   cancel?: () => Promise<void>;
-  workspace: SandboxWorkspace | null;
   lease: SandboxExecutionLease;
   /** Remove verified host-only prefixes from arbitrary command output before it reaches the model. */
   sanitizeOutput(text: string): string;
@@ -1323,52 +1298,6 @@ export interface SandboxPreparedExecution {
 /** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
  * invalid because its DB/runtime generation may already have been replaced. */
 export interface SandboxControl extends ProjectEnvironmentControl {
-  workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
-  /** Resolve one durable workspace ref for an explicit account and current project ceiling. Refuses stale,
-   * orphaned, foreign, path-mismatched and inaccessible workspaces rather than falling back to a Project. */
-  resolveWorkspace(input: {
-    accountUserId: number;
-    workspace: SandboxWorkspaceRef;
-    accessibleProjectIds: readonly number[] | 'all';
-  }): SandboxWorkspaceBinding;
-  /** Hold a workspace alive for the full delegated turn. Removal remains blocked until release/owner death. */
-  acquireDelegationLease(input: { accountUserId: number; workspace: SandboxWorkspaceRef }): SandboxExecutionLease;
-  /** The same lookup for an EXPLICITLY named account, for callers that have no ambient identity to read.
-   *  `workspaceRoots` resolves the account from the current contribution/identity scope, which is exactly
-   *  what a background service does not have: `registerInterval` and `registerService` run with
-   *  `currentIdentity()` and `currentContributionUserId()` both null. A worker that must act on behalf of
-   *  many accounts therefore cannot use the ambient form at all, and passing the account explicitly is the
-   *  only honest way to say whose workspaces are meant. Omitting `projectIds` means every project. */
-  workspacesFor(input: { userId: number; projectIds?: readonly number[] }): SandboxWorkspace[];
-  activeWorkspace(input: { sessionId: string; projectId: number }): SandboxWorkspace | null;
-  /** The conversation's active workspace ACROSS `projectIds`, most recently bound first. The turn resolver
-   *  has only a cwd, and a cwd names at most one project — but a switch may bind ANY project the account can
-   *  reach, so asking per inferred project makes a legitimate switch invisible (and answers nothing at all
-   *  when no project can be inferred). `projectIds` is the caller's own accessibility ceiling and the
-   *  account stays ambient, so this is the same authority as `activeWorkspace`, asked without a project.
-   *  Optional: an older Sandbox build simply does not answer it, and the caller keeps its per-project
-   *  lookup rather than losing workspace selection entirely. */
-  activeSessionWorkspace?(input: {
-    sessionId: string;
-    projectIds: readonly number[];
-  }): SandboxWorkspace | null;
-  /** Release a conversation's workspace bindings, so its next turn runs in its Project directory again.
-   *  The inverse of a switch, and it PRESERVES every workspace: only the binding rows go, so the worktree,
-   *  its branch and its directory all survive and can be switched back into at any time.
-   *
-   *  `keepProjectId` releases every binding EXCEPT that Project's — what an explicit move INTO a Project
-   *  means, since the latest explicit intent wins while a workspace belonging to the Project being entered
-   *  keeps working. `projectIds` is the caller's own accessibility ceiling, exactly as above.
-   *
-   *  Throws with code `workspace_in_use` (status 409) while a process holds an execution lease on a bound
-   *  workspace: moving a conversation out from under a running command is the same hazard removal refuses
-   *  for. Optional on the same precedent as `activeSessionWorkspace` — an older Sandbox build cannot do it,
-   *  and a caller must degrade rather than fail. */
-  releaseSessionWorkspaces?(input: {
-    sessionId: string;
-    projectIds: readonly number[];
-    keepProjectId?: number;
-  }): { released: number; workspaceIds: string[] };
   prepareExecution(
     input: {
       command: SandboxExecutionCommand;
@@ -1378,13 +1307,10 @@ export interface SandboxControl extends ProjectEnvironmentControl {
       /** A fresh network namespace has no route to the host loopback or another site's listener. Omitted
        * keeps the existing shared network for interactive terminal/GitHub work. */
       network?: 'shared' | 'isolated';
-      /** When present, execution is forced into this exact workspace even for an operator/admin. */
-      workspace?: SandboxWorkspaceRef;
     },
     /** For a caller with NO ambient turn to read — a background service has neither an identity nor a
      *  set of allowed roots. Naming both explicitly is the only honest way to say whose HOME the child
-     *  gets and which directories it may see, and the caller owns the tenancy rule for what it names,
-     *  exactly as it does for `workspacesFor`.
+     *  gets and which directories it may see, and the caller owns the tenancy rule for what it names.
      *
      *  There is deliberately no way to ask for UNCONFINED execution: an explicit request is always run
      *  under bubblewrap, whoever makes it. Direct execution follows from who is driving the turn, and a
@@ -1394,10 +1320,6 @@ export interface SandboxControl extends ProjectEnvironmentControl {
       roots: readonly string[];
     },
   ): SandboxPreparedExecution | Promise<SandboxPreparedExecution>;
-  gitStatus?(input: { accountUserId: number; workspace: SandboxWorkspaceRef; path?: string }): Promise<{
-    branch: string;
-    lines: string[];
-  }>;
 }
 
 /** Options a Microsoft Graph call accepts, mirroring the delegated client the Teams plugin already owns. */
@@ -1638,7 +1560,7 @@ export interface PluginChatArtifactRef {
 export interface PluginContext {
   /** Contribute a tool. `ownerUserId` scopes it to ONE Elowen account: it is then composed only into
    * that account's own/direct/delegated sessions. Omitted → instance-wide, as before. */
-  registerTool(tool: ToolDefinition, opts?: { ownerUserId?: number; hostFilesystem?: boolean; workspaceSafe?: boolean; projectId?: number }): void;
+  registerTool(tool: ToolDefinition, opts?: { ownerUserId?: number; projectId?: number }): void;
   /** Contribute a skill. `ownerUserId` scopes it to ONE Elowen account: it is then advertised (and
    *  `/skill:` expandable) only in that user's own sessions. Omitted → instance-wide, as before. */
   registerSkill(skill: PluginSkill, opts?: { ownerUserId?: number }): void;
@@ -1840,12 +1762,6 @@ export interface PluginContext {
    *  directory a FORK child inherited its placeholders from. Pass it only where the call genuinely leads
    *  to a read; omitting it keeps the stricter boundary, which is why it is opt-in. */
   assertPathAllowed(path: string, opts?: { intent?: 'read' | 'write' }): string;
-  /** Render a validated host path in the current logical filesystem view. */
-  displayPath(path: string): string;
-  /** Stable per-session read/write identity; workspace mode includes the durable workspace id. */
-  pathStateKey(path: string): string;
-  /** Remove exact verified host workspace prefixes from diagnostics before returning them to the model. */
-  sanitizePathOutput(text: string): string;
   /** Persist the COMPLETE output of the current tool call when the inline result can only carry a bounded
    *  excerpt of it, and get back the path to name in that excerpt. Writes into the host's EXISTING
    *  tool-result spill store — the same `<dataDir>/tool-results/<spill namespace>/` directory the context
@@ -1855,10 +1771,10 @@ export interface PluginContext {
    *  `ToolDefinition.execute`; it is fs-encoded by the host, so an exotic id cannot escape the directory.
    *  Ungated: it writes only inside the current turn's own spill directory, which that session can already
    *  write through `assertPathAllowed`. Resolves null when nothing readable can be stored — outside a
-   *  prompt turn (worker/cron runs own no conversation), inside a workspace-confined turn (whose logical
-   *  filesystem admits no absolute path), and when a different file already occupies the name. The caller
-   *  keeps whatever it does without a stored path. Rejects on a real write failure, and on a `text` above
-   *  the host's size ceiling — bounding what it produces is the caller's job, not this store's. */
+   *  prompt turn (worker/cron runs own no conversation), and when a different file already occupies the
+   *  name. The caller keeps whatever it does without a stored path. Rejects on a real write failure, and on
+   *  a `text` above the host's size ceiling — bounding what it produces is the caller's job, not this
+   *  store's. */
   persistToolOutput(input: { toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */
@@ -1911,7 +1827,7 @@ export interface PluginContext {
    *  skips that narrowing when this is set and authorizes the request the way the API surface already does
    *  — `req.auth.accessibleProjects` plus durable membership for the acting account. Everything else must
    *  ignore it: it is not a grant, and it never appears inside a turn. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; apiRequest?: true; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; accountUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef; projectRef?: ProjectExecutionRef };
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; apiRequest?: true; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; accountUserId?: number | null; readOnly?: boolean; projectRef?: ProjectExecutionRef };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;
@@ -1922,11 +1838,11 @@ export interface PluginContext {
    *  than the model was told about. Deliberately not `currentIdentity().elowenUserId`: a delegated child
    *  carries no account identity yet legitimately inherits its delegating turn's contributions. */
   currentContributionUserId(): number | null;
-  /** The ACCOUNT the current turn acts as, for state owned per account (Sandbox workspaces and HOME,
-   *  per-user config and secrets, process ownership): the contribution owner when the turn has one —
-   *  the only account a delegated child carries — else the verified identity's `elowenUserId` (an owner
-   *  or direct turn without a contribution scope, or an authenticated plugin API request). Null when
-   *  neither names an account. THE one resolver: read this instead of composing `currentContributionUserId()
+  /** The ACCOUNT the current turn acts as, for state owned per account (account HOME, per-user config
+   *  and secrets, process ownership): the contribution owner when the turn has one — the only account a
+   *  delegated child carries — else the verified identity's `elowenUserId` (an owner or direct turn
+   *  without a contribution scope, or an authenticated plugin API request). Null when neither names an
+   *  account. THE one resolver: read this instead of composing `currentContributionUserId()
    *  ?? currentIdentity()?.elowenUserId` in the plugin, so every tool of one turn agrees on the account. */
   currentAccountUserId(): number | null;
   /** Whether a human approved THIS tool call at an `ask` permission prompt a moment ago. False for a call
@@ -1937,32 +1853,13 @@ export interface PluginContext {
    *  once" agreed to that command finishing in front of them, not to the tool quietly changing how it
    *  runs. Terminal reads it to keep an approved command out of its auto-backgrounding. */
   callApprovedByAsk(): boolean;
-  /** Resolve an explicit Sandbox workspace assignment against a delegable access boundary — THE one
-   *  resolver, the same host code path that resolves `access.workspaceId` when a delegated child is
-   *  actually spawned. A plugin that assigns workspaces to children (Delegate, workflow nodes) must ask
-   *  here rather than reach for the Sandbox control itself: the control is restricted to the plugins that
-   *  own process launch, so a plugin-local copy of this logic resolves to nothing at all in production
-   *  while passing every test that mocks the control.
-   *
-   *  `access` is a boundary the HOST stamped — `ctx.currentAccess()`, or a captured child boundary handed
-   *  back by the host — never one the plugin composed: the account and project ceiling in it are what the
-   *  workspace is checked against. Returns undefined when neither an inherited nor a requested workspace
-   *  applies (the plain project-scoped case). THROWS, with a message meant for the model, when the account
-   *  is missing, Sandbox is disabled, the id is not one of that account's workspaces inside its current
-   *  project scope, or the request would switch an already workspace-scoped turn to a sibling.
-   *
-   *  Gated by `reads:['controls']`, the same grant as the control it stands in for. */
-  resolveWorkspaceScope(
-    access: { admin: boolean; projectIds: readonly number[]; accountUserId?: number | null; workspaceRef?: SandboxWorkspaceRef },
-    workspaceId?: string,
-  ): SandboxWorkspaceRef | undefined;
   /** Read one bounded UTF-8 file out of the MANAGED project the current turn is bound to — the guest
    *  counterpart of {@link assertPathAllowed}, for a plugin that must read a file the model created with
    *  its own file tools. In a managed project those tools write into the guest, and the host path guard
    *  refuses every host path (there is nothing on the host to resolve against), so a plugin that only
    *  knows the host route cannot read back what it just told the model to write.
    *
-   *  Exposed for the same reason as {@link resolveWorkspaceScope}: the read goes through the Sandbox
+   *  Exposed because the read goes through the Sandbox
    *  control, which `CONTROL_CONSUMERS` restricts to the plugins that own process launch. Routed through
    *  core's own guest artifact seam, so the bounded, version-pinned read has ONE implementation.
    *
@@ -2031,7 +1928,7 @@ export interface PluginContext {
    *
    *  `model` optionally overrides the model the sub-agent runs on, as a `provider/model` string (value
    *  from {@link listModels}); omit it to resume on the model recorded on the child's session row. */
-  continueSubagent(sessionId: string, text: string, onEvent?: (e: SubagentProgressEvent) => void, model?: string, promote?: boolean, workspaceId?: string): Promise<DelegatedContinueResult>;
+  continueSubagent(sessionId: string, text: string, onEvent?: (e: SubagentProgressEvent) => void, model?: string, promote?: boolean): Promise<DelegatedContinueResult>;
   /** Stop a DIRECT sub-agent listed by {@link subagentRuns} — a runaway or no-longer-needed one — without
    *  touching its parent or siblings. The host anchors the lookup to the current turn's session, exactly
    *  like {@link readSubagent}; the plugin supplies only the child id and cannot widen the parent scope.

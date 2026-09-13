@@ -5,7 +5,6 @@ import { join } from 'node:path';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { controlCommandsFrom } from '../../packages/plugin-shared/chatCommands.mjs';
 import { PluginRegistry, projectScopedTools } from '../../src/plugins/registry.js';
-import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import { assertPathAllowed } from '../../src/plugins/pathGuard.js';
 import type { Policy } from '../../src/plugins/policy.js';
@@ -780,7 +779,7 @@ describe('PluginRegistry', () => {
   // names its tool call and nothing else, so it can neither pick a conversation nor be handed a path the
   // turn is unable to read back.
   describe('persistToolOutput', () => {
-    const scoped = <T>(fn: () => T, opts: { sessionId?: string; pathView?: ReturnType<typeof createWorkspacePathView> }): T => {
+    const scoped = <T>(fn: () => T, opts: { sessionId?: string }): T => {
       const policy: Policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [] };
       return runWithPolicy(policy, fn, { identity: { platform: 'elowen', userId: '1', admin: false }, ...opts });
     };
@@ -823,20 +822,11 @@ describe('PluginRegistry', () => {
       });
     });
 
-    it('stores nothing outside a prompt turn, or in a workspace-confined one that could not read it back', async () => {
+    it('stores nothing outside a prompt turn', async () => {
       await withHome(async (home) => {
         const ctx = new PluginRegistry().contextFor('demo', {}, noopLog);
-        const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'elowen-persist-ws-')));
-        const pathView = createWorkspacePathView({ accountUserId: 1, workspaceId: 'ws_1', projectId: 1, path: workspace });
-        try {
-          expect(await scoped(() => ctx.persistToolOutput({ toolCallId: 'c', text: 'x' }), {})).toBeNull();
-          // A workspace turn's logical filesystem admits no absolute path, so a stored path would name a
-          // file the model cannot open — and expose the daemon's data directory while doing it.
-          expect(await scoped(() => ctx.persistToolOutput({ toolCallId: 'c', text: 'x' }), { sessionId: 'brain-p-3', pathView })).toBeNull();
-          expect(existsSync(join(home, '.config', 'elowen', 'tool-results'))).toBe(false);
-        } finally {
-          rmSync(workspace, { recursive: true, force: true });
-        }
+        expect(await scoped(() => ctx.persistToolOutput({ toolCallId: 'c', text: 'x' }), {})).toBeNull();
+        expect(existsSync(join(home, '.config', 'elowen', 'tool-results'))).toBe(false);
       });
     });
   });

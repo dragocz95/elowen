@@ -32,18 +32,18 @@ Authorization: Bearer <token>
 
 The web UI keeps authentication in its same-origin session path. The CLI sends a bearer token directly. Before the first account is created, the daemon is temporarily open for onboarding; authentication resumes automatically afterwards.
 
-## Projects and effective workspaces
+## Projects and the working directory
 
 A **Project** is a registered filesystem root with a stable slug and numeric ID. Projects are the primary tenancy boundary: account assignments, file access, Git snapshots, uploads, and most plugin operations resolve through Project policy.
 
-An **effective workspace** is the directory a particular turn actually uses. It starts with the Project root and may be replaced by an account-owned Sandbox workspace. The Sandbox plugin can expose a worktree with its own branch, base reference, label, and path while keeping it attached to the same Project policy.
+A **working directory** is the directory a particular turn actually uses. It starts with the Project root and can be moved to another directory the account may reach, such as a `git worktree` the person created in their own checkout, by `/cd` in owner chat or by starting the conversation there. The Project policy keeps applying wherever the turn runs, because no plugin selects a checkout on the account's behalf.
 
-A Project's execution target is declared, never inferred from a path: it is either the host filesystem or a managed environment. A managed Project runs in its own persistent container that survives across turns, with its own workspace, home, and data volumes, and the file, shell, and related surfaces reach it through the Sandbox control instead of the host filesystem. This is a third answer to where a turn actually runs, alongside the Project root and an account-owned Sandbox worktree.
+A Project's execution target is declared, never inferred from a path: it is either the host filesystem or a managed environment. A managed Project runs in its own persistent container that survives across turns, with its own home and data volumes, and the file, shell, and related surfaces reach it through the Sandbox control instead of the host filesystem. This is a second answer to where a turn actually runs, alongside the directory on the host.
 
 This distinction matters operationally:
 
 - Project access answers **which project** an account may use.
-- Sandbox selection answers **which account-owned checkout** the turn should use for that Project.
+- The working directory answers **which directory** of it the turn runs in, and it is the Project root unless the conversation was moved.
 - The execution target answers **whether the turn runs on the host filesystem or in the Project's managed container**.
 - The path guard answers **whether a concrete path** is inside the permitted roots.
 
@@ -148,12 +148,12 @@ The scope can capture:
 - focused role/context prompt appendices;
 - whether read-only mode was requested or imposed;
 - the principal that spawned it;
-- the account whose personal tools, HOME, and Sandbox state it inherits;
+- the account whose personal tools, HOME, and plugin contribution it inherits;
 - the reasoning level it runs on, so a continuation or a restart resumes it at the same effort.
 
 The child cannot widen that scope. Continuation re-checks the parent's current authority, so revoked Projects, plugin grants, and stricter permission settings affect old children. The only supported widening is promotion of a read-only child that the same principal explicitly requested as read-only; the promoted scope is minted from the caller's current authority.
 
-The child is a fresh sub-agent or a fork of the calling conversation. A fork inherits the parent's full context and prompt prefix, which makes it cheap on the same provider and model because it reuses the parent's prompt cache, and it is the right choice when the child's intermediate output is not worth keeping in the parent's context. A fresh sub-agent is right when the child needs a narrower toolset, read-only tools, a different model, or a workspace scope, because a fork must keep the parent's exact tools and prompt.
+The child is a fresh sub-agent or a fork of the calling conversation. A fork inherits the parent's full context and prompt prefix, which makes it cheap on the same provider and model because it reuses the parent's prompt cache, and it is the right choice when the child's intermediate output is not worth keeping in the parent's context. A fresh sub-agent is right when the child needs a narrower toolset, read-only tools, or a different model, because a fork must keep the parent's exact tools and prompt.
 
 A delegation and a workflow node each choose their own reasoning effort with an optional `thinkingLevel`, picked from the difficulty of that task: omitted or low for mechanical work, high for design, unexplained failures, or security-sensitive review. Omitting it inherits the delegating turn's level. A level the child's model does not offer is refused with the levels it does, never silently reduced.
 
@@ -179,9 +179,9 @@ Prompt-cache stability is preserved by deterministic tool ordering and volatile 
 
 A **platform channel** is a conversation delivered by a Discord, Telegram, Microsoft Teams, WhatsApp, or other adapter plugin. Adapters authenticate their own inbound webhook or gateway traffic and pass verified identity metadata to the core channel service.
 
-The channel service reuses the normal brain pipeline. It applies the linked writer's Project policy, plugin grants, tool rules, memory toggles, model settings, and Sandbox workspace where applicable. Shared rooms remain shared; scheduled direct delivery is still a channel turn rather than an owner-chat send.
+The channel service reuses the normal brain pipeline. It applies the linked writer's Project policy, plugin grants, tool rules, memory toggles, and model settings where applicable. Shared rooms remain shared; scheduled direct delivery is still a channel turn rather than an owner-chat send.
 
-In a chat platform, the `/project` command moves that channel's conversation into one of the sender's own Projects. A bare `/project` opens a chooser listing the Projects that sender can reach, by slug; `/project <slug|id>` switches in one step. The switch re-validates the sender's own project policy and is refused for an unlinked sender, an unknown or unreachable project, or while a process is still running in the bound worktree. It is not operator-gated, because it can only move the conversation into a directory the switching account itself reaches. The related `/context` picker continues the channel in one of the sender's own conversations and is operator-gated.
+In a chat platform, the `/project` command moves that channel's conversation into one of the sender's own Projects. A bare `/project` opens a chooser listing the Projects that sender can reach, by slug; `/project <slug|id>` switches in one step. The switch re-validates the sender's own project policy and is refused for an unlinked sender or an unknown or unreachable project. It is not operator-gated, because it can only move the conversation into a directory the switching account itself reaches. The related `/context` picker continues the channel in one of the sender's own conversations and is operator-gated.
 
 **Scheduling** is plugin-owned. Personal jobs execute as the owning account and re-check ownership and grants when they fire. Owner-chat and Web-created recurring jobs use a dedicated job conversation unless a permitted explicit notification channel is configured; direct one-to-one platform jobs retain their direct origin, while shared-room jobs use the normal channel path. An explicit notification channel takes precedence over the normal ownership-based destination. Instance jobs execute with operator authority and may notify configured channels. Filing a job under a conversation is organizational only and does not change execution context, model, permissions, or delivery.
 

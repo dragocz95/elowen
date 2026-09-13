@@ -365,7 +365,7 @@ export function DataTableCell({ children, header = false, priority = 'always', l
  *
  *  Every interactive register renders it as the last cell of its row — Memory, Projects, Users, the
  *  advisor's agents table and the markdown asset editor — and `lib/pluginUi` publishes it to plugin
- *  registers (the MCP servers and sandbox workspaces pages) so theirs open the same way. It goes with the
+ *  registers (the MCP servers page) so theirs open the same way. It goes with the
  *  row contract above (`onOpen` + `openLabel`); `.data-table-chevron` in
  *  app/styles/components/data-table.css is its half of the same pair. */
 export function DataTableChevronCell({ className = '' }: { className?: string }) {

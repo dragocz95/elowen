@@ -7,7 +7,6 @@ import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
-import { en } from '../../../lib/i18n/dictionaries/en';
 
 /** EventSource stand-in — the surface only needs the stream to exist and to be drivable by hand. */
 class FakeES {
@@ -98,13 +97,8 @@ const server = setupServer(
       { name: 'model', description: 'Switch the model', kind: 'picker' },
       { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', execution: 'session-control', argument: { kind: 'text' } },
       { name: 'help', description: 'List every command', kind: 'info' },
-      // A picker the SANDBOX PLUGIN contributes, exactly as the daemon publishes one: no prompt, an
-      // owning plugin, and an execution that says the surface draws it. Nothing in the router knows this
-      // name — it is dispatched by shape, through the web's own renderer registry.
-      { name: 'sandbox', description: 'Inspect and manage Sandbox workspaces', kind: 'picker', execution: 'surface-local', plugin: 'sandbox' },
     ],
   })),
-  http.get('*/api/plugins/sandbox/api/overview', () => HttpResponse.json({ projects: [], sessions: [], workspaces: [] })),
 );
 
 beforeAll(() => {
@@ -353,43 +347,11 @@ describe('web slash commands: work mode + rename', () => {
 });
 
 /** A plugin picker is not a command the chat controller knows by name. The daemon says "kind:'picker',
- *  execution:'surface-local', owned by <plugin>" and this surface answers with a renderer of its own, so
- *  these two cover the seam itself rather than the sandbox drawer behind it: the shape opens the picker,
- *  and a catalog that does not carry the command leaves the slash as ordinary text. */
+ *  execution:'surface-local', owned by <plugin>" and leaves the chooser to the surface, and this build
+ *  draws no plugin-declared chooser: such a command has to be REPORTED as undrawable rather than ending in
+ *  the success toast that names it, and a catalog that does not carry the command at all leaves the slash
+ *  as ordinary text. */
 describe('web slash commands: plugin-contributed pickers', () => {
-  it('/sandbox opens the plugin picker through the generic surface-local path', async () => {
-    renderChat();
-    await waitFor(() => expect(FakeES.instances.length).toBe(1));
-    await runSlash('sandbox');
-
-    // Named from the dictionary the modal itself reads, so the assertion follows the shipped title.
-    expect(await screen.findByRole('dialog', { name: en.sandboxModal.modalTitle })).toBeInTheDocument();
-    // Opening a picker is a local render, never a turn: nothing was said to the model.
-    expect(sendBodies).toEqual([]);
-    expect(commandBodies).toEqual([]);
-  });
-
-  /** The renderer registry is keyed by the published name AND the owning plugin. Keyed by name alone,
-   *  ANY plugin that registered `/sandbox` would have its command answered by the sandbox drawer — which
-   *  posts to the sandbox plugin's own workspace routes, creating and removing Git worktrees on behalf of
-   *  a command that plugin never declared. */
-  it('does not draw the sandbox drawer for a /sandbox published by a different plugin', async () => {
-    server.use(http.get('*/api/brain/commands', () => HttpResponse.json({
-      commands: [
-        { name: 'help', description: 'List every command', kind: 'info' },
-        { name: 'sandbox', description: 'Pick a build sandbox', kind: 'picker', execution: 'surface-local', plugin: 'ci-runner' },
-      ],
-    })));
-    renderChat();
-    await waitFor(() => expect(FakeES.instances.length).toBe(1));
-    await runSlash('sandbox');
-
-    expect(screen.queryByRole('dialog', { name: en.sandboxModal.modalTitle })).toBeNull();
-    // …and the sandbox plugin's routes were never touched on that command's behalf.
-    expect(sendBodies).toEqual([]);
-    expect(commandBodies).toEqual([]);
-  });
-
   /** A published picker nothing here can draw used to end in the success toast that names the command,
    *  which reads exactly like the chooser opened somewhere off screen. It has to SAY that nothing opened. */
   it('states in words that a picker this build cannot draw was not opened', async () => {
@@ -415,7 +377,7 @@ describe('web slash commands: plugin-contributed pickers', () => {
 
   // Disabling the plugin removes the command from the published catalog, because the daemon builds that
   // list from the live loaded-plugin set. Without a catalog entry there is nothing to dispatch, and the
-  // slash has to stay what it looks like: text. This is what stops the drawer from outliving its plugin.
+  // slash has to stay what it looks like: text, with no overlay of any kind behind it.
   it('treats /sandbox as ordinary text when the catalog does not publish it', async () => {
     server.use(http.get('*/api/brain/commands', () => HttpResponse.json({
       commands: [{ name: 'help', description: 'List every command', kind: 'info' }],
@@ -431,7 +393,7 @@ describe('web slash commands: plugin-contributed pickers', () => {
     await send('/sandbox');
     await waitFor(() => expect(sendBodies.length).toBe(1));
     expect(sendBodies[0]).toMatchObject({ text: '/sandbox' });
-    expect(screen.queryByRole('dialog', { name: en.sandboxModal.modalTitle })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 

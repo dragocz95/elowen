@@ -5,7 +5,6 @@ import {
 } from './toolPermissions.js';
 import { buildReadOnlyBoundary } from './agents/readOnlyBoundary.js';
 import { FORK_EXECUTE_DENIES } from './session/forkPrefix.js';
-import type { SandboxWorkspaceRef } from '../plugins/workspaceTypes.js';
 import { projectExecutionRefSchema, sameProjectExecution, type ProjectExecutionRef } from '../shared/projectExecution.js';
 
 /**
@@ -42,13 +41,10 @@ export interface DelegatedExecutionScope {
   /** Account whose model, prompt, compaction and Fast preferences compose the child. Optional only for
    * legacy rows; new children capture it so eviction or runner execution never falls back to the row owner. */
   settingsUserId?: number;
-  /** Account whose owner-scoped contributions, HOME and Sandbox workspaces the child inherits. Optional for
+  /** Account whose owner-scoped contributions, HOME and secrets the child inherits. Optional for
    * legacy rows; absence fails closed to instance contributions/base Project roots rather than guessing the
    * durable session owner. */
   contributionUserId?: number;
-  /** Explicit Sandbox worktree assigned by the delegating turn. The durable scope stores only this
-   * ownership tuple; every process resolves the canonical host path through Sandbox immediately before use. */
-  workspaceRef?: SandboxWorkspaceRef;
   projectRef?: ProjectExecutionRef;
   /** Reasoning effort this child was spawned on — the Delegate call's own `thinkingLevel`, or the level
    * inherited from the delegating turn. Captured here because it is spawn input, not display data: a
@@ -200,23 +196,10 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     if (typeof value.fork !== 'boolean') return undefined;
     fork = value.fork;
   }
-  let workspaceRef: SandboxWorkspaceRef | undefined;
-  if (own(value, 'workspaceRef')) {
-    const rawWorkspace = value.workspaceRef;
-    if (!rawWorkspace || typeof rawWorkspace !== 'object' || Array.isArray(rawWorkspace)) return undefined;
-    const workspace = rawWorkspace as Record<string, unknown>;
-    if (typeof workspace.workspaceId !== 'string' || !workspace.workspaceId.trim()
-      || workspace.workspaceId.length > 128
-      || !Number.isSafeInteger(workspace.projectId) || (workspace.projectId as number) <= 0) return undefined;
-    workspaceRef = { workspaceId: workspace.workspaceId.trim(), projectId: workspace.projectId as number };
-    if (!value.admin && !canonicalProjectIds.includes(workspaceRef.projectId)) return undefined;
-    if (contributionUserId === undefined) return undefined;
-  }
-
   let projectRef: ProjectExecutionRef | undefined;
   if (own(value, 'projectRef')) {
     const parsed = projectExecutionRefSchema.safeParse(value.projectRef);
-    if (!parsed.success || workspaceRef) return undefined;
+    if (!parsed.success) return undefined;
     projectRef = parsed.data;
     // A host ref that NAMES a project the parent is assigned to travels with the same authority the
     // parent's own turns have; the child is confined to that project's root either way. The nameless
@@ -237,7 +220,6 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(spawnedBy ? { spawnedBy } : {}),
     ...(settingsUserId !== undefined ? { settingsUserId } : {}),
     ...(contributionUserId !== undefined ? { contributionUserId } : {}),
-    ...(workspaceRef ? { workspaceRef } : {}),
     ...(projectRef ? { projectRef } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(fork ? { fork: true } : {}),
@@ -294,13 +276,8 @@ export interface DelegatingTurnAccess {
   settingsUserId?: number | null;
   /** Account whose owner-scoped contributions this turn carries. */
   contributionUserId?: number | null;
-  /** The ACCOUNT this turn acts as: the contribution owner when it has one, else the verified identity.
-   *  Declared HERE, not only on the concrete `currentAccess()` return, because this is the interface a
-   *  workspace resolution is measured against (see WorkspaceAccessCeiling). Leaving it out let a caller
-   *  typed to this interface compile while silently resolving no workspace at all. */
+  /** The ACCOUNT this turn acts as: the contribution owner when it has one, else the verified identity. */
   accountUserId?: number | null;
-  /** Present only inside a child already narrowed to an explicitly assigned Sandbox workspace. */
-  workspaceRef?: SandboxWorkspaceRef;
   projectRef?: ProjectExecutionRef;
 }
 
@@ -339,14 +316,6 @@ export function scopeExceedsCurrentAccess(
   }
   if (access.projectRef && (!scope.projectRef || !sameProjectExecution(access.projectRef, scope.projectRef))) {
     return 'it is not scoped to the selected project execution target';
-  }
-  if (access.workspaceRef && scope.projectRef) return 'a managed project cannot replace a restricted workspace';
-  if (access.workspaceRef) {
-    if (!scope.workspaceRef) return 'it is not confined to this turn’s Sandbox workspace';
-    if (scope.workspaceRef.workspaceId !== access.workspaceRef.workspaceId
-      || scope.workspaceRef.projectId !== access.workspaceRef.projectId) {
-      return 'it is confined to a different Sandbox workspace';
-    }
   }
   const callerAllow = access.toolPolicy?.allow;
   if (callerAllow) {
@@ -418,7 +387,6 @@ export function promoteDelegatedScope(
     spawnedBy: scope.spawnedBy,
     ...(scope.settingsUserId !== undefined ? { settingsUserId: scope.settingsUserId } : {}),
     ...(scope.contributionUserId !== undefined ? { contributionUserId: scope.contributionUserId } : {}),
-    ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
     ...(scope.projectRef ? { projectRef: scope.projectRef } : {}),
     // Effort is not authority: a promoted child is the SAME conversation continuing with write access, so
     // it keeps thinking exactly as hard as it did while it was read-only.

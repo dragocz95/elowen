@@ -1,11 +1,12 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { CornerDownLeft, Sparkles } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginUi } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
+import { announceLocation, hrefPathname } from '../../lib/sameDocumentNavigation';
 import {
   askCandidates, buildSearchIndex, displayHref, filterEntries, findNormalizedRange, rankCandidates,
   SEARCH_GROUP_ORDER, SEARCH_MAX_QUERY_CHARS, type SearchEntry, type SearchGroup,
@@ -125,6 +126,7 @@ const ASK_IDLE: AskState = { status: 'idle', entries: NO_ENTRIES };
 function CommandPaletteDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: () => void }) {
   const { t } = useTranslation();
   const router = useRouter();
+  const pathname = usePathname();
   // Query lives HERE, so closing the palette discards it with the component and the next open starts
   // from an empty field without a reset effect flashing the previous search first.
   const [query, setQuery] = useState('');
@@ -232,7 +234,12 @@ function CommandPaletteDialog({ entries, onClose }: { entries: SearchEntry[]; on
   const run = (id: string) => {
     const entry = entries.find((candidate) => candidate.id === id);
     if (!entry) return;
-    router.push(entry.href);
+    // A row of the page the reader is already on — another section of this deck, a record within it —
+    // moves in the document rather than through the router, the same decision every shell link makes
+    // (see ShellLink). On `/account` and `/settings` a router navigation would be intercepted and
+    // answered with a second copy of the page in an overlay above it.
+    if (hrefPathname(entry.href) === pathname) announceLocation(entry.href);
+    else router.push(entry.href);
     onClose();
   };
 

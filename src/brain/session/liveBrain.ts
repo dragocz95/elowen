@@ -10,7 +10,6 @@ import type { TurnMode } from '../service/turnRequest.js';
 import type { ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import type { AssessColdCompaction } from './coldStartCompaction.js';
 import type { StoredChatImage } from '../chatImages.js';
-import type { WorkspacePathView } from '../../plugins/pathView.js';
 import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
 
 /** A queued mid-turn message's image attachments, in PI's ImageContent shape. */
@@ -363,8 +362,6 @@ export interface SpawnOpts {
    *  the policy before use — see BrainService.turnWorkDir — and preferred as the session cwd, which pi
    *  advertises to the model ("Current working directory: …"). */
   clientCwd?: string;
-  /** Ephemeral exact workspace view resolved through Sandbox for this process. Never persisted or sent over IPC. */
-  pathView?: WorkspacePathView;
 }
 
 /** Fallback auto-compact threshold (context-window fill %) when the user set none — also the fixed value

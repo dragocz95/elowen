@@ -108,8 +108,7 @@ function fixture(options: { managed?: boolean; catalog?: unknown; provider?: Ret
     config: {}, registerTool: (tool: Tool) => tools.push(tool), registerHook() {}, registerControl() {}, registerCleanup() {}, emitCard() {},
     logger: { info() {}, warn() {}, error() {} }, currentAccess: () => access, currentAccountUserId: () => 1,
     currentSessionId: () => session, defaultCwd: () => (options.managed === false ? '/tmp' : '/workspace'),
-    assertPathAllowed: hostGuard, displayPath: (path: string) => path, pathStateKey: (path: string) => `host:${path}`,
-    sanitizePathOutput: (text: string) => text, control, callApprovedByAsk: () => false,
+    assertPathAllowed: hostGuard, control, callApprovedByAsk: () => false,
     currentIdentity: () => ({ conversation: 'own' }), processes: new ProcessRegistry(),
   };
   files.register(ctx as unknown as PluginContext);

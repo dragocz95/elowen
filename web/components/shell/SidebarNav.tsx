@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, ChevronsUpDown, MoreHorizontal, Search, Settings2, UserRound, X } from 'lucide-react';
@@ -8,6 +7,7 @@ import { useBrand } from '../../lib/brand';
 import { useBrainSessions, useHealth, useMe } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { SkinSwitcher } from '../ui/SkinSwitcher';
+import { ShellLink } from './ShellLink';
 import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
 import { navOrderIndex } from './navOrder';
@@ -386,7 +386,7 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
     const hint = badge ? `${entry.label} · ${badge.title}` : entry.label;
     return (
       <SidebarMenuButton asChild isActive={active} className="sidebar-nav__item">
-        <Link
+        <ShellLink
           href={entry.href ?? '#'}
           draggable={false}
           aria-current={currentPage ? 'page' : undefined}
@@ -397,7 +397,7 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
           <span className="sidebar-nav__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
           <span className="sidebar-nav__label" aria-hidden={compact || undefined}>{entry.label}</span>
           {badge ? <SidebarMenuBadge aria-hidden className="sidebar-nav__badge" data-live={badge.live || undefined}>{badge.count}</SidebarMenuBadge> : null}
-        </Link>
+        </ShellLink>
       </SidebarMenuButton>
     );
   };
@@ -430,10 +430,10 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
               return (
                 <SidebarMenuSubItem key={page.id}>
                   <SidebarMenuSubButton asChild isActive={current} className="sidebar-nav__sub-item">
-                    <Link href={page.href} draggable={false} aria-current={current ? 'page' : undefined} title={page.label} onContextMenu={onContextMenu}>
+                    <ShellLink href={page.href} draggable={false} aria-current={current ? 'page' : undefined} title={page.label} onContextMenu={onContextMenu}>
                       {PageIcon ? <span className="sidebar-nav__icon" aria-hidden><PageIcon size={16} strokeWidth={1.75} /></span> : null}
                       <span className="sidebar-nav__label">{page.label}</span>
-                    </Link>
+                    </ShellLink>
                   </SidebarMenuSubButton>
                 </SidebarMenuSubItem>
               );
@@ -545,10 +545,10 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link href="/account"><UserRound size={15} strokeWidth={1.75} aria-hidden />{t.nav.account}</Link>
+                <ShellLink href="/account"><UserRound size={15} strokeWidth={1.75} aria-hidden />{t.nav.account}</ShellLink>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link href="/settings"><Settings2 size={15} strokeWidth={1.75} aria-hidden />{t.nav.settings}</Link>
+                <ShellLink href="/settings"><Settings2 size={15} strokeWidth={1.75} aria-hidden />{t.nav.settings}</ShellLink>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

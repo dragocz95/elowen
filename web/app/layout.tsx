@@ -127,7 +127,10 @@ export async function generateViewport() {
 // briefly playing entrance or ambient motion while React hydrates. Theme is fixed in the markup.
 const NO_FLASH_EFFECTS = `(function(){try{var m=localStorage.getItem('elowen:effects');m=m==='full'||m==='reduced'||m==='off'?m:'auto';var r=m==='auto'?(window.matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'full'):m;document.documentElement.setAttribute('data-effects-mode',m);document.documentElement.setAttribute('data-effects',r);}catch(e){}})();`;
 
-export default async function RootLayout({ children, settingsOverlay = null }: { children: ReactNode; settingsOverlay?: ReactNode }) {
+// `pageOverlay` is the parallel slot in `app/@pageOverlay`: the intercepted presentation of a page the
+// shell links to (`/settings`, `/account`). It is null on a hard load or an external link, where the
+// canonical page under `app/` is the whole screen.
+export default async function RootLayout({ children, pageOverlay = null }: { children: ReactNode; pageOverlay?: ReactNode }) {
   // Server-rendered theme overrides: the values are in the markup before first paint (no FOUC), and the
   // login screen — rendered before any token exists — already carries the instance brand.
   const theme = await fetchThemePayload();
@@ -168,7 +171,7 @@ export default async function RootLayout({ children, settingsOverlay = null }: {
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} />
         {themeStyle ? <style id="theme-overrides" dangerouslySetInnerHTML={{ __html: themeStyle }} /> : null}
       </head>
-      <body style={{ backgroundColor: paint.background }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} sessionPresent={sessionPresent} initialLocale={locale} skinSeed={{ choice: skinChoice, allowed, fallback: skinDefault }} settingsOverlay={settingsOverlay}>{children}</Shell></body>
+      <body style={{ backgroundColor: paint.background }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} sessionPresent={sessionPresent} initialLocale={locale} skinSeed={{ choice: skinChoice, allowed, fallback: skinDefault }} pageOverlay={pageOverlay}>{children}</Shell></body>
     </html>
   );
 }

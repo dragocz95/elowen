@@ -15,11 +15,10 @@ import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, type SlashSurface } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
-import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
-import { currentIdentity, currentContributionUserId, currentAccountUserId, currentCallApprovedByAsk, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentPathView, currentSessionId } from './policyContext.js';
+import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
+import { currentIdentity, currentContributionUserId, currentAccountUserId, currentCallApprovedByAsk, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
 import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
 import { sessionToolResultSpillDir } from '../shared/paths.js';
-import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
 import { GUEST_WRITE_OP_BYTES, readManagedGuestArtifact } from '../brain/managedArtifacts.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
@@ -128,7 +127,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
-  sandbox: ['workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution', ...ENVIRONMENT_CONTROL_METHODS],
+  sandbox: ['prepareExecution', ...ENVIRONMENT_CONTROL_METHODS],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
   github: ['sessionCredential'],
   publishedSitesGateway: [
@@ -254,9 +253,6 @@ export class PluginRegistry {
    * Index-aligned with `tools`; owner-scoped duplicate names are safe because `toolsFor` filters and
    * de-duplicates before a session is composed. */
   readonly toolOwnerUsers: (number | null)[] = [];
-  /** Tools whose implementation can see the daemon host filesystem outside PathView (notably stdio MCP).
-   * Explicit workspace-scoped children omit them fail-closed; remote/network tools remain available. */
-  readonly hostFilesystemTools = new Set<string>();
   /** Tools whose very DECLARATION is derived from one managed project, as tool name → project id.
    * An MCP server bound to a project reports its tool names, descriptions and input schemas from inside
    * that project, so those are project data even before anything is called. A bound stdio server is
@@ -264,10 +260,6 @@ export class PluginRegistry {
    * declaration would otherwise be composed for every account. The session composer drops these unless
    * the session is running in that same project. */
   readonly projectBoundTools = new Map<string, number>();
-  /** Tools positively declared safe for an exact workspace PathView. */
-  readonly workspaceSafeTools = new Set<string>();
-  /** At least one registration for this name lacked the workspace-safe declaration. */
-  readonly workspaceUnsafeTools = new Set<string>();
   readonly skills: PluginSkill[] = [];
   /** Canonical base directory captured when a skill is registered. SkillLoad reads through this pinned
    *  boundary so a later symlink re-point cannot move an advertised skill onto an arbitrary host path. */
@@ -410,11 +402,8 @@ export class PluginRegistry {
       this.tools.push(t);
       this.toolOwnerUsers.push(other.toolOwnerUsers[i] ?? null);
       this.toolOwner.set(t.name, owner);
-      if (other.hostFilesystemTools.has(t.name)) this.hostFilesystemTools.add(t.name);
       const boundProject = other.projectBoundTools.get(t.name);
       if (boundProject !== undefined) this.projectBoundTools.set(t.name, boundProject);
-      if (other.workspaceSafeTools.has(t.name)) this.workspaceSafeTools.add(t.name);
-      if (other.workspaceUnsafeTools.has(t.name)) this.workspaceUnsafeTools.add(t.name);
     }
     this.skills.push(...other.skills);
     for (const skill of other.skills) this.skillCanonicalBaseDirs.set(skill, other.skillCanonicalBaseDir(skill));
@@ -1062,10 +1051,7 @@ export class PluginRegistry {
         this.tools.push(t);
         this.toolOwnerUsers.push(opts?.ownerUserId ?? null);
         this.toolOwner.set(t.name, name);
-        if (opts?.hostFilesystem === true) this.hostFilesystemTools.add(t.name);
         if (typeof opts?.projectId === 'number') this.projectBoundTools.set(t.name, opts.projectId);
-        if (opts?.workspaceSafe === true) this.workspaceSafeTools.add(t.name);
-        else this.workspaceUnsafeTools.add(t.name);
       },
       registerSkill: (s, opts) => {
         this.skills.push(s);
@@ -1464,9 +1450,6 @@ export class PluginRegistry {
         });
       },
       assertPathAllowed,
-      displayPath,
-      pathStateKey,
-      sanitizePathOutput,
       // The spill DIRECTORY comes from the host's own turn scope, never from the plugin: the caller names
       // only its tool call and the text, so it can no more write into another conversation's spills than
       // it could name one. Sessionless (worker/cron) turns own no directory and get null rather than a
@@ -1482,11 +1465,6 @@ export class PluginRegistry {
         }
         const sessionId = currentSessionId();
         if (!sessionId) return null;
-        // A workspace-confined turn has no name for this file: its logical filesystem is the worktree, so
-        // assertPathAllowed resolves through the path view and refuses every absolute path. Storing it
-        // would hand the model a path it cannot open — and one that names the daemon's data directory,
-        // which the workspace sanitiser has no prefix to redact. Nothing is stored instead.
-        if (currentPathView()) return null;
         return persistToolOutputSpill(sessionToolResultSpillDir(process.env, sessionId), toolCallId, text);
       },
       allowedRoots,
@@ -1509,25 +1487,7 @@ export class PluginRegistry {
       currentContributionUserId,
       currentAccountUserId,
       callApprovedByAsk: currentCallApprovedByAsk,
-      // THE workspace resolver, exposed instead of the Sandbox control it needs. `CONTROL_CONSUMERS`
-      // restricts that control to the plugins that own process launch, so a delegating plugin resolving
-      // workspaces on its own gets `undefined` in production while a mocked control keeps its tests green —
-      // which is exactly how a workflow node could be assigned a workspace the same turn had just created
-      // and then be refused it. One resolver, host-side, for assignment time and spawn time alike.
-      //
-      // Behind the same `reads:['controls']` grant as the control it stands in for. It hands back only the
-      // ownership tuple (`bindingRef` drops the host path), and the account it resolves against comes from
-      // a boundary the host stamped — but the caller still supplies that boundary, so this would otherwise
-      // let ANY enabled plugin ask whether a given workspace id belongs to a given account. Deny-by-default
-      // keeps that question inside the plugins the operator's manifest already admits to cross-domain reach.
-      resolveWorkspaceScope: (access, workspaceId) => {
-        if (!capabilities.reads?.includes('controls')) {
-          throw new Error(`plugin "${name}" did not declare the reads:['controls'] capability`);
-        }
-        const binding = resolveDelegatedWorkspace(resolveControl?.('sandbox'), access, workspaceId);
-        return binding ? bindingRef(binding) : undefined;
-      },
-      // The guest read, exposed for the same reason and behind the same grant as the resolver above: the
+      // The guest read, behind the `reads:['controls']` grant: the
       // Sandbox control it needs is restricted to the plugins that own process launch. The managed turn
       // (project, account, conversation) is resolved from the HOST scope, so the plugin supplies only a
       // path — it cannot name another project or another account. Core's guest artifact seam does the
@@ -1571,14 +1531,14 @@ export class PluginRegistry {
         }
         return delegatedChildren.read(parentSessionId, sessionId);
       },
-      continueSubagent: (sessionId, text, onEvent, model, promote, workspaceId) => {
+      continueSubagent: (sessionId, text, onEvent, model, promote) => {
         const parentSessionId = currentSessionId();
         if (!parentSessionId || !delegatedChildren) {
           return Promise.reject(new Error('continuing a sub-agent is only available inside a conversation turn'));
         }
         // `currentAccess()` is read HERE, from the live turn scope, for the promotion ceiling as much as for
         // the continuation check: the plugin never supplies the authority a promotion is measured against.
-        return delegatedChildren.continue(parentSessionId, sessionId, text, currentAccess(), onEvent, model, promote === true, workspaceId);
+        return delegatedChildren.continue(parentSessionId, sessionId, text, currentAccess(), onEvent, model, promote === true);
       },
       stopSubagent: (sessionId) => {
         const parentSessionId = currentSessionId();

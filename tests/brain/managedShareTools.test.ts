@@ -10,7 +10,6 @@ import { buildShareImageTool } from '../../src/brain/tools/shareImageTool.js';
 import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import type { WorkspacePathView } from '../../src/plugins/pathView.js';
 import { managedGuestFs, PROJECT } from '../helpers/managedGuest.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { SandboxControl } from '../../src/plugins/api.js';
@@ -44,8 +43,6 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 interface Scope {
   projectRef?: { kind: 'managed'; projectId: number };
   identity: TurnIdentity;
-  /** A legacy exact workspace scope rides a delegated child — it must never widen into the project. */
-  workspacePathView?: WorkspacePathView;
 }
 
 /** Run a tool inside a turn scope shaped like the real one: managed projectRef + identity. */
@@ -61,8 +58,6 @@ function call(
       sessionId: SESSION,
       identity: scope.identity,
       projectRef: scope.projectRef ?? PROJECT,
-      // A workspace-scoped child carries an immutable path view; scope.workspacePathView stands in for it.
-      ...(scope.workspacePathView ? { pathView: scope.workspacePathView } : {}),
     },
   ) as Promise<{ content: { type: string; text?: string }[]; details?: Record<string, unknown> }>;
 }
@@ -176,21 +171,6 @@ describe('ShareFile on a managed project', () => {
     const tool = buildShareFileTool({ imagesDir, sandbox: async () => guest.sandbox as SandboxControl });
     expect(text(await call(tool, { path: '/workspace/dir' }, { identity: OWNER }))).toContain('is not a file');
     expect(text(await call(tool, { path: '/workspace/absent.txt' }, { identity: OWNER }))).toContain('cannot find');
-  });
-
-  it('refuses a legacy exact workspace scope widened into the managed project', async () => {
-    const guest = managedGuestFs({ '/workspace/report.txt': 'bytes' });
-    const tool = buildShareFileTool({ imagesDir, sandbox: async () => guest.sandbox as SandboxControl });
-    const view: WorkspacePathView = {
-      kind: 'workspace',
-      workspace: { workspaceId: 'w', projectId: 1 },
-      root: '/worktrees/main',
-      resolve: (p) => p, display: (p) => p, stateKey: (p) => p, sanitize: (p) => p,
-    };
-    const res = await call(tool, { path: '/workspace/report.txt' }, { identity: OWNER, workspacePathView: view });
-    expect(res.details?.sharedFile).toBeUndefined();
-    expect(text(res)).toContain('workspace');
-    expect(guest.calls()).toBe(0);
   });
 
   /** One turn = one WeakMap key in the budget, so the whole budget check must run inside ONE turn scope. */
