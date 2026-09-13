@@ -667,15 +667,22 @@ export class BrainStatusService {
     return this.withRunningAnchors(id, this.shapedHistory(id));
   }
 
+  /** The single authorization source for an explicit transcript read. Session ownership is sufficient:
+   *  a retained child transcript deliberately outlives its parent relation and legacy/channel/cron/workflow
+   *  children were always readable here. `anyOwner` is the admin oversight read-only escape hatch. */
+  sessionForRead(userId: number, sessionId: string, opts: { anyOwner?: boolean } = {}): BrainSessionRow {
+    const row = this.d.store.getSession(sessionId);
+    // Granted only by read routes. Write paths never call this with anyOwner, so oversight cannot post into
+    // another account's conversation under that account's identity.
+    if (!row || (row.user_id !== userId && !opts.anyOwner)) throw new Error('unknown session');
+    return row;
+  }
+
   /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
    *  task-worker sessions that `start()` refuses to resume. Ownership-checked; used by the read-only
    *  history view (Sessions → open in web chat). Throws for an unknown or foreign session. */
   messagesOf(userId: number, sessionId: string, opts: { anyOwner?: boolean } = {}): BrainMessageView[] {
-    const row = this.d.store.getSession(sessionId);
-    // `anyOwner` is the admin oversight register READING a foreign transcript. It is granted by the HTTP
-    // boundary on the read route only -- never on the send path, where it would let an admin post INTO
-    // someone else's conversation under that person's user id.
-    if (!row || (row.user_id !== userId && !opts.anyOwner)) throw new Error('unknown session');
+    this.sessionForRead(userId, sessionId, opts);
     return this.withRunningAnchors(sessionId, this.shapedHistory(sessionId));
   }
 
@@ -684,11 +691,7 @@ export class BrainStatusService {
    *  conversation; an explicit `sessionId` is ownership-checked exactly like {@link messagesOf}. Shapes the
    *  full history then windows it (see {@link windowViews}) so folding/marker interleaving stays intact. */
   messagesPage(userId: number, sessionId: string | undefined, opts: MessagePageOpts, access: { anyOwner?: boolean } = {}): MessagePage {
-    if (sessionId !== undefined) {
-      const row = this.d.store.getSession(sessionId);
-      // Same read-only escape hatch as messagesOf: the register pages through a foreign transcript.
-      if (!row || (row.user_id !== userId && !access.anyOwner)) throw new Error('unknown session');
-    }
+    if (sessionId !== undefined) this.sessionForRead(userId, sessionId, access);
     const id = sessionId ?? this.d.lifecycle.activeSessionId(userId);
     const page = windowViews(this.shapedHistory(id), opts);
     // Anchors are pinned AFTER windowing, and only into the FIRST (newest) page: the window can cut a
@@ -703,9 +706,13 @@ export class BrainStatusService {
   /** Atomic, idempotent first frame for an opt-in fixed-session SSE stream. Reads the clean durable
    *  history and the live run journal synchronously on the same event-loop turn, so an event cannot
    *  fall between the two halves. The route installs its tap immediately before calling this method. */
-  streamSnapshot(userId: number, sessionId: string, history?: MessagePageOpts): BrainStreamSnapshot {
-    const row = this.d.store.getSession(sessionId);
-    if (!row || row.user_id !== userId) throw new Error('unknown session');
+  streamSnapshot(
+    userId: number,
+    sessionId: string,
+    history?: MessagePageOpts,
+    access: { anyOwner?: boolean } = {},
+  ): BrainStreamSnapshot {
+    const row = this.sessionForRead(userId, sessionId, access);
     const live = this.liveBrain(sessionId);
     const replay = live?.replay.transportSnapshot() ?? { cursor: 0, events: [], run: 0, eventCursors: [] };
     const orderedUserRows = new Set(replay.events.flatMap((event) =>
