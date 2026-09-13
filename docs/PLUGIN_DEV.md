@@ -741,7 +741,7 @@ The request function is bound to the calling MCP client's token. A plugin MCP to
 
 Keep these version axes separate:
 
-- The daemon version is the root `package.json` version (`0.28.42` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
+- The daemon version is the root `package.json` version (`0.28.44` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
 - A plugin's manifest `version` is that plugin's own release version. Bump it whenever its installed bytes change, so reload cache-busting and marketplace update detection see the new build. It does not need to match the daemon version.
 - `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `4`.
 - `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `16`; it must not be used to signal removals.
@@ -754,8 +754,8 @@ Add a file named after the version, with front matter and a body:
 
 ```markdown
 ---
-version: 0.28.42
-date: 2026-09-12
+version: 0.28.44
+date: 2026-09-13
 title: What this release gives the reader
 tags: [Chat, Plugins]
 pinned: false
