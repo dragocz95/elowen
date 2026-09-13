@@ -75,8 +75,7 @@ export function provenSourceRepo(worktreeDir) {
   const backPointer = pointerFile(join(gitdir, 'gitdir'));
   if (!backPointer) return null;
   // Git records the WORKING TREE's own `.git` FILE in the administrative directory, so the back-proof is
-  // that this leftover is that file's parent and the file it names is a file (not a directory, not a
-  // symlink) at all.
+  // that this leftover is the parent of the file it names, and that the named path really is a plain file.
   const named = resolve(gitdir, backPointer);
   if (basename(named) !== '.git' || entryOf(named)?.isFile() !== true) return null;
   if (realDirectory(dirname(named)) !== worktreeDir) return null;
