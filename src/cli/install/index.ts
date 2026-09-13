@@ -16,7 +16,6 @@ import { runOnboarding } from '../setup/wizard.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { INSTALL_INFO_PATH, buildInstallInfo, serializeInstallInfo, type InstallArtifacts, type InstallUnit } from '../installInfo.js';
 import {
-  MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE,
   MACHINE_STORAGE_RECEIPT_PATH,
   SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE,
   SITE_GATEWAY_DEPLOYMENT_PATH,
@@ -209,6 +208,24 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
  * read it. Machine storage is a separate root-owned receipt, never a helper request field: the generic
  * installer records the passwd-HOME default, while a custom deployment can install its actual state root
  * through the same fixed receipt path during root provisioning. */
+const MACHINE_STORAGE_TEMP_TEMPLATE = '/etc/elowen/.machine-storage.XXXXXX';
+const SAFE_MACHINE_STORAGE_TEMP = /^\/etc\/elowen\/\.machine-storage\.[A-Za-z0-9]{6}$/;
+
+async function installMachineStorageReceipt(r: Runner, content: string): Promise<void> {
+  const created = await r.exec('mktemp', [MACHINE_STORAGE_TEMP_TEMPLATE]);
+  if (created.code !== 0) throw new Error(`mktemp ${MACHINE_STORAGE_TEMP_TEMPLATE} failed: ${(created.stderr || created.stdout).trim() || created.code}`);
+  const temp = created.stdout.trim();
+  if (!SAFE_MACHINE_STORAGE_TEMP.test(temp)) throw new Error('mktemp returned an invalid machine storage receipt path');
+  try {
+    await must(r, 'chown', ['root:root', temp]);
+    await must(r, 'chmod', ['0600', temp]);
+    await r.writeFile(temp, content);
+    await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', temp, MACHINE_STORAGE_RECEIPT_PATH]);
+  } finally {
+    await r.exec('rm', ['-f', '--', temp]);
+  }
+}
+
 export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment, home: string): Promise<boolean> {
   const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
   await r.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
@@ -216,12 +233,12 @@ export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment, 
     ...(deploy.mode === 'domain' && deploy.domain ? { appHost: deploy.domain.toLowerCase() } : {}),
     daemonPort: DAEMON_PORT,
   }, null, 2)}\n`);
-  await r.writeFile(MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE, `${JSON.stringify({ pluginDataDir: siteGatewayPluginDataDir(home) }, null, 2)}\n`);
-  await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH), dirname(SITE_GATEWAY_DEPLOYMENT_PATH)]);
+  await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH)]);
+  await must(r, 'install', ['-d', '-o', 'root', '-g', 'root', '-m', '0755', dirname(MACHINE_STORAGE_RECEIPT_PATH)]);
   await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
   await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_PATH]);
-  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE, MACHINE_STORAGE_RECEIPT_PATH]);
-  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE]);
+  await installMachineStorageReceipt(r, `${JSON.stringify({ pluginDataDir: siteGatewayPluginDataDir(home) }, null, 2)}\n`);
+  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE]);
   return true;
 }
 

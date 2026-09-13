@@ -15,7 +15,6 @@ export const SITE_GATEWAY_DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
  *  the service user can write is a way for that user to choose root-trusted contents. */
 export const SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE = '/tmp/elowen-site-gateway.json';
 export const MACHINE_STORAGE_RECEIPT_PATH = '/etc/elowen/machine-storage.json';
-export const MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE = '/tmp/elowen-machine-storage.json';
 export const SITE_GATEWAY_SUDOERS_PATH = '/etc/sudoers.d/elowen-site-gateway';
 
 /** The default plugin-data root for a service user. The installer records this one root in a root-owned
