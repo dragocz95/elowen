@@ -183,14 +183,7 @@ function ProjectTeamCell({ members, labels }: {
   const [open, setOpen] = useState(false);
   const tooltipId = useId();
   if (!members) return null;
-  if (members.total === 0) {
-    return (
-      <span className="text-xs text-muted-foreground" data-project-team="empty">
-        <span className="sr-only">{labels.empty}</span>
-        <span aria-hidden>—</span>
-      </span>
-    );
-  }
+  if (members.total === 0) return <span className="sr-only" data-project-team="empty">{labels.empty}</span>;
   const visible = members.samples.slice(0, TEAM_AVATARS_VISIBLE);
   const overflow = Math.max(0, members.total - visible.length);
   return (
@@ -571,17 +564,15 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    /* Identity, team and resources. The Path column is gone: two thirds of the register's
-                       width went to monospaced strings that read the same at a glance, and the one
-                       genuinely useful thing about a path — knowing it exactly — is served better by the
-                       mark in the identity cell than by an ellipsised column. The plugin indicator pills
-                       went with it; a repository connection is a fact about the project's tools, which
-                       its drawer already reports, and thirteen identical "GitHub @…" chips said nothing
-                       that distinguished one row from another. */
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(14rem,1.5fr) minmax(6rem,0.45fr) minmax(15rem,1.2fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
+                    /* Identity and resources. The Path column is gone: two thirds of the register's width
+                       went to monospaced strings that read the same at a glance, and the one genuinely
+                       useful thing about a path — knowing it exactly — is served better by the mark in the
+                       identity cell than by an ellipsised column. Team membership belongs to that same
+                       identity, so its compact face stack sits beside the project name instead of claiming
+                       a sparse column of its own. Plugin indicators stay in their owning project surfaces. */
+                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(16rem,1.5fr) minmax(15rem,1.2fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
                       <DataTableRow header>
                         <DataTableCell header lines={1}>{t.projects.columnProject}</DataTableCell>
-                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnTeam}</DataTableCell>
                         <DataTableCell header priority="wide" lines={1}>{t.projects.columnResources}</DataTableCell>
                         {/* The state track carries a glyph, not a name of its own: each row's glyph is
                             named by the state label the plugin itself reports. */}
@@ -617,13 +608,27 @@ export function ProjectsView() {
                                 which the wide-only Resources column cannot show there. The warning is NOT
                                 behind the mark — a directory that is gone is a fact about the row, not a
                                 detail someone has to go looking for. */}
-                            <DataTableCell lines="auto" className="flex items-center gap-3">
+                            <DataTableCell
+                              lines="auto"
+                              className="flex items-center gap-3"
+                              // The identity cell contains its own location/team controls, so the shared
+                              // table raises the whole cell above the stretched row-open button. Let the
+                              // quiet identity surface open the detail itself; those controls already stop
+                              // propagation and retain their independent tooltip behavior.
+                              onClick={() => setSelectedId(project.id)}
+                            >
                               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
                                 <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-muted-foreground" />
                               </span>
                               <div className="flex min-w-0 flex-1 flex-col">
                                 <span className="flex min-w-0 items-center gap-1.5">
-                                  <span className="min-w-0 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
+                                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
+                                  <span className="hidden shrink-0 @min-[56rem]:inline-flex">
+                                    <ProjectTeamCell
+                                      members={summariesByProject.get(project.id)?.members}
+                                      labels={{ count: t.projects.membersCount, empty: t.projects.teamEmpty, more: t.projects.teamMore }}
+                                    />
+                                  </span>
                                   <ProjectLocationTip
                                     project={project}
                                     labels={{
@@ -638,12 +643,6 @@ export function ProjectsView() {
                                 </span>
                                 <div className="@min-[56rem]:hidden"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} compact /></div>
                               </div>
-                            </DataTableCell>
-                            <DataTableCell priority="wide" lines="auto" onClick={(event) => event.stopPropagation()}>
-                              <ProjectTeamCell
-                                members={summariesByProject.get(project.id)?.members}
-                                labels={{ count: t.projects.membersCount, empty: t.projects.teamEmpty, more: t.projects.teamMore }}
-                              />
                             </DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} /></DataTableCell>
                             {/* The state glyph sits at the row's far end, one narrow track left of the row

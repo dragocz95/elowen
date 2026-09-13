@@ -399,12 +399,12 @@ describe('ProjectsView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
     const row = await screen.findByText('elowen');
-    // The register's columns are identity, team and resources. A plugin indicator pill is NOT one of
-    // them: the summary column repeated the same "GitHub @…" chip on every row and told the reader
-    // nothing that distinguished one project from another. The GitHub connection itself is untouched —
-    // it is reported by its own surfaces, and `/projects/summary` still serves the indicator.
-    expect(await screen.findByRole('columnheader', { name: 'Team' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Resources' })).toBeInTheDocument();
+    // Team membership is part of the project's identity now, not a sparse column of its own. A plugin
+    // indicator pill is not a column either: the old summary repeated the same "GitHub @…" chip on every
+    // row and told the reader nothing that distinguished one project from another. The connections remain
+    // available in their owning project surfaces and `/projects/summary` still serves both kinds of data.
+    expect(screen.queryByRole('columnheader', { name: 'Team' })).toBeNull();
+    expect(await screen.findByRole('columnheader', { name: 'Resources' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Summary' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Path' })).toBeNull();
     expect(screen.queryByText('Connected')).toBeNull();
