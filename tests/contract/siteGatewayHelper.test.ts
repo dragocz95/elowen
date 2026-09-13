@@ -2,9 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 // The installed root helper is deliberately standalone ESM: it cannot import service-user-owned package
 // code after sudo. This contract test imports its pure renderer directly and exercises the bytes shipped.
-// @ts-expect-error the standalone deployment helper intentionally has no TypeScript declaration file
 import {
-  deploymentFrom, lineageFor, renderActiveConfig, renderDenyConfig, runtimeSocketPathFor,
+  deploymentFrom, lineageFor, renderActiveConfig, renderDenyConfig,
 } from '../../scripts/elowen-site-gateway.mjs';
 
 const deployment = deploymentFrom({ appHost: 'agent.chetty.ai', daemonPort: 4400 });
@@ -26,12 +25,6 @@ describe('root-owned published-sites gateway helper', () => {
     for (const bad of ['../etc', 'UPPER', 'a', 'has space', 'dot.dot', '']) {
       expect(() => lineageFor(deployment, bad)).toThrow(/slug/);
     }
-  });
-
-  it('derives runtime socket paths only from UUID site ids', () => {
-    expect(runtimeSocketPathFor('123e4567-e89b-12d3-a456-426614174000'))
-      .toBe('/var/lib/elowen/site-runtime-sockets/123e4567-e89b-12d3-a456-426614174000/app.sock');
-    expect(() => runtimeSocketPathFor('../../run/daemon.sock')).toThrow(/site id/);
   });
 
   it('always serves the HTTP-01 challenge, so a first certificate can be issued at all', () => {

@@ -159,7 +159,7 @@ External writes are separate from local file access and must not be inferred fro
 - The one-shot push broker keeps the credential out of process arguments, environment variables, remote URLs, and persistent Git configuration. Force-push, automatic branch deletion, auto-merge, and blind retries after an unknown mutation outcome are unavailable.
 - GitHub publishing, pull-request creation, reviews, and merges require interactive confirmation in a verified conversation. Delegated, scheduled, and unattended contexts cannot publish or approve these actions.
 - Merge checks include the exact expected head SHA, an open non-draft PR, successful checks, no current changes-requested review, and a repository-supported merge method.
-- The published-sites gateway is a core-owned privileged boundary. The plugin supplies only validated site identifiers and gateway credentials; it cannot supply shell commands, system paths, upstreams, nginx fragments, certificates, or certbot arguments. Runtime sockets are created and sealed by the core/helper boundary.
+- The published-sites gateway is a core-owned privileged boundary. The plugin supplies only validated site identifiers and gateway credentials; it cannot supply shell commands, system paths, upstreams, nginx fragments, certificates, or certbot arguments. Applications are reached only through Sandbox-managed Project publication bindings.
 
 ## Web Push
 

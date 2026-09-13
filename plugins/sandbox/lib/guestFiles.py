@@ -14,7 +14,6 @@ import time
 
 MAX_BYTES = 524288
 MAX_ENTRIES = 10000
-MAX_EXPORT_ENTRIES = 60000
 SAFE_INT = 9007199254740991
 
 
@@ -288,44 +287,6 @@ def run(op):
     name = path(op.get('path'))
     if kind in ['write-begin', 'write-chunk', 'write-commit', 'write-abort']:
         return upload(op, name)
-    if kind == 'export-manifest':
-        root = os.path.realpath(name)
-        if not os.path.isdir(root):
-            fail('not_directory', 'Publication source must be a directory')
-        entries = []
-        stack = [root]
-        total = 0
-        while stack:
-            current = stack.pop()
-            with os.scandir(current) as scan:
-                for item in scan:
-                    if item.name == '.git':
-                        continue
-                    relative = os.path.relpath(item.path, root)
-                    info = os.lstat(item.path)
-                    mode = stat.S_IMODE(info.st_mode)
-                    record = {'path': relative, 'mode': mode}
-                    if stat.S_ISLNK(info.st_mode):
-                        target = os.readlink(item.path)
-                        resolved = os.path.normpath(os.path.join(os.path.dirname(relative), target))
-                        if os.path.isabs(target) or resolved == '..' or resolved.startswith('../'):
-                            fail('unsafe_symlink', 'Publication symlink leaves the exported tree')
-                        record.update(kind='symlink', target=target)
-                    elif stat.S_ISDIR(info.st_mode):
-                        record.update(kind='directory')
-                        stack.append(item.path)
-                    elif stat.S_ISREG(info.st_mode):
-                        if mode & 0o7000:
-                            fail('unsafe_mode', 'Publication refuses special permission bits')
-                        record.update(kind='file', size=info.st_size, version=version(item.path))
-                        total += info.st_size
-                    else:
-                        fail('unsupported_entry', 'Publication supports regular files, directories and safe relative symlinks')
-                    entries.append(record)
-                    if len(entries) > MAX_EXPORT_ENTRIES or total > 17179869184:
-                        fail('export_limit', 'Publication exceeds its bounded transport')
-        entries.sort(key=lambda value: value['path'])
-        return {'kind': kind, 'root': root, 'mode': stat.S_IMODE(os.stat(root).st_mode), 'entries': entries}
     if kind == 'stat':
         follow = op.get('followSymlinks', False)
         if type(follow) is not bool:
