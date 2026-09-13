@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,14 @@ const EXECUTION_ID = 'b'.repeat(32);
 const UID_BASE = 1073741824;
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+/** The ceiling a managed disk is now reported against: the size of the volume it is stored on, read the
+ *  same way the runtime reads it. Asserted against the live syscall rather than a literal, because the
+ *  point is that the figure IS the filesystem and not a number the test and the code agreed on. */
+const volumeBytes = (path: string): number => {
+  const filesystem = statfsSync(path);
+  return filesystem.blocks * filesystem.bsize;
+};
 
 /** A complete host-side envelope for one machine: the disk with its identity record, the two root-owned
  *  configuration files, and a `systemctl show` answer that matches all of them. Each test then breaks
@@ -267,7 +275,7 @@ describe('nspawn resource telemetry', () => {
     expect(first).toEqual([{
       cpu: { state: 'sampling', usedCpus: null, percent: null },
       memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
-      disk: { state: 'ready', usedBytes: 4 * 512 * 1024 * 1024, limitBytes: null },
+      disk: { state: 'ready', usedBytes: 4 * 512 * 1024 * 1024, limitBytes: volumeBytes(state.spec.disk.rootfsPath) },
     }]);
     expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1);
 
@@ -287,9 +295,43 @@ describe('nspawn resource telemetry', () => {
     expect(stopped[0]).toEqual({
       cpu: { state: 'stopped', usedCpus: null, percent: null },
       memory: { state: 'stopped', usedBytes: null, limitBytes: 1024 * 1024 * 1024 },
-      disk: { state: 'ready', usedBytes: 4 * 768 * 1024 * 1024, limitBytes: null },
+      disk: { state: 'ready', usedBytes: 4 * 768 * 1024 * 1024, limitBytes: volumeBytes(state.spec.disk.rootfsPath) },
     });
     expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(2);
+  });
+
+  /** A managed environment has no disk quota to divide by, which left the register with a measurement it
+   *  could not draw beside CPU and memory. The volume the disk is stored on IS a ceiling: the environment
+   *  cannot grow past it, and every byte counted against it was really written to it. */
+  it('reports a managed disk against the volume it is stored on', async () => {
+    const state = fixture();
+    const observed = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    const capacity = volumeBytes(state.spec.disk.rootfsPath);
+    expect(capacity).toBeGreaterThan(0);
+    expect(observed[0].disk.limitBytes).toBe(capacity);
+    // A ceiling, not a quota: the measured figure is genuinely a fraction of it.
+    expect(observed[0].disk.usedBytes).toBeLessThanOrEqual(capacity);
+    // Reading a filesystem is a syscall, not a privileged round trip — no extra helper call was made.
+    expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1);
+  });
+
+  /** The ceiling is a property of the VOLUME, not of the project: two environments stored on the same
+   *  filesystem are measured against the same total, and neither is scaled against the other. A register
+   *  that normalized one project's disk against its neighbours would draw a bar that moves when an
+   *  unrelated project grows. */
+  it('gives environments sharing a volume the same ceiling, not one relative to each other', async () => {
+    const first = fixture();
+    const second = fixture();
+    first.sizeTrees({ [first.spec.disk.rootfsPath]: 1024 });
+
+    const observed = await first.client.resourceUsageBatch([
+      { spec: first.spec, state: 'running' },
+      { spec: second.spec, state: 'running' },
+    ]);
+    expect(observed[0].disk.limitBytes).toBe(volumeBytes(first.spec.disk.rootfsPath));
+    expect(observed[1].disk.limitBytes).toBe(observed[0].disk.limitBytes);
+    // Their used figures differ; only the shared denominator is identical.
+    expect(observed[0].disk.usedBytes).not.toBe(observed[1].disk.usedBytes);
   });
 
   /** The rootfs is one component of the disk beside `workspace`, `home` and `data`, and the project's own
@@ -306,7 +348,7 @@ describe('nspawn resource telemetry', () => {
     });
 
     const observed = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
-    expect(observed[0].disk).toEqual({ state: 'ready', usedBytes: 165 * 1024 * 1024, limitBytes: null });
+    expect(observed[0].disk).toEqual({ state: 'ready', usedBytes: 165 * 1024 * 1024, limitBytes: volumeBytes(state.spec.disk.rootfsPath) });
     const measured = state.requests.filter((request) => request.op === 'tree-sizes');
     expect(measured).toHaveLength(1);
     expect([...measured[0].paths].sort()).toEqual([state.spec.disk.rootfsPath, component('data'), component('home'), component('workspace')].sort());
@@ -337,7 +379,7 @@ describe('nspawn resource telemetry', () => {
     });
 
     const observed = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
-    expect(observed[0].disk).toEqual({ state: 'ready', usedBytes: 840 * 1024 * 1024, limitBytes: null });
+    expect(observed[0].disk).toEqual({ state: 'ready', usedBytes: 840 * 1024 * 1024, limitBytes: volumeBytes(state.spec.disk.rootfsPath) });
     const measured = state.requests.filter((request) => request.op === 'tree-sizes');
     expect(measured).toHaveLength(1);
     expect([...measured[0].paths].sort()).toEqual([state.spec.disk.rootfsPath, component('data'), component('home'), component('workspace')].sort());

@@ -29,6 +29,17 @@ export function usageProgressClass(pct: number): string {
   }
 }
 
+/** The same ramp as a CSS colour, for a meter the charting library draws rather than a class does: an
+ *  SVG fill cannot take a Tailwind utility. Both readings come off `usagePressure`, so a bar and a chart
+ *  can never disagree about where amber begins. */
+export function usageProgressColour(pct: number): string {
+  switch (usagePressure(pct)) {
+    case 'critical': return 'var(--color-destructive)';
+    case 'warning': return 'var(--color-warning)';
+    default: return 'var(--color-primary)';
+  }
+}
+
 /** A tiny non-zero usage still shows a sliver, so a meter that is barely used never reads as untouched. */
 export function usageMeterValue(pct: number): number {
   const clamped = Math.max(0, Math.min(100, pct));

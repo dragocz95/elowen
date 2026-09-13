@@ -92,14 +92,19 @@ function metricValue(metric: UsageMetric, kind: 'cpu' | 'memory' | 'disk', s: Re
     return { id: kind, label, value, valueText: `${label}: ${value}`, percent, state: 'ready' };
   }
   const used = formatBytes(metric.usedBytes ?? 0);
-  // A managed environment's disk has no configured quota, so there is no denominator to divide by. The
-  // used figure is a complete measurement on its own and is reported as itself: `1.2 GiB / ?` put a
-  // ceiling on screen that does not exist, and a percentage of nothing would have to be invented.
+  // No ceiling could be read at all — an environment whose disk was never materialized, or a volume the
+  // runtime could not measure. The used figure is a complete measurement on its own and is reported as
+  // itself: `1.2 GiB / ?` puts a ceiling on screen that does not exist, and a percentage of nothing would
+  // have to be invented.
   if (metric.limitBytes === null) return { id: kind, label, value: used, valueText: `${label}: ${used}. ${s.usageLimitUnknown}`, state: 'absolute' };
   const limit = formatBytes(metric.limitBytes);
   const percent = clampPercent(metric.limitBytes > 0 ? (metric.usedBytes ?? 0) / metric.limitBytes * 100 : 0);
   const value = `${used} / ${limit}`;
-  return { id: kind, label, value, valueText: `${label}: ${value}`, percent, state: 'ready' };
+  // Memory's ceiling is the environment's own configured limit; disk's is the volume it is stored on,
+  // which is a real ceiling it genuinely cannot grow past but NOT a per-project quota. Same reading, so
+  // the register draws one meter for both, and the difference is said rather than left to be assumed.
+  const valueText = kind === 'disk' ? `${label}: ${value}. ${s.usageDiskVolume}` : `${label}: ${value}`;
+  return { id: kind, label, value, valueText, percent, state: 'ready' };
 }
 
 export function useProjectRowContribution({ projects }: { projects: Project[] }) {
