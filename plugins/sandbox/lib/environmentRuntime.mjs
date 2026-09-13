@@ -52,6 +52,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *  established again after a container restart and the same one has to be found. */
 export const publicationSocketName = (publicationId) => `pub-${publicationRuntimeToken(publicationId)}.sock`;
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
+const protocolError = (message) => error('guest_protocol', message, 500);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function positive(value, label) {
   if (!Number.isSafeInteger(value) || value <= 0) throw error('invalid_input', `Invalid ${label}`, 400);
@@ -140,7 +141,7 @@ function command(input, synchronous = false) {
 }
 function fileOperation(op) {
   if (UPLOAD_KINDS.includes(op?.kind)) return validateUploadOperation(op);
-  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
+  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], 'export-manifest': [], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
   if (op?.followSymlinks !== undefined && typeof op.followSymlinks !== 'boolean') throw error('invalid_operation', 'followSymlinks must be boolean', 400);
   if (!op || !Object.hasOwn(keys, op.kind) || Object.keys(op).some((key) => !['kind', 'path', ...keys[op.kind]].includes(key))) throw error('invalid_operation', 'Invalid guest file operation', 400);
   guestPath(op.path);
@@ -148,6 +149,66 @@ function fileOperation(op) {
   if (['write', 'remove', 'rename'].includes(op.kind) && !Object.hasOwn(op, 'expectedVersion')) throw error('version_required', 'A content version is required', 400);
   if (Buffer.byteLength(JSON.stringify(op)) > 1024 * 1024) throw error('input_limit', 'Guest input exceeds its bound', 400);
   return op;
+}
+
+const EXPORT_MANIFEST_ENTRIES = 60_000;
+const EXPORT_MANIFEST_BYTES = 16 * 1024 * 1024 * 1024;
+const exactKeys = (value, keys) => Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const exportMode = (value) => Number.isInteger(value) && value >= 0 && value <= 0o777;
+function exportPath(value) {
+  return typeof value === 'string' && value !== '' && value.length <= 4096 && !value.includes('\0')
+    && !posix.isAbsolute(value) && posix.normalize(value) === value && value !== '..' && !value.startsWith('../');
+}
+/** The guest helper is inside the Project trust boundary, but its stdout still crosses a protocol boundary.
+ * Validate the bounded manifest here so every plugin receives one typed shape rather than each consumer
+ * deciding which malformed paths, modes or hashes it is willing to accept. */
+function exportManifestResult(value) {
+  if (!value || typeof value !== 'object' || !exactKeys(value, ['kind', 'root', 'mode', 'entries'])
+    || value.kind !== 'export-manifest' || typeof value.root !== 'string' || value.root.length > 4096
+    || !value.root.startsWith('/') || value.root.includes('\0') || posix.normalize(value.root) !== value.root
+    || !exportMode(value.mode) || !Array.isArray(value.entries) || value.entries.length > EXPORT_MANIFEST_ENTRIES) {
+    throw protocolError('Invalid Project export manifest');
+  }
+  const paths = new Map();
+  let previous = null;
+  let total = 0;
+  for (const entry of value.entries) {
+    if (!entry || typeof entry !== 'object' || !exportPath(entry.path) || !exportMode(entry.mode)
+      || (previous !== null && entry.path <= previous) || paths.has(entry.path)) {
+      throw protocolError('Invalid Project export manifest entry');
+    }
+    previous = entry.path;
+    if (entry.kind === 'file') {
+      if (!exactKeys(entry, ['path', 'kind', 'mode', 'size', 'version']) || !Number.isSafeInteger(entry.size)
+        || entry.size < 0 || typeof entry.version !== 'string' || !/^[a-f0-9]{64}$/.test(entry.version)) {
+        throw protocolError('Invalid Project export file metadata');
+      }
+      total += entry.size;
+      if (!Number.isSafeInteger(total) || total > EXPORT_MANIFEST_BYTES) throw protocolError('Project export manifest exceeds its byte bound');
+    } else if (entry.kind === 'directory') {
+      if (!exactKeys(entry, ['path', 'kind', 'mode'])) throw protocolError('Invalid Project export directory metadata');
+    } else if (entry.kind === 'symlink') {
+      if (!exactKeys(entry, ['path', 'kind', 'mode', 'target']) || typeof entry.target !== 'string'
+        || entry.target === '' || entry.target.length > 4096 || entry.target.includes('\0') || posix.isAbsolute(entry.target)) {
+        throw protocolError('Invalid Project export symlink metadata');
+      }
+      const resolved = posix.normalize(posix.join(posix.dirname(entry.path), entry.target));
+      if (resolved === '..' || resolved.startsWith('../') || posix.isAbsolute(resolved)) throw protocolError('Project export symlink leaves its root');
+    } else throw protocolError('Unsupported Project export entry');
+    paths.set(entry.path, entry);
+  }
+  for (const entry of value.entries) {
+    let parent = posix.dirname(entry.path);
+    while (parent !== '.') {
+      if (paths.get(parent)?.kind !== 'directory') throw protocolError('Project export manifest has invalid ancestry');
+      parent = posix.dirname(parent);
+    }
+    if (entry.kind === 'symlink') {
+      const resolved = posix.normalize(posix.join(posix.dirname(entry.path), entry.target));
+      if (resolved !== '.' && !paths.has(resolved)) throw protocolError('Project export symlink target is absent');
+    }
+  }
+  return value;
 }
 
 /** One coordinator for managed Project environments. Forks only write durable intents and execute
@@ -717,10 +778,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const result = await runGuest(row, input.accountUserId, ['/usr/bin/python3', '-c', FILE_HELPER], { input: JSON.stringify(op), timeoutMs: 120000 });
       if (result.truncated) throw error('output_limit', 'Guest file output exceeded its bound');
       let reply;
-      try { reply = JSON.parse(result.stdout); } catch { throw error('guest_protocol', 'Invalid guest file response'); }
+      try { reply = JSON.parse(result.stdout); } catch { throw protocolError('Invalid guest file response'); }
       if (!reply?.ok || result.code !== 0) throw error(reply?.error?.code ?? 'guest_file_error', reply?.error?.message ?? 'Guest file operation failed');
-      if (reply.result?.kind !== op.kind) throw error('guest_protocol', 'Guest response kind differs from the requested operation');
-      return reply.result;
+      if (reply.result?.kind !== op.kind) throw protocolError('Guest response kind differs from the requested operation');
+      return op.kind === 'export-manifest' ? exportManifestResult(reply.result) : reply.result;
     };
     // Only the operations that CHANGE the tree serialize against each other. Holding one exclusive
     // repository lease across every file operation meant a batch of independent reads ran strictly one at

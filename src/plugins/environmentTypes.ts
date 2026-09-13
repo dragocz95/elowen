@@ -31,6 +31,10 @@ export interface GuestFileStat {
    *  contents; a caller that intends to write must obtain a version from a read or a plain stat. */
   version?: string;
 }
+export type GuestExportManifestEntry =
+  | { path: string; kind: 'file'; mode: number; size: number; version: string }
+  | { path: string; kind: 'directory'; mode: number }
+  | { path: string; kind: 'symlink'; mode: number; target: string };
 /** Decoded bytes per upload chunk; every chunk except the last has exactly this size. */
 export const GUEST_FILE_CHUNK_BYTES = 524288;
 export type GuestFileOperation =
@@ -55,6 +59,9 @@ export type GuestFileOperation =
    *  directories not to descend into. Nothing returned is written against, so no content is read and no
    *  version is computed. */
   | { kind: 'walk'; path: string; limit: number; skip?: string[]; maxDepth?: number }
+  /** A bounded immutable-publication inventory. It hashes regular files and records permission bits and
+   *  safe relative symlinks so a consumer can copy a Project tree without resolving a host path. */
+  | { kind: 'export-manifest'; path: string }
   | { kind: 'search'; path: string; pattern: string; glob?: string; caseSensitive?: boolean; limit: number };
 export type GuestFileResult =
   | { kind: 'stat'; entry: GuestFileStat | null }
@@ -78,6 +85,7 @@ export type GuestFileResult =
    *  operation instead. */
   | { kind: 'walk'; root: string; rootKind: 'file' | 'directory' | 'symlink' | 'other' | null;
       entries: { path: string; kind: 'file' | 'directory' | 'symlink'; size: number; mtime: number }[]; truncated: boolean }
+  | { kind: 'export-manifest'; root: string; mode: number; entries: GuestExportManifestEntry[] }
   | { kind: 'search'; matches: { path: string; line: number; text: string }[]; truncated: boolean };
 export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string }
 export type ManagedWorktreeAction = { kind: 'list' } | { kind: 'create'; label: string; baseRef: string } | { kind: 'remove'; workspaceId: string };

@@ -686,6 +686,35 @@ describe('durable managed environment lifecycle', () => {
     ctx.currentAccess = () => ({ readOnly: false }); ctx.currentAccountUserId = () => 2;
     await expect(runtime.environmentFor(input)).rejects.toThrow(/actor/i);
   });
+
+  it('exposes only a bounded validated Project export manifest', async () => {
+    const { runtime, nspawn } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const files = (operation: any) => runtime.projectFiles({ ...input, operation });
+    await expect(files({ kind: 'export-manifest', path: '/sales-dashboard/app', limit: 1 })).rejects.toThrow(/invalid guest file operation/i);
+
+    const manifest = {
+      kind: 'export-manifest', root: '/sales-dashboard/app', mode: 0o755,
+      entries: [
+        { path: 'bin', kind: 'directory', mode: 0o755 },
+        { path: 'bin/start', kind: 'file', mode: 0o755, size: 4, version: 'a'.repeat(64) },
+      ],
+    };
+    nspawn.exec.mockResolvedValueOnce({ code: 0, stdout: JSON.stringify({ ok: true, result: manifest }), stderr: '', truncated: false });
+    await expect(files({ kind: 'export-manifest', path: '/sales-dashboard/app' })).resolves.toEqual(manifest);
+
+    nspawn.exec.mockResolvedValueOnce({ code: 0, stdout: JSON.stringify({ ok: true, result: {
+      ...manifest, entries: [{ path: '../escape', kind: 'file', mode: 0o755, size: 4, version: 'a'.repeat(64) }],
+    } }), stderr: '', truncated: false });
+    await expect(files({ kind: 'export-manifest', path: '/sales-dashboard/app' })).rejects.toMatchObject({ code: 'guest_protocol', status: 500 });
+
+    nspawn.exec.mockResolvedValueOnce({ code: 0, stdout: JSON.stringify({ ok: true, result: {
+      ...manifest,
+      entries: Array.from({ length: 60_001 }, (_, index) => ({ path: `d${String(index).padStart(5, '0')}`, kind: 'directory', mode: 0o755 })),
+    } }), stderr: '', truncated: false });
+    await expect(files({ kind: 'export-manifest', path: '/sales-dashboard/app' })).rejects.toMatchObject({ code: 'guest_protocol', status: 500 });
+  });
+
   it('answers a failed guest upload from a fixed table rather than forwarding guest text', async () => {
     const { runtime, nspawn, root } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
