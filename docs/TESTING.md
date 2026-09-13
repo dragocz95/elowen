@@ -130,7 +130,7 @@ ELOWEN_DIST_BUILD_TEST=1 npx vitest run tests/scripts/distIntegrity.test.ts
 
 `tests/plugins/environmentNspawnProof.test.ts` proves the systemd-nspawn runtime against a real machine. Everything it asserts is a property of something running — the capability bound, the seccomp mode, what a bind does to file ownership, what the cgroup holds, how long a command actually takes — so it cannot be established against a fake, and the suite skips with a named reason on a host that cannot hold a machine. A skip is not coverage; read the reason it prints.
 
-It needs three root-owned artefacts an unprovisioned host does not have: the machine unit template, the polkit rule that lets the service account start those units without sudo, and a sudoers line naming one privileged helper. `tests/plugins/nspawnProofHost.mjs` installs them, runs the suite as the service account and takes the preparation away again, verifying the removal:
+It needs root-owned host state an unprovisioned host does not have: the machine unit template, a sudoers line naming one privileged helper, the machine firewall rules, and exact instance drop-ins when the installed template predates trusted nspawn settings. `tests/plugins/nspawnProofHost.mjs` installs only proof-owned state, runs the suite as the service account and takes the preparation away again, verifying the removal:
 
 ```bash
 sudo node tests/plugins/nspawnProofHost.mjs run
@@ -138,13 +138,15 @@ sudo node tests/plugins/nspawnProofHost.mjs install
 sudo node tests/plugins/nspawnProofHost.mjs uninstall
 ```
 
+The proof uses cached release root filesystems when present. A branch build can supply local project and Site archives through `ELOWEN_TEST_NSPAWN_ARTIFACT` and `ELOWEN_TEST_NSPAWN_SITE_ARTIFACT`; preserve those two variables through sudo.
+
 The helper it names is deliberately not the installed one. On a host where `/usr/local/libexec/elowen-site-gateway` is serving published sites, replacing it to test a branch would deploy that branch's whole Sites domain untested, so the harness installs a root-owned wrapper that runs the helper from the working tree and pins the sudoers line to the wrapper. The argv keeps exactly the shape the production drop-in pins; only the path moves. `ELOWEN_TEST_NSPAWN_HELPER` is what tells the suite which helper to talk to, and with it unset the suite proves the deployed runtime instead.
 
 An artefact that already exists is left alone and never removed, so an operator who has provisioned the host keeps their own, and a receipt is written after each one so teardown can find whatever got as far as disk. The helper is copied to a root-owned path and the sudoers line names that copy, because a grant pointing at the working tree would be root on request for the account that can write it. The deployment record is not touched at all: the helper derives its trusted storage roots from the passwd home of the account that invoked it.
 
-Every resource the suite creates is disposable and unmistakably its own: machines named after a throwaway project id and a `nsproof-` site, disks under the real storage roots, and a final case that asserts all of it is gone. Firewall rules for virtual-ethernet machines are reported, never installed — the daemon does not mutate the firewall and neither does a test.
+Every resource the suite creates is disposable and unmistakably its own: machines named after a throwaway project id and a `nsproof-` site, disks under the real storage roots, instance-specific service drop-ins, and firewall rules recorded in the proof receipt. Teardown removes only the exact rules and paths the receipt says this run created, then verifies that every proof resource is gone.
 
-The one resource a run cannot throw away itself is the uid range each environment is reserved. That registry is forward-only by design — one environment, one range, never reused, because a restored disk carries its ownership on disk — it holds 4096 slots, and only root can write it. So teardown gives back what the run reserved, and the suite refuses to run at all when the receipt says no teardown is coming: that is why a plain `npm test` reports it as skipped on a provisioned host. What teardown removes is only a key that was absent when the run was installed, that no environment but this suite can produce, and whose disk tree is gone; a range whose tree survived a failed run stays reserved and is named in the output.
+UID reservations use an isolated proof registry and a high proof-only base, so the production registry and its existing aliases are never read or changed. Teardown gives back only proof keys whose disk trees are gone. A surviving tree keeps its reservation and is named in the output. The suite refuses to run when no receipt has armed that teardown, which is why a plain `npm test` reports it as skipped.
 
 ## Static checks and builds
 

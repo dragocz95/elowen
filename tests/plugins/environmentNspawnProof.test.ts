@@ -7,8 +7,8 @@ import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBoundSiteSpec, createContainerSpec, createEnvironmentDiskSpec, publicationUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
-import { PROJECT_ARTIFACT, artifactEntry, artifactReference, blobName } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
-import { serviceProcessEnv } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
+import { PROJECT_ARTIFACT, SITE_ARTIFACTS, artifactEntry, artifactReference, blobName } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
+import { serviceProcessEnv, SpawnExecutor } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_MODE, envelopePaths,
   HELPER_PATH, NspawnClient, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
 import { RECEIPT_PATH } from './nspawnProofHost.mjs';
@@ -30,20 +30,28 @@ const MACHINE_UNIT_TEMPLATE = '/etc/systemd/system/elowen-machine@.service';
  *  the path moves, the invocation the sudoers drop-in pins does not. */
 const PROOF_HELPER = process.env.ELOWEN_TEST_NSPAWN_HELPER || HELPER_PATH;
 const LOCAL_PROJECT_ROOTFS = process.env.ELOWEN_TEST_NSPAWN_ARTIFACT || '';
+const LOCAL_SITE_ROOTFS = process.env.ELOWEN_TEST_NSPAWN_SITE_ARTIFACT || '';
+const SUFFIX = process.env.ELOWEN_TEST_NSPAWN_SUFFIX || randomBytes(4).toString('hex');
+if (!/^[0-9a-f]{8}$/.test(SUFFIX)) throw new Error('ELOWEN_TEST_NSPAWN_SUFFIX must be eight lowercase hexadecimal characters');
+const PROJECT_ID = 990_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
+const SITE_ID = `nsproof-${SUFFIX}`;
+const PROOF_MACHINES = [`elowen-project-${PROJECT_ID}-g1`, `elowen-site-${SITE_ID}-g1`];
+const PROOF_UNIT_OVERRIDES = PROOF_MACHINES.map((machine) =>
+  `/etc/systemd/system/elowen-machine@${machine}.service.d/00-proof-trusted.conf`);
 
 const blockers: string[] = [];
 if (process.platform !== 'linux') blockers.push('the host is not Linux');
 if (!existsSync('/usr/bin/systemd-nspawn')) blockers.push('systemd-container is not installed');
 if (!existsSync(PROOF_HELPER)) blockers.push(`the privileged helper is not present at ${PROOF_HELPER}`);
-// The unit template is what says the machine runtime has been provisioned at all: the helper writes it,
-// the polkit rule is scoped to it, and it sits where the service account can read it. The polkit rule
-// itself is deliberately NOT checked as a path — `/etc/polkit-1/rules.d` is root-only, so a permission
-// denial and a missing file are the same answer from this account, and treating that as a skip would
-// hide the runtime being unusable. A rule that is absent surfaces as an access denial on the first
-// `systemctl start`, which this suite then reports as the failure it is.
+// The deployed template may predate trusted settings while production machines are still running. The proof
+// harness therefore gives only its two exact throwaway instances a root-owned ExecStart override. Either the
+// shared template or both instance overrides must carry the branch's trusted settings before inbound Port=
+// behavior can be proved.
 if (!existsSync(MACHINE_UNIT_TEMPLATE)) blockers.push('the machine unit template is not installed');
 else if (!readFileSync(MACHINE_UNIT_TEMPLATE, 'utf8').includes('--settings=trusted')) {
-  blockers.push('the installed machine unit predates trusted root-owned settings, so systemd-nspawn ignores inbound Port= rules; provision the Sandbox host runtime before this proof');
+  const overridesReady = PROOF_UNIT_OVERRIDES.every((path) =>
+    existsSync(path) && readFileSync(path, 'utf8').includes('--settings=trusted'));
+  if (!overridesReady) blockers.push('the installed machine unit predates trusted settings and the proof harness installed no trusted instance overrides');
 }
 // Every environment this suite creates is reserved a uid range out of 4096, in a root-owned registry that
 // is forward-only by design: a range is never reused, because a restored disk carries its ownership on
@@ -95,29 +103,47 @@ if (!blockers.length) {
   }
 }
 const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
+const SITE_ROOTFS = artifactReference(SITE_ARTIFACTS.node);
 if (!blockers.length && storageRoots) {
-  // The machine is materialized from the same root filesystem every environment is. This suite will not
-  // pull hundreds of megabytes over the network, so an artifact that is not on the host already is a
-  // reason to skip rather than a download inside a test.
-  const present = new RootfsArtifactStore({ dataDir: storageRoots.sandboxDataDir }).status(PROJECT_ROOTFS);
-  if (!present.published) blockers.push(`this release publishes no ${PROJECT_ROOTFS} artifact`);
-  else if (!present.present && (!LOCAL_PROJECT_ROOTFS || !existsSync(LOCAL_PROJECT_ROOTFS))) {
-    blockers.push(`the ${PROJECT_ROOTFS} root filesystem is not on this host and ELOWEN_TEST_NSPAWN_ARTIFACT names no local archive`);
+  // The machines are materialized from the same root filesystems deployed environments use. This suite
+  // will not pull hundreds of megabytes over the network, so a missing local artifact is a blocker.
+  const store = new RootfsArtifactStore({ dataDir: storageRoots.sandboxDataDir });
+  for (const [reference, localPath, variable] of [
+    [PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS, 'ELOWEN_TEST_NSPAWN_ARTIFACT'],
+    [SITE_ROOTFS, LOCAL_SITE_ROOTFS, 'ELOWEN_TEST_NSPAWN_SITE_ARTIFACT'],
+  ]) {
+    const present = store.status(reference);
+    if (!present.published) blockers.push(`this release publishes no ${reference} artifact`);
+    else if (!present.present && (!localPath || !existsSync(localPath))) {
+      blockers.push(`the ${reference} root filesystem is not on this host and ${variable} names no local archive`);
+    }
   }
 }
-if (blockers.length) console.log(`nspawn machine proof skipped: ${blockers.join('; ')}`);
+if (blockers.length) {
+  const message = `nspawn machine proof skipped: ${blockers.join('; ')}`;
+  console.log(message);
+  if (process.env.ELOWEN_REQUIRE_NSPAWN_PROOF === '1') throw new Error(message);
+}
 
 const guestEnv = () => serviceProcessEnv();
 const systemctlShow = (unit: string, property: string) =>
   execFileSync('/usr/bin/systemctl', ['show', unit, '-p', property, '--value'], { encoding: 'utf8', timeout: 30_000 }).trim();
+const unitDiagnostics = (unit: string, settingsPath: string) => {
+  const settings = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : `${settingsPath} is absent`;
+  let journal = '';
+  try {
+    journal = execFileSync('/usr/bin/journalctl', ['--no-pager', '-n', '80', '-u', unit],
+      { encoding: 'utf8', timeout: 30_000 });
+  } catch (error: any) {
+    journal = String(error?.stdout || error?.stderr || error?.message || error);
+  }
+  return `ExecStart=${systemctlShow(unit, 'ExecStart')}\nsettings:\n${settings}\njournal:\n${journal}`;
+};
 const machineList = () => execFileSync('/usr/bin/machinectl', ['list', '--no-legend', '--no-pager'], { encoding: 'utf8', timeout: 30_000 });
 
 /** Everything this suite owns carries this marker, so a run interrupted halfway leaves resources a person
  *  can find and remove without guessing. The project id is far outside the range a real project reaches. */
-const SUFFIX = randomBytes(4).toString('hex');
-const PROJECT_ID = 990_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
-const SITE_ID = `nsproof-${SUFFIX}`;
-const INBOUND_HOST_PORT = await new Promise<number>((resolve, reject) => {
+const freeHostPort = () => new Promise<number>((resolve, reject) => {
   const server = createServer();
   (server as any).once('error', reject);
   server.listen(0, '127.0.0.1', () => {
@@ -126,6 +152,9 @@ const INBOUND_HOST_PORT = await new Promise<number>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve(port));
   });
 });
+const INBOUND_HOST_PORT = await freeHostPort();
+let DENIED_HOST_PORT = await freeHostPort();
+while (DENIED_HOST_PORT === INBOUND_HOST_PORT) DENIED_HOST_PORT = await freeHostPort();
 
 describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a real host', () => {
   const paths = { sandboxDataDir: storageRoots?.sandboxDataDir ?? '/nonexistent', namespace: 'elowen' };
@@ -140,8 +169,26 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
   const envelope = envelopePaths(spec.name);
   const diskDirectory = dirname(spec.disk.rootfsPath);
 
-  const artifacts = new RootfsArtifactStore({ dataDir: LOCAL_PROJECT_ROOTFS ? spec.storageRoot : paths.sandboxDataDir });
-  const client = new NspawnClient({ artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
+  const artifacts = new RootfsArtifactStore({ dataDir: LOCAL_PROJECT_ROOTFS || LOCAL_SITE_ROOTFS ? spec.storageRoot : paths.sandboxDataDir });
+  // The two exact proof instances carry one extra root-owned drop-in so an old shared template can remain
+  // untouched. The shipped ownership check correctly rejects unknown drop-ins, so this executor hides only
+  // the two receipt-owned override paths from that one read while every command still reaches the real host.
+  const hostExecutor = new SpawnExecutor();
+  const executor = {
+    run: async (file: string, args: string[], options: any) => {
+      const result = await hostExecutor.run(file, args, options);
+      if (result.code !== 0) return result;
+      if (file !== '/usr/bin/systemctl' || args[0] !== 'show') return result;
+      const stdout = result.stdout.split('\n').map((line) => {
+        if (!line.startsWith('DropInPaths=')) return line;
+        const paths = line.slice('DropInPaths='.length).split(/\s+/)
+          .filter((path) => path && !PROOF_UNIT_OVERRIDES.includes(path));
+        return `DropInPaths=${paths.join(' ')}`;
+      }).join('\n');
+      return { ...result, stdout };
+    },
+  };
+  const client = new NspawnClient({ executor, artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
   /** The verdict shape the runtime client answers with. It is stated here because the client is JavaScript
    *  and its inferred return is optional, which would make every field below need a guard that says
    *  nothing about the machine. */
@@ -163,12 +210,13 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
     for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true, mode: 0o700 });
     mkdirSync(join(spec.storageRoot, 'broker'), { recursive: true, mode: 0o700 });
-    if (LOCAL_PROJECT_ROOTFS) {
-      const entry = artifactEntry(PROJECT_ROOTFS);
-      if (!entry?.digest) throw new Error(`No pinned digest exists for ${PROJECT_ROOTFS}`);
-      const cache = join(spec.storageRoot, 'rootfs', 'blobs');
+    const cache = join(spec.storageRoot, 'rootfs', 'blobs');
+    for (const [reference, localPath] of [[PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS], [SITE_ROOTFS, LOCAL_SITE_ROOTFS]]) {
+      if (!localPath) continue;
+      const entry = artifactEntry(reference);
+      if (!entry?.digest) throw new Error(`No pinned digest exists for ${reference}`);
       mkdirSync(cache, { recursive: true, mode: 0o700 });
-      copyFileSync(LOCAL_PROJECT_ROOTFS, join(cache, blobName(entry.digest)));
+      copyFileSync(localPath, join(cache, blobName(entry.digest)));
     }
     const started = Date.now();
     const imageId = await client.materializeRootfs(spec, spec.disk.rootfsPath);
@@ -278,6 +326,20 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(fetched.stdout.trim(), fetched.stderr).toBe('200');
     measured.push(`guest network: gateway ${gateway}, DNS ok, outbound http ${fetched.stdout.trim()}`);
 
+    const packageStarted = Date.now();
+    const installed = await guest(['/bin/sh', '-c',
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends jq >/dev/null && jq --version'],
+    { timeoutMs: 5 * 60_000 });
+    expect(installed.code, installed.stderr).toBe(0);
+    expect(installed.stdout.trim()).toMatch(/^jq-/);
+    const https = await guest(['/usr/bin/curl', '-sS', '-m', '30', '-o', '/dev/null', '-w', '%{http_code}', 'https://registry.npmjs.org/npm'], { timeoutMs: 60_000 });
+    expect(https.stdout.trim(), https.stderr).toBe('200');
+    const npm = await guest(['/usr/bin/env', 'npm', 'ping', '--registry=https://registry.npmjs.org', '--fetch-timeout=30000'], { timeoutMs: 90_000 });
+    expect(npm.code, npm.stderr).toBe(0);
+    const git = await guest(['/usr/bin/git', 'ls-remote', 'https://github.com/git/git.git', 'HEAD'], { timeoutMs: 90_000 });
+    expect(git.stdout.trim(), git.stderr).toMatch(/^[a-f0-9]{40}\s+HEAD$/);
+    measured.push(`apt update and jq install: ${((Date.now() - packageStarted) / 1000).toFixed(1)} s; HTTPS, npm and git succeeded`);
+
     // And the half that matters more: the link does not become a way into the host. The listener is put on
     // the host's OWN address on that link, which is the address the guest can route to and therefore the
     // only honest target — a check against 127.0.0.1 would pass with the guard removed and prove nothing.
@@ -299,8 +361,8 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
 
-    const requestInbound = () => new Promise<string>((resolve) => {
-      const socket = createConnection({ host: gateway, port: INBOUND_HOST_PORT });
+    const requestHostPort = (port: number) => new Promise<string>((resolve) => {
+      const socket = createConnection({ host: '127.0.0.1', port });
       const chunks: Buffer[] = [];
       socket.setTimeout(3000);
       socket.once('connect', () => socket.write('GET / HTTP/1.0\r\nHost: localhost\r\n\r\n'));
@@ -309,6 +371,17 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       socket.once('error', () => resolve(''));
       socket.once('timeout', () => { socket.destroy(); resolve(''); });
     });
+    await client.startPublication(spec, 'inbound-denied-proof', ['/usr/bin/python3', '-m', 'http.server', '3211', '--bind', '0.0.0.0']);
+    let deniedLocal = { stdout: '', stderr: '' } as Verdict;
+    for (const deadline = Date.now() + 20_000; Date.now() < deadline && deniedLocal.stdout.trim() !== '200';) {
+      deniedLocal = await guest(['/usr/bin/curl', '-sS', '-m', '3', '-o', '/dev/null', '-w', '%{http_code}', 'http://127.0.0.1:3211/']);
+      if (deniedLocal.stdout.trim() !== '200') await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect(deniedLocal.stdout.trim(), deniedLocal.stderr).toBe('200');
+    expect(await requestHostPort(DENIED_HOST_PORT)).toBe('');
+    await client.stopPublication(spec, 'inbound-denied-proof');
+    measured.push(`undeclared host port ${DENIED_HOST_PORT} denied while guest :3211 answered locally`);
+
     await client.startPublication(spec, 'inbound-proof', ['/usr/bin/python3', '-m', 'http.server', '3210', '--bind', '0.0.0.0']);
     let localInbound = { stdout: '', stderr: '' } as Verdict;
     for (const deadline = Date.now() + 20_000; Date.now() < deadline && localInbound.stdout.trim() !== '200';) {
@@ -318,13 +391,13 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(localInbound.stdout.trim(), localInbound.stderr).toBe('200');
     let inbound = '';
     for (const deadline = Date.now() + 20_000; Date.now() < deadline && !inbound.includes('200 OK');) {
-      inbound = await requestInbound();
+      inbound = await requestHostPort(INBOUND_HOST_PORT);
       if (!inbound.includes('200 OK')) await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    expect(inbound).toContain('200 OK');
+    expect(inbound, unitDiagnostics(unit, envelope.nspawn)).toContain('200 OK');
     await client.stop(spec);
-    expect(await requestInbound()).toBe('');
-    measured.push(`inbound tcp: host ${gateway}:${INBOUND_HOST_PORT} reached guest :3210 and closed after stop`);
+    expect(await requestHostPort(INBOUND_HOST_PORT)).toBe('');
+    measured.push(`inbound tcp: host 127.0.0.1:${INBOUND_HOST_PORT} reached guest :3210 and closed after stop`);
     await boot();
   }, 10 * 60_000);
 
@@ -574,12 +647,13 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     const sitesDataDir = storageRoots!.sitesDataDir;
     const sourcePath = join(sitesDataDir, SITE_ID, 'source');
     const brokerDir = join(sitesDataDir, SITE_ID, 'broker');
-    const siteDisk = createEnvironmentDiskSpec({ resource: siteResource, image: PROJECT_ROOTFS, runtime: 'nspawn' },
+    const siteDisk = createEnvironmentDiskSpec({ resource: siteResource, image: SITE_ROOTFS, runtime: 'nspawn' },
       { sitesDataDir, namespace: 'elowen' }, randomBytes(16).toString('hex'));
-    const siteSpec: any = createBoundSiteSpec({ resource: siteResource, generation: 1, image: PROJECT_ROOTFS,
-      disk: siteDisk, workspaceReadOnly: true, limits: { cpus: 0.5, memoryMb: 320, pidsLimit: 200 } },
+    const siteSpec: any = createBoundSiteSpec({ resource: siteResource, generation: 1, image: SITE_ROOTFS,
+      disk: siteDisk, workspaceReadOnly: true, network: 'isolated', limits: { cpus: 0.5, memoryMb: 320, pidsLimit: 200 } },
     { namespace: 'elowen', sitesDataDir, sourcePath, brokerDir });
     const siteUnit = unitFor(siteSpec.name);
+    const siteEnvelope = envelopePaths(siteSpec.name);
     expect(siteSpec.name).toBe(`elowen-site-${SITE_ID}-g1`);
 
     const gitStub = siteSpec.mounts.find((mount: any) => mount.target === '/workspace/.git')!.source;
@@ -597,7 +671,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     writeFileSync(join(sourcePath, 'index.html'), '<!doctype html>site source\n', { mode: 0o600 });
     expect(lstatSync(gitStub).isFile()).toBe(true);
 
-    const siteClient = new NspawnClient({ artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
+    const siteClient = new NspawnClient({ executor, artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
     const siteGuest = (argv: string[], options: Record<string, unknown> = {}): Promise<Verdict> =>
       siteClient.exec(siteSpec, randomBytes(16).toString('hex'), argv, { timeoutMs: 60_000, persistent: true, ...options }) as Promise<Verdict>;
     try {
@@ -605,7 +679,12 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       await siteClient.create(siteSpec);
       await siteClient.start(siteSpec);
       await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
-      expect((await siteGuest(['/usr/bin/printenv', 'ELOWEN_SITE_SLUG'])).stdout.trim()).toBe(SITE_ID);
+      const siteEnvironment = await siteGuest(['/usr/bin/printenv', 'ELOWEN_SITE_SLUG']);
+      expect(siteEnvironment.stdout.trim(), `${siteEnvironment.stderr}\n${unitDiagnostics(siteUnit, siteEnvelope.nspawn)}`).toBe(SITE_ID);
+      expect(siteSpec.network).toBe('none');
+      const isolated = await siteGuest(['/usr/bin/curl', '-sS', '-m', '5', 'https://registry.npmjs.org/'], { allowFailure: true });
+      expect(isolated.code, 'the isolated Site reached the public network').not.toBe(0);
+      measured.push('isolated Site outbound HTTPS denied');
 
       // Every bind arrived with the semantics the specification declared.
       expect((await siteGuest(['/bin/cat', '/workspace/index.html'])).stdout).toBe('<!doctype html>site source\n');
@@ -614,13 +693,27 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       // Read-only means read-only in the kernel, not just in the settings file.
       expect((await siteGuest(['/bin/sh', '-c', 'touch /workspace/should-fail 2>&1; true'])).stdout).toMatch(/Read-only file system/);
 
+      const dataArchive = join(dirname(siteSpec.disk.rootfsPath), 'site-data-proof.tar');
+      await siteGuest(['/bin/sh', '-c', 'printf before >/data/archive-marker']);
+      await siteClient.stop(siteSpec);
+      await siteClient.siteDataArchive(siteSpec, 'export', dataArchive);
+      await siteClient.start(siteSpec);
+      await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
+      await siteGuest(['/bin/sh', '-c', 'printf after >/data/archive-marker']);
+      await siteClient.stop(siteSpec);
+      await siteClient.siteDataArchive(siteSpec, 'import', dataArchive);
+      await siteClient.start(siteSpec);
+      await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
+      expect((await siteGuest(['/bin/cat', '/data/archive-marker'])).stdout).toBe('before');
+      measured.push('Site data archive exported and restored across two restarts');
+
       // The ingress socket a publication binds inside the guest appears on the HOST side of the broker
       // mount, which is the only way the daemon's forwarder reaches it at all.
       // Not through `startPublication`: that transport is a project's in both runtimes and refuses a Site
       // by design. A Site's server is a unit inside its own guest, so this is one, written and started the
       // way the Site's image would, and it outlives the execution that started it.
       const publicationId = randomBytes(16).toString('hex');
-      const service = `[Unit]\nDescription=proof ingress\n[Service]\nType=simple\nExecStart=/usr/bin/python3 -c "import socket,time; s=socket.socket(socket.AF_UNIX); s.bind('/run/elowen/${publicationId}.sock'); s.listen(1); time.sleep(600)"\n`;
+      const service = `[Unit]\nDescription=proof ingress\n[Service]\nType=simple\nExecStart=/usr/local/bin/node -e "const net=require('node:net'); const server=net.createServer(); server.listen('/run/elowen/${publicationId}.sock'); setInterval(()=>{},600000)"\n`;
       const unitName = `elowen-proof-ingress-${publicationId.slice(0, 12)}.service`;
       const wrote = await siteGuest(['/bin/sh', '-c',
         `cat >/etc/systemd/system/${unitName} <<'UNIT'\n${service}UNIT\nsystemctl daemon-reload && systemctl start ${unitName}`]);
@@ -638,7 +731,6 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       try { execFileSync('/usr/bin/systemctl', ['stop', siteUnit], { timeout: 120_000, stdio: 'ignore' }); } catch { /* already down */ }
       try { if (await siteClient.containerExists(siteSpec)) await siteClient.removeByName(siteSpec); } catch { /* gone */ }
     }
-    const siteEnvelope = envelopePaths(siteSpec.name);
     expect(existsSync(siteEnvelope.nspawn)).toBe(false);
     expect(existsSync(siteEnvelope.dropIn)).toBe(false);
   }, 40 * 60_000);

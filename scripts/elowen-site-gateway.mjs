@@ -748,7 +748,7 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     binary: '/usr/sbin/iptables',
     chain: 'INPUT',
     insertAt: 1,
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-m', 'comment', '--comment', 'elowen-machine-dhcp', '-j', 'ACCEPT']),
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '-m', 'udp', '--dport', '67', '-m', 'comment', '--comment', 'elowen-machine-dhcp', '-j', 'ACCEPT']),
     why: 'the host runs the address server for the link, so the guard below must not cover it',
   }),
   Object.freeze({
@@ -981,11 +981,13 @@ export function nspawnExecArgs(request) {
   // A DETACHED unit outlives the call that started it — a preview server, a publication forwarder — so it
   // drops the three options that make `systemd-run` wait for an exit: there is no exit to wait for.
   const detached = request.detached === true;
+  const environment = nspawnEnvironmentEntries(request.environment ?? {});
   return [
     '-M', machine, '--quiet', ...(detached ? [] : ['--pipe', '--wait']), '--collect', `--unit=${unit}`,
     '--service-type=exec', '--expand-environment=no', '--property=KillMode=control-group',
     '--property=TimeoutStopSec=5s', '--property=TasksMax=infinity',
     ...(detached ? [] : [`--property=RuntimeMaxSec=${seconds}s`]),
+    ...environment.map(([key, value]) => `--setenv=${key}=${value}`),
     `--working-directory=${cwd}`, '--', ...argv,
   ];
 }
@@ -1498,13 +1500,18 @@ function machineResolver(readText) {
   fail('the host has no non-loopback DNS resolver for machine networking');
 }
 
-function nspawnEnvironment(value) {
+function nspawnEnvironmentEntries(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 64) fail('the machine environment is invalid');
   return Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, raw]) => {
     const text = typeof raw === 'string' ? raw : fail('the machine environment value is invalid');
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || text.length > 4096 || /[\0\r\n]/.test(text)) fail('the machine environment is invalid');
-    return `Environment="${`${key}=${text}`.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+    return [key, text];
   });
+}
+
+function nspawnEnvironment(value) {
+  return nspawnEnvironmentEntries(value).map(([key, text]) =>
+    `Environment="${`${key}=${text}`.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`);
 }
 
 function nspawnPorts(raw) {
@@ -1541,9 +1548,6 @@ export function renderMachineSettings(binds, { privateNetwork = true, uidBase, e
     // the whole tree. 255.4 reads this key in [Files]; in [Exec] it parses as an unknown name, logs that
     // it is ignoring it and leaves the intent resting on nspawn's default instead of stating it.
     'PrivateUsersOwnership=off',
-    // Resolver delivery is an explicit read-only bind below. Letting nspawn choose from /etc/resolv.conf
-    // can copy the host's 127.0.0.53 stub into the guest, where it points at the wrong loopback.
-    'ResolvConf=off',
   ];
   for (const bind of binds) {
     lines.push(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);

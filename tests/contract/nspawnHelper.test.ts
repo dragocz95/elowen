@@ -273,6 +273,17 @@ describe('privileged helper: execution', () => {
     ]);
   });
 
+  it('passes the validated machine environment into every transient guest unit', () => {
+    const args = nspawnExecArgs({ machine: MACHINE, unit: UNIT, argv: ['/usr/bin/printenv'], cwd: '/workspace',
+      timeoutSeconds: 30, environment: { Z_LAST: 'two words', A_FIRST: 'literal$HOME' } });
+    const separator = args.indexOf('--');
+    expect(args.slice(0, separator).filter((value) => value.startsWith('--setenv='))).toEqual([
+      '--setenv=A_FIRST=literal$HOME', '--setenv=Z_LAST=two words',
+    ]);
+    expect(() => nspawnExecArgs({ machine: MACHINE, unit: UNIT, argv: ['/bin/true'], cwd: '/', timeoutSeconds: 30,
+      environment: { BROKEN: 'line one\nline two' } })).toThrow(/machine environment is invalid/);
+  });
+
   it('delivers the guest argv byte for byte, without systemd rewriting a variable reference out of it', () => {
     // A transient unit's command line is a systemd command line, and the manager substitutes into it at
     // exec time unless told not to. Measured against systemd 255.4 on this host, with the flag absent:
@@ -657,7 +668,7 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(settings).toContain('Environment="ELOWEN_SITE_SLUG=demo"');
     expect(settings).toContain('Environment="ELOWEN_SITE_URL=https://demo.example/path?a=1&b=2"');
     expect(settings).toContain('PrivateUsersOwnership=off');
-    expect(settings).toContain('ResolvConf=off');
+    expect(settings).not.toContain('ResolvConf=');
     expect(renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false, resolverPath: '/run/systemd/resolve/resolv.conf' }))
       .toContain('BindReadOnly=/run/systemd/resolve/resolv.conf:/etc/resolv.conf');
     expect(settings).toContain('NoNewPrivileges=yes');
@@ -929,6 +940,7 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(guards.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
     // IPv4 DHCP is first and its guard second; IPv6 has no lease exception and its guard is first.
     const lease = NSPAWN_FIREWALL_RULES.find((rule) => rule.id === 'firewall:machine-dhcp')!;
+    expect(lease.spec.join(' ')).toContain('-p udp -m udp --dport 67');
     expect(lease.insertAt).toBe(1);
     expect(guards.map((rule) => rule.insertAt)).toEqual([2, 1]);
     expect(guards.every((rule) => firewallRuleCommand(rule).includes('-I INPUT'))).toBe(true);

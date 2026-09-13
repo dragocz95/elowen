@@ -609,7 +609,7 @@ export class NspawnClient {
     if (row.state !== 'running') throw new Error('Container is not running');
     return { ...prepared, container: row,
       request: helperRequest('exec', { machine, unit, argv: [...argv], cwd: prepared.workdir,
-        timeoutSeconds: Math.ceil(prepared.timeoutMs / 1000), ...mode }) };
+        timeoutSeconds: Math.ceil(prepared.timeoutMs / 1000), environment: this.#environment(spec), ...mode }) };
   }
 
   async #prepareGuest(spec, executionId, argv, options = {}, mode = {}) {
