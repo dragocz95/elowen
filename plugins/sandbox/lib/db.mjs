@@ -241,16 +241,6 @@ export function activeExecutionLeases(db, input = {}) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function waitForExecutionLeases(db, input = {}, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const active = activeExecutionLeases(db, input);
-    if (active.length === 0) return [];
-    if (Date.now() >= deadline) return active;
-    await sleep(50);
-  }
-}
-
 export async function withRepoLease(db, commonDir, fn, opts = {}) {
   const ownerId = `srl_${randomUUID()}`;
   const runnerIdentity = processIdentity() ?? `unverifiable:${randomUUID()}`;

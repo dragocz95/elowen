@@ -323,10 +323,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!internal) account(userId);
     else if (!stores().usersRead.list().some((user) => user.id === userId) || !stores().usersRead.mayUsePlugin(userId, 'sandbox')) throw error('account_forbidden', 'Account access is unavailable', 403);
     const scope = ctx.currentAccess();
-    // The narrowing below is a TURN's: a selected Project, an exact workspace, the policy's project list.
-    // An authenticated API request has none of those, so `apiRequest` is the host's positive marker for
-    // that scope. Membership is resolved again below so revocation still refuses the operation.
-    if (!internal && !scope.apiRequest && ctx.currentAccountUserId() != null && (scope.workspaceRef || (scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
+    // The narrowing below is a TURN's: a selected Project and the policy's project list. An authenticated
+    // API request has neither, so `apiRequest` is the host's positive marker for that scope. Membership is
+    // resolved again below so revocation still refuses the operation.
+    if (!internal && !scope.apiRequest && ctx.currentAccountUserId() != null && ((scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
     const project = stores().projects.get(Number(id));
     if (!project || project.executionKind !== 'managed' || !(manage ? stores().userProjects.canManage(userId, project.id) : stores().userProjects.canAccess(userId, project.id))) throw error('project_forbidden', 'Project access is denied', 403);
     return project;
@@ -684,7 +684,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function prepareExecution(input, userId) {
     const id = projectId(input.projectRef);
     account(userId, true);
-    if (input.workspace || ctx.currentAccess().workspaceRef) throw error('workspace_pinned', 'A legacy narrow workspace cannot widen into a managed Project', 403);
     const row = await ready(id, userId, false);
     const program = command(input.command);
     const cwd = guestPath(input.cwd ?? rootOf(row));
@@ -700,7 +699,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         // The client owns what goes on that pipe, not this function: it hands back the caller's own
         // bytes unchanged, while a transport whose privileged request travels ahead of them in the same
         // pipe hands back both. Returning `program.input` here would silently drop the request half.
-        launch: prepared.launch, stdin: prepared.stdin, cancel: () => handle.cancel(), workspace: null, lease: handle,
+        launch: prepared.launch, stdin: prepared.stdin, cancel: () => handle.cancel(), lease: handle,
         sanitizeOutput: sanitize };
     } catch (cause) { await handle.release(); throw cause; }
   }
