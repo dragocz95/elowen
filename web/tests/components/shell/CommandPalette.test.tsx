@@ -16,7 +16,13 @@ function W({ children }: { children: React.ReactNode }) { return <LanguageProvid
 function Cs({ children }: { children: React.ReactNode }) { return <LanguageProvider initialLocale="cs">{children}</LanguageProvider>; }
 
 const push = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push, replace: () => {} }) }));
+// Where the reader is standing. The palette decides between routing and moving inside the document from
+// it, so it is a variable rather than a constant.
+const location = vi.hoisted(() => ({ pathname: '/dash' }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push, replace: () => {} }),
+  usePathname: () => location.pathname,
+}));
 // The palette lists the pages of every enabled plugin alongside the core modules; this suite runs
 // without a QueryClient, so the hook is stubbed directly.
 vi.mock('../../../lib/queries', () => ({
@@ -83,6 +89,9 @@ beforeEach(() => {
   // The stored locale outlives a test — and `LanguageProvider` re-resolves it on mount, so a Czech
   // test would silently render in whatever language the PREVIOUS test left behind.
   localStorage.clear();
+  push.mockClear();
+  location.pathname = '/dash';
+  window.history.replaceState(null, '', '/dash');
 });
 
 describe('CommandPalette', () => {
@@ -120,6 +129,22 @@ describe('CommandPalette', () => {
     type(en.settings.models);
     fireEvent.click(document.querySelector<HTMLElement>('[cmdk-item][data-value="settings:models"]')!);
     expect(push).toHaveBeenCalledWith('/settings?cat=models');
+  });
+
+  /** A row of the page the reader is ALREADY on is not a route change. `/account` and `/settings` are
+   *  presented as intercepted page overlays, so routing to one from its own canonical page answers with a
+   *  second copy of the page above it; the address carries the move instead, which is what the page and
+   *  the record anchor both listen to. Same decision as every link the shell draws (ShellLink). */
+  it('moves within the page the reader is on instead of routing to it', () => {
+    location.pathname = '/account';
+    window.history.replaceState(null, '', '/account?cat=profile');
+    render(<CommandPalette />, { wrapper: W });
+    openPalette();
+    type(en.account.tabSecurity);
+    fireEvent.click(document.querySelector<HTMLElement>('[cmdk-item][data-value="account:security"]')!);
+
+    expect(push).not.toHaveBeenCalled();
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/account?cat=security');
   });
 
   // TopBar's visible trigger dispatches exactly this event, and it is the only way a pointer user reaches

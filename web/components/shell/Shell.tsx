@@ -396,7 +396,7 @@ function ConfiguredToastProvider({ children }: { children: ReactNode }) {
   return <ToastProvider durationMs={resolveToastDuration(config?.runtime?.limits)}>{children}</ToastProvider>;
 }
 
-export function Shell({ children, settingsOverlay = null, theme, pluginUiSeed, meSeed, sessionPresent = true, initialLocale, skinSeed }: { children: ReactNode; settingsOverlay?: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; sessionPresent?: boolean; initialLocale?: Locale; skinSeed?: { choice: SkinName | null; allowed: SkinName[]; fallback: SkinName | null } }) {
+export function Shell({ children, pageOverlay = null, theme, pluginUiSeed, meSeed, sessionPresent = true, initialLocale, skinSeed }: { children: ReactNode; pageOverlay?: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; sessionPresent?: boolean; initialLocale?: Locale; skinSeed?: { choice: SkinName | null; allowed: SkinName[]; fallback: SkinName | null } }) {
   return (
     <EffectsProvider>
       <Providers pluginUiSeed={pluginUiSeed} meSeed={meSeed}>
@@ -412,7 +412,9 @@ export function Shell({ children, settingsOverlay = null, theme, pluginUiSeed, m
             <LoginGate initiallyAuthenticated={meSeed != null} sessionPresent={sessionPresent}>
               <>
                 <ShellBody>{children}</ShellBody>
-                {settingsOverlay}
+                {/* The intercepted page, when one is open: it renders BESIDE the shell body rather than
+                    inside it, so the page underneath stays mounted and the overlay isolates it. */}
+                {pageOverlay}
               </>
             </LoginGate>
           </PageHeaderProvider>

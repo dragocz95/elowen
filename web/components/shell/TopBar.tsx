@@ -1,5 +1,4 @@
 'use client';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronRight, LogOut, Menu, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Search, User } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
@@ -12,6 +11,7 @@ import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 import { SkinSwitcher } from '../ui/SkinSwitcher';
 import { useElementWidth } from '../../lib/useElementWidth';
 import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
+import { ShellLink } from './ShellLink';
 
 /** How the page's chrome claims its room.
  *
@@ -183,7 +183,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
         ) : null}
         <SkinSwitcher collapsed />
         <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
-        <Link
+        <ShellLink
           href="/account"
           className={`top-bar__identity ml-0.5 flex items-center rounded-full ring-primary/30 transition-[opacity,box-shadow] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 ${onMenuClick ? 'min-h-[var(--touch-target)] min-w-[var(--touch-target)] justify-center' : ''}`}
           title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
@@ -193,7 +193,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           ) : (
             <span className={`flex items-center justify-center rounded-full border border-border bg-muted ${bar ? 'h-[26px] w-[26px]' : 'h-[34px] w-[34px]'}`}><User size={bar ? 15 : 17} className="text-muted-foreground" aria-hidden /></span>
           )}
-        </Link>
+        </ShellLink>
       </div>
     </header>
   );
