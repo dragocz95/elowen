@@ -64,10 +64,6 @@
  * @property {(spec: object) => Promise<void>} removeGenerationStorage
  * @property {(spec: object, snapshotId: string) => Promise<void>} removeSnapshotStorage
  * @property {(spec: object, snapshotId: string) => Promise<void>} discardIncompleteSnapshot
- * @property {(spec: object, operation: 'import' | 'export', archivePath: string) => Promise<void>} siteDataArchive
- *   Seeds a Site's `data` tree from an archive, or captures it into one. An import replaces the tree
- *   atomically and only while the environment is stopped; an export never overwrites its destination.
- *
  * Host readiness. The machine runtime needs its host prepared before it can hold an environment at all.
  * @property {() => Promise<{ ready: boolean, items: { id: string, label: string, ok: boolean, detail?: string }[] }>} [hostReadiness]
  */
@@ -85,7 +81,7 @@
  * @param {{ nspawn?: RuntimeClient | null }} clients
  * @returns {RuntimeClient}
  */
-export const UNSUPPORTED_RUNTIME_MESSAGE = 'This environment belongs to the removed Podman runtime. Delete the managed Project or Site that owns it, then create it again; this build only creates systemd-nspawn environments from published root filesystems.';
+export const UNSUPPORTED_RUNTIME_MESSAGE = 'This environment belongs to the removed Podman runtime. Delete the managed Project that owns it, then create it again; this build only creates systemd-nspawn environments from published root filesystems.';
 export const unsupportedRuntime = () => Object.assign(new Error(UNSUPPORTED_RUNTIME_MESSAGE), { code: 'unsupported_runtime', status: 409 });
 
 export function selectRuntimeClient(spec, clients) {

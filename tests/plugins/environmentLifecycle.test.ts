@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
-import { PROJECT_ARTIFACT, ROOTFS_RECIPES, SITE_ARTIFACTS, artifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
+import { PROJECT_ARTIFACT, ROOTFS_RECIPES, artifactReference } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
@@ -18,7 +18,6 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 /** The published root filesystem a NEW managed project is stamped with, in both the envelope image and
  *  the disk's source. Nothing on the host produces it: it is fetched by reference and verified by digest. */
 const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
-const SITE_ROOTFS = artifactReference(SITE_ARTIFACTS.base);
 /** `machineHost` answers the readiness probe the way a provisioned or an unprovisioned host answers it,
  *  which is where production makes the decision. There is no third world any more: every environment is a
  *  machine on a disk materialized from a published artifact, so `'ready'` is what almost every test below
@@ -123,9 +122,6 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     inspectVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
     importSnapshotVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
     removeSnapshotImage: vi.fn(async () => { throw new Error('A disk-backed environment snapshots its disk, not an image'); }),
-    // Not a volume handle: the Site data archive seeds and captures the `data` tree the disk already
-    // holds, and the machine client implements it through the privileged helper.
-    siteDataArchive: vi.fn(async () => {}),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
     // The rows the helper reports, in the helper's own shape. `unready` carries the details a real host
     // returns, because what the runtime does with them — quoting them back in its refusal — is the thing
@@ -207,42 +203,6 @@ describe('durable managed environment lifecycle', () => {
     expect(diskFiles.has(second.disk.id)).toBe(true);
   });
 
-  it('restores a rootfs-backed Site without snapshot data through disk restore while stopped', async () => {
-    const { runtime, root, nspawn, storage, containers } = setup();
-    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: SITE_ROOTFS, network: 'shared',
-      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
-    mkdirSync(registration.sourcePath, { recursive: true });
-    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
-    const registered = await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    expect(registered.state).toBe('unprovisioned');
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-    const first = nspawn.create.mock.calls.at(-1)![0];
-    expect(first.disk).toMatchObject({ format: 2, sourceImage: registration.image });
-    storage.snapshot.mockImplementation(async (_spec: any, snapshotId: string) => ({ version: 2, snapshotId,
-      sourceImage: { reference: first.disk.sourceImage, id: 'sha256:' + 'd'.repeat(64) }, trees: [{ component: 'rootfs' }] }));
-    const capture = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-snapshot',
-      action: { kind: 'snapshot', includeData: false } });
-    await runtime.reconcile();
-    const saved = await runtime.siteEnvironmentOperation({ operationId: capture.id, accountUserId: 1 });
-    storage.readSnapshot.mockResolvedValue({ version: 2, snapshotId: saved!.snapshotId,
-      sourceImage: { reference: first.disk.sourceImage, id: 'sha256:' + 'd'.repeat(64) }, trees: [{ component: 'rootfs' }] });
-    storage.restoreVolumes.mockImplementation(async () => { expect(containers.get(first.name)?.state).toBe('stopped'); });
-    storage.restoreVolumes.mockClear();
-    nspawn.importSnapshotVolume.mockClear();
-
-    const restore = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-restore-no-data',
-      action: { kind: 'restore', snapshotId: saved!.snapshotId, restoreData: false } });
-    await runtime.reconcile();
-    const completed = await runtime.siteEnvironmentOperation({ operationId: restore.id, accountUserId: 1 });
-    expect(completed, JSON.stringify(completed)).toMatchObject({ status: 'succeeded' });
-
-    expect(storage.restoreVolumes).toHaveBeenCalledOnce();
-    expect(nspawn.importSnapshotVolume).not.toHaveBeenCalled();
-    expect(nspawn.stop.mock.invocationCallOrder.at(-1)).toBeLessThan(storage.restoreVolumes.mock.invocationCallOrder[0]!);
-  });
-
   // The artifact reference a row carries is inside its specification hash and inside the machine's own
   // identity record, so a start that moved an existing environment onto the release's current root
   // filesystem would leave it unable to prove it owns anything it already has.
@@ -295,7 +255,7 @@ describe('durable managed environment lifecycle', () => {
     await expect(runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } }))
       .rejects.toMatchObject({ code: 'unsupported_runtime', status: 409 });
     await expect(runtime.requestEnvironment({ ...input, requestId: 'legacy-start-2', action: { kind: 'start' } }))
-      .rejects.toThrow(/removed Podman runtime.*Delete the managed Project or Site/);
+      .rejects.toThrow(/removed Podman runtime.*Delete the managed Project/);
   });
 
   // Reconcile sweeps publications of every running project without going through `rowFor`, so a running
@@ -725,20 +685,6 @@ describe('durable managed environment lifecycle', () => {
     ctx.currentAccess = () => ({ readOnly: false }); ctx.currentAccountUserId = () => 2;
     await expect(runtime.environmentFor(input)).rejects.toThrow(/actor/i);
   });
-  it('rechecks generation inside the deletion intent transaction after asynchronous publication preflight', async () => {
-    const { runtime, sql, project } = setup();
-    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
-    runtime.connectSitesRuntime({ resolve: async () => null, beforeStart: async () => {}, afterStop: async () => {},
-      projectDependents: async () => {
-        sql.prepare("UPDATE p_sandbox_runtimes SET generation=2 WHERE kind='project' AND resource_id='7'").run();
-        return [];
-      },
-    });
-    await expect(runtime.requestEnvironment({ ...input, expectedGeneration: 1, requestId: 'stale-delete', action: { kind: 'delete' } })).rejects.toThrow(/generation/i);
-    expect(project.lifecycle).toBe('active');
-    expect(sql.prepare("SELECT generation,desired_state FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toMatchObject({ generation: 2, desired_state: 'running' });
-    expect(sql.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE request_key='stale-delete'").get()).toBeUndefined();
-  });
   it('answers a failed guest upload from a fixed table rather than forwarding guest text', async () => {
     const { runtime, nspawn, root } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
@@ -890,42 +836,30 @@ describe('durable managed environment lifecycle', () => {
     expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
   });
 
-  /** The one path that seeds a Site's `data` tree automatically: the first start after registration, from
-   *  the bootstrap archive the Sites plugin hands over. It runs before the envelope exists, and it runs
-   *  once for the life of the disk — a second start must not write the bootstrap over data the Site has
-   *  since been serving from. */
-  it('seeds a new Site data directory from the bootstrap archive, and only on the first start', async () => {
-    const { runtime, nspawn, root } = setup();
-    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: SITE_ROOTFS,
-      network: 'shared', workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'),
-      sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
-    mkdirSync(registration.sourcePath, { recursive: true });
-    const archivePath = join(root, 'sites', 'shop', 'bootstrap.tar');
-    mkdirSync(dirname(archivePath), { recursive: true });
-    writeFileSync(archivePath, 'bootstrap archive');
-    const containerSeed = vi.fn(async () => ({ kind: 'data' as const, archivePath }));
-    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {}, containerSeed });
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+  it('keeps historical Site runtime rows dormant and out of readiness', async () => {
+    const { runtime, db, nspawn } = setup();
+    const spec = JSON.stringify({ input: { resource: { kind: 'site', id: 'retired-site' }, disk: { sourceImage: 'localhost/retired-site:1' } } });
+    db.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json)
+      VALUES('site','retired-site',7,4,'running','running',?,'{}')`).run(spec);
+    db.prepare(`INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json,status)
+      VALUES('env_retired_site','site','retired-site',1,'retained-start',4,'{"kind":"start"}','pending')`).run();
+    db.prepare(`INSERT INTO p_sandbox_runtime_snapshots(id,kind,resource_id,generation,spec_json,manifest_json,note)
+      VALUES('retained-snapshot','site','retired-site',4,?,'{}','audit')`).run(spec);
+    db.prepare("INSERT INTO p_sandbox_runtime_logs(kind,resource_id,message) VALUES('site','retired-site','retained log')").run();
 
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'seed-start', action: { kind: 'start' } });
     await runtime.reconcile();
+    await runtime.revokeAccount(1);
 
-    expect(nspawn.siteDataArchive).toHaveBeenCalledTimes(1);
-    const [spec, operation, archive] = nspawn.siteDataArchive.mock.calls[0]!;
-    expect(operation).toBe('import');
-    expect(archive).toBe(archivePath);
-    expect(spec.resource).toEqual({ kind: 'site', id: 'shop' });
-    // Seeded into the disk's own data tree, before the envelope that will bind it into the machine.
-    expect(spec.disk.components.map((entry: any) => entry.component)).toEqual(['data']);
-    expect(nspawn.siteDataArchive.mock.invocationCallOrder[0]).toBeLessThan(nspawn.create.mock.invocationCallOrder[0]!);
-    expect((await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).state).toBe('running');
+    expect(nspawn.inspect).not.toHaveBeenCalled();
+    expect(nspawn.create).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT state,desired_state FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='retired-site'").get())
+      .toEqual({ state: 'running', desired_state: 'running' });
+    expect(db.prepare("SELECT status FROM p_sandbox_runtime_operations WHERE id='env_retired_site'").get()).toEqual({ status: 'pending' });
+    expect(db.prepare("SELECT note FROM p_sandbox_runtime_snapshots WHERE kind='site' AND resource_id='retired-site'").get()).toEqual({ note: 'audit' });
+    expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='site' AND resource_id='retired-site'").get()).toEqual({ message: 'retained log' });
 
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'seed-stop', action: { kind: 'stop' } });
-    await runtime.reconcile();
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'seed-restart', action: { kind: 'start' } });
-    await runtime.reconcile();
-    expect(nspawn.siteDataArchive).toHaveBeenCalledTimes(1);
+    const readiness = await runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    expect(readiness.requirements.find((entry: any) => entry.id === 'runtime:legacy-references')).toMatchObject({ ok: true });
   });
 });
 
@@ -997,28 +931,6 @@ describe('project root filesystem binding', () => {
 });
 
 describe('adopted workspace rollback', () => {
-  it('resolves the current host workspace across adoption, recreate and rollback', async () => {
-    const { runtime, project, root } = setup();
-    const host = join(root, 'host-project');
-    mkdirSync(host, { recursive: true });
-    project.executionKind = 'host'; project.path = host;
-    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(host);
-
-    project.executionKind = 'managed'; project.path = ''; project.adoptedPath = host;
-    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(host);
-    await runtime.requestEnvironment({ ...input, requestId: 'adopted-path-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-    const adopted = await runtime.projectWorkspaceHostPath({ projectId: 7 });
-    expect(adopted).toMatch(/projects\/7\/disks\/[a-f0-9]{32}\/workspace$/);
-
-    await runtime.requestEnvironment({ ...input, requestId: 'adopted-path-recreate', action: { kind: 'recreate' } });
-    await runtime.reconcile();
-    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(adopted);
-
-    await runtime.releaseAdoptedWorkspace(input);
-    project.executionKind = 'host'; project.path = host; project.adoptedPath = null;
-    expect(await runtime.projectWorkspaceHostPath({ projectId: 7 })).toBe(host);
-  });
 
   it('removes the provisioned environment and moves its workspace back through storage', async () => {
     const { runtime, nspawn, storage, project, sql, root } = setup();
@@ -1036,162 +948,6 @@ describe('adopted workspace rollback', () => {
     expect(storage.releaseWorkspace).toHaveBeenCalledWith(expect.anything(), project.adoptedPath);
     expect(nspawn.removeStorage).toHaveBeenCalledOnce();
     expect(sql.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toBeUndefined();
-  });
-
-  it('rebuilds a Site container when project adoption moves its source path', async () => {
-    const { runtime, nspawn, project, root, ctx } = setup();
-    const host = join(root, 'host-project');
-    const sourceRel = 'sites/shop';
-    mkdirSync(join(host, sourceRel), { recursive: true });
-    project.executionKind = 'host'; project.path = host;
-    runtime.connectSitesRuntime({
-      resolve: async () => ({ siteId: 'shop', projectId: 7, sourceRel, image: SITE_ROOTFS, network: 'shared',
-        workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel),
-        brokerDir: join(root, 'brokers'), limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true }),
-      beforeStart: async () => {}, afterStop: async () => {},
-    });
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-host-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-host-stop', action: { kind: 'stop' } });
-    await runtime.reconcile();
-
-    project.executionKind = 'managed'; project.path = ''; project.adoptedPath = host;
-    await runtime.requestEnvironment({ ...input, requestId: 'adopt-project-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-    const movedSource = join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel);
-
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-moved-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-
-    const siteCreates = nspawn.create.mock.calls.map(([spec]: any[]) => spec).filter((spec: any) => spec.mounts.some((mount: any) => mount.target === '/workspace'));
-    expect(siteCreates).toHaveLength(2);
-    expect(siteCreates[0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(join(host, sourceRel));
-    expect(siteCreates[1].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(movedSource);
-    expect(siteCreates[1].disk.id).toBe(siteCreates[0].disk.id);
-    expect(siteCreates[1].disk.rootfsPath).toBe(siteCreates[0].disk.rootfsPath);
-    // The rebuild replaces the envelope and nothing else: the disk carries the Site's installed
-    // application across it, so nothing is re-seeded from a data archive and no handle is released.
-    // A re-seed here would write the bootstrap over data the Site has been serving from.
-    expect(nspawn.siteDataArchive).not.toHaveBeenCalled();
-    expect(nspawn.removeVolume).not.toHaveBeenCalled();
-    expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 1 });
-    expect(ctx.logger.info).toHaveBeenCalledWith(`site shop: source path moved from ${join(host, sourceRel)} to ${movedSource}, rebuilding container`);
-  });
-});
-
-describe('site environment tombstones', () => {
-  it('re-registers a deleted Site at a new generation and rejects lifecycle actions on its tombstone', async () => {
-    const { runtime, root, db, nspawn } = setup();
-    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: SITE_ROOTFS, network: 'shared',
-      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'host-project', 'sites', 'shop'), brokerDir: join(root, 'brokers'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
-    mkdirSync(registration.sourcePath, { recursive: true });
-    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
-    await runtime.reconcile();
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-delete', action: { kind: 'delete' } });
-    await runtime.reconcile();
-
-    expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'deleted', generation: 1 });
-    const actions = [
-      { kind: 'start' }, { kind: 'stop' }, { kind: 'restart' }, { kind: 'delete' }, { kind: 'snapshot', includeData: false },
-      { kind: 'restore', snapshotId: 'snap', restoreData: false }, { kind: 'prepare' }, { kind: 'cleanup-stage' },
-      { kind: 'provision-image', imageKind: 'base' }, { kind: 'import-data', artifactId: 'artifact' },
-      { kind: 'export-data', artifactId: 'artifact' },
-      { kind: 'remove-artifact', artifactId: 'artifact' }, { kind: 'export-project', artifactId: 'artifact' },
-    ];
-    for (const [index, action] of actions.entries()) {
-      await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: `tombstone-${index}`, action } as any))
-        .rejects.toThrow(/environment has been deleted/i);
-    }
-    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 3, requestId: 'tombstone-limits',
-      action: { kind: 'limits', limits: registration.limits } })).rejects.toThrow(/environment has been deleted/i);
-
-    registration.sourcePath = join(root, 'projects', '7', 'storage', '1', 'workspace', 'sites', 'shop');
-    mkdirSync(registration.sourcePath, { recursive: true });
-    const recreated = await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    expect(recreated).toMatchObject({ state: 'unprovisioned', generation: 2 });
-    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get()).toEqual({ n: 1 });
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-recreated-start',
-      expectedGeneration: 2, action: { kind: 'start' } });
-    await runtime.reconcile();
-    expect(nspawn.create.mock.calls.at(-1)![0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(registration.sourcePath);
-    expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 2 });
-  });
-
-  function mismatchedSite() {
-    const state = setup();
-    const registration = { siteId: 'shop', projectId: 7, image: SITE_ROOTFS, network: 'shared' as const,
-      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(state.root, 'sites'), sourcePath: join(state.root, 'sources'), brokerDir: join(state.root, 'brokers'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
-    let current = registration;
-    mkdirSync(registration.sourcePath, { recursive: true });
-    state.runtime.connectSitesRuntime({ resolve: async () => current, beforeStart: async () => {}, afterStop: async () => {} });
-    return { ...state, registration, changeBinding: () => { current = { ...registration, sourcePath: join(state.root, 'moved-sources') }; } };
-  }
-
-  it('upgrades a legacy Site registration with a matching Project-relative source reference', async () => {
-    const { runtime, db, registration } = mismatchedSite();
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    const generation = (await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).generation;
-    const upgraded = { ...registration, sourceRel: 'sites/shop' };
-    runtime.connectSitesRuntime({ resolve: async () => upgraded, beforeStart: async () => {}, afterStop: async () => {} });
-
-    await expect(runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 }))
-      .resolves.toMatchObject({ generation });
-    const stored = JSON.parse((db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get() as any).spec_json);
-    expect(stored.registration).toMatchObject({ sourcePath: registration.sourcePath, sourceRel: 'sites/shop' });
-  });
-
-  it('rejects a legacy Site registration upgrade when its absolute source changed', async () => {
-    const { runtime, registration, root } = mismatchedSite();
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    const changed = { ...registration, sourcePath: join(root, 'moved-sources'), sourceRel: 'sites/shop' };
-    runtime.connectSitesRuntime({ resolve: async () => changed, beforeStart: async () => {}, afterStop: async () => {} });
-
-    await expect(runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 }))
-      .rejects.toMatchObject({ code: 'site_binding_changed' });
-  });
-
-  it('completes a Site delete handover after its trusted binding changed', async () => {
-    const { runtime, db, changeBinding } = mismatchedSite();
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    // Provisioned first, which is the handover a person actually performs: the Site is serving, its
-    // binding moves under it, and the deletion still has to reach the end. It is also the only shape the
-    // deletion can take at all now — an environment whose disk was never materialized carries no runtime
-    // on its disk record, and every lifecycle step resolves its client from exactly that field.
-    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-boot', action: { kind: 'start' } });
-    await runtime.reconcile();
-    changeBinding();
-
-    const requested = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-delete',
-      handover: true, action: { kind: 'delete' } });
-    await runtime.reconcile();
-
-    await expect(runtime.siteEnvironmentOperation({ operationId: requested.id, accountUserId: 1 }))
-      .resolves.toMatchObject({ status: 'succeeded', action: { kind: 'delete' } });
-    expect(db.prepare("SELECT state,desired_state,error FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get())
-      .toEqual({ state: 'deleted', desired_state: 'deleted', error: null });
-  });
-
-  it('rejects a Site start handover after its trusted binding changed', async () => {
-    const { runtime, changeBinding } = mismatchedSite();
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    changeBinding();
-
-    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'handover-start',
-      handover: true, action: { kind: 'start' } })).rejects.toMatchObject({ code: 'site_binding_changed' });
-  });
-
-  it('rejects a Site delete without handover after its trusted binding changed', async () => {
-    const { runtime, changeBinding } = mismatchedSite();
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    changeBinding();
-
-    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'ordinary-delete',
-      action: { kind: 'delete' } })).rejects.toMatchObject({ code: 'site_binding_changed' });
   });
 });
 
@@ -1406,6 +1162,9 @@ describe('durable project publications', () => {
     // behind for reconciliation to chase.
     const remaining = { project: input.project, accountUserId: 2 };
     await runtime.projectPublicationBinding({ ...remaining, publicationId: 'shop', port: 8080 });
+    await expect(runtime.requestEnvironment({ ...remaining, requestId: 'publication-delete', action: { kind: 'delete' } }))
+      .rejects.toMatchObject({ code: 'published_sites_exist' });
+    await runtime.projectPublicationRelease({ project: input.project, publicationId: 'shop' });
     await runtime.requestEnvironment({ ...remaining, requestId: 'publication-delete', action: { kind: 'delete' } });
     await runtime.reconcile();
     expect(records(sql)).toEqual([]);

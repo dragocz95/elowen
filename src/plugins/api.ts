@@ -20,10 +20,10 @@ import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagen
 import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import type { ProjectGitSnapshot } from '../git/gitReader.js';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
-import type { ProjectEnvironmentControl, SiteEnvironmentControl } from './environmentTypes.js';
+import type { ProjectEnvironmentControl } from './environmentTypes.js';
 export type { ProjectExecutionRef, ManagedProjectRef } from '../shared/projectExecution.js';
 export { GUEST_FILE_CHUNK_BYTES } from './environmentTypes.js';
-export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, SiteEnvironmentControl, SiteEnvironmentRegistration, SiteRuntimeAuthority, SiteEnvironment, SiteEnvironmentOperation, SiteEnvironmentAction, SiteRuntimeArtifact, SiteImageRecipe, SiteImageKind, SiteImageStatus, SiteImageOperation, ProjectPreviewBinding } from './environmentTypes.js';
+export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
 
@@ -1322,7 +1322,7 @@ export interface SandboxPreparedExecution {
 
 /** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
  * invalid because its DB/runtime generation may already have been replaced. */
-export interface SandboxControl extends ProjectEnvironmentControl, SiteEnvironmentControl {
+export interface SandboxControl extends ProjectEnvironmentControl {
   workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
   /** Resolve one durable workspace ref for an explicit account and current project ceiling. Refuses stale,
    * orphaned, foreign, path-mismatched and inaccessible workspaces rather than falling back to a Project. */

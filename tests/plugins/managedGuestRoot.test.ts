@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createBoundSiteSpec, createContainerSpec, guestMountTarget, RESERVED_GUEST_ROOTS as pluginReserved } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { createContainerSpec, createEnvironmentDiskSpec, guestMountTarget, RESERVED_GUEST_ROOTS as pluginReserved } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { managedGuestRoot as pluginRoot } from '../../plugins/sandbox/lib/containerPaths.mjs';
 import { createProjectSchema } from '../../src/api/schemas/projects.js';
 import { isReservedProjectSlug, managedGuestRoot as coreRoot, RESERVED_GUEST_ROOTS } from '../../src/shared/projectExecution.js';
@@ -67,14 +67,14 @@ describe('managed project mount point', () => {
     expect(at('/kolin')).not.toBe(at('/other'));
   });
 
-  // Sites were migrated separately and their containers are in production: their specification identity
-  // must not move because projects gained a named mount. This is the exact hash those containers carry.
-  it('leaves the Site container specification hash untouched', () => {
-    const spec = createBoundSiteSpec(
-      { resource: { kind: 'site', id: 'demo-site' }, generation: 3, image: 'localhost/site:v1' },
-      { namespace: 'elowen', sitesDataDir: '/srv/sites-data', sourcePath: '/srv/sites/demo-site', brokerDir: '/srv/broker/demo-site' },
-    );
-    expect(spec.specHash).toBe('c5737001dfd0aab0b0e9c41034d4792392c819205d63ba27c51aa2e37c49a0fb');
-    expect(spec.workdir).toBe('/workspace');
+  it('keeps the existing Project specification hash unchanged', () => {
+    const resource = { kind: 'project' as const, id: 3 };
+    const image = 'project-base@1';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, 'a'.repeat(32));
+    const spec = createContainerSpec({ resource, generation: 1, image, disk, previewBroker: true,
+      workspaceTarget: '/kolin', limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+      network: { mode: 'shared', inboundPorts: [] } }, paths);
+    expect(spec.specHash).toBe('fd9c38ea20c5a36d24252b3727aaa094f41e0811997236e3a9ee791b0cde09b7');
+    expect(spec.envFile).toBeNull();
   });
 });

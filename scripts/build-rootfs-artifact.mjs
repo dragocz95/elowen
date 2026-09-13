@@ -17,7 +17,7 @@
  *  directory and prints what an operator would publish. Publishing is a separate, owner-approved step.
  *
  *    node scripts/build-rootfs-artifact.mjs --all
- *    node scripts/build-rootfs-artifact.mjs --recipe site-base --out /tmp/rootfs
+ *    node scripts/build-rootfs-artifact.mjs --recipe project-base --out /tmp/rootfs
  *    node scripts/build-rootfs-artifact.mjs --all --verify
  */
 
@@ -75,44 +75,19 @@ export function releaseTagFor(name, version) { return `rootfs-${name}-v${version
 export function assetNameFor(name, version) { return `${name}-v${version}.tar.gz`; }
 export function releasePathFor(name, version) { return `${releaseTagFor(name, version)}/${assetNameFor(name, version)}`; }
 
-/** A recipe with its base folded in.
- *
- *  `site-static` and `site-node` declare `base: 'site-base'`, and each artifact is a COMPLETE root
- *  filesystem rather than a layer over one: a host unpacks exactly one tarball onto a disk and boots it.
- *  So a based recipe is built as the base's package set plus its own, in one tree, in one pass. Layering
- *  would mean a second unpack, an ordering rule, and a partial state where the base is present and the
- *  overlay is not. */
 export function resolveRecipe(name, recipes = ROOTFS_RECIPES) {
   const recipe = Object.hasOwn(recipes, name) ? recipes[name] : null;
   if (!recipe) throw new Error(`Unknown root filesystem recipe: ${name}`);
-  if (!recipe.base) {
-    return {
-      name,
-      version: recipe.version,
-      suite: recipe.suite,
-      variant: recipe.variant,
-      packages: [...recipe.packages],
-      node: recipe.node ?? null,
-      masked: [...(recipe.masked ?? [])],
-      enabled: [...(recipe.enabled ?? [])],
-      directories: [...(recipe.directories ?? [])],
-      base: null,
-    };
-  }
-  const base = resolveRecipe(recipe.base, recipes);
-  const union = (left, right) => [...new Set([...left, ...right])];
   return {
     name,
-    // The revision is the recipe's OWN, because that is what the reference `site-static@1` names.
     version: recipe.version,
-    suite: recipe.suite ?? base.suite,
-    variant: recipe.variant ?? base.variant,
-    packages: union(base.packages, recipe.packages ?? []),
-    node: recipe.node ?? base.node,
-    masked: union(base.masked, recipe.masked ?? []),
-    enabled: union(base.enabled, recipe.enabled ?? []),
-    directories: union(base.directories, recipe.directories ?? []),
-    base: recipe.base,
+    suite: recipe.suite,
+    variant: recipe.variant,
+    packages: [...recipe.packages],
+    node: recipe.node ?? null,
+    masked: [...(recipe.masked ?? [])],
+    enabled: [...(recipe.enabled ?? [])],
+    directories: [...(recipe.directories ?? [])],
   };
 }
 
@@ -728,7 +703,7 @@ async function buildRecipe(name, options) {
       // retry cannot substitute different content: it would fail that check. What zero retries actually
       // excluded was snapshot.debian.org answering 503 under its own rate limiting, which it does
       // constantly, and that made a whole build unreproducible for a reason that has nothing to do with
-      // the bytes. Measured here: a `site-base` build died after seven minutes with thirty-one packages
+      // the bytes. Measured here: a root filesystem build died after seven minutes with thirty-one packages
       // reporting `All backends failed or unhealthy`.
       '--aptopt=Acquire::Retries "5"',
       '--aptopt=Acquire::http::Timeout "120"',

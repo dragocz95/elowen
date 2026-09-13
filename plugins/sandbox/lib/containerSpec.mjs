@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, join, normalize } from 'node:path';
+import { isAbsolute, join, normalize } from 'node:path';
 
 const trustedSpecs = new WeakSet();
 const DEFAULT_CONTAINER_LIMITS = Object.freeze({ cpus: 1, memoryMb: 1024, pidsLimit: 512 });
@@ -48,8 +48,8 @@ export function createContainerSpec(input, paths) {
   return buildSpec(input, paths);
 }
 
-/** Create the complete persisted disk record for a new environment. Every environment this release drives
- * has one; a stored specification without it is refused by `selectRuntimeClient` rather than adopted.
+/** Create the complete persisted disk record for a new managed Project environment. A stored specification
+ * without it is refused by `selectRuntimeClient` rather than adopted.
  *
  * `componentGeneration` names an environment whose workspace, HOME and data directories are already
  * durable and named after the generation that created them, so its disk record points at those paths
@@ -58,31 +58,20 @@ export function createEnvironmentDiskSpec({ resource, image, runtime }, paths, d
   closed(resource, ['kind', 'id']);
   if (runtime !== undefined && runtime !== 'nspawn') throw new Error('Invalid environment disk runtime');
   const { kind, id } = resource;
-  if (kind !== 'project' && kind !== 'site') throw new Error('Invalid container resource kind');
-  if (kind === 'project' && (!Number.isSafeInteger(id) || id < 1)) throw new Error('Invalid project ID');
-  if (kind === 'site') resourceToken(id);
+  if (kind !== 'project') throw new Error('Invalid container resource kind');
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('Invalid project ID');
   if (typeof image !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(image)) throw new Error('Invalid container image');
   resourceToken(diskId);
-  const storageRoot = kind === 'project'
-    ? join(hostPath(paths.sandboxDataDir), 'projects', String(id))
-    : join(hostPath(paths.sitesDataDir), id, 'environment');
+  const storageRoot = join(hostPath(paths.sandboxDataDir), 'projects', String(id));
   const directory = join(storageRoot, 'disks', diskId);
   if (componentGeneration !== undefined && (!Number.isSafeInteger(componentGeneration) || componentGeneration < 1)) throw new Error('Invalid migrated disk component generation');
   const root = componentGeneration === undefined ? directory : join(storageRoot, 'storage', String(componentGeneration));
-  const components = (kind === 'project' ? ['workspace', 'home', 'data'] : ['data'])
-    .map((component) => ({ component, path: join(root, component) }));
-  // `runtime` is data on the disk record and the only driver discriminator between the two runtime
-  // clients. It is appended LAST and omitted when absent, so the serialization of every disk already
-  // created stays byte-identical and their specification hashes do not move.
+  const components = ['workspace', 'home', 'data'].map((component) => ({ component, path: join(root, component) }));
+  // `runtime` is data on the disk record and the only driver discriminator. It is appended LAST and omitted
+  // when absent, so the serialization of every disk already created stays byte-identical and their
+  // specification hashes do not move.
   return freeze({ id: diskId, format: 2, rootfsPath: join(directory, 'rootfs'), components, sourceImage: image,
     ...(componentGeneration === undefined ? {} : { componentGeneration }), ...(runtime === undefined ? {} : { runtime }) });
-}
-
-export function createBoundSiteSpec(input, binding) {
-  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'namespace']);
-  if (input?.resource?.kind !== 'site') throw new Error('A Site binding is required');
-  for (const key of ['sitesDataDir', 'sourcePath', 'brokerDir']) hostPath(binding[key]);
-  return buildSpec(input, { namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir) }, binding);
 }
 
 /** Keep creation ownership stable while carrying the effective cgroup settings. A live limit change is
@@ -122,19 +111,17 @@ export function normalizeEnvironmentNetwork(value) {
   return { mode: value.mode, inboundPorts };
 }
 
-function buildSpec(input, paths, binding = null) {
-  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker', 'workspaceTarget', 'disk']);
-  if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
+function buildSpec(input, paths) {
+  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'previewBroker', 'workspaceTarget', 'disk']);
+  if (input.previewBroker !== undefined && typeof input.previewBroker !== 'boolean') throw new Error('Invalid preview broker policy');
   closed(input.resource, ['kind', 'id']);
   const { kind, id } = input.resource;
-  if (kind !== 'project' && kind !== 'site') throw new Error('Invalid container resource kind');
-  if (kind === 'project' && (!Number.isSafeInteger(id) || id < 1)) throw new Error('Invalid project ID');
-  if (kind === 'site') resourceToken(id);
+  if (kind !== 'project') throw new Error('Invalid container resource kind');
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('Invalid project ID');
   if (!Number.isSafeInteger(input.generation) || input.generation < 1) throw new Error('Invalid runtime generation');
   if (typeof input.image !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(input.image)) throw new Error('Invalid container image');
   const legacyNetwork = input.network === undefined || typeof input.network === 'string';
   const network = normalizeEnvironmentNetwork(input.network);
-  if (input.workspaceReadOnly !== undefined && (kind !== 'site' || typeof input.workspaceReadOnly !== 'boolean')) throw new Error('Invalid read-only workspace policy');
   closed(input.limits ?? {}, ['cpus', 'memoryMb', 'pidsLimit']);
   // An envelope keeps the limits it was created with until an explicit limits action updates them
   // through `withContainerLimits`, which is the only path that also applies them to the live machine.
@@ -147,10 +134,8 @@ function buildSpec(input, paths, binding = null) {
   const resource = { kind, id };
   const generation = input.generation;
   const name = `${namespace}-${kind}-${id}-g${generation}`;
-  const storageRoot = kind === 'project'
-    ? join(hostPath(paths.sandboxDataDir), 'projects', String(id))
-    : join(hostPath(paths.sitesDataDir), id, 'environment');
-  const components = kind === 'project' ? ['workspace', 'home', 'data'] : ['data'];
+  const storageRoot = join(hostPath(paths.sandboxDataDir), 'projects', String(id));
+  const components = ['workspace', 'home', 'data'];
   let disk;
   if (input.disk !== undefined) {
     closed(input.disk, ['id', 'format', 'rootfsPath', 'components', 'sourceImage', 'componentGeneration', 'runtime']);
@@ -163,25 +148,16 @@ function buildSpec(input, paths, binding = null) {
   const volumes = components.map((component) => ({
     component, name: `${name}-${component}`, path: disk?.components.find((entry) => entry.component === component)?.path ?? join(storageRoot, 'storage', String(generation), component),
   }));
-  // A project is mounted under its own name; a Site keeps `/workspace`.
-  const workdir = kind === 'project' ? guestMountTarget(input.workspaceTarget) : '/workspace';
+  const workdir = guestMountTarget(input.workspaceTarget);
   // A disk-backed environment binds the disk's own directories, so the disk record stays the single owner
-  // of those paths and nothing outlives the generation that created it. `volumes` remains the component
-  // list, which is what deletion walks. The `volume` shape below belongs to rows this release refuses to
-  // drive at all — `selectRuntimeClient` names them and stops — and is kept only so their stored
-  // specification still deserializes into the identity that refusal reports.
+  // of those paths and nothing outlives the generation that created it. The `volume` shape below belongs to
+  // rows this release refuses to drive at all and is kept only so their stored specification still
+  // deserializes into the identity that refusal reports.
   const mountFor = (target) => {
     const volume = volumes.find((entry) => entry.component === target);
     return disk ? { type: 'bind', source: volume.path } : { type: 'volume', source: volume.name };
   };
-  const mounts = kind === 'project'
-    ? volumes.map((volume) => ({ ...mountFor(volume.component), target: { workspace: workdir, home: '/root', data: '/data' }[volume.component], readOnly: false }))
-    : [
-      { type: 'bind', source: binding?.sourcePath ?? join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
-      { type: 'bind', source: join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
-      { type: 'bind', source: binding?.brokerDir ?? join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
-      { ...mountFor('data'), target: '/data', readOnly: false },
-    ];
+  const mounts = volumes.map((volume) => ({ ...mountFor(volume.component), target: { workspace: workdir, home: '/root', data: '/data' }[volume.component], readOnly: false }));
   if (input.previewBroker) mounts.push({ type: 'bind', source: join(storageRoot, 'broker'), target: '/run/elowen', readOnly: false });
   const settings = {
     resource, generation, namespace, name, image: input.image, limits, ...(disk ? { disk } : {}),
@@ -189,16 +165,14 @@ function buildSpec(input, paths, binding = null) {
     ipcMode: 'private',
     network: network.mode === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
     ...(legacyNetwork ? {} : { inboundPorts: network.inboundPorts }),
-    storageRoot, volumes, mounts, envFile: kind === 'site' ? join(storageRoot, 'container.env') : null,
+    storageRoot, volumes, mounts,
+    // Retained in the project specification because it has always been part of the hash preimage as null.
+    envFile: null,
   };
-  // The hash preimage keeps the `legacy: null` key every spec carried while Sites containers created by
-  // an earlier runtime could still be adopted. It is the identity in the `io.elowen.spec` label of every
-  // container created so far, so dropping it from the preimage would make each of them fail ownership.
-  // `workdir` is deliberately NOT part of the preimage: for a Site it is the unchanged `/workspace`, and
-  // adding the key would change the identity of every Site container already created. A project's mount
-  // target changes the hash through its `mounts` entry, which is what actually differs in the container.
-  // (`JSON.stringify` drops an undefined value, so the preimage is byte-identical to the one every
-  // existing container was hashed from.)
+  // The hash preimage keeps the `legacy: null` key every spec carried while older containers could still be
+  // adopted. It is the identity in the `io.elowen.spec` label of every existing project environment, so
+  // dropping it or the null `envFile` above would make each of them fail ownership. `workdir` remains excluded;
+  // the project mount target changes the hash through its mount entry.
   const preimage = { resource, generation, namespace, name, image: input.image, limits, legacy: null, ...settings, workdir: undefined };
   const hash = createHash('sha256').update(JSON.stringify(preimage)).digest('hex');
   /** @type {Record<string, string>} */
@@ -206,7 +180,6 @@ function buildSpec(input, paths, binding = null) {
     'io.elowen.runtime': 'sandbox', 'io.elowen.namespace': namespace,
     'io.elowen.resource': `${kind}:${id}`, 'io.elowen.generation': String(generation), 'io.elowen.spec': hash,
     ...(disk ? { 'io.elowen.disk': disk.id } : {}),
-    ...(kind === 'site' ? { 'io.elowen.site': id } : {}),
   };
   const spec = { ...settings, specHash: hash, labels };
   freeze(spec);
@@ -233,15 +206,14 @@ export function executionUnit(spec, executionId) {
 }
 
 /** The bounded runtime identity for a publication. The durable database row keeps the complete id; host
- *  sockets and guest units use only this stable digest so UUIDs remain safe inside their tighter limits. */
+ * sockets and guest units use only this stable digest so UUIDs remain safe inside their tighter limits. */
 export function publicationRuntimeToken(publicationId) {
   resourceToken(publicationId);
   return createHash('sha256').update(publicationId).digest('hex').slice(0, 16);
 }
 
-/** The guest unit a PUBLICATION's forwarder runs as. It is not an execution unit: nothing leases it, it
- *  outlives the request that created it and is established again after a container restart, so its name
- *  is derived from the publication alone and the same forwarder is found again instead of duplicated. */
+/** The guest unit a publication's forwarder runs as. It is not an execution unit: nothing leases it, it
+ * outlives the request that created it and is established again after a container restart. */
 export function publicationUnit(publicationId) {
   return `elowen-pub-${publicationRuntimeToken(publicationId)}.service`;
 }

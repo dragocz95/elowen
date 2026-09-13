@@ -90,22 +90,19 @@ export const environmentPublicationMigration = {
 };
 
 /** The idempotency key a caller attaches to a lifecycle request, which is what one durable operation row
- *  is identified by for one resource and account. The store that keys rows by it states the rule once:
- *  the HTTP surface, the runtime and the Sites image service all validate the key a caller sent, and a
- *  second copy of the pattern is how the two ends come to disagree about which keys exist. */
+ * is identified by for one resource and account. The store states the rule once so API and runtime
+ * validation cannot disagree about which keys exist. */
 export function isRequestId(value) { return typeof value === 'string' && /^[a-zA-Z0-9_.:-]{1,160}$/.test(value); }
 
-/** The one projection of an operation row onto the wire shape both the project and the Site surfaces
- *  read (`EnvironmentOperation`, `SiteEnvironmentOperation`). It lives beside the row mapper because a
- *  second copy of it is how the declared progress fields went missing from one of them. */
+/** The one projection of a Project operation row onto the wire shape. It lives beside the row mapper so
+ * declared progress fields cannot drift between runtime and API readers. */
 const operationProgress = (op) => ({ id: op.id, requestId: op.request_key, accountUserId: op.user_id, generation: op.generation,
   action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
   steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
   stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
   percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
 
-export const operationView = (op) => ({ ...operationProgress(op),
-  [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id });
+export const operationView = (op) => ({ ...operationProgress(op), projectId: Number(op.resource_id) });
 
 export const hostOperationView = (op) => ({ ...operationProgress(op), runtime: op.resource_id,
   errorCode: op.checkpoint?.errorCode ?? null });

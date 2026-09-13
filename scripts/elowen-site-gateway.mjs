@@ -576,7 +576,7 @@ function runtimeSocketRequest(request) {
  *  uses. The pattern admits only lowercase letters, digits and dashes, so the value is a single safe
  *  filename component for the per-machine `.nspawn` file and unit drop-in — it is never used to derive
  *  a DISK path, which always comes from the trusted storage roots plus a validated resource and disk id. */
-const NSPAWN_MACHINE = /^elowen-(project|site)-[a-z0-9-]{1,64}-g[0-9]{1,9}$/;
+const NSPAWN_MACHINE = /^elowen-project-[1-9][0-9]{0,15}-g[0-9]{1,9}$/;
 /** The guest unit `systemd-run` creates inside the machine; bounded so it cannot be read as an option. */
 const NSPAWN_EXECUTION_UNIT = /^[a-zA-Z0-9][a-zA-Z0-9:_.-]{0,190}\.service$/;
 const SAFE_RESOURCE_TOKEN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -887,7 +887,6 @@ export function storageRootsFor(home) {
   const pluginData = join(home, '.config', 'elowen', 'plugins-data');
   return Object.freeze({
     sandboxDataDir: trustedStorageRoot(join(pluginData, 'sandbox')),
-    sitesDataDir: trustedStorageRoot(join(pluginData, 'sites')),
   });
 }
 
@@ -895,10 +894,10 @@ function readStorageRoots(options) {
   return storageRootsFor(serviceUser(options.runner ?? defaultCommandRunner, options.env ?? process.env).home);
 }
 
-/** Every root a machine path may resolve under. The first two are the service account's own storage; the
- *  third is the Sites ingress directory this helper already owns and binds into a machine. */
+/** Every root a machine path may resolve under. Project storage belongs to Sandbox; the runtime socket
+ * root remains owned by the published-sites gateway domain of this shared helper. */
 function trustedRoots(storage) {
-  return [storage.sandboxDataDir, storage.sitesDataDir, RUNTIME_SOCKET_ROOT];
+  return [storage.sandboxDataDir, RUNTIME_SOCKET_ROOT];
 }
 
 /** Re-validate a path the request names. The runtime derives paths this helper cannot re-derive from an
@@ -943,16 +942,9 @@ export function trustedPath(storage, value, { file = false, allowMissing = false
 function nspawnResourceStorage(storage, request) {
   const kind = request?.kind;
   const resource = request?.resource;
-  if (kind !== 'project' && kind !== 'site') fail('the resource kind is invalid');
-  // The runtime addresses a resource by its string form, which is also the path segment the disk layout
-  // uses. A project id is decimal; a Site id is a resource token.
-  if (typeof resource !== 'string'
-    || (kind === 'project' ? !/^[1-9][0-9]{0,15}$/.test(resource) : !SAFE_RESOURCE_TOKEN.test(resource))) {
-    fail('the resource id is invalid');
-  }
-  return Object.freeze({ kind, resource, storageRoot: kind === 'project'
-    ? join(storage.sandboxDataDir, 'projects', resource)
-    : join(storage.sitesDataDir, resource, 'environment') });
+  if (kind !== 'project') fail('the resource kind is invalid');
+  if (typeof resource !== 'string' || !/^[1-9][0-9]{0,15}$/.test(resource)) fail('the resource id is invalid');
+  return Object.freeze({ kind, resource, storageRoot: join(storage.sandboxDataDir, 'projects', resource) });
 }
 
 export function nspawnDiskPaths(storage, request) {
@@ -1844,330 +1836,6 @@ function nspawnTreeRemove(request, storage) {
   return { ok: true, path };
 }
 
-/** What one Site data archive may weigh, in either direction and whichever side it is measured on.
- *
- *  It is the aggregate figure `exportProjectTree` in the Sandbox plugin already applies to one tree
- *  crossing the boundary between an environment and a host artifact, and this is that same crossing by a
- *  different transport. What it protects is the host filesystem both sides land on: without it an import
- *  is an unbounded write into the service account's storage driven by a file the daemon did not produce,
- *  and an export turns a runaway data directory into an archive that fills the disk every other
- *  environment on the host is running from. */
-export const SITE_DATA_ARCHIVE_BYTES = 16 * 1024 ** 3;
-
-/** What an archive would unpack to, HOW MANY entries it would create, and whether every member stays
- *  inside the directory it is unpacked into, read from the member headers alone: an uncompressed archive
- *  on a seekable file is walked by header without its content ever being read. Both running totals are
- *  held against their bound as they go, so an archive claiming a petabyte, or a hundred million files, is
- *  refused on the member that crosses the line rather than after the whole index is built. */
-export const SITE_DATA_INDEX_PY = `import json,os,sys,tarfile
-archive=sys.argv[1]; limit=int(sys.argv[2]); entries=int(sys.argv[3]); total=0; members=0
-with tarfile.open(archive,'r') as tar:
- for member in tar:
-  rel=os.path.normpath(member.name)
-  if os.path.isabs(rel) or rel=='..' or rel.startswith('..'+os.sep):
-   print('the archive names a member outside the data directory: '+member.name[:200],file=sys.stderr); sys.exit(1)
-  members+=1
-  if members>entries:
-   print('the archive names more than %d members' % entries,file=sys.stderr); sys.exit(1)
-  if member.isreg(): total+=member.size
-  if total>limit:
-   print('the archive would unpack to more than %d bytes' % limit,file=sys.stderr); sys.exit(1)
-print(json.dumps({'members':members,'unpackedBytes':total}))`;
-
-/** How many entries one Site data archive may name.
- *
- *  The byte bound does not bound the work, because an entry that carries no content costs a header and
- *  nothing else: an archive of about twenty megabytes can describe tens of millions of empty members and
- *  pass every size check there is. Each one still becomes an inode that is created, walked by the
- *  verification, chowned by the ownership pass and fsynced, so the archive that weighs nothing is the one
- *  that occupies the helper — and the host's inode table — for as long as it likes.
- *
- *  Two million is far above what a Site's data directory holds and far below what makes that possible. */
-export const SITE_DATA_ARCHIVE_MEMBERS = 2_000_000;
-
-/** The archive flags both directions share. `--numeric-owner` is what makes the archive portable back
- *  into a machine: ids travel as numbers, so the ownership pass on the way in maps guest id g onto this
- *  machine's own range rather than resolving a name against the host's accounts. The pax format is not
- *  decoration either — it is what carries modification times to the nanosecond and extended attributes,
- *  both of which the tree fingerprint compares, so a round trip through any lesser format would come back
- *  as a different tree. */
-const SITE_DATA_ARCHIVE_FLAGS = Object.freeze(['--numeric-owner', '--preserve-permissions', '--xattrs',
-  '--xattrs-include=*', '--sparse']);
-
-/** The staging names an import owns, and they are deliberately none of the ones already in use.
- *  `prepare` reads `rootfs.pending` and `disk.pending` as an interrupted disk fill, `adoptDiskIdentity`
- *  stages at `disk.adopting`, and a snapshot restore stages a component tree at `<component>.pending`.
- *  A crashed data import must not present as any of them. */
-const DATA_STAGING_SUFFIX = '.importing';
-const DATA_RETIRED_SUFFIX = '.retiring';
-const DATA_EXPORT_SUFFIX = '.exporting';
-
-const missing = (path) => {
-  try { lstatSync(path); return false; }
-  catch (error) { if (error && error.code === 'ENOENT') return true; throw error; }
-};
-
-function syncDirectory(path) {
-  const fd = openDirectory(path);
-  try { fsyncSync(fd); } finally { closeSync(fd); }
-}
-
-/** Every machine unit this environment could be running under, as one systemd glob. The machine name is
- *  `elowen-<kind>-<resource>-g<generation>` and `NSPAWN_MACHINE` pins that whole shape, so the kind and
- *  the resource the request already had to prove are the entire name apart from the generation. */
-const machineUnitGlobFor = (paths) => `elowen-machine@elowen-${paths.kind}-${paths.resource}-g*.service`;
-
-/** Refuse while any generation of this environment's machine is up.
- *
- *  Every generation is asked about rather than the one a request happens to name, because the request
- *  names a disk and a disk is not what holds the bind open — a live machine of any generation is. The
- *  glob is answered by systemd and the names it returns are held against the exact pattern again, so a
- *  resource whose token happens to contain a generation suffix cannot widen what this reads.
- *
- *  A systemd that will not answer is not an absent machine: an unreadable state refuses the import rather
- *  than passing it, because the whole point of asking is that the alternative is destroying live data. */
-function assertMachineStopped(paths, options) {
-  const runner = options.runner ?? defaultCommandRunner;
-  const exact = new RegExp(`^elowen-machine@elowen-${paths.kind}-${paths.resource}-g[0-9]{1,9}\\.service$`);
-  const listed = runner('/usr/bin/systemctl', ['list-units', '--plain', '--no-legend',
-    '--state=activating,active,deactivating,reloading', machineUnitGlobFor(paths)]);
-  if (!listed.ok) fail(`the machine state could not be established: ${String(listed.stderr || '').slice(-400)}`);
-  const up = String(listed.stdout || '').split('\n')
-    .map((line) => line.trim().split(/\s+/)[0] ?? '')
-    .filter((unit) => exact.test(unit));
-  if (up.length > 0) fail(`stop the environment before importing its data: ${up[0]} is still up`);
-}
-
-/** The data tree as an OBJECT rather than as a name.
- *
- *  `trustedPath` answers about a path at the moment it looks, and the account that owns the directory
- *  around this one can replace the entry afterwards. A symlink to `/root` planted in that window would
- *  have root capture the host's own files into an archive that is then chowned to the caller and handed
- *  over — so the whole tree crosses the boundary on a read every check had already passed. The window can
- *  be spun until it is hit, because an export can be asked for as often as the caller likes.
- *
- *  `O_DIRECTORY|O_NOFOLLOW` refuses a symlink outright and cannot open a regular file, which is the same
- *  refusal the lstat made, done in the only way that leaves no gap for the entry to be swapped underneath
- *  it. Everything after it runs on the descriptor. It is the treatment the archive FILE already gets a few
- *  lines below, and the one `ensureIdentityDirectory` and the materialized root filesystem already get. */
-function openDataDirectory(path) {
-  let fd;
-  try {
-    fd = openDirectory(path);
-  } catch (error) {
-    if (error && (error.code === 'ELOOP' || error.code === 'ENOTDIR')) fail('the site data directory is not a directory');
-    throw error;
-  }
-  try {
-    if (!fstatSync(fd).isDirectory()) fail('the site data directory is not a directory');
-  } catch (cause) {
-    closeSync(fd);
-    throw cause;
-  }
-  return fd;
-}
-
-/** An open directory addressed as a path, for the commands that only take one. `/proc/<pid>/fd/<n>`
- *  resolves to the object the descriptor holds rather than to the name it was opened by, so a child
- *  pointed at it walks the tree this process verified however that name has been made to read since.
- *
- *  The pid is stated rather than `self`: the descriptor belongs to this process, and a child reading
- *  `/proc/self` would find its own table, where Node has already closed this one on exec. */
-function descriptorPath(fd) {
-  return `/proc/${process.pid}/fd/${fd}`;
-}
-
-/** Seed or capture a Site's `data` directory as one archive. The container runtime did it by streaming a
- *  named volume; a machine has no such handle, because the data directory is a plain tree on the disk
- *  that the machine's uid range owns — so both directions run here, where the tree can be read at all.
- *
- *  The tree is never named by the request alone. `nspawnDiskPaths` re-derives the environment's storage
- *  root from the validated kind and resource, and `siteDataComponent` derives the one path under that root
- *  the `data` component of this disk can have. The request is held against that single path. */
-function nspawnSiteDataArchive(request, storage, options) {
-  const paths = nspawnDiskPaths(storage, request);
-  if (paths.kind !== 'site') fail('only a site environment has a data directory to archive');
-  const operation = request.operation;
-  if (operation !== 'import' && operation !== 'export') fail('the data archive operation is invalid');
-  const data = trustedPath(storage, request.dataPath);
-  if (data !== siteDataComponent(paths, request)) {
-    fail('the data directory does not belong to the environment the request names');
-  }
-  return operation === 'import'
-    ? importSiteData(request, storage, options, paths, data)
-    : exportSiteData(request, storage, options, data);
-}
-
-/** The ONE path this disk's `data` component can have, derived here rather than recognised by its name.
- *
- *  The layout puts it in the disk directory, or under `storage/<generation>` for an environment migrated
- *  onto trees an earlier generation created; `createEnvironmentDiskSpec` in the Sandbox plugin owns both
- *  shapes and `tests/contract/nspawnHelper.test.ts` holds the two in step. The generation cannot be
- *  re-derived from the resource, so it arrives as a number and is validated as one — a number can name a
- *  directory this environment owns and nothing else.
- *
- *  Accepting "anything called `data` under the storage root" instead is what made this dangerous rather
- *  than merely loose: `snapshots/<id>/data` is such a directory, and an import onto it overwrites the
- *  snapshot the runtime documents as the recovery for a data tree that went missing. The binding to the
- *  live component existed only on the daemon side, where it protects nothing this helper does. */
-function siteDataComponent(paths, request) {
-  const generation = request.componentGeneration;
-  if (generation === undefined) return join(paths.directory, 'data');
-  if (!Number.isSafeInteger(generation) || generation < 1 || generation > 1_000_000_000) {
-    fail('the disk component generation is invalid');
-  }
-  return join(paths.storageRoot, 'storage', String(generation), 'data');
-}
-
-/** Capture the tree into an archive the service account can read.
- *
- *  Nothing is written at the destination until there is a whole archive to put there: the capture lands
- *  on its own staging name and is renamed into place, so a failure leaves nothing a retry could mistake
- *  for a finished export, and the destination is never truncated by a capture that then fails. */
-function exportSiteData(request, storage, options, data) {
-  const archive = trustedPath(storage, request.archivePath, { file: true, allowMissing: true });
-  if (!missing(archive)) fail('the archive destination already exists');
-  // The daemon creates the destination directory, as it creates every other staging directory here: a
-  // directory made by root at 0700 would be one the account that has to read the archive could not enter.
-  const directory = trustedPath(storage, dirname(archive));
-  const staging = trustedPath(storage, `${archive}${DATA_EXPORT_SUFFIX}`, { file: true, allowMissing: true });
-  const run = treeRunner(options);
-  // Opened before it is measured and held open until the archive is complete, so the tree that is sized
-  // and the tree that is captured are one object and neither is the name it arrived as.
-  const dataFd = openDataDirectory(data);
-  try {
-    return captureSiteData(options, { run, data, source: descriptorPath(dataFd), archive, directory, staging });
-  } finally {
-    closeSync(dataFd);
-  }
-}
-
-/** The capture itself, with the tree named by the descriptor it was opened on. `data` is carried only so
- *  the receipt still reports the path the request asked about. */
-function captureSiteData(options, { run, data, source, archive, directory, staging }) {
-  // Asked before a byte is written, and it answers both questions at once: what the tree weighs, and
-  // whether the filesystem the archive lands on has room for it.
-  const sized = run(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, JSON.stringify([source]), directory]);
-  if (!sized.ok) fail(`the site data export was refused: ${String(sized.stderr || '').slice(-400)}`);
-  const required = JSON.parse(String(sized.stdout || '{}')).requiredBytes;
-  if (!Number.isSafeInteger(required)) fail('the site data size is invalid');
-  if (required > SITE_DATA_ARCHIVE_BYTES) {
-    fail(`the site data directory holds ${required} bytes and the archive bound is ${SITE_DATA_ARCHIVE_BYTES}`);
-  }
-  rmSync(staging, { force: true });
-  try {
-    const created = run('/usr/bin/tar', ['--create', '--file', staging, '--directory', source,
-      '--format=posix', ...SITE_DATA_ARCHIVE_FLAGS, '--', '.']);
-    if (!created.ok) fail(`the site data could not be archived: ${String(created.stderr || '').slice(-400)}`);
-    // Everything left is settled through the descriptor rather than through the name a second time. The
-    // archive sits in a directory the service account owns, so between naming the file and changing it
-    // that account could unlink what root just wrote and put a link to a system file in its place — and a
-    // chown by path would then hand that file away. `O_NOFOLLOW` refuses a symlink outright.
-    const fd = openSync(staging, O_RDONLY | O_NOFOLLOW);
-    let bytes;
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.nlink !== 1) fail('the staged site data archive is not a plain file');
-      bytes = stat.size;
-      if (bytes > SITE_DATA_ARCHIVE_BYTES) {
-        fail(`the site data archive weighs ${bytes} bytes and the bound is ${SITE_DATA_ARCHIVE_BYTES}`);
-      }
-      fchmodSync(fd, 0o600);
-      // Handed to the account that has to read it back, download it and eventually delete it. Root keeps
-      // nothing here: the archive is the caller's artifact from the moment it is complete.
-      const env = options.env ?? process.env;
-      (options.setOwner ?? defaultSetOwner)(fd, sudoId(env.SUDO_UID, 'user id'), serviceGroupId(env));
-      fsyncSync(fd);
-    } finally { closeSync(fd); }
-    renameSync(staging, archive);
-    syncDirectory(directory);
-    return { ok: true, operation: 'export', dataPath: data, archivePath: archive, bytes };
-  } catch (cause) {
-    rmSync(staging, { force: true });
-    throw cause;
-  }
-}
-
-/** Replace the tree with the archive's contents, or leave it exactly as it was.
- *
- *  The archive is unpacked into a staging tree beside the target, held against its own member list,
- *  put on the machine's uid range and flushed to disk before anything visible moves. Only then is the
- *  swap performed, as two renames: the old tree steps aside and the new one takes its name. Every state
- *  those two renames can be interrupted between is one the next attempt recognises and finishes, so what
- *  a crash leaves is the old data or the new data and never a mixture of the two. */
-function importSiteData(request, storage, options, paths, data) {
-  // The machine has to be DOWN, and this is where that is settled. The import renames the tree the guest
-  // has bind-mounted and then deletes what it replaced, so a request arriving while the guest runs races
-  // whatever it is writing and leaves it holding a directory that was unlinked underneath it. The runtime
-  // asks the same question before it sends the request, which is where an operator gets a readable
-  // refusal; what happens here is what makes the answer binding, the way `destroy` settles its own
-  // precondition rather than trusting that the caller settled it.
-  assertMachineStopped(paths, options);
-  const archive = trustedPath(storage, request.archivePath, { file: true });
-  const staging = `${data}${DATA_STAGING_SUFFIX}`;
-  const retired = `${data}${DATA_RETIRED_SUFFIX}`;
-  const parent = trustedPath(storage, dirname(data));
-  // Finish a swap that was interrupted between its two renames before anything else reads the tree. A
-  // retired tree beside a target that is gone is the old data and belongs back under its own name; one
-  // beside a target that is there has already been superseded and is what the previous attempt was about
-  // to delete.
-  if (missing(data) && !missing(retired)) { renameSync(retired, data); syncDirectory(parent); }
-  rmSync(retired, { recursive: true, force: true });
-  rmSync(staging, { recursive: true, force: true });
-  const size = lstatSync(archive).size;
-  if (size > SITE_DATA_ARCHIVE_BYTES) {
-    fail(`the site data archive weighs ${size} bytes and the bound is ${SITE_DATA_ARCHIVE_BYTES}`);
-  }
-  const run = treeRunner(options);
-  const indexed = run(PYTHON, ['-c', SITE_DATA_INDEX_PY, archive, String(SITE_DATA_ARCHIVE_BYTES),
-    String(SITE_DATA_ARCHIVE_MEMBERS)]);
-  if (!indexed.ok) fail(`the site data archive was refused: ${String(indexed.stderr || '').slice(-400)}`);
-  const index = JSON.parse(String(indexed.stdout || '{}'));
-  if (!Number.isSafeInteger(index.members) || !Number.isSafeInteger(index.unpackedBytes)) {
-    fail('the site data archive index is invalid');
-  }
-  // The same free-space question the export side asks before it writes a byte, asked the same way and
-  // against the same margin. What the archive would unpack to is already known from its headers, so the
-  // preflight is given that figure instead of a tree to walk: the filesystem the staging tree lands on is
-  // the one the environments on this host are running from, and filling it is not an outcome an import may
-  // reach by trying.
-  const room = run(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, '[]', parent, String(index.unpackedBytes)]);
-  if (!room.ok) fail(`the site data import was refused: ${String(room.stderr || '').slice(-400)}`);
-  // The replacement presents as the directory it replaces. An archive carrying its own root member
-  // rewrites this during extraction, which is correct: the mode then comes from the tree that was
-  // captured rather than from the one being discarded.
-  mkdirSync(staging, { mode: statSync(data).mode & 0o7777 });
-  try {
-    const extracted = run('/usr/bin/tar', ['--extract', '--file', archive, '--directory', staging,
-      '--same-owner', ...SITE_DATA_ARCHIVE_FLAGS]);
-    if (!extracted.ok) fail(`the site data could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
-    // An archive carrying its own root member applies that member's ownership to the directory it is
-    // extracted into, so a tree captured somewhere else can name any id at all for what becomes the
-    // guest's `/data`. That mount point belongs to the guest's root, and the pass below maps guest 0 onto
-    // base+0 — so the directory enters it as guest root rather than as whatever the archive recorded,
-    // which would otherwise land it outside the range everything inside it carries.
-    const rootFd = openDirectory(staging);
-    try { (options.setOwner ?? defaultSetOwner)(rootFd, 0, 0); } finally { closeSync(rootFd); }
-    const verified = run(PYTHON, ['-c', DISK_TREE_VERIFY_PY, archive, staging]);
-    if (!verified.ok) fail(`the imported site data could not be verified: ${String(verified.stderr || '').slice(-400)}`);
-    const base = uidRangeFor(paths, options);
-    shiftOwnership(options.runner ?? defaultCommandRunner, staging, { base, size: UID_RANGE_SIZE });
-    const synced = run(PYTHON, ['-c', DISK_TREE_SYNC_PY, staging]);
-    if (!synced.ok) fail(`the imported site data could not be flushed: ${String(synced.stderr || '').slice(-400)}`);
-    renameSync(data, retired);
-    try { renameSync(staging, data); }
-    catch (cause) { renameSync(retired, data); throw cause; }
-    syncDirectory(parent);
-    rmSync(retired, { recursive: true, force: true });
-    syncDirectory(parent);
-    return { ok: true, operation: 'import', dataPath: data, archivePath: archive,
-      members: index.members, unpackedBytes: index.unpackedBytes, uidBase: base, uidSize: UID_RANGE_SIZE };
-  } catch (cause) {
-    rmSync(staging, { recursive: true, force: true });
-    throw cause;
-  }
-}
-
 /** The envelope, and only the envelope. The disk outlives it: a repair removes an envelope whose
  *  specification changed and writes a new one over the same root filesystem, and storage removal is a
  *  separate operation with its own ownership proof on the runtime side. */
@@ -2472,7 +2140,6 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'set-limits': (request, _storage, options) => nspawnLifecycle(request, 'set-limits', options),
   freeze: (request, _storage, options) => nspawnMachineState(request, 'freeze', options),
   thaw: (request, _storage, options) => nspawnMachineState(request, 'thaw', options),
-  'site-data-archive': nspawnSiteDataArchive,
   'tree-copy': nspawnTreeCopy,
   'tree-fingerprint': nspawnTreeFingerprint,
   'tree-preflight': nspawnTreePreflight,

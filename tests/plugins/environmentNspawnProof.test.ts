@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createBoundSiteSpec, createContainerSpec, createEnvironmentDiskSpec, publicationUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { createContainerSpec, createEnvironmentDiskSpec, publicationUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
-import { PROJECT_ARTIFACT, SITE_ARTIFACTS, artifactEntry, artifactReference, blobName } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
+import { PROJECT_ARTIFACT, artifactEntry, artifactReference, blobName } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 import { serviceProcessEnv, SpawnExecutor } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_MODE, envelopePaths,
   HELPER_PATH, NspawnClient, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
@@ -30,12 +30,10 @@ const MACHINE_UNIT_TEMPLATE = '/etc/systemd/system/elowen-machine@.service';
  *  the path moves, the invocation the sudoers drop-in pins does not. */
 const PROOF_HELPER = process.env.ELOWEN_TEST_NSPAWN_HELPER || HELPER_PATH;
 const LOCAL_PROJECT_ROOTFS = process.env.ELOWEN_TEST_NSPAWN_ARTIFACT || '';
-const LOCAL_SITE_ROOTFS = process.env.ELOWEN_TEST_NSPAWN_SITE_ARTIFACT || '';
 const SUFFIX = process.env.ELOWEN_TEST_NSPAWN_SUFFIX || randomBytes(4).toString('hex');
 if (!/^[0-9a-f]{8}$/.test(SUFFIX)) throw new Error('ELOWEN_TEST_NSPAWN_SUFFIX must be eight lowercase hexadecimal characters');
 const PROJECT_ID = 990_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
-const SITE_ID = `nsproof-${SUFFIX}`;
-const PROOF_MACHINES = [`elowen-project-${PROJECT_ID}-g1`, `elowen-site-${SITE_ID}-g1`];
+const PROOF_MACHINES = [`elowen-project-${PROJECT_ID}-g1`];
 const PROOF_UNIT_OVERRIDES = PROOF_MACHINES.map((machine) =>
   `/etc/systemd/system/elowen-machine@${machine}.service.d/00-proof-trusted.conf`);
 
@@ -89,29 +87,25 @@ if (!blockers.length) {
  *  from anything the caller can write. The same derivation is made here so the suite builds its disks
  *  where the privileged side will agree they belong; `tests/contract/nspawnHelper.test.ts` is what holds
  *  the two in step. */
-let storageRoots: { sandboxDataDir: string; sitesDataDir: string } | null = null;
+let storageRoots: { sandboxDataDir: string } | null = null;
 if (!blockers.length) {
   const passwd = execFileSync('/usr/bin/getent', ['passwd', String(process.getuid!())], { encoding: 'utf8', timeout: 30_000 }).trim().split(':');
   const home = passwd[5] ?? '';
   if (!home.startsWith('/')) blockers.push('the service account running this suite has no home directory');
   else {
     const pluginData = join(home, '.config', 'elowen', 'plugins-data');
-    storageRoots = { sandboxDataDir: join(pluginData, 'sandbox'), sitesDataDir: join(pluginData, 'sites') };
-    for (const root of [storageRoots.sandboxDataDir, storageRoots.sitesDataDir]) {
+    storageRoots = { sandboxDataDir: join(pluginData, 'sandbox') };
+    for (const root of [storageRoots.sandboxDataDir]) {
       if (!existsSync(root)) blockers.push(`the trusted storage root ${root} does not exist`);
     }
   }
 }
 const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
-const SITE_ROOTFS = artifactReference(SITE_ARTIFACTS.node);
 if (!blockers.length && storageRoots) {
-  // The machines are materialized from the same root filesystems deployed environments use. This suite
+  // The machine is materialized from the same root filesystem deployed environments use. This suite
   // will not pull hundreds of megabytes over the network, so a missing local artifact is a blocker.
   const store = new RootfsArtifactStore({ dataDir: storageRoots.sandboxDataDir });
-  for (const [reference, localPath, variable] of [
-    [PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS, 'ELOWEN_TEST_NSPAWN_ARTIFACT'],
-    [SITE_ROOTFS, LOCAL_SITE_ROOTFS, 'ELOWEN_TEST_NSPAWN_SITE_ARTIFACT'],
-  ]) {
+  for (const [reference, localPath, variable] of [[PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS, 'ELOWEN_TEST_NSPAWN_ARTIFACT']]) {
     const present = store.status(reference);
     if (!present.published) blockers.push(`this release publishes no ${reference} artifact`);
     else if (!present.present && (!localPath || !existsSync(localPath))) {
@@ -179,10 +173,10 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
   const envelope = envelopePaths(spec.name);
   const diskDirectory = dirname(spec.disk.rootfsPath);
 
-  const artifacts = new RootfsArtifactStore({ dataDir: LOCAL_PROJECT_ROOTFS || LOCAL_SITE_ROOTFS ? spec.storageRoot : paths.sandboxDataDir });
-  // The two exact proof instances carry one extra root-owned drop-in so an old shared template can remain
+  const artifacts = new RootfsArtifactStore({ dataDir: LOCAL_PROJECT_ROOTFS ? spec.storageRoot : paths.sandboxDataDir });
+  // The exact proof instance carries one extra root-owned drop-in so an old shared template can remain
   // untouched. The shipped ownership check correctly rejects unknown drop-ins, so this executor hides only
-  // the two receipt-owned override paths from that one read while every command still reaches the real host.
+  // the receipt-owned override path from that one read while every command still reaches the real host.
   const hostExecutor = new SpawnExecutor();
   const executor = {
     run: async (file: string, args: string[], options: any) => {
@@ -222,7 +216,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true, mode: 0o700 });
     mkdirSync(join(spec.storageRoot, 'broker'), { recursive: true, mode: 0o700 });
     const cache = join(spec.storageRoot, 'rootfs', 'blobs');
-    for (const [reference, localPath] of [[PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS], [SITE_ROOTFS, LOCAL_SITE_ROOTFS]]) {
+    for (const [reference, localPath] of [[PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS]]) {
       if (!localPath) continue;
       const entry = artifactEntry(reference);
       if (!entry?.digest) throw new Error(`No pinned digest exists for ${reference}`);
@@ -238,9 +232,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
   afterAll(async () => {
     try { execFileSync('/usr/bin/systemctl', ['stop', unit], { timeout: 120_000, stdio: 'ignore' }); } catch { /* already down */ }
     try { if (await client.containerExists(spec)) await client.removeByName(spec); } catch { /* gone */ }
-    for (const path of [spec.storageRoot, join(storageRoots?.sitesDataDir ?? '/nonexistent', SITE_ID)]) {
-      try { if (existsSync(path)) await client.removeDiskPath(path); } catch { /* gone */ }
-    }
+    try { if (existsSync(spec.storageRoot)) await client.removeDiskPath(spec.storageRoot); } catch { /* gone */ }
     for (const line of measured) console.log(`nspawn proof: ${line}`);
   }, 15 * 60_000);
 
@@ -684,116 +676,19 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     measured.push(`host readiness: ${readiness.ready ? 'ready' : 'NOT ready'}, ${rules.length} firewall rows all present`);
   }, 5 * 60_000);
 
-  it('writes a real Site envelope, with the git stub as a file and the ingress socket on the host side', async () => {
-    const siteResource = { kind: 'site' as const, id: SITE_ID };
-    const sitesDataDir = storageRoots!.sitesDataDir;
-    const sourcePath = join(sitesDataDir, SITE_ID, 'source');
-    const brokerDir = join(sitesDataDir, SITE_ID, 'broker');
-    const siteDisk = createEnvironmentDiskSpec({ resource: siteResource, image: SITE_ROOTFS, runtime: 'nspawn' },
-      { sitesDataDir, namespace: 'elowen' }, randomBytes(16).toString('hex'));
-    const siteSpec: any = createBoundSiteSpec({ resource: siteResource, generation: 1, image: SITE_ROOTFS,
-      disk: siteDisk, workspaceReadOnly: true, network: 'isolated', limits: { cpus: 0.5, memoryMb: 320, pidsLimit: 200 } },
-    { namespace: 'elowen', sitesDataDir, sourcePath, brokerDir });
-    const siteUnit = unitFor(siteSpec.name);
-    const siteEnvelope = envelopePaths(siteSpec.name);
-    expect(siteSpec.name).toBe(`elowen-site-${SITE_ID}-g1`);
-
-    const gitStub = siteSpec.mounts.find((mount: any) => mount.target === '/workspace/.git')!.source;
-    for (const path of [sourcePath, brokerDir, dirname(gitStub)]) mkdirSync(path, { recursive: true, mode: 0o700 });
-    // The machine's ROOT directory, and 0755 is not cosmetic: every guest process that is not the guest's
-    // own root has to traverse it, and a 0700 root leaves `dbus-daemon` unable to finish starting after it
-    // drops to `messagebus`. The daemon then never gets its readiness notification and the whole boot
-    // hangs on a unit whose process is alive. A project's rootfs is created the same way.
-    mkdirSync(siteSpec.disk.rootfsPath, { recursive: true, mode: 0o755 });
-    for (const component of siteSpec.disk.components) mkdirSync(component.path, { recursive: true, mode: 0o700 });
-    // A FILE, which is what a Site's git stub is. A directory here passes a hand-written test and fails
-    // against the real client, which validates this bind as a file.
-    writeFileSync(gitStub, 'gitdir: /dev/null\n', { mode: 0o600 });
-    writeFileSync(siteSpec.envFile, `ELOWEN_SITE_SLUG=${SITE_ID}\n`, { mode: 0o600 });
-    writeFileSync(join(sourcePath, 'index.html'), '<!doctype html>site source\n', { mode: 0o600 });
-    expect(lstatSync(gitStub).isFile()).toBe(true);
-
-    const siteClient = new NspawnClient({ executor, artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
-    const siteGuest = (argv: string[], options: Record<string, unknown> = {}): Promise<Verdict> =>
-      siteClient.exec(siteSpec, randomBytes(16).toString('hex'), argv, { timeoutMs: 60_000, persistent: true, ...options }) as Promise<Verdict>;
-    try {
-      await siteClient.materializeRootfs(siteSpec, siteSpec.disk.rootfsPath);
-      await siteClient.create(siteSpec);
-      await siteClient.start(siteSpec);
-      await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
-      const siteEnvironment = await siteGuest(['/usr/bin/printenv', 'ELOWEN_SITE_SLUG']);
-      expect(siteEnvironment.stdout.trim(), `${siteEnvironment.stderr}\n${unitDiagnostics(siteUnit, siteEnvelope.nspawn)}`).toBe(SITE_ID);
-      expect(siteSpec.network).toBe('none');
-      const isolated = await siteGuest(['/usr/bin/curl', '-sS', '-m', '5', 'https://registry.npmjs.org/'], { allowFailure: true });
-      expect(isolated.code, 'the isolated Site reached the public network').not.toBe(0);
-      measured.push('isolated Site outbound HTTPS denied');
-
-      // Every bind arrived with the semantics the specification declared.
-      expect((await siteGuest(['/bin/cat', '/workspace/index.html'])).stdout).toBe('<!doctype html>site source\n');
-      expect((await siteGuest(['/bin/sh', '-c', 'test -f /workspace/.git && echo file || echo other'])).stdout.trim()).toBe('file');
-      expect((await siteGuest(['/bin/cat', '/workspace/.git'])).stdout).toBe('gitdir: /dev/null\n');
-      // Read-only means read-only in the kernel, not just in the settings file.
-      expect((await siteGuest(['/bin/sh', '-c', 'touch /workspace/should-fail 2>&1; true'])).stdout).toMatch(/Read-only file system/);
-
-      const dataArchive = join(dirname(siteSpec.disk.rootfsPath), 'site-data-proof.tar');
-      await siteGuest(['/bin/sh', '-c', 'printf before >/data/archive-marker']);
-      await siteClient.stop(siteSpec);
-      await siteClient.siteDataArchive(siteSpec, 'export', dataArchive);
-      await siteClient.start(siteSpec);
-      await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
-      await siteGuest(['/bin/sh', '-c', 'printf after >/data/archive-marker']);
-      await siteClient.stop(siteSpec);
-      await siteClient.siteDataArchive(siteSpec, 'import', dataArchive);
-      await siteClient.start(siteSpec);
-      await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
-      expect((await siteGuest(['/bin/cat', '/data/archive-marker'])).stdout).toBe('before');
-      measured.push('Site data archive exported and restored across two restarts');
-
-      // The ingress socket a publication binds inside the guest appears on the HOST side of the broker
-      // mount, which is the only way the daemon's forwarder reaches it at all.
-      // Not through `startPublication`: that transport is a project's in both runtimes and refuses a Site
-      // by design. A Site's server is a unit inside its own guest, so this is one, written and started the
-      // way the Site's image would, and it outlives the execution that started it.
-      const publicationId = randomBytes(16).toString('hex');
-      const service = `[Unit]\nDescription=proof ingress\n[Service]\nType=simple\nExecStart=/usr/local/bin/node -e "const net=require('node:net'); const server=net.createServer(); server.listen('/run/elowen/${publicationId}.sock'); setInterval(()=>{},600000)"\n`;
-      const unitName = `elowen-proof-ingress-${publicationId.slice(0, 12)}.service`;
-      const wrote = await siteGuest(['/bin/sh', '-c',
-        `cat >/etc/systemd/system/${unitName} <<'UNIT'\n${service}UNIT\nsystemctl daemon-reload && systemctl start ${unitName}`]);
-      expect(wrote.code, wrote.stderr).toBe(0);
-      const hostSocket = join(brokerDir, `${publicationId}.sock`);
-      for (let attempt = 0; attempt < 50 && !existsSync(hostSocket); attempt++) await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(existsSync(hostSocket), `the ingress socket did not appear at ${hostSocket}`).toBe(true);
-      expect(lstatSync(hostSocket).isSocket()).toBe(true);
-      // Written by guest root through a rootidmap bind, so on the host it belongs to the service account.
-      expect(lstatSync(hostSocket).uid).toBe(process.getuid!());
-      measured.push(`site ingress socket appeared on the host side of the broker mount as ${hostSocket.split('/').pop()}`);
-      const stopped = await siteGuest(['/bin/sh', '-c', `systemctl stop ${unitName} && systemctl is-active ${unitName} || true`]);
-      expect(stopped.stdout.trim()).not.toBe('active');
-    } finally {
-      try { execFileSync('/usr/bin/systemctl', ['stop', siteUnit], { timeout: 120_000, stdio: 'ignore' }); } catch { /* already down */ }
-      try { if (await siteClient.containerExists(siteSpec)) await siteClient.removeByName(siteSpec); } catch { /* gone */ }
-    }
-    expect(existsSync(siteEnvelope.nspawn)).toBe(false);
-    expect(existsSync(siteEnvelope.dropIn)).toBe(false);
-  }, 40 * 60_000);
-
   it('leaves the host with nothing of its own behind', async () => {
     try { await client.stop(spec); } catch { /* already down */ }
     try { if (await client.containerExists(spec)) await client.removeByName(spec); } catch { /* gone */ }
     await client.removeDiskPath(spec.storageRoot);
-    if (existsSync(join(storageRoots!.sitesDataDir, SITE_ID))) await client.removeDiskPath(join(storageRoots!.sitesDataDir, SITE_ID));
 
     expect(machineList()).not.toContain(spec.name);
-    expect(machineList()).not.toContain(SITE_ID);
     expect(lastInboundGateway).toBeTruthy();
     expect(await requestHostPort(lastInboundGateway!, INBOUND_HOST_PORT)).toBe('');
     expect(existsSync(envelope.nspawn)).toBe(false);
     expect(existsSync(envelope.dropIn)).toBe(false);
     expect(existsSync(spec.storageRoot)).toBe(false);
-    expect(existsSync(join(storageRoots!.sitesDataDir, SITE_ID))).toBe(false);
     // And nothing that was not this suite's went with it.
     expect(existsSync(storageRoots!.sandboxDataDir)).toBe(true);
-    expect(existsSync(storageRoots!.sitesDataDir)).toBe(true);
     expect(guestEnv().HOME).toBeTruthy();
   }, 15 * 60_000);
 });

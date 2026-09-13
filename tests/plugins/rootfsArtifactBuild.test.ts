@@ -250,23 +250,7 @@ describe('installed package provenance', () => {
 });
 
 describe('recipe resolution', () => {
-  it('folds a base into one complete root filesystem rather than a layer', () => {
-    const base = resolveRecipe('site-base');
-    const layered = resolveRecipe('site-static');
-    expect(layered.base).toBe('site-base');
-    // Every package of the base plus its own, in one tree, because a host unpacks exactly one tarball.
-    for (const name of base.packages) expect(layered.packages).toContain(name);
-    expect(layered.packages).toContain('nginx-light');
-    expect(layered.suite).toBe(base.suite);
-    expect(layered.variant).toBe(base.variant);
-    expect(layered.directories).toEqual(base.directories);
-    // The revision stays the recipe's own, because that is what `site-static@1` names.
-    expect(layered.version).toBe(1);
-  });
-
-  it('takes Node from whichever recipe declares it and writes no checksum of its own', () => {
-    expect(resolveRecipe('site-node').node).toEqual({ version: '24.8.0' });
-    expect(resolveRecipe('site-static').node).toBeNull();
+  it('takes Node from the Project recipe and writes no checksum of its own', () => {
     expect(resolveRecipe('project-base').node).toEqual({ version: '24.8.0' });
     // A checksum in the catalogue is one nobody re-derives; the build verifies against SHASUMS256.txt.
     expect(Object.keys(resolveRecipe('project-base').node)).toEqual(['version']);
@@ -329,9 +313,6 @@ describe('host dependencies', () => {
 describe('rebuild verification', () => {
   const pins = {
     'project-base@1': { digest: `sha256:${'a'.repeat(64)}`, sizeBytes: 1024, path: releasePathFor('project-base', 1) },
-    'site-base@1': { digest: null, sizeBytes: null, path: releasePathFor('site-base', 1) },
-    'site-static@1': { digest: `sha256:${'c'.repeat(64)}`, sizeBytes: 99, path: releasePathFor('site-static', 1) },
-    'site-node@1': { digest: null, sizeBytes: null, path: releasePathFor('site-node', 1) },
   };
 
   it('passes when a rebuild reproduces the pinned bytes', async () => {
@@ -357,33 +338,6 @@ describe('rebuild verification', () => {
   it('fails on a length that differs even when the digest is quoted back correctly', async () => {
     const build = vi.fn(async () => ({ digest: pins['project-base@1'].digest, sizeBytes: 7 }));
     expect((await verifyArtifacts({ names: ['project-base'], pins, build })).ok).toBe(false);
-  });
-
-  it('skips an unpublished pin rather than comparing one, and never builds it', async () => {
-    // An unpublished recipe has no recorded digest to differ from, so there is nothing to rebuild it
-    // against and the run does not try. Skipped is reported as skipped, next to what was verified.
-    const build = vi.fn(async () => ({ digest: pins['project-base@1'].digest, sizeBytes: 1024 }));
-    const result = await verifyArtifacts({ names: ['project-base', 'site-base', 'site-node'], pins, build });
-    expect(result.ok).toBe(true);
-    expect(result.verified).toBe(1);
-    expect(result.unpublished.map((item: { reference: string }) => item.reference)).toEqual(['site-base@1', 'site-node@1']);
-    expect(build).toHaveBeenCalledTimes(1);
-  });
-
-  it('fails a run that verified nothing, because a check that cannot fail is not a check', async () => {
-    // Asked only about recipes with no published pin, `npm run rootfs:verify` rebuilt nothing, compared
-    // nothing, never reached the build tools and exited 0. CI then reported a verification that had not
-    // happened, which is worse than no gate at all — a missing gate is visible and a green one is
-    // believed.
-    const build = vi.fn(async () => ({ digest: `sha256:${'e'.repeat(64)}`, sizeBytes: 1 }));
-    const result = await verifyArtifacts({ names: ['site-base', 'site-node'], pins, build });
-    expect(result.ok).toBe(false);
-    expect(result.verified).toBe(0);
-    expect(result.matched).toEqual([]);
-    expect(result.differing).toEqual([]);
-    expect(result.missing).toEqual([]);
-    expect(result.unpublished.map((item: { reference: string }) => item.reference)).toEqual(['site-base@1', 'site-node@1']);
-    expect(build).not.toHaveBeenCalled();
   });
 
   const pinsFor = (entry: (name: string, at: number) => { digest: string | null; sizeBytes: number | null }) =>
@@ -423,13 +377,13 @@ describe('rebuild verification', () => {
     expect(passed.missing).toEqual([]);
     expect(matching).toHaveBeenCalledTimes(names.length);
 
-    const drifted = vi.fn(async (name: string) => (name === names[1]
+    const drifted = vi.fn(async (name: string) => (name === names[0]
       ? { digest: `sha256:${'d'.repeat(64)}`, sizeBytes: 7 }
       : rebuild(name)));
     const failed = await verifyArtifacts({ names, pins, build: drifted });
     expect(failed.ok).toBe(false);
     expect(failed.verified).toBe(names.length - 1);
-    expect(failed.differing.map((item: { reference: string }) => item.reference)).toEqual([artifactReference(names[1])]);
+    expect(failed.differing.map((item: { reference: string }) => item.reference)).toEqual([artifactReference(names[0])]);
   });
 
   it('fails when the pin file carries no entry for a recipe at all', async () => {
@@ -438,16 +392,5 @@ describe('rebuild verification', () => {
     expect(result.ok).toBe(false);
     expect(result.missing.map((item: { reference: string }) => item.reference)).toEqual(['project-base@1']);
     expect(build).not.toHaveBeenCalled();
-  });
-
-  it('reports every recipe in one pass rather than stopping at the first difference', async () => {
-    const build = vi.fn(async (name: string) => ({
-      digest: name === 'project-base' ? pins['project-base@1'].digest : `sha256:${'9'.repeat(64)}`,
-      sizeBytes: name === 'project-base' ? 1024 : 5,
-    }));
-    const result = await verifyArtifacts({ names: ['project-base', 'site-static'], pins, build });
-    expect(result.matched).toHaveLength(1);
-    expect(result.differing).toHaveLength(1);
-    expect(result.ok).toBe(false);
   });
 });

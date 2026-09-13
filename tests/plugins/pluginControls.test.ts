@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import type { KnownControls, PluginCapabilities, PluginControl } from '../../src/plugins/api.js';
-import { ENVIRONMENT_CONTROL_METHODS, SITE_ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
+import { ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
 import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { WorkspacePathView } from '../../src/plugins/pathView.js';
@@ -15,15 +15,14 @@ import { managedGuestFs, PROJECT } from '../helpers/managedGuest.js';
 const noopLog = { info() {}, warn() {}, error() {} };
 const fakeLsp = (): KnownControls['lsp'] => ({ diagnosticsEnabled: () => true });
 const fakeGitHub = (): KnownControls['github'] => ({ sessionCredential: () => ({ token: 'secret', login: 'octocat' }) });
-// The COMPLETE Sandbox contract: the legacy workspace half plus the managed environment and Sites
-// runtime halves. Built from the exported method lists so a method added to the contract lands here too
-// — a fake frozen at the old six would let "resolves the complete contract" pass for a provider that
-// could no longer serve a managed project. Refusal of an INCOMPLETE control has its own test below.
+// The complete Sandbox contract: the workspace and managed Project environment methods. Built from the
+// exported method list so a new required method lands here too. Refusal of an incomplete control has its
+// own test below.
 const SANDBOX_WORKSPACE_METHODS = [
   'workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution',
 ] as const;
 const fakeSandbox = (): KnownControls['sandbox'] => Object.fromEntries(
-  [...SANDBOX_WORKSPACE_METHODS, ...ENVIRONMENT_CONTROL_METHODS, ...SITE_ENVIRONMENT_CONTROL_METHODS]
+  [...SANDBOX_WORKSPACE_METHODS, ...ENVIRONMENT_CONTROL_METHODS]
     .map((name) => [name, () => undefined]),
 ) as unknown as KnownControls['sandbox'];
 const fakeWorkflow = (): KnownControls['workflow'] => ({
@@ -137,7 +136,6 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
 
   it('resolves the complete Sandbox contract live', () => {
     const merged = new PluginRegistry();
-    // Sites is the one consumer served the raw control, so identity here is the liveness evidence.
     const ctx = contextOver(merged, { reads: ['controls'] }, undefined, 'sites');
     const first = fakeSandbox();
     ownerMerges(merged, 'sandbox-a', 'sandbox', first);
@@ -148,21 +146,6 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     const next = fakeSandbox();
     ownerMerges(merged, 'sandbox-b', 'sandbox', next);
     expect(ctx.control('sandbox')).toBe(next);
-  });
-
-  it('serves every other consumer a facade whose Site runtime methods refuse', () => {
-    const merged = new PluginRegistry();
-    ownerMerges(merged, 'sandbox-a', 'sandbox', fakeSandbox());
-    const terminal = contextOver(merged, { reads: ['controls'] }, undefined, 'terminal').control('sandbox');
-    expect(terminal).toBeDefined();
-    // The workspace and managed-project halves stay usable…
-    expect(typeof terminal!.prepareExecution).toBe('function');
-    expect(typeof terminal!.requestEnvironment).toBe('function');
-    // …while the Sites half is replaced rather than merely hidden, so reading the descriptor off the
-    // facade cannot recover the real function either.
-    for (const method of SITE_ENVIRONMENT_CONTROL_METHODS) {
-      expect(() => (terminal as unknown as Record<string, () => unknown>)[method]()).toThrow(/restricted to the Sites plugin/);
-    }
   });
 
   it('resolves a dependent control only while its complete dependency exists', () => {
