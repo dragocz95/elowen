@@ -826,7 +826,7 @@ describe('SubagentRunnerPool — the background-process verbs across runners', (
     h.pool.attachProcessChangedSink((sessionId, processes) => { seen.push({ sessionId, processes }); });
     h.children[0]!.reply({
       type: 'processesChanged', sessionId: 'brain-ch-subagent-sub-dlg-a',
-      processes: [{ id: 'p-a', command: 'c', cwd: '/w', startedAt: 's', sessionId: 'brain-ch-subagent-sub-dlg-a', running: true, exitCode: null, workspaceId: null }],
+      processes: [{ id: 'p-a', command: 'c', cwd: '/w', startedAt: 's', sessionId: 'brain-ch-subagent-sub-dlg-a', running: true, exitCode: null }],
     });
     expect(seen).toEqual([{ sessionId: 'brain-ch-subagent-sub-dlg-a', processes: [expect.objectContaining({ id: 'p-a' })] }]);
 

@@ -397,7 +397,7 @@ export function createChatComposition(
       hints: color.faint(fitSegments(startScreenHintItems(keymap), startScreenBox(term.columns).boxWidth, ' · ')),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
-      statusLeft: projectStatusLabel({ cwd: resources.cwdLabel, branch: resources.branchLabel, workspace: rt.workspace }),
+      statusLeft: projectStatusLabel({ cwd: resources.cwdLabel, branch: resources.branchLabel }),
       version: ELOWEN_CLI_VERSION,
       productLabel: rt.brand.productName.toLowerCase(),
       showMascot: rt.showMascot,
@@ -678,7 +678,7 @@ export function createChatComposition(
     currentAgents = stream.subagentStates(); // one transcript scan per frame, shared by rail + fallback
     currentWorkflows = stream.workflowStates();
     const agents = currentAgents;
-    const projectLine = projectStatusLabel({ cwd: resources.cwdLabel, branch: resources.branchLabel, workspace: rt.workspace });
+    const projectLine = projectStatusLabel({ cwd: resources.cwdLabel, branch: resources.branchLabel });
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, focusedUsage(), rt.modelName);
     const activeGoal = goalMeta(rt.goal);
     const metaRight = panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`;

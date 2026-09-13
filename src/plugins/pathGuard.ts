@@ -1,6 +1,6 @@
 import { basename, dirname, join } from 'node:path';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
-import { currentAccountUserId, currentApiRequest, currentContributionUserId, currentIdentity, currentPathView, currentPolicy, currentProjectRef, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
+import { currentAccountUserId, currentApiRequest, currentContributionUserId, currentIdentity, currentPolicy, currentProjectRef, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
 import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import { inheritedToolResultSpillDirs, planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
 import { realAbs, realPathWithin } from './pathUtils.js';
@@ -22,7 +22,7 @@ export function allowedRoots(): string[] {
  *  scope, so it re-asserts itself at the start of every run regardless of where the agent moved. */
 export function defaultCwd(): string {
   if (currentProjectRef()?.kind === 'managed') return currentWorkDir() ?? '/';
-  return currentPathView()?.root ?? currentWorkDir() ?? allowedRoots()[0] ?? process.cwd();
+  return currentWorkDir() ?? allowedRoots()[0] ?? process.cwd();
 }
 
 /** Whether the current session has unrestricted (admin) access to the filesystem. */
@@ -58,11 +58,10 @@ export function isAllAccess(): boolean {
  *  skip a narrowing that has no subject — the request carries its own `auth.accessibleProjects`, and
  *  durable membership still decides what the account may reach. It never widens `projectIds` or `admin`,
  *  so a reader that ignores it keeps refusing exactly as before. */
-export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; apiRequest?: true; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId: number | null; contributionUserId: number | null; accountUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string; workspaceRef?: { workspaceId: string; projectId: number }; projectRef?: ProjectExecutionRef } {
+export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; apiRequest?: true; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId: number | null; contributionUserId: number | null; accountUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string; projectRef?: ProjectExecutionRef } {
   const p = currentPolicy();
   const principal = turnPrincipal(currentIdentity());
   const tools = currentToolPolicy();
-  const pathView = currentPathView();
   const projectRef = currentProjectRef();
   const toolPolicy = tools ? {
     ...(tools.allow ? { allow: [...tools.allow] } : {}),
@@ -80,7 +79,6 @@ export function currentAccess(): { projectIds: number[]; admin: boolean; owner: 
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(currentTurnMode() === 'plan' ? { readOnly: true, planMode: true } : {}),
     ...(principal ? { principal } : {}),
-    ...(pathView ? { workspaceRef: pathView.workspace } : {}),
     ...(projectRef ? { projectRef } : {}),
   };
 }
@@ -146,8 +144,6 @@ export function isSessionPlanPath(sessionId: string, candidate: string): boolean
  *  intent are treated as writers, so a new call site cannot widen this by forgetting about it. */
 export function assertPathAllowed(path: string, opts: { intent?: 'read' | 'write' } = {}): string {
   if (currentProjectRef()?.kind === 'managed') throw new Error('managed project paths require the guest filesystem provider');
-  const pathView = currentPathView();
-  if (pathView) return pathView.resolve(path);
   if (isAllAccess()) return realAbs(path);
   const abs = realPathWithin(path, allowedRoots());
   if (abs) return abs;
@@ -162,19 +158,4 @@ export function assertPathAllowed(path: string, opts: { intent?: 'read' | 'write
     if (spill) return spill;
   }
   throw new Error(`path not allowed: "${path}" is outside your accessible repositories`);
-}
-
-/** Model-facing path for a host path already validated by {@link assertPathAllowed}. */
-export function displayPath(path: string): string {
-  return currentPathView()?.display(path) ?? path;
-}
-
-/** Stable read-before-edit identity. Workspace-scoped turns include the durable workspace id. */
-export function pathStateKey(path: string): string {
-  return currentPathView()?.stateKey(path) ?? path;
-}
-
-/** Scrub exact verified workspace prefixes from filesystem/library diagnostics. */
-export function sanitizePathOutput(text: string): string {
-  return currentPathView()?.sanitize(text) ?? text;
 }

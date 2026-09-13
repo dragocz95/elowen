@@ -107,23 +107,23 @@ A tool permission cannot grant a tool that the account does not otherwise have. 
 - `write_access: true` can promote only a read-only child that the same caller explicitly requested as read-only. A read-only mode imposed by Plan mode or by the child type cannot be promoted.
 - A delegated child does not receive the parent's personal memory identity, although it can inherit the account-scoped plugin contributions needed for the task.
 
-`read_only: true` removes write tools and applies a non-destructive shell guardrail. It is **not** a sandbox: shell redirection can still write files reachable by the daemon user, so use Project and Sandbox boundaries for filesystem isolation.
+`read_only: true` removes write tools and applies a non-destructive shell guardrail. It is **not** a sandbox: shell redirection can still write files reachable by the daemon user, so use the Project boundary and a managed Project's environment for filesystem isolation.
 
 ## Workflow DAGs
 
 `WorkflowStart` runs a directed graph of delegated children. Independent nodes can run in parallel; a node with dependencies waits for its prerequisites and receives only the direct dependency's handover context. `WorkflowResume` continues only unfinished work. A node added dynamically inherits the creating node's current scope and cannot widen the workflow's original authority.
 
-An explicitly workspace-scoped child receives a logical workspace path view and only workspace-safe tools. Host-filesystem tools, including `WorkflowStart`, are withheld. A normal parent bound to a workspace can still spawn work from that bound worktree; a read-only child can return a plan or report for the parent to save.
+A child inherits the conversation's working directory, so a workflow started from a `git worktree` runs there. Parallel work is separated by creating a worktree per task with native `git worktree` in your own checkout and pointing a conversation at it; a read-only child can return a plan or report for the parent to save.
 
 A running node may use `WorkflowAddNodes` to extend its own workflow when that workflow engine is local to the process. A node executing in a forked runner reaches the owning engine through the host RPC bridge; if that capability is unavailable, the node is not given `WorkflowAddNodes` rather than being given a tool that cannot work. Nested workflows remain local to the runner that owns them and do not jump to the parent's engine.
 
-Delegations and workflows have durable state. After a daemon restart, Elowen attempts recovery using the stored scope and workflow journal. If safe recovery cannot be established, the work is refused, parked for recovery, or terminalized with the completed portion preserved; it is not blindly replayed under a wider account scope. A continuation re-checks the caller's current Projects, account contribution, workspace, model-session boundary, tool policy, and non-interactive permission rules before delivering work.
+Delegations and workflows have durable state. After a daemon restart, Elowen attempts recovery using the stored scope and workflow journal. If safe recovery cannot be established, the work is refused, parked for recovery, or terminalized with the completed portion preserved; it is not blindly replayed under a wider account scope. A continuation re-checks the caller's current Projects, account contribution, working directory, model-session boundary, tool policy, and non-interactive permission rules before delivering work.
 
 ## Account, Project, and Sandbox isolation
 
 In a shared room, authority is resolved from the current verified writer, not from whoever opened the room. Personal tools, plugin configuration, encrypted plugin secrets, Project scope, and scheduled work follow that contribution account. An unlinked sender does not get a guessed account.
 
-File tools remain path-confined to accessible Project roots. Fresh configuration also bubblewrap-confines non-operator terminal commands, but an operator can deliberately set `sandbox.confineNonOperators` to `false`, allowing granted non-operators to run commands directly on the host. Workspace-scoped execution remains confined and fails closed when its boundary cannot be established.
+File tools remain path-confined to accessible Project roots. Fresh configuration also bubblewrap-confines non-operator terminal commands, but an operator can deliberately set `sandbox.confineNonOperators` to `false`, allowing granted non-operators to run commands directly on the host. Commands in a managed Project run inside the Project's own environment and are not governed by that setting.
 
 Revoking Project access removes that Project from the account's path policy. Removing a tool grant or disabling its owning plugin does not create a fallback with broader access.
 
@@ -133,4 +133,4 @@ Publishing code, pushing a branch, reviewing or merging a pull request, deployin
 
 For example, GitHub mutating tools require an interactive verified conversation. Delegated, scheduled, and other unattended contexts may inspect GitHub state but cannot publish, review, or merge through those tools.
 
-See [Your Account & Preferences](account-preferences), [Sub-agents & Workflows](tasks-missions), and [Projects, Sandbox & GitHub](projects-workflow) for the operating details of these features.
+See [Your Account & Preferences](account-preferences), [Sub-agents & Workflows](tasks-missions), and [Projects, Environments & GitHub](projects-workflow) for the operating details of these features.

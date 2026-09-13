@@ -53,8 +53,8 @@ export interface DelegatedTurnRequest {
 }
 
 export interface DelegatedTurnDeps {
-  /** Build a Policy from an explicit project-id set. The captured contribution account is required for
-   * Sandbox workspace roots, especially in a forked runner where the parent live session does not exist. */
+  /** Build a Policy from an explicit project-id set. The captured account is required to scope the child
+   *  to its own membership, especially in a forked runner where the parent live session does not exist. */
   policyForProjects?: (projectIds: number[], contributionUserId?: number) => Policy;
   identity: { forDelegatedTurn(scope: DelegatedExecutionScope, ownerUserId: number): TurnIdentity };
 }
@@ -92,7 +92,7 @@ export function delegatedChannelSendOpts(
     // Persisted on the child's session row at creation, so every LATER turn of this child (a
     // continuation, a result drain, a boot-recovery respawn) is billed to the same request.
     ...(req.origin ? { spawnOrigin: req.origin } : {}),
-    ...(scope.workspaceRef || scope.projectRef?.kind === 'managed' ? {} : req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
+    ...(scope.projectRef?.kind === 'managed' ? {} : req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
     // The captured scope stays authoritative; the spawning account's CURRENT grant intersects it, exactly
     // as the drill-in continuation path does. Without this the forked runner and every first spawn were
     // the two paths on which a revoked tool kept reaching a child — one behaviour with three answers.
@@ -227,7 +227,6 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
   const origin = v.origin === undefined ? undefined : parseSpawnOrigin(v.origin);
   if (v.thinkingLevel !== undefined && typeof v.thinkingLevel !== 'string') return undefined;
   if (v.clientCwd !== undefined && typeof v.clientCwd !== 'string') return undefined;
-  if (scope.workspaceRef && v.clientCwd !== undefined) return undefined;
   // A request minted before the channel idle cutoff was removed may still carry `idleRolloverMs`. It is an
   // unknown key now, and unknown keys are dropped rather than refused — a runner mid-upgrade still runs.
   return {

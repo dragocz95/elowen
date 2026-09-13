@@ -126,11 +126,11 @@ If the runner pool is disabled or unavailable, the daemon may run a delegated tu
 
 `WorkflowStart` runs a DAG: independent nodes run in parallel and dependent nodes wait. Use `WorkflowResume` for unfinished nodes after an interruption; completed nodes are not replayed.
 
-## A project or workspace is wrong
+## A project or directory is wrong
 
-Projects are registered access boundaries. Confirm the selected Project in **Projects** and the active Sandbox workspace. A workspace is an account-owned Git worktree, not the Project directory itself.
+Projects are registered access boundaries. Confirm the selected Project in **Projects**, and the directory the conversation is working in, which `/cd` reports and changes. A `git worktree` you created yourself is an ordinary directory; a conversation works in it only once it has been pointed there.
 
-A delegated child inherits the relevant project and workspace scope and cannot widen it. A dirty worktree, untracked file, unique commit, or active process can prevent workspace removal. Plan mode and read-only mode are additional execution guardrails, not replacements for Project or Sandbox isolation.
+A delegated child inherits the parent's Project and working directory and cannot widen either. Plan mode and read-only mode are additional execution guardrails, not replacements for the Project boundary.
 
 ## Memory or semantic search returns nothing
 

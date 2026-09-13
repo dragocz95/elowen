@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainStore } from '../store/brainStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
-import type { KnownControls, PlatformHistory, PlatformHistoryMessage, SandboxExecutionLease } from '../plugins/api.js';
+import type { KnownControls, PlatformHistory, PlatformHistoryMessage } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
 import type { PlatformSenderAttribution } from './identity.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
-import { createWorkspacePathView, type WorkspacePathView } from '../plugins/pathView.js';
 import {
   delegatedToolPolicy,
   delegatedVisibilityToolPolicy,
@@ -466,7 +465,7 @@ export interface ChannelServiceDeps {
    *  channelAttachments.ts). Absent ⇒ no candidate project exists and an attachment is refused with the
    *  same message the web route gives, rather than silently discarded. */
   uploads?: ChannelUploadDeps;
-  /** Registered Projects plus the live Sandbox control resolve the current writer's effective workspace. */
+  /** Registered Projects and the live Sandbox control resolve the current writer's effective working directory. */
   projects?: ProjectStore;
   projectPath?: () => string | undefined;
   sandbox?(): KnownControls['sandbox'] | undefined;
@@ -629,7 +628,6 @@ export class ChannelSessionService {
     /** What the child ADVERTISES. Identical to `toolPolicy` for every child except a fork, whose visible
      *  set must equal its parent's or the prompt cache it was spawned to read is rewritten. */
     visibilityToolPolicy: ToolPolicy | undefined;
-    pathView?: WorkspacePathView;
   } {
     const scope = normalizeDelegatedExecutionScope(opts.delegatedAccess);
     if (!scope || !opts.identity || opts.writerUserId !== undefined
@@ -652,29 +650,10 @@ export class ChannelSessionService {
     // its current grant intersects — so it cannot swap the inherited allow/deny shape while the child is
     // idle. Dropping the caller's allow here is what made the account grant a per-path accident: the
     // careful intersection every caller computes was discarded and rebuilt from the frozen scope alone.
-    let pathView: WorkspacePathView | undefined;
-    if (scope.workspaceRef) {
-      const sandbox = this.d.sandbox?.();
-      if (!sandbox || scope.contributionUserId === undefined) throw new Error('delegated workspace unavailable');
-      const binding = sandbox.resolveWorkspace({
-        accountUserId: scope.contributionUserId,
-        workspace: scope.workspaceRef,
-        accessibleProjectIds: scope.admin ? 'all' : scope.projectIds,
-      });
-      const scopedProjectIds = scope.admin
-        ? this.d.projects?.list().map((project) => project.id) ?? []
-        : scope.projectIds;
-      const hiddenPrefixes = [
-        ...(this.d.projects?.list().filter((project) => scopedProjectIds.includes(project.id)).map((project) => project.path) ?? []),
-        ...sandbox.workspacesFor({ userId: scope.contributionUserId, projectIds: scopedProjectIds }).map((workspace) => workspace.path),
-      ];
-      pathView = createWorkspacePathView(binding, hiddenPrefixes);
-    }
     return {
       scope,
       toolPolicy: delegatedToolPolicy(scope, opts.toolPolicy?.deny ?? [], opts.toolPolicy?.allow),
       visibilityToolPolicy: delegatedVisibilityToolPolicy(scope, opts.toolPolicy?.deny ?? [], opts.toolPolicy?.allow),
-      ...(pathView ? { pathView } : {}),
     };
   }
 
@@ -791,8 +770,6 @@ export class ChannelSessionService {
       this.d.registry.isParentAborting(parentSessionId) || this.d.registry.hasPendingAbort(sessionId)
     );
     let delegatedCall = false;
-    let delegationLease: SandboxExecutionLease | undefined;
-    let delegationLeaseHeartbeat: ReturnType<typeof setInterval> | undefined;
     // Armed by a turn that actually produced an answer and consumed once by settleTurn below, mirroring
     // the owner surface: a turn that threw leaves it undefined, which is how a failed exchange stays out
     // of the writer's memory. The writer stamp and the drain are NOT gated on it — see the settle.
@@ -807,14 +784,6 @@ export class ChannelSessionService {
       if (this.d.registry.isParentAborting(parentSessionId)) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
       const parent = this.d.store.getSession(parentSessionId);
       if (!parent || parent.user_id !== opts.ownerUserId || parent.id === sessionId) throw new Error('invalid parent session');
-      if (delegated?.scope.workspaceRef) {
-        const sandbox = this.d.sandbox?.();
-        const accountUserId = delegated.scope.contributionUserId;
-        if (!sandbox || accountUserId === undefined) throw new Error('delegated workspace unavailable');
-        delegationLease = sandbox.acquireDelegationLease({ accountUserId, workspace: delegated.scope.workspaceRef });
-        delegationLeaseHeartbeat = setInterval(() => { void delegationLease?.heartbeat(); }, 5_000);
-        delegationLeaseHeartbeat.unref?.();
-      }
       // Register before the first async boundary. A background delegate may be stopped immediately after
       // its tool returns, before spawn has emitted the child's `session` progress event.
       this.beginDelegatedCall(parentSessionId, sessionId);
@@ -985,8 +954,7 @@ export class ChannelSessionService {
             : {}),
           // A delegated child inherits its parent's working directory (set only for subagent sends); an
           // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
-          clientCwd: delegated?.pathView?.root ?? opts.clientCwd,
-          ...(delegated?.pathView ? { pathView: delegated.pathView } : {}),
+          clientCwd: opts.clientCwd,
         });
         // A first personal spawn can mint its default project after the incoming policy was captured.
         if (opts.direct && !parentSessionId && this.d.store.getProjectExecution(sessionId)?.kind === 'managed') {
@@ -1116,12 +1084,9 @@ export class ChannelSessionService {
           .find((message) => message.role === 'assistant');
         // Resolve from THIS writer and THIS turn. `ch.workDir` is only the static spawn cwd (often the room
         // opener's Project); validating it through the current Policy first makes another writer fall back to
-        // their own Project, then Sandbox may select that account's active workspace.
-        const baseWorkDir = delegated?.pathView?.root
-          ?? turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
-        const resolveWorkDir = (): ReturnType<typeof effectiveTurnWorkDir> => delegated?.pathView
-          ? { baseWorkDir, workDir: delegated.pathView.root, workspace: null }
-          : effectiveTurnWorkDir({
+        // their own Project.
+        const baseWorkDir = turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
+        const resolveWorkDir = (): ReturnType<typeof effectiveTurnWorkDir> => effectiveTurnWorkDir({
               policy: opts.policy,
               baseWorkDir,
               accountUserId: turnContributionUserId,
@@ -1135,7 +1100,7 @@ export class ChannelSessionService {
         // Compared against the ADVERTISED cwd, never `ch.workDir`: a validated move updates the live
         // cwd, and comparing against it would make the supersede silently vanish exactly when the
         // static prompt — which PI wrote at spawn and never rewrites — is most stale.
-        const workspaceReminder = workDirReorientation(ch.advertisedWorkDir ?? ch.workDir, effectiveWorkDir.workDir);
+        const workDirReminder = workDirReorientation(ch.advertisedWorkDir ?? ch.workDir, effectiveWorkDir.workDir);
         try {
           // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
           // The two are different questions and both have to be asked: the grant says what an admin gave
@@ -1244,7 +1209,7 @@ export class ChannelSessionService {
                 // shared with every sibling fork and only the directive itself is new after the prefix.
                 text: forkChild ? buildForkChildMessage(turnText) : turnText,
                 afterUser: turnContext.afterUser,
-                workDirReorientation: workspaceReminder,
+                workDirReorientation: workDirReminder,
                 sessionChanges,
                 postCompaction,
                 // A room's turns are minutes apart with other people's messages in between, so an agent
@@ -1294,7 +1259,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               this.d.registry.throwIfPendingAbort(sessionId);
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, projectRef: effectiveWorkDir.projectRef, resolveProjectRef: () => resolveWorkDir().projectRef, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, ...(forkChild ? { forkChild: true } : {}), model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, projectRef: effectiveWorkDir.projectRef, resolveProjectRef: () => resolveWorkDir().projectRef, settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, ...(forkChild ? { forkChild: true } : {}), model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',
@@ -1425,9 +1390,7 @@ export class ChannelSessionService {
           // `notify` is owner-only and therefore absent: the room already received this answer.
         });
       } finally {
-        if (delegationLeaseHeartbeat) clearInterval(delegationLeaseHeartbeat);
-        try { await delegationLease?.release(); }
-        finally { if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId); }
+        if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);
       }
     }
   }
@@ -1783,26 +1746,22 @@ export class ChannelSessionService {
    *  project's slug (the reply's label); throws when no durable conversation exists here, or the
    *  project is unknown or unreachable. The chat surfaces reach it through the shared control core's
    *  /project (which draws the chooser per surface); the PlatformControlApi still calls it directly. */
-  async switchProject(channelId: string, input: { policy: Policy; accountUserId: number; projectId: number }): Promise<{ workDir: string; slug: string }> {
+  async switchProject(channelId: string, input: { policy: Policy; projectId: number }): Promise<{ workDir: string; slug: string }> {
     const sessionId = channelSessionId(channelId);
     return this.d.registry.withLock(sessionId, async () => {
       const target = projectMoveTarget(input.policy, this.d.projects, input.projectId);
       if (!target) throw new Error('project is not readable or not allowed');
       if (!this.d.store.getSession(sessionId)) throw new Error('no conversation in this channel');
       const ch = this.d.registry.channelGet(channelId);
-      const sandbox = this.d.sandbox?.();
       const moved = moveSessionWorkDir({
         store: this.d.store,
         policy: input.policy,
-        accountUserId: input.accountUserId,
         sessionId,
         ...(ch ? { live: ch } : {}),
         workDir: target.workDir,
         // The room's next turn drains the notice whatever writer sends it, so it names the project's
         // slug instead of carrying the absolute path into a shared channel's context.
         noticeDetail: target.slug,
-        ...(this.d.projects ? { projects: this.d.projects } : {}),
-        ...(sandbox ? { sandbox } : {}),
       });
       return { workDir: moved.workDir, slug: target.slug };
     });

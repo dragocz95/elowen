@@ -1,6 +1,6 @@
-// Terminal plugin: Bash plus foreground/background process lifecycle. Filesystem authority, account HOME,
-// workspace selection and confinement belong to the live Sandbox control. Terminal resolves that control
-// for every launch so plugin reloads apply immediately and no stale security generation is retained.
+// Terminal plugin: Bash plus foreground/background process lifecycle. Filesystem authority and account HOME
+// belong to the live Sandbox control. Terminal resolves that control for every launch so plugin reloads
+// apply immediately and no stale security generation is retained.
 //
 // The plugin is `userGrantable` and carries no grant gate of its own: the host's per-account tool policy
 // decides who may reach Bash and the process tools.
@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
-import { isAbsolute, join, posix } from 'node:path';
+import { isAbsolute, posix } from 'node:path';
 
 function guestCwd(path, base = '/workspace') {
   if (typeof path !== 'string' || path.includes('\0')) throw new Error('invalid managed project cwd');
@@ -112,23 +112,15 @@ function resolveTimeoutMs(input) {
   return Math.round(timeout);
 }
 
-/** Convert the cwd reported from inside a workspace namespace back to its host path, then run the ordinary
- * path authority check again. A guest path outside /workspace is never interpreted as a host path. */
-export function mapReportedCwd(reported, prepared, assertAllowed, workspacePathView = false) {
+/** Convert the cwd reported from inside a managed guest back to the guest path the turn works in, then run
+ * the ordinary path authority check again on anything the host actually reported. */
+export function mapReportedCwd(reported, prepared, assertAllowed) {
   if (prepared.mode === 'managed') {
     if (!posix.isAbsolute(reported)) throw new Error('reported guest cwd is not absolute');
     return guestCwd(reported);
   }
-  let candidate = reported;
-  if (prepared.workspace) {
-    if (reported === '/workspace') candidate = workspacePathView ? '.' : prepared.workspace.path;
-    else if (reported.startsWith('/workspace/')) {
-      const relative = reported.slice('/workspace/'.length);
-      candidate = workspacePathView ? relative : join(prepared.workspace.path, relative);
-    } else throw new Error('reported cwd is outside the assigned workspace');
-  }
-  if (!workspacePathView && !isAbsolute(candidate)) throw new Error('reported cwd is not absolute');
-  return assertAllowed(candidate);
+  if (!isAbsolute(reported)) throw new Error('reported cwd is not absolute');
+  return assertAllowed(reported);
 }
 
 /** Tokenize top-level shell commands just far enough for the restart safety check below. Control
@@ -417,7 +409,7 @@ class BgProcess {
     this.id = id;
     this.cwd = prepared.displayCwd ?? cwd;
     this.spawnCwd = prepared.cwd ?? cwd;
-    this.workspaceScoped = !!prepared.workspace || prepared.mode === 'managed';
+    this.managedScoped = prepared.mode === 'managed';
     this.projectRef = prepared.projectRef;
     this.runtimeGeneration = prepared.lease.runtimeGeneration;
     this.cancelGuest = guestCancellation(prepared);
@@ -431,7 +423,6 @@ class BgProcess {
     this.exitCode = null;
     this.finished = false;
     this.startedAt = new Date().toISOString();
-    this.workspaceId = prepared.workspace?.workspaceId ?? null;
     this.homeGeneration = prepared.lease.homeGeneration;
     if (prepared.mode === 'direct' && process.platform !== 'linux') {
       throw new Error('direct-host background execution is unavailable on this platform because escaped descendants cannot be terminated safely');
@@ -513,7 +504,7 @@ class ForegroundRun {
     this.id = id;
     this.cwd = prepared.displayCwd ?? cwd;
     this.spawnCwd = prepared.cwd ?? cwd;
-    this.workspaceScoped = !!prepared.workspace || prepared.mode === 'managed';
+    this.managedScoped = prepared.mode === 'managed';
     this.projectRef = prepared.projectRef;
     this.runtimeGeneration = prepared.lease.runtimeGeneration;
     this.cancelGuest = guestCancellation(prepared);
@@ -537,7 +528,6 @@ class ForegroundRun {
     this.killed = false;
     this.spawnError = null;
     this.child = null;
-    this.workspaceId = prepared.workspace?.workspaceId ?? null;
     this.homeGeneration = prepared.lease.homeGeneration;
     const { launch, directToken, sanitizeOutput } = launchWithDirectToken(prepared);
     this.launch = launch;
@@ -777,8 +767,8 @@ function truncateBlock(content, maxBytes, describe) {
  *
  *  `dropped` is what ForegroundRun's own buffer already discarded mid-run. It is USUALLY still above the
  *  cap when it gets here — the buffer's limit is twice `outputCap` — so the banner normally sits between
- *  a head and a tail. It is not guaranteed to, because workspace-path sanitisation runs in between and
- *  shrinks the text, so the no-middle case is handled rather than assumed.
+ *  a head and a tail. It is not guaranteed to, because the run's output sanitisation runs in between and
+ *  can shrink the text, so the no-middle case is handled rather than assumed.
  *
  *  The reported total mixes sanitised surviving bytes with unsanitised discarded ones, so it is a size
  *  estimate rather than an exact byte count of what the process wrote. Naming a slightly imprecise total
@@ -872,10 +862,8 @@ export function register(ctx) {
     const sessionId = currentSessionId();
     // A remembered shell cd belongs to this effective root, not every later binding of the conversation.
     // Capture this key before launch so a finishing old turn cannot overwrite the new root's cwd.
-    const access = ctx.currentAccess();
-    const workspaceId = access.workspaceRef?.workspaceId ?? '';
-    const project = access.projectRef;
-    return sessionId ? `${currentAccountUserId() ?? 'accountless'}\0${sessionId}\0${project?.kind ?? ''}:${project?.projectId ?? ''}\0${workspaceId}\0${ctx.defaultCwd()}` : null;
+    const project = ctx.currentAccess().projectRef;
+    return sessionId ? `${currentAccountUserId() ?? 'accountless'}\0${sessionId}\0${project?.kind ?? ''}:${project?.projectId ?? ''}\0${ctx.defaultCwd()}` : null;
   };
   const rememberCwd = (key, cwd) => {
     if (!key) return;
@@ -910,9 +898,9 @@ export function register(ctx) {
   // The thin handle the registry gets: metadata + callbacks into the BgProcess this closure owns.
   // `readNew` is the agent's incremental read (advances the buffer cursor); the daemon's panel reads
   // `readAll`, which never moves it.
-  const handleFor = (id, bg, accountUserId, sessionId, completionMode, workspaceId = null, homeGeneration = null) => ({
+  const handleFor = (id, bg, accountUserId, sessionId, completionMode, homeGeneration = null) => ({
     id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt,
-    accountUserId, sessionId, workspaceId, homeGeneration, completionMode,
+    accountUserId, sessionId, homeGeneration, completionMode,
     projectRef: bg.projectRef, runtimeGeneration: bg.runtimeGeneration,
     // The per-run env token: upward-reported so a daemon-side sweep can still stop this tree if this
     // process (or the runner holding it) dies abruptly and the graceful kill never runs.
@@ -920,10 +908,11 @@ export function register(ctx) {
     running: () => bg.running, exitCode: () => bg.exitCode,
     readAll: () => withDropNotice(bg, bg.sanitizeOutput(bg.output)),
     readNew: (all) => {
-      // A host prefix may be split across process chunks or the incremental cursor. Workspace-scoped output
-      // is therefore sanitized as one complete buffer before it is exposed; repeating prior output is safer
-      // than returning a cross-boundary fragment that reconstructs a host path.
-      const whole = bg.workspaceScoped || all;
+      // The host string a managed run's sanitizer replaces may be split across process chunks or the
+      // incremental cursor. Managed output is therefore sanitized as one complete buffer before it is
+      // exposed; repeating prior output is safer than returning a cross-boundary fragment that reconstructs
+      // a host path.
+      const whole = bg.managedScoped || all;
       const from = whole ? 0 : bg.readOffset;
       const text = bg.sanitizeOutput(whole ? bg.output : bg.output.slice(from));
       bg.readOffset = bg.output.length;
@@ -1026,11 +1015,10 @@ export function register(ctx) {
   const maxBackgroundProcesses = Math.min(Math.max(Number(ctx.config.maxBackgroundProcesses) || DEFAULT_MAX_BG, 1), 64);
 
   // Explicit cwd wins. Otherwise a successful foreground call's final cwd persists for this account/session;
-  // a new session starts from the bound workspace or project default. Every reuse passes authority again.
+  // a new session starts from the project default. Every reuse passes authority again.
   const guardCwd = (cwd) => {
     const key = cwdStateKey();
-    const requested = cwd ?? (key ? sessionCwds.get(key) : undefined)
-      ?? (ctx.currentAccess().workspaceRef ? '.' : ctx.defaultCwd());
+    const requested = cwd ?? (key ? sessionCwds.get(key) : undefined) ?? ctx.defaultCwd();
     return ctx.currentAccess().projectRef?.kind === 'managed'
       ? guestCwd(requested, ctx.defaultCwd()) : ctx.assertPathAllowed(requested);
   };
@@ -1047,7 +1035,6 @@ export function register(ctx) {
       const prepared = await sandbox.prepareExecution({
         command: { type: 'shell', command }, cwd, leaseKind: 'terminal',
         ...(access.projectRef ? { projectRef: access.projectRef } : {}),
-        ...(access.workspaceRef ? { workspace: access.workspaceRef } : {}),
       });
       if (access.projectRef?.kind === 'managed' && (prepared.mode !== 'managed'
         || prepared.projectRef?.kind !== 'managed' || prepared.projectRef.projectId !== access.projectRef.projectId)) {
@@ -1063,9 +1050,6 @@ export function register(ctx) {
       }
       return prepared;
     }
-    if (access.workspaceRef) {
-      throw new Error('the shell is unavailable because exact workspace confinement requires the Sandbox plugin');
-    }
     if (access.owner !== true) {
       throw new Error('the shell is unavailable because the Sandbox plugin is disabled or failed to load; non-operator commands cannot run directly on the host');
     }
@@ -1073,8 +1057,8 @@ export function register(ctx) {
     const env = Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === 'string'));
     env.HOME = home;
     return {
-      mode: 'direct', cwd, displayCwd: cwd, home, roots: ctx.allowedRoots(), launch: { type: 'shell', command, env }, workspace: null,
-      lease: { id: `terminal-direct-${Date.now()}`, accountUserId: currentAccountUserId(), workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
+      mode: 'direct', cwd, displayCwd: cwd, home, roots: ctx.allowedRoots(), launch: { type: 'shell', command, env },
+      lease: { id: `terminal-direct-${Date.now()}`, accountUserId: currentAccountUserId(), homeGeneration: null, heartbeat() {}, release() {} },
       sanitizeOutput: (text) => String(text),
     };
   };
@@ -1156,7 +1140,7 @@ export function register(ctx) {
           let handle = null;
           let foregroundEntry = null;
           if (fgSession) {
-            handle = handleFor(id, run, foregroundAccountUserId, fgSession, 'foreground', run.workspaceId, run.homeGeneration);
+            handle = handleFor(id, run, foregroundAccountUserId, fgSession, 'foreground', run.homeGeneration);
             ctx.processes.register(handle);
             // The principal is the contribution account actually running the turn — a delegated child has
             // no account identity of its own but still belongs to its delegator.
@@ -1243,11 +1227,10 @@ export function register(ctx) {
                 run.reportedCwd,
                 prepared,
                 (candidate) => ctx.assertPathAllowed(candidate),
-                ctx.currentAccess().workspaceRef !== undefined,
               );
-              rememberCwd(sessionCwdKey, ctx.currentAccess().workspaceRef ? ctx.displayPath(persistedCwd) : persistedCwd);
+              rememberCwd(sessionCwdKey, persistedCwd);
             } catch (error) {
-              cwdWarning = `[working directory was not persisted: ${ctx.sanitizePathOutput(error instanceof Error ? error.message : String(error))}]\n`;
+              cwdWarning = `[working directory was not persisted: ${error instanceof Error ? error.message : String(error)}]\n`;
             }
           }
           // Name the deadline that actually applied so the model knows whether to re-run with a longer
@@ -1312,7 +1295,7 @@ export function register(ctx) {
             catch (cleanup) { throw new AggregateError([error, cleanup], 'Background launch cleanup failed'); }
             throw error;
           }
-          ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job', bg.workspaceId, bg.homeGeneration));
+          ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job', bg.homeGeneration));
           emitProcCard();
           return ok(`Started background process ${id}: ${bg.command}\n(cwd: ${bg.cwd})\nYou will be notified when it completes — do not poll. If you need its result now, ProcessOutput("${id}") waits for it.`);
         } finally {

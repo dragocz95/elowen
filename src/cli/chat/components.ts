@@ -234,10 +234,7 @@ export class SubagentPanel implements Component {
       // the highlight background early (SGR has no stack), so strip SGR here to keep these strings truly
       // plain — the contract the coloured branches below rely on.
       let metaPlain = stripSgr(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
-      // The terminal-safe sandbox marker (`[S] `, 4 cols) is carved out of the label budget up front so a
-      // workspace-scoped row keeps the same overall width as an unscoped one instead of overflowing.
-      const sandboxBudget = e.workspaceId ? 4 : 0;
-      const textBudget = Math.max(10, width - visibleWidth(metaPlain) - 12 - sandboxBudget);
+      const textBudget = Math.max(10, width - visibleWidth(metaPlain) - 12);
       // The label is the delegation's NAME: a task is a briefing paragraph, and at a row's width it filled
       // the line with prose that said nothing about which of three running children this one is. The task
       // remains the fallback for a run recorded before the field existed.
@@ -250,8 +247,7 @@ export class SubagentPanel implements Component {
         : '';
       const textPlain = notePlain ? `${labelPlain} ${notePlain}` : labelPlain;
       const iconPlain = e.status === 'running' ? '●' : e.status === 'done' ? '✓' : '✗';
-      const sandboxGlyphPlain = e.workspaceId ? '[S] ' : '';
-      const rowPlain = `    ${iconPlain} ${sandboxGlyphPlain}${textPlain} click`;
+      const rowPlain = `    ${iconPlain} ${textPlain} click`;
       let gap = width - visibleWidth(rowPlain) - visibleWidth(metaPlain) - 2;
       if (gap < 1) {
         // The label already floors at 10 columns, so a narrow panel (e.g. its 36-column minimum)
@@ -267,9 +263,8 @@ export class SubagentPanel implements Component {
         continue;
       }
       const icon = e.status === 'running' ? color.warning('●') : e.status === 'done' ? color.success('✓') : color.error('✗');
-      const sandboxGlyph = e.workspaceId ? `${color.faint('[S]')} ` : '';
       const note = notePlain ? ` ${FAINTC(notePlain)}` : '';
-      lines.push(`    ${icon} ${sandboxGlyph}${DIM(labelPlain)}${note} ${FAINTC('click')}${' '.repeat(gap)}${FAINTC(metaPlain)}`);
+      lines.push(`    ${icon} ${DIM(labelPlain)}${note} ${FAINTC('click')}${' '.repeat(gap)}${FAINTC(metaPlain)}`);
     }
     // A clickable pager row makes the hidden overflow discoverable (the wheel alone was invisible). It
     // pages forward and wraps, so more than one full page is reachable with clicks alone.
@@ -365,11 +360,8 @@ export class WorkflowPanel implements Component {
         ...(c.error ? [color.error(`${c.error}✗`)] : []),
       ].join(' ');
       let meta = [tally, c.tokens ? FAINTC(`${formatK(c.tokens)} tok`) : ''].filter(Boolean).join('  ');
-      // Same 4-col carve-out as SubagentPanel's `[S] ` marker, kept out of the title budget so a
-      // workspace-scoped workflow row stays the same overall width as an unscoped one.
-      const sandboxGlyph = w.workspaceRef ? `${color.faint('[S]')} ` : '';
-      const title = DIM(truncateToWidth(inlineText(workflowTitle(w)), Math.max(10, width - visibleWidth(meta) - 12 - (w.workspaceRef ? 4 : 0)), '…'));
-      const row = `    ${color.accent('⛓')} ${sandboxGlyph}${title} ${FAINTC('click')}`;
+      const title = DIM(truncateToWidth(inlineText(workflowTitle(w)), Math.max(10, width - visibleWidth(meta) - 12), '…'));
+      const row = `    ${color.accent('⛓')} ${title} ${FAINTC('click')}`;
       let gap = width - visibleWidth(row) - visibleWidth(meta) - 2;
       if (gap < 1) {
         // The title already floors at 10 columns, so a narrow rail (e.g. its 36-column minimum) cannot

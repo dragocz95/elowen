@@ -190,10 +190,11 @@ export function flushReasoningMarker(store: BrainStore, live: LiveBrain): void {
  *  `commit` removes only the prefix captured HERE, so a notice queued concurrently — while this turn's
  *  prompt is still being assembled or in flight — survives and is delivered on a later turn instead of
  *  being silently dropped by a blind clear. */
-/** Volatile `/cd`-style reorientation for a Sandbox-selected workspace. PI's static system prompt still
- * advertises the cwd it spawned with, so a turn whose effective directory differs must explicitly supersede
- * it. This block is never persisted and needs no commit: it is recomputed from live workspace selection on
- * every turn, which is what lets two writers alternate inside one room without rewriting its transcript. */
+/** Volatile `/cd`-style reorientation for the directory a turn actually runs in. PI's static system prompt
+ * still advertises the cwd it spawned with, so a turn whose effective directory differs must explicitly
+ * supersede it. This block is never persisted and needs no commit: it is recomputed from the live
+ * effective directory on every turn, which is what lets two writers alternate inside one room without
+ * rewriting its transcript. */
 export function workDirReorientation(advertised: string | undefined, effective: string | undefined): string {
   if (!effective || effective === advertised) return '';
   return '<system-reminder>\n<current-workspace>\n'

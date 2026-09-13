@@ -138,7 +138,7 @@ describe('BrainStore', () => {
     expect(store.upsertSubagentRun('root', {
       id: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
       detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
-      thinkingLevel: 'high', thinkingLabel: 'High', background: true, workspaceId: 'ws_abc123',
+      thinkingLevel: 'high', thinkingLabel: 'High', background: true,
     })).toBe(true);
     // The DTO reads both timestamps from the existing tables; neither lives in the JSON state.
     db.prepare("UPDATE brain_sessions SET created_at = '2026-08-30 05:00:00' WHERE id = 'child'").run();
@@ -146,7 +146,7 @@ describe('BrainStore', () => {
     expect(store.getSubagentRuns('root')).toEqual([{
       toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
       detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
-      thinkingLevel: 'high', thinkingLabel: 'High', background: true, workspaceId: 'ws_abc123',
+      thinkingLevel: 'high', thinkingLabel: 'High', background: true,
       startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07', rowid: 1,
     }]);
     expect(store.upsertSubagentRun('root', {
@@ -157,9 +157,6 @@ describe('BrainStore', () => {
     })).toBe(false);
     expect(store.upsertSubagentRun('root', {
       id: 'bad', sessionId: 'child', status: 'running', task: 'x', tools: -1, seconds: 0,
-    })).toBe(false);
-    expect(store.upsertSubagentRun('root', {
-      id: 'bad-workspace', sessionId: 'child', status: 'running', task: 'x', tools: 0, seconds: 0, workspaceId: 123,
     })).toBe(false);
     // A call id cannot later be rebound to a different child.
     store.createSession({ id: 'child-2', userId: 1, model: 'm', parentSessionId: 'root' });

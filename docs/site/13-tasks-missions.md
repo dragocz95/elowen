@@ -72,7 +72,7 @@ The terminal plugin limits concurrent background processes per session and accou
 
 Use `/workflow` in CLI or web chat when the request is best handled by orchestration rather than one turn. This changes the agent's prompt bias; it is not an additional permission boundary. The agent may still handle a trivial request directly instead of wrapping it in a workflow.
 
-A workflow is started with `WorkflowStart`. Its complete definition must be in a JSON file created with `Write`; nodes cannot be passed inline. An explicitly workspace-scoped child cannot use `WorkflowStart`, because host-filesystem tools are withheld from that logical workspace view. A normal parent bound to a workspace can still start delegated work whose shell begins in that worktree. The file can be a node array or an object containing `nodes`, optional `title`, optional shared `context`, and optional `background`:
+A workflow is started with `WorkflowStart`. Its complete definition must be in a JSON file created with `Write`; nodes cannot be passed inline. A child inherits the conversation's working directory, so a workflow started from a `git worktree` your conversation was pointed at runs there. The file can be a node array or an object containing `nodes`, optional `title`, optional shared `context`, and optional `background`:
 
 ```json
 [

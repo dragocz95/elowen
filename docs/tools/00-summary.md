@@ -62,8 +62,8 @@ text stubu `FileReadTool/prompt.ts:7-8`).
 
 **7. „Did you mean …?“ u ENOENT** — z Claude Code (helpery v `FileReadTool`; přesné řádky podle reportu 02,
 **neověřeno**).
-- Proč lépe: slepá chyba se mění na sebeopravnou. Elowenské cesty jsou omezené na workspace, takže kandidátů
-  je málo a kontrola je levná.
+- Proč lépe: slepá chyba se mění na sebeopravnou. Elowenské cesty jsou omezené na projektové rooty, takže
+  kandidátů je málo a kontrola je levná.
 - Kam: chybové větve Read/Glob/Grep/Edit v `plugins/files`. Cena **S**.
 - Zachovat: **path guard** — návrh smí jmenovat výhradně cesty uvnitř přístupných rootů, jinak je to únik
   informací o souborovém systému.
@@ -90,9 +90,9 @@ Těsně pod čarou: blokace device paths v Read (**S**) a tokenový cap vedle by
 
 ## 2. Co nepřebírat
 
-- **EnterWorktree / ExitWorktree.** Elowen už má ekvivalent v sandbox pluginu (`SandboxCreateWorkspace`,
-  `SandboxUseWorkspace`, `SandboxCommit`, `SandboxReleaseWorkspace`, `SandboxRemoveWorkspace`,
-  `plugins/sandbox/index.mjs:179-288`). Druhá cesta k izolovanému workspace by byla paralelní mechanismus.
+- **EnterWorktree / ExitWorktree.** Izolovanou práci řeší nativní `git worktree` v lidském checkoutu:
+  konverzace se na ten adresář namíří přes `/cd`, nebo se v něm rovnou spustí. Vlastní tool by byl druhý
+  mechanismus k témuž účelu.
 - **REPLTool.** Schovává primitivní nástroje za JS VM a obětuje per-tool permissions i streaming průběhu.
   `Delegate*` řeší stejnou potřebu s lepší pozorovatelností.
 - **PowerShellTool.** Nasazení je Linux-only a byl by to druhý bezpečnostní stack k údržbě.

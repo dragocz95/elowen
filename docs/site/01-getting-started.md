@@ -52,7 +52,7 @@ elowen doctor
 
 - Node.js 22 or newer.
 - npm.
-- Git for Git Projects and Sandbox workspaces.
+- Git for Git Projects and worktrees.
 - `tmux` for delegated agents and integrations that launch external command-line tools. The CLI chat itself does not require `tmux`; `elowen setup` prints an installation hint when it is missing.
 - `ripgrep` is required for bounded file-content search. `elowen install` installs it on Debian/Ubuntu; install it separately for a manual setup.
 - On Linux, `bubblewrap` is used by the Sandbox for confined non-operator commands. `elowen install` can install it on Debian/Ubuntu.
@@ -73,15 +73,15 @@ Other useful first requests include:
 
 The tools available to a turn depend on the account, the selected Project, plugin access, and the account's tool grants. Elowen does not give every account unrestricted host access by default.
 
-## Projects, Sandbox, and GitHub
+## Projects, Environments, and GitHub
 
 A **Project** is the access boundary for a repository or directory. Administrators register Projects and assign them to accounts. Registering a Project does not create a worktree or change files on disk.
 
-The optional **Sandbox** gives each account a persistent `HOME` and real Git worktrees. A workspace can be bound to one conversation and Project, so file operations and shell commands use that worktree instead of changing the source checkout. Non-operator commands are confined by default on supported Linux hosts; if the live isolation probe fails, Elowen refuses confined execution rather than silently running it unconfined.
+Isolated or parallel Git work is a worktree you create yourself with native `git worktree`, in your own checkout; point the conversation at it with `/cd <path>` in owner chat, or start the conversation in that directory. A managed Project instead runs in its own persistent environment, and non-operator commands are confined by default on supported Linux hosts; if the live isolation probe fails, Elowen refuses confined execution rather than silently running it unconfined.
 
-The optional **GitHub** integration is account-scoped. It can map a Project to a base and push repository, publish a committed Sandbox branch, and handle pull-request review actions subject to confirmation and repository checks.
+The optional **GitHub** integration is account-scoped. It can map a Project to a base and push repository, publish a committed branch, and handle pull-request review actions subject to confirmation and repository checks.
 
-See [Projects, Sandbox & GitHub](projects-workflow) for the complete workflow.
+See [Projects, Environments & GitHub](projects-workflow) for the complete workflow.
 
 ## Accounts and permissions
 

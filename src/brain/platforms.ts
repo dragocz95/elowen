@@ -20,7 +20,6 @@ import type { DelegatedTurnRequest } from './delegatedTurn.js';
 import { resolveAgentTools, READ_ONLY_AGENT_TOOLS, type AgentDef } from './agents/agentRegistry.js';
 import { renderAgentPrompt } from './agents/agentPrompt.js';
 import { buildReadOnlyBoundary, resolveReadOnlyOrigin } from './agents/readOnlyBoundary.js';
-import { bindingRef, resolveDelegatedWorkspace } from './workspaceScope.js';
 import type { SwitchableProject } from './service/workDir.js';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 
@@ -207,11 +206,11 @@ export class PlatformOrchestrator {
                 throw new Error('fork is only available in an owner conversation — a sub-agent or a platform channel cannot fork');
               }
               // Each of these would change the child's prefix: a narrower toolset rewrites the tool block,
-              // a role prompt or agent type rewrites the system prompt, and a workspace changes the cwd the
-              // prompt advertises. Refusing beats silently producing a fork that misses the cache.
+              // Each of these would change the child's prefix: a narrower toolset rewrites the tool block,
+              // a role prompt or agent type rewrites the system prompt.
+              // Refusing beats silently producing a fork that misses the cache.
               if (src.access.readOnly === true) throw new Error('fork cannot be combined with read_only — a fork inherits the parent’s exact toolset');
               if (src.access.agentType) throw new Error('fork cannot be combined with subagent_type — a fork inherits the parent’s own prompt');
-              if (src.access.workspaceId) throw new Error('fork cannot be combined with workspaceId — a fork inherits the parent’s working directory');
               if (src.access.planMode === true) throw new Error('fork is not available from a planning turn — plan mode narrows what the child could inherit');
               // Handed-over context is a system-prompt append, and a fork appends nothing (see the packing
               // below), so accepting it here would drop it without a trace — which is precisely how a fork
@@ -275,16 +274,6 @@ export class PlatformOrchestrator {
             // above rather than dropped here. Appending any of them would be exactly the byte that moves
             // the cached prefix.
             const packed = packDelegatedPromptAppend(fork ? [] : promptAppend);
-            const workspaceBinding = resolveDelegatedWorkspace(
-              this.d.sandbox?.(),
-              {
-                admin: src.access.admin === true,
-                projectIds: src.access.projectIds ?? [],
-                accountUserId: src.access.accountUserId,
-                workspaceRef: src.access.workspaceRef,
-              },
-              src.access.workspaceId,
-            );
             if (packed.truncated || packed.dropped) {
               log?.info(`delegated prompt did not fit the scope budget: ${packed.truncated} section(s) shortened, `
                 + `${packed.dropped} dropped (channel ${keyOf(src)})`);
@@ -307,7 +296,6 @@ export class PlatformOrchestrator {
                 ? { settingsUserId: src.access.settingsUserId } : {}),
               ...(Number.isSafeInteger(src.access.contributionUserId) && src.access.contributionUserId! > 0
                 ? { contributionUserId: src.access.contributionUserId } : {}),
-              ...(workspaceBinding ? { workspaceRef: bindingRef(workspaceBinding) } : {}),
               ...(src.access.projectRef ? { projectRef: src.access.projectRef } : {}),
               // Spawn input, so it belongs in the immutable scope rather than only on this one dispatch:
               // continuation, eviction and boot recovery all rebuild the child from the scope and would
@@ -360,8 +348,7 @@ export class PlatformOrchestrator {
               ...(src.access.thinkingLevel !== undefined ? { thinkingLevel: src.access.thinkingLevel } : {}),
               // A delegated child inherits the delegating turn's working directory so its tools run in —
               // and it advertises — the SAME project as the parent, not the daemon's `/`.
-              ...(!workspaceBinding && src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),
-            }, text, onEvent);
+              ...(src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),            }, text, onEvent);
           }
           // A platform sender has only the permissions of their linked Elowen account. Room roles still
           // decide admission and trusted-room context, but never supply projects or tools.

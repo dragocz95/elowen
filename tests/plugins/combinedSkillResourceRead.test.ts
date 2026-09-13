@@ -4,10 +4,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import type { GuestFileResult, GuestFileStat, KnownControls, PluginContext } from '../../src/plugins/api.js';
 import { buildBrainCore } from '../../src/daemon/brainCore.js';
-import { runWithContributionUser } from '../../src/plugins/policyContext.js';
+import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import type { Policy } from '../../src/plugins/policy.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ProcessRegistry } from '../../src/brain/processRegistry.js';
 import { createHash } from 'node:crypto';
+
+/** The turn scope a plugin control is read under; the account is scoped through `runWithPolicy` exactly as
+ *  a channel turn scopes it, rather than through a test-only bridge. */
+const SCOPE_POLICY: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 
 /** The two halves of F8c, joined.
  *
@@ -133,14 +138,12 @@ function managedFiles(sessionId: string, guestFiles: Record<string, string> = {}
     registerCleanup() {}, emitCard() {}, logger: { info() {}, warn() {}, error() {} },
     currentAccess: () => access, currentAccountUserId: () => 1, currentSessionId: () => sessionId,
     defaultCwd: () => '/workspace', assertPathAllowed: (path: string) => path,
-    displayPath: (path: string) => path, pathStateKey: (path: string) => `host:${path}`,
-    sanitizePathOutput: (text: string) => text,
     control: vi.fn((name: string) => (name === 'skillResources' ? skillResources : { projectFiles: provider.projectFiles })),
     callApprovedByAsk: () => false, currentIdentity: () => ({ conversation: 'own' }), processes: new ProcessRegistry(),
   };
   files.register(ctx as unknown as PluginContext);
   const run = (name: string, p: Record<string, unknown>): Promise<Result> =>
-    runWithContributionUser(1, () => tools.find((tool) => tool.name === name)!.execute('test', p)) as Promise<Result>;
+    runWithPolicy(SCOPE_POLICY, () => tools.find((tool) => tool.name === name)!.execute('test', p), { contributionUserId: 1 }) as Promise<Result>;
   return { run, provider, control: ctx.control };
 }
 

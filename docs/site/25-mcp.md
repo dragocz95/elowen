@@ -53,10 +53,6 @@ Personal servers are not connected at daemon or sub-agent startup. Their last su
 
 Remote HTTP and SSE servers can be moved between the instance scope and the acting account's personal scope. A move cannot transfer a server to another person's account. stdio servers cannot change scope; create the server again in the target scope instead.
 
-## Sandbox workspace behavior
-
-MCP servers do not receive Elowen's Sandbox workspace path or its Git worktree context. Bridged MCP tools are not workspace-safe tools: when a turn or delegated child is confined to an active Sandbox workspace, MCP tools are omitted from that workspace-scoped toolset. Use the workspace-aware Elowen file, terminal, and Git tools for work inside the worktree.
-
 ## Bridged tool names
 
 Each discovered tool is exposed with the name:

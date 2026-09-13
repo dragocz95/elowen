@@ -10,7 +10,7 @@ export function preparePersonalProject(
   if (deps.store.getSession(opts.sessionId)) {
     return { policy: opts.policy, projectRef: deps.store.getProjectExecution(opts.sessionId) };
   }
-  if (opts.parentSessionId || opts.delegatedAccess || opts.fork || opts.pathView
+  if (opts.parentSessionId || opts.delegatedAccess || opts.fork
     || opts.scheduled || opts.projectRef || (opts.channel && !opts.direct) || opts.clientCwd) {
     // A delegated child inherits its parent's boundary; a job carries the project it was filed against,
     // so the conversation it opens executes there instead of falling back to the host. Both are explicit

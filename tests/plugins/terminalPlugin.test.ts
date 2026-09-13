@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertPathAllowed } from '../../src/plugins/pathGuard.js';
-import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithApprovedCall, runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
@@ -21,7 +20,7 @@ const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1
 const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, conversation: 'own' };
 const terminalModule = await import(resolve(repoRoot, 'plugins/terminal/index.mjs')) as {
-  mapReportedCwd(reported: string, prepared: { workspace?: { path: string } | null }, assertAllowed: (path: string) => string, workspacePathView?: boolean): string;
+  mapReportedCwd(reported: string, prepared: { mode?: string }, assertAllowed: (path: string) => string): string;
   getDefaultBashTimeoutMs(env?: Record<string, string | undefined>): number;
   getMaxBashTimeoutMs(env?: Record<string, string | undefined>): number;
 };
@@ -115,21 +114,6 @@ describe('terminal plugin', () => {
     const bash = reg.tools.find((tool) => tool.name === 'Bash') as unknown as { description: string };
     expect(bash.description).not.toContain('Write refuses a missing directory');
     expect(bash.description).toContain("Write and Edit create a file's missing parent directories themselves");
-  });
-
-  it('maps a workspace guest cwd through the real workspace PathView contract', () => {
-    const workspace = join(dir, 'workspace-host');
-    mkdirSync(join(workspace, 'nested'), { recursive: true });
-    const pathView = createWorkspacePathView({
-      accountUserId: 1, workspaceId: 'ws_terminal_cwd', projectId: 1, path: workspace,
-    });
-    const checked: string[] = [];
-    const mapped = terminalModule.mapReportedCwd('/workspace/nested', { workspace: { path: workspace } }, (path) => {
-      checked.push(path);
-      return pathView.resolve(path);
-    }, true);
-    expect(mapped).toBe(realpathSync(join(workspace, 'nested')));
-    expect(checked).toEqual(['nested']);
   });
 
   it('fails closed before spawn when sandbox bypass is requested, while false is a no-op', async () => {
@@ -740,9 +724,9 @@ describe('terminal plugin — atomic background capacity', () => {
   beforeAll(() => { dir = tmpDir('term-capacity'); });
 
   const prepared = (command: string, cwd: string) => ({
-    mode: 'direct', cwd, displayCwd: cwd, home: dir, roots: [dir], workspace: null,
+    mode: 'direct', cwd, displayCwd: cwd, home: dir, roots: [dir],
     launch: { type: 'shell', command, env: { ...process.env } },
-    lease: { id: 'lease', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
+    lease: { id: 'lease', accountUserId: 1, homeGeneration: null, heartbeat() {}, release() {} },
     sanitizeOutput: (text: unknown) => String(text),
   });
 
@@ -758,8 +742,6 @@ describe('terminal plugin — atomic background capacity', () => {
     let prepares = 0;
     reg.controls.set('sandbox', {
       ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS.map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
-      workspaceRoots: () => [], resolveWorkspace: () => { throw new Error('unused'); },
-      acquireDelegationLease: () => { throw new Error('unused'); }, workspacesFor: () => [], activeWorkspace: () => null,
       prepareExecution: async ({ command, cwd }: { command: { command: string }; cwd: string }) => {
         prepares += 1;
         markPreparing();
@@ -792,8 +774,6 @@ describe('terminal plugin — atomic background capacity', () => {
     let fail = true;
     reg.controls.set('sandbox', {
       ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS.map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
-      workspaceRoots: () => [], resolveWorkspace: () => { throw new Error('unused'); },
-      acquireDelegationLease: () => { throw new Error('unused'); }, workspacesFor: () => [], activeWorkspace: () => null,
       prepareExecution: async ({ command, cwd }: { command: { command: string }; cwd: string }) => {
         if (fail) { fail = false; throw new Error('prepare failed'); }
         return prepared(command.command, cwd);

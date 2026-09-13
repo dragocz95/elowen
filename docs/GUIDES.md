@@ -33,7 +33,7 @@ The `users` table is the account boundary. Administrators have instance-wide man
 
 Every project-capable route and tool must use the shared path policy in `src/plugins/pathGuard.ts` and the current account's Project assignments. A UI visibility decision is not a security check: the route or tool must re-check the acting identity at execution time.
 
-The account boundary also applies to personal memory, account plugin configuration, encrypted user secrets, GitHub credentials, Sandbox workspaces, and per-user tool authority. An administrator can configure a Project shared-memory pool for eligible Project members; that pool remains bounded by Project membership. Shared channel senders are not silently treated as the account owner, and unlinked senders do not receive personal memory.
+The account boundary also applies to personal memory, account plugin configuration, encrypted user secrets, GitHub credentials, the account HOME, and per-user tool authority. An administrator can configure a Project shared-memory pool for eligible Project members; that pool remains bounded by Project membership. Shared channel senders are not silently treated as the account owner, and unlinked senders do not receive personal memory.
 
 ## Tool authority and permission rules
 
@@ -65,9 +65,9 @@ A safe delegation implementation must preserve these invariants:
 - workflow nodes inherit the effective boundary of the node that creates them;
 - forked runner processes use the same `buildBrainCore()` path but do not start another daemon, HTTP server, scheduler, or platform gateway.
 
-A child can also be a fork of the calling conversation rather than a fresh one. A fork inherits the caller's full context, system prompt and toolset, and what it buys is the provider's prompt cache, so it pays off only when the child runs on the same provider and model as the parent. On a different model the child inherits the context but shares no cache, which makes a fresh sub-agent with a focused task the better default there. Because a fork must keep the parent's exact prompt and tools, `tools`, `read_only`, `subagent_type` and `workspaceId` are each refused alongside it; forking is available only from an owner conversation, since a channel turn and a worker have no prompt cache of their own for a child to inherit. An omitted `fork` consults the instance default only where a fork is possible at all, so enabling that default does not break nested or channel delegation. Workflow nodes take the same flag and fork the conversation the workflow was started from.
+A child can also be a fork of the calling conversation rather than a fresh one. A fork inherits the caller's full context, system prompt and toolset, and what it buys is the provider's prompt cache, so it pays off only when the child runs on the same provider and model as the parent. On a different model the child inherits the context but shares no cache, which makes a fresh sub-agent with a focused task the better default there. Because a fork must keep the parent's exact prompt and tools, `tools`, `read_only` and `subagent_type` are each refused alongside it; forking is available only from an owner conversation, since a channel turn and a worker have no prompt cache of their own for a child to inherit. An omitted `fork` consults the instance default only where a fork is possible at all, so enabling that default does not break nested or channel delegation. Workflow nodes take the same flag and fork the conversation the workflow was started from.
 
-Workflow nodes should be self-contained and report a bounded result. Independent nodes may run in parallel; dependency edges must be explicit and acyclic. An explicitly workspace-scoped child receives only workspace-safe tools and cannot use host-filesystem tools such as `WorkflowStart`; if it has no write tool, return the plan or document in the node result for the parent to save. Dynamic expansion goes through the host `WorkflowAddNodes` seam rather than allowing a child to fabricate workflow identity or bypass the host.
+Workflow nodes should be self-contained and report a bounded result. Independent nodes may run in parallel; dependency edges must be explicit and acyclic. A node inherits the delegating conversation's authority and working directory, and a node without a write tool should return the plan or document in its result for the parent to save. Dynamic expansion goes through the host `WorkflowAddNodes` seam rather than allowing a child to fabricate workflow identity or bypass the host.
 
 Delegated state is durable in `brain_subagent_runs` and related session rows. Recovery claims interrupted work in dependency order; unanswered tool calls are not replayed blindly as if their side effects were known.
 
@@ -79,20 +79,18 @@ When adding or changing goal behavior, test pause, resume, budget exhaustion, bl
 
 ## Sandbox and GitHub handoff
 
-The bundled `sandbox` plugin provides account-scoped execution state:
+The bundled `sandbox` plugin provides execution state:
 
 - persistent account HOME;
-- Git worktree workspaces per Project;
-- one active workspace per conversation and Project;
+- managed Project environments;
 - durable process leases;
-- explicit-path commits;
-- clean/loss previews before workspace removal.
+- confinement preparation for non-operator commands.
 
 Non-operator commands are confined by default when the runtime supports the configured isolation. Network access remains available for package installation, Git, and development servers. If the live namespace probe cannot establish confinement, execution is refused rather than silently run unconfined.
 
-The optional GitHub plugin keeps each account's GitHub identity and repository mapping separate. Its read operations cover repository status, pull requests, changed files, checks, and reviews. Publishing or merging is an external action: it requires a verified Project mapping, an active Sandbox workspace where required, a preview, and one-time explicit confirmation. The default merge method is `squash` unless the account's plugin configuration selects another supported method.
+The optional GitHub plugin keeps each account's GitHub identity and repository mapping separate. Its read operations cover repository status, pull requests, changed files, checks, and reviews. Publishing or merging is an external action: it requires a verified Project mapping, a committed branch, a preview, and one-time explicit confirmation. The default merge method is `squash` unless the account's plugin configuration selects another supported method.
 
-Core Projects does not create worktrees, publish branches, create pull requests, or merge them. Those operations belong to Sandbox and GitHub plugin contracts and must remain unavailable when their owning plugin is disabled.
+Core Projects does not create worktrees, publish branches, create pull requests, or merge them. Worktrees are native `git worktree` in the person's own checkout; publishing, pull requests and merges belong to the GitHub plugin contract and must remain unavailable when that plugin is disabled.
 
 ## Plugin lifecycle and reloads
 
@@ -131,10 +129,10 @@ Before handing off a change, verify the affected boundary rather than only the h
 - plugin disabled, unavailable, incompatible, and reload states;
 - interactive approval and unattended ask behavior;
 - restart, reconnect, cancellation, and duplicate-delivery behavior for streams or delegated work;
-- path traversal and workspace cleanup conditions;
+- path traversal and plugin cleanup conditions;
 - external-action preview/confirmation and state-change races;
 - browser keyboard, focus, responsive, loading, and error states where applicable.
 
 Use [`DEVELOPMENT.md`](DEVELOPMENT.md) for repository commands, [`SECURITY.md`](SECURITY.md) for the security model, [`TESTING.md`](TESTING.md) for the verification matrix, and [`WEB.md`](WEB.md)/[`CLI.md`](CLI.md) for client-specific contracts.
 
-For operator-facing procedures, see the topical manual pages for [sub-agents and workflows](site/13-tasks-missions.md), [providers and models](site/14-agents-providers.md), [autonomy and safety](site/15-autonomy-safety.md), [Projects, Sandbox, and GitHub](site/16-projects-workflow.md), [scheduling](site/17-scheduling.md), [plugins](site/23-plugins.md), [skills](site/24-skills.md), [MCP](site/25-mcp.md), and [troubleshooting](site/28-troubleshooting.md).
+For operator-facing procedures, see the topical manual pages for [sub-agents and workflows](site/13-tasks-missions.md), [providers and models](site/14-agents-providers.md), [autonomy and safety](site/15-autonomy-safety.md), [Projects, Environments, and GitHub](site/16-projects-workflow.md), [scheduling](site/17-scheduling.md), [plugins](site/23-plugins.md), [skills](site/24-skills.md), [MCP](site/25-mcp.md), and [troubleshooting](site/28-troubleshooting.md).

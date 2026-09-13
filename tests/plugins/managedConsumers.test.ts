@@ -29,8 +29,7 @@ function fixture(plugin: typeof files, provider: unknown) {
     config: {}, registerTool: (tool: Tool) => tools.push(tool), registerHook() {}, registerControl() {}, registerCleanup() {}, emitCard() {},
     logger: { info() {}, warn() {}, error() {} }, currentAccess: () => access, currentAccountUserId: () => 1,
     currentSessionId: () => `managed-${Math.random()}`, defaultCwd: () => '/workspace',
-    assertPathAllowed: hostGuard, displayPath: (path: string) => path, pathStateKey: (path: string) => path,
-    sanitizePathOutput: (text: string) => text, control: () => provider, callApprovedByAsk: () => false,
+    assertPathAllowed: hostGuard, control: () => provider, callApprovedByAsk: () => false,
     currentIdentity: () => ({ conversation: 'own' }), processes: new ProcessRegistry(),
   };
   // Each fixture is one stable conversation, so reads authorize that fixture's subsequent edits.
@@ -134,9 +133,9 @@ function memoryProvider(initial: Record<string, string | Buffer> = {}) {
     const base64 = Buffer.from(output).toString('base64');
     return {
       mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: input.cwd,
-      home: '/root', roots: ['/'], workspace: null,
+      home: '/root', roots: ['/'],
       launch: { type: 'argv', file: process.execPath, args: ['-e', `process.stdout.write(Buffer.from('${base64}','base64'))`], env: {} },
-      lease: { id: 'files-test', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release },
+      lease: { id: 'files-test', accountUserId: 1, homeGeneration: null, heartbeat() {}, release },
       sanitizeOutput: text => text, cancel: vi.fn(async () => {}),
     };
   });
@@ -157,7 +156,6 @@ describe('managed builtin consumer routing', () => {
     registry.controls.set('sandbox', {
       ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS
         .map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
-      workspaceRoots: () => [], resolveWorkspace() {}, acquireDelegationLease() {}, workspacesFor: () => [], activeWorkspace: () => null,
       projectFiles: provider.projectFiles, prepareExecution: provider.prepareExecution,
     } as never);
     registry.controlOwner.set('sandbox', 'sandbox');
@@ -167,14 +165,6 @@ describe('managed builtin consumer routing', () => {
         sessionId: 'managed-contract', projectRef: { kind: 'managed', projectId: 7 }, workDir: '/workspace' });
     expect(JSON.stringify(result)).toContain('guest account data');
     expect(provider.projectFiles).toHaveBeenCalledWith(expect.objectContaining({ project: { kind: 'managed', projectId: 7 }, accountUserId: 1 }));
-  });
-
-  it('does not widen a legacy exact workspace into the managed project filesystem', async () => {
-    const provider = memoryProvider({ '/etc/example': 'guest data' });
-    const { run, access } = fixture(files, provider);
-    Object.assign(access, { workspaceRef: { workspaceId: 'legacy', projectId: 7 } });
-    expect((await run('Read', { file_path: '/etc/example' })).details?.ok).toBe(false);
-    expect(provider.projectFiles).not.toHaveBeenCalled();
   });
 
   it('isolates read authorization by project and rejects atomic write conflicts', async () => {
@@ -520,9 +510,9 @@ describe('managed builtin consumer routing', () => {
     const launcher = fakeLauncher('#!/bin/sh\nsleep 10\n');
     provider.prepareExecution.mockImplementation(async (input: any) => ({
       mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace',
-      home: '/root', roots: ['/'], workspace: null,
+      home: '/root', roots: ['/'],
       launch: { type: 'argv', file: launcher.file, args: launcher.args, env: {} },
-      lease: { id: 'typed', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {}, ...lease },
+      lease: { id: 'typed', accountUserId: 1, homeGeneration: null, heartbeat() {}, release() {}, ...lease },
       sanitizeOutput: (text: string) => text, cancel: vi.fn(async () => {}),
     }) as never);
     return launcher;
@@ -574,9 +564,9 @@ describe('managed builtin consumer routing', () => {
     const release = vi.fn();
     const prepareExecution = vi.fn(async (): Promise<SandboxPreparedExecution> => ({
       mode: 'managed', projectRef: { kind: 'managed', projectId: 7 }, cwd: '/tmp', displayCwd: '/workspace',
-      home: '/root', roots: ['/'], workspace: null,
+      home: '/root', roots: ['/'],
       launch: { type: 'argv', file: process.execPath, args: ['-e', 'process.stdout.write("GUEST OUTPUT")'], env: {} },
-      lease: { id: 'test', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release },
+      lease: { id: 'test', accountUserId: 1, homeGeneration: null, heartbeat() {}, release },
       sanitizeOutput: text => text, cancel: vi.fn(async () => {}),
     }));
     const { run, hostGuard } = fixture(terminal, { prepareExecution });
@@ -605,9 +595,9 @@ describe('managed builtin consumer routing', () => {
     const release = vi.fn();
     const prepared: SandboxPreparedExecution = {
       mode: 'managed', projectRef: { kind: 'managed', projectId: 7 }, cwd: '/tmp', displayCwd: '/workspace',
-      home: '/root', roots: ['/'], workspace: null,
+      home: '/root', roots: ['/'],
       launch: { type: 'argv', file: process.execPath, args: ['-e', 'process.stdout.write("background guest")'], env: {} },
-      lease: { id: 'terminal-bg', accountUserId: 1, workspaceId: null, homeGeneration: null, runtimeGeneration: 3, heartbeat() {}, release }, sanitizeOutput: text => text, cancel: vi.fn(async () => {}),
+      lease: { id: 'terminal-bg', accountUserId: 1, homeGeneration: null, runtimeGeneration: 3, heartbeat() {}, release }, sanitizeOutput: text => text, cancel: vi.fn(async () => {}),
     };
     provider.prepareExecution.mockResolvedValue(prepared);
     const { run, ctx } = fixture(terminal, provider);

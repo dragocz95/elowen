@@ -313,14 +313,9 @@ export interface ProcessInfo { id: string; command: string; cwd: string; started
 /** The statusline plugin's display toggles (null = plugin disabled). */
 export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean; showSpeed?: boolean }
 /** Where the conversation works: the live (or last stamped) directory and its git branch. Both null for
- *  a chat that never reported a directory — an ordinary web conversation has no client cwd. `workspace`
- *  is the Sandbox worktree the next turn starts in, when the conversation is bound to one; `cwd` stays the
- *  client's directory and the worktree's host path is `workspace.path`. Optional for an older daemon. */
-export interface BrainProject { cwd: string | null; branch: string | null; workspace?: BrainProjectWorkspace | null }
-/** A bound Sandbox workspace. `confined` says the turn starts inside the worktree, where a shell command
- *  runs in the workspace container (mounted at `/workspace`, no Git, no host paths); a command whose
- *  working directory lies outside the worktree runs by the ordinary rules. */
-interface BrainProjectWorkspace { workspaceId: string; label: string; branch: string; path: string; confined: true }
+ *  a chat that never reported a directory — an ordinary web conversation has no client cwd. Optional for
+ *  an older daemon. */
+export interface BrainProject { cwd: string | null; branch: string | null }
 /** One MCP server of this daemon. `mcp: null` (non-admin, or the plugin is off) hides the section. */
 export interface McpServerStatus { name: string; status: string }
 /** `thinkingLevel*` are the reasoning-effort controls of the conversation's CURRENT model — the levels it
@@ -875,69 +870,6 @@ export interface SessionTask {
   metadata: Record<string, unknown>;
   blockedBy: string[];
   blocks: string[];
-}
-
-/** The sandbox plugin's Git worktrees, as served by `GET /plugins/sandbox/api/overview`.
- *
- *  Mirrored from the plugin's own `plugins/sandbox/web-src/runtime.ts`: the plugin owns every operation
- *  and the chat dock is one more reader of the same routes. Only the fields the dock renders are declared.
- *  `defaultRef` is the repository's REAL default branch as the daemon read it, and null when there is
- *  none — the create form leaves its base reference empty in that case rather than guessing a name. */
-interface SandboxProject { id: number; slug: string; path: string; defaultRef: string | null }
-/** One porcelain entry of a workspace's tree: the two-letter status code and the path it applies to. */
-interface SandboxWorkspaceFile { path: string; code: string; untracked: boolean }
-/** The worktree's Git state. Null when its path is gone or is no longer a repository. */
-interface SandboxWorkspaceStatus {
-  branch: string;
-  head: string;
-  upstream: string | null;
-  ahead: number;
-  behind: number;
-  dirty: number;
-  untracked: number;
-  clean: boolean;
-}
-/** One conversation bound to a workspace. The binding is what the daemon derives a turn's working
- *  directory from, which is why the dock MARKS the active one and never stores a cwd of its own. */
-interface SandboxBinding { sessionId: string; updatedAt: string }
-export interface SandboxWorkspace {
-  id: string;
-  userId: number;
-  projectId: number;
-  label: string;
-  path: string;
-  branch: string;
-  baseRef: string;
-  lifecycle: 'active' | 'orphaned';
-  orphanReason: string | null;
-  createdAt: string;
-  updatedAt: string;
-  lastUsedAt: string;
-  accessible: boolean;
-  status: SandboxWorkspaceStatus | null;
-  files: SandboxWorkspaceFile[];
-  uniqueCommits: number;
-  activeProcesses: number;
-  bindings: SandboxBinding[];
-}
-interface SandboxSession { id: string; title: string; updatedAt: string }
-export interface SandboxOverview {
-  projects: SandboxProject[];
-  sessions: SandboxSession[];
-  workspaces: SandboxWorkspace[];
-}
-/** What `POST /plugins/sandbox/api/workspaces/remove-preview` answers: exactly what removal would take
- *  with it. The response also carries `phrase` and `previewHash`, which belong to the plugin's
- *  DESTRUCTIVE path — the dock never reads or sends them, because it only ever asks for the safe
- *  removal, and the daemon refuses that on an unclean tree. */
-export interface SandboxRemovalPreview {
-  workspaceId: string;
-  head: string;
-  dirty: number;
-  untracked: number;
-  uniqueCommits: number;
-  activeProcesses: number;
-  files: string[];
 }
 
 /** One markdown skill of the skills plugin (GET /plugins/skills/list). Bundled skills ship with the

@@ -8,10 +8,14 @@ const REPO_LEASE_MS = 30_000;
 
 export function initSandboxDb(ctx) {
   const db = ctx.db();
-  db.migrate([{
-    version: 1,
-    up(m) {
-      m.exec(`
+  db.migrate(SANDBOX_MIGRATIONS);
+  return db;
+}
+
+const workspaceTablesMigration = {
+  version: 1,
+  up(m) {
+    m.exec(`
         CREATE TABLE IF NOT EXISTS p_sandbox_workspaces (
           id TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL,
@@ -69,8 +73,10 @@ export function initSandboxDb(ctx) {
         );
       `);
     },
-  }, {
-    version: 2,
+};
+
+const leaseKindsMigration = {
+  version: 2,
     // A supervised background runtime is a third kind of held execution, and the original CHECK named
     // only the two that existed. SQLite cannot widen a CHECK in place, so the table is rebuilt: the
     // rows are live leases of processes that may still be running, which is exactly why they are copied
@@ -101,9 +107,48 @@ export function initSandboxDb(ctx) {
           ON p_sandbox_execution_leases(workspace_id, expires_at);
       `);
     },
-  }, environmentMigration, guestFileMigration, environmentProgressMigration, environmentPublicationMigration]);
-  return db;
-}
+};
+
+const workspaceRetirementMigration = {
+  version: 7,
+    // The account-owned Git workspaces are gone: their rows described worktrees a removed subsystem cut,
+    // so nothing reads them and leaving them behind would only misdescribe what this plugin owns. The
+    // state that DOES survive is migrated rather than discarded — the lease table is copied across again
+    // (the same reason its version-2 and version-3 rebuilds copied theirs: these rows are live leases of
+    // processes that may still be running), losing only the column that named a workspace.
+    up(m) {
+      m.exec(`
+        DROP TABLE IF EXISTS p_sandbox_session_bindings;
+        DROP TABLE IF EXISTS p_sandbox_workspaces;
+        CREATE TABLE p_sandbox_execution_leases_v3 (
+          id TEXT PRIMARY KEY, user_id INTEGER, home_generation INTEGER,
+          outer_pid INTEGER NOT NULL, runner_identity TEXT NOT NULL, kind TEXT NOT NULL,
+          heartbeat_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          resource_kind TEXT, resource_id TEXT, runtime_generation INTEGER, execution_id TEXT,
+          cancel_requested INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO p_sandbox_execution_leases_v3
+          (id,user_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at,created_at,
+           resource_kind,resource_id,runtime_generation,execution_id,cancel_requested)
+          SELECT id,user_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at,created_at,
+                 resource_kind,resource_id,runtime_generation,execution_id,cancel_requested
+          FROM p_sandbox_execution_leases;
+        DROP TABLE p_sandbox_execution_leases;
+        ALTER TABLE p_sandbox_execution_leases_v3 RENAME TO p_sandbox_execution_leases;
+        CREATE INDEX p_sandbox_execution_leases_user ON p_sandbox_execution_leases(user_id,home_generation,expires_at);
+        CREATE INDEX p_sandbox_execution_leases_resource ON p_sandbox_execution_leases(resource_kind,resource_id,runtime_generation);
+      `);
+    },
+};
+
+/** The plugin's declared steps. The order they are listed in is NOT the order they run in: `migrate` sorts
+ *  by version, and the environment, guest-file, progress and publication steps from the neighbouring modules
+ *  slot in between the numbers here. Exported so a test can reproduce the state a live instance is at just
+ *  BEFORE one step — by applying every other one — and then prove what that step alone does to it. */
+export const SANDBOX_MIGRATIONS = [
+  workspaceTablesMigration, leaseKindsMigration, workspaceRetirementMigration,
+  environmentMigration, guestFileMigration, environmentProgressMigration, environmentPublicationMigration,
+];
 
 function processExists(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
@@ -168,14 +213,13 @@ export function createExecutionLease(db, input) {
   const now = Date.now();
   const runnerIdentity = processIdentity() ?? `unverifiable:${randomUUID()}`;
   db.prepare(`INSERT INTO p_sandbox_execution_leases
-    (id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, input.accountUserId, input.workspaceId, input.homeGeneration, process.pid, runnerIdentity, input.kind, now, now + EXECUTION_LEASE_MS);
+    (id, user_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, input.accountUserId, input.homeGeneration, process.pid, runnerIdentity, input.kind, now, now + EXECUTION_LEASE_MS);
   let released = false;
   return {
     id,
     accountUserId: input.accountUserId,
-    workspaceId: input.workspaceId,
     homeGeneration: input.homeGeneration,
     // Repair an absent row under the same identity, but never renew or replace another owner's row.
     // Expiry alone no longer removes a live lease; explicit release permanently disables renewal.
@@ -187,9 +231,9 @@ export function createExecutionLease(db, input) {
         .run(at, at + EXECUTION_LEASE_MS, id, process.pid, runnerIdentity).changes;
       if (changes > 0) return;
       db.prepare(`INSERT OR IGNORE INTO p_sandbox_execution_leases
-        (id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.accountUserId, input.workspaceId, input.homeGeneration, process.pid, runnerIdentity, input.kind, at, at + EXECUTION_LEASE_MS);
+        (id, user_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.accountUserId, input.homeGeneration, process.pid, runnerIdentity, input.kind, at, at + EXECUTION_LEASE_MS);
     },
     release() {
       if (released) return;
@@ -205,23 +249,12 @@ export function activeExecutionLeases(db, input = {}) {
   const clauses = ['1 = 1'];
   const params = [];
   if (input.accountUserId !== undefined) { clauses.push('user_id IS ?'); params.push(input.accountUserId); }
-  if (input.workspaceId !== undefined) { clauses.push('workspace_id IS ?'); params.push(input.workspaceId); }
   if (input.homeGeneration !== undefined) { clauses.push('home_generation IS ?'); params.push(input.homeGeneration); }
-  return db.prepare(`SELECT id, user_id, workspace_id, home_generation, outer_pid, kind, heartbeat_at, expires_at
+  return db.prepare(`SELECT id, user_id, home_generation, outer_pid, kind, heartbeat_at, expires_at
     FROM p_sandbox_execution_leases WHERE ${clauses.join(' AND ')} ORDER BY created_at`).all(...params);
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-export async function waitForExecutionLeases(db, input = {}, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const active = activeExecutionLeases(db, input);
-    if (active.length === 0) return [];
-    if (Date.now() >= deadline) return active;
-    await sleep(50);
-  }
-}
 
 export async function withRepoLease(db, commonDir, fn, opts = {}) {
   const ownerId = `srl_${randomUUID()}`;

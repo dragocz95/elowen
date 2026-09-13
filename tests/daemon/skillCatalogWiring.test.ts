@@ -3,8 +3,17 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildBrainCore } from '../../src/daemon/brainCore.js';
-import { runWithContributionUser } from '../../src/plugins/policyContext.js';
+import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { resolvePolicy } from '../../src/plugins/policy.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
+
+type Core = Awaited<ReturnType<typeof buildBrainCore>>;
+
+/** The scope a real turn establishes — the account's own policy plus its contribution owner, which is what
+ *  `runWithPolicy` supplies to every plugin control — so a probe reads the catalog as THAT account. */
+function asAccount<T>(core: Core, id: number, fn: () => T): T {
+  return runWithPolicy(resolvePolicy({ userProjects: core.userProjects, projects: core.projects }, id), fn, { contributionUserId: id });
+}
 
 interface SkillCatalogProbe {
   (): string[] | null;
@@ -83,11 +92,11 @@ describe('brainCore skill catalog control', () => {
       if (!probe) throw new Error('catalog reader never captured the control');
 
       expect(probe()).toEqual([]);
-      expect(runWithContributionUser(1, probe)).toEqual(['raynet-crm']);
-      expect(runWithContributionUser(member.id, probe)).toEqual([]);
+      expect(asAccount(core, 1, probe)).toEqual(['raynet-crm']);
+      expect(asAccount(core, member.id, probe)).toEqual([]);
 
       core.users.setGrantedPlugins(member.id, ['raynet']);
-      expect(runWithContributionUser(member.id, probe)).toEqual(['raynet-crm', 'private-raynet']);
+      expect(asAccount(core, member.id, probe)).toEqual(['raynet-crm', 'private-raynet']);
     } finally {
       core.db.close();
     }
@@ -165,7 +174,7 @@ describe('brainCore skill catalog control', () => {
       const readerProbe = globals.__readerResourceProbe;
       if (!filesProbe || !readerProbe) throw new Error('a probe plugin never captured its context');
 
-      const asOwner = <T>(fn: () => T): T => runWithContributionUser(1, fn) as T;
+      const asOwner = <T>(fn: () => T): T => asAccount(core, 1, fn);
 
       const files = asOwner(() => filesProbe(supportFile));
       expect(files?.hasResourceControl).toBe(true);
@@ -248,7 +257,7 @@ describe('brainCore skill catalog control', () => {
       await core.pluginProvider.get();
       const probe = (globalThis as { __flatResourceProbe?: (path: string) => string | null }).__flatResourceProbe;
       if (!probe) throw new Error('the files probe never captured its context');
-      const asOwner = (path: string): string | null => runWithContributionUser(1, () => probe(path)) as string | null;
+      const asOwner = (path: string): string | null => asAccount(core, 1, () => probe(path));
 
       // Both skills are visible to this account, so the flat one is the live authority under test.
       expect(asOwner(personalSkillFile)).toBeNull();

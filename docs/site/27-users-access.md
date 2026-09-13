@@ -162,7 +162,7 @@ Tool grants are not clamped to the currently loaded catalogue, so a grant can su
 offline personal MCP server; it simply matches nothing until the tool exists again. Unknown tool names likewise
 have no effect.
 
-A terminal grant is not automatically unrestricted host access. Fresh configuration bubblewrap-confines non-operator commands to accessible Projects and account HOME, failing closed when confinement is required but unavailable. An operator can deliberately set `sandbox.confineNonOperators` to `false`; then granted non-operators run terminal commands directly on the host. File tools and workspace-scoped execution keep their own path/workspace boundaries.
+A terminal grant is not automatically unrestricted host access. Fresh configuration bubblewrap-confines non-operator commands to accessible Projects and account HOME, failing closed when confinement is required but unavailable. An operator can deliberately set `sandbox.confineNonOperators` to `false`; then granted non-operators run terminal commands directly on the host. File tools keep their own path boundaries, and commands in a managed Project run inside the Project's own environment.
 
 ## Permission rules
 

@@ -19,7 +19,6 @@ import { ScrollArea } from '../../components/ui/shadcn/scroll-area';
 import { Separator } from '../../components/ui/shadcn/separator';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { HelpTip } from '../../components/ui/HelpTip';
 import { MorePill } from '../../components/ui/MorePill';
 import { useToast } from '../../components/ui/Toast';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
@@ -480,11 +479,6 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           {runningWorkflows.map((wf) => (
             <li key={wf.id} className="flex items-center gap-1.5">
               <Workflow size={11} className="shrink-0 text-primary" aria-hidden />
-              {wf.workspaceRef ? (
-                <span className="shrink-0" title={t.agents.sandboxed}>
-                  <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
-                </span>
-              ) : null}
               <LiveRow
                 label={workflowLabel(wf)}
                 meta={workflowProgress(wf)}
@@ -507,11 +501,6 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
           {liveAgents.map((agent) => (
             <li key={agent.sessionId} className="flex items-center gap-1.5">
               <Users size={11} className="shrink-0 text-subtle-foreground" aria-hidden />
-              {agent.workspaceId ? (
-                <span className="shrink-0" title={t.agents.sandboxed}>
-                  <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
-                </span>
-              ) : null}
               {/* Label = the delegation's short name (its task text is the fallback for a run recorded
                   before the field); secondary = what the child last said it is doing. The full task stays
                   on the row's title, which is where a paragraph belongs. */}
@@ -682,31 +671,17 @@ function TelemetryHead({ busy, collapsible, collapsed, onToggle }: {
   );
 }
 
-/** The pinned foot: which workspace this conversation is standing in, on the viewport's bottom edge.
- *  Workspace identity is ambient information — it belongs on a status bar, not in the middle of the
- *  metrics it never changes with. */
+/** The pinned foot: the directory and branch this conversation works in, on the viewport's bottom edge.
+ *  Where it works is ambient information — it belongs on a status bar, not in the middle of the metrics
+ *  it never changes with. */
 function TelemetryFoot() {
   const { t } = useTranslation();
   const { telemetry } = useBrainChat();
   const project = telemetry.project;
-  const workspace = project?.workspace ?? null;
   if (!project?.cwd && !project?.branch) return null;
   return (
     <div data-testid="telemetry-foot" className="flex flex-col gap-0.5 px-3 py-2">
       <section className="flex flex-col gap-0.5" data-testid="telemetry-project">
-        {workspace ? (
-          // A bound Sandbox workspace means the next turn starts in the worktree, where shell commands run
-          // in its container rather than on the host; the directory below stays the client's own. Said
-          // once, calmly, with the explanation and the way out behind the shared help affordance.
-          <p className="flex min-w-0 items-center gap-1 text-xs" data-testid="telemetry-workspace">
-            <Badge variant="outline" className="min-w-0 max-w-full gap-1 px-1 py-0 font-mono text-[10px]">
-              <span className="shrink-0">{t.telemetry.workspaceBadge}</span>
-              <span className="shrink-0 text-subtle-foreground" aria-hidden>·</span>
-              <span className="min-w-0 truncate" title={workspace.label}>{workspace.label}</span>
-            </Badge>
-            <HelpTip align="left">{interpolate(t.telemetry.workspaceHelp, { label: workspace.label, branch: workspace.branch, path: workspace.path })}</HelpTip>
-          </p>
-        ) : null}
         {project?.cwd ? (
           <p className="truncate font-mono text-xs text-foreground" title={project.cwd}>{project.cwd}</p>
         ) : null}

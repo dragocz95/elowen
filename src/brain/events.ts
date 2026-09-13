@@ -46,7 +46,7 @@ export type BrainEvent =
    *  "formatted a.ts with prettier" — see `details.notes`) the reducer attaches alongside the diff;
    *  clients that ignore it lose only the note, never the diff. */
   | { type: 'diff'; diff: string; id?: string; output?: ToolOutputView }
-  | { type: 'tool_output'; output: ToolOutputView; id?: string; plan?: string; metadataChanged?: true }
+  | { type: 'tool_output'; output: ToolOutputView; id?: string; plan?: string }
   /** A tool completed without a displayable output block. This closes status-only renderers (Discord)
    *  while transcript clients may safely ignore it; output/diff events already imply completion.
    *
@@ -54,7 +54,7 @@ export type BrainEvent =
    *  `BrainSegment.plan`, so the plan panel and the "implement it?" decision are driven by the CALL on
    *  the live path too, not only after a history refetch. It rides both settle events because a
    *  hook-annotated result would take the `tool_output` branch instead. */
-  | { type: 'tool_end'; id?: string; isError?: boolean; plan?: string; metadataChanged?: true }
+  | { type: 'tool_end'; id?: string; isError?: boolean; plan?: string }
   /** A structured display card a plugin pushed via `ctx.emitCard` — a live panel (CLI above the status
    *  bar, Discord in the streamed message, web in a cards region) keyed by `card.id` so a re-emit
    *  replaces it; an empty card (no items/body) removes it. Generalizes what the todo checklist used to
@@ -138,7 +138,7 @@ export type BrainEvent =
    *  ALREADY RUNNING turn and returned at once. Its own row is terminal and honest, but nothing finished —
    *  the delegation it steered into is still working — so a renderer shows a steer instead of a settled run
    *  and no finish marker is recorded. Present only on such a call; every other update is unchanged. */
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; name?: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; workspaceId?: string; steered?: true }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; name?: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; steered?: true }
   /** Live snapshot of a declarative sub-agent WORKFLOW (a DAG the delegating agent authored via
    *  `WorkflowStart`). One event per state change carries the WHOLE workflow — its overall status and
    *  the full node list with each node's dependencies, live status, and the child session/tokens/tool
@@ -155,7 +155,7 @@ export type BrainEvent =
    *  `background` (started with background:true, or detached with Ctrl+B) is NOT display trivia: a parent
    *  abort must SPARE such a workflow's node sessions exactly as it spares a detached delegate's child,
    *  and Ctrl+B must not count one that is already detached. */
-  | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; background?: boolean; workspaceRef?: WorkflowWorkspaceRef; nodes: WorkflowNode[] }
+  | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; background?: boolean; nodes: WorkflowNode[] }
   /** A visible, display-only marker that the owner changed session state out of turn — switched the
    *  model, work mode (build/plan/workflow), renamed the conversation, or changed the reasoning level.
    *  `subagent` and `workflow` are the delegated-work finish markers (see recordSubagentFinishMarker /
@@ -219,11 +219,6 @@ export type BrainEvent =
  *  `subagent` BrainEvent except its `type` tag (the host adds that when fanning out). */
 export type SubagentUpdate = Omit<Extract<BrainEvent, { type: 'subagent' }>, 'type'>;
 
-export interface WorkflowWorkspaceRef {
-  workspaceId: string;
-  projectId: number;
-}
-
 /** One node of a `workflow` snapshot. `sessionId` is set once the node's child agent starts (drill-in
  *  target); `tokens`/`seconds`/`detail` accumulate the child's live progress; `deps` are the node ids
  *  that must finish before it runs. Bounded display data only — `result`/`error` carry a short preview
@@ -246,8 +241,6 @@ export interface WorkflowNode {
   startedAt?: number;
   result?: string;
   error?: string;
-  /** Trusted durable workspace anchor for restart recovery; contains no host path. */
-  workspaceRef?: WorkflowWorkspaceRef;
 }
 
 /** The payload the workflow engine pushes through `ctx.workflowEmitter()` — the whole `workflow`
@@ -538,7 +531,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), ima
     };
   }
   const anyE = e as {
-    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; sharedImage?: unknown; sharedFile?: unknown; metadataChanged?: unknown } }; isError?: boolean;
+    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; sharedImage?: unknown; sharedFile?: unknown } }; isError?: boolean;
     toolCallId?: string; partialResult?: unknown;
     // toolcall_start additionally carries the in-progress assistant message: the tool NAME is already on
     // the partial block at `contentIndex` (only its arguments stream in later), so we thread it out.
@@ -696,10 +689,8 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), ima
       // event-level `isError` flag IS authoritative here, so pass it through for a correct live tone.
       const output = toolOutputView(anyE.toolName, anyE.args, anyE.result, anyE.isError === true);
       const plan = submittedPlan(anyE.toolName, anyE.result);
-      const metadata = anyE.isError !== true && anyE.result?.details?.metadataChanged === true
-        ? { metadataChanged: true as const } : {};
-      if (output) return { type: 'tool_output', output, id: anyE.toolCallId, ...(plan ? { plan } : {}), ...metadata };
-      return { type: 'tool_end', id: anyE.toolCallId, ...(anyE.isError === true ? { isError: true } : {}), ...(plan ? { plan } : {}), ...metadata };
+      if (output) return { type: 'tool_output', output, id: anyE.toolCallId, ...(plan ? { plan } : {}) };
+      return { type: 'tool_end', id: anyE.toolCallId, ...(anyE.isError === true ? { isError: true } : {}), ...(plan ? { plan } : {}) };
     }
   }
   return null;

@@ -8,19 +8,6 @@ export interface User {
   disabled_tools: string[]; allowed_tools: string[]; granted_plugins: string[]; name: string; email: string;
   avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean;
 }
-export interface Session { id: string; title: string; updatedAt: string }
-export interface WorkspaceFile { path: string; code: string; untracked: boolean }
-export interface WorkspaceStatus {
-  branch: string; head: string; upstream: string | null; ahead: number; behind: number;
-  dirty: number; untracked: number; clean: boolean;
-}
-export interface Workspace {
-  id: string; userId: number; projectId: number; label: string; path: string; branch: string; baseRef: string;
-  lifecycle: 'active' | 'orphaned'; orphanReason: string | null; createdAt: string; updatedAt: string; lastUsedAt: string;
-  accessible: boolean; status: WorkspaceStatus | null; files: WorkspaceFile[]; uniqueCommits: number; activeProcesses: number;
-  bindings: { sessionId: string; updatedAt: string }[];
-}
-export interface Overview { projects: Project[]; sessions: Session[]; workspaces: Workspace[] }
 export interface EnvironmentState {
   mode: 'confined' | 'direct' | 'unavailable';
   probe: { available: boolean; reason: string | null };
@@ -80,9 +67,8 @@ interface RuntimeComponents {
   Button: AnyComponent; Input: AnyComponent; Badge: AnyComponent; Field: AnyComponent;
   SelectMenu: AnyComponent; Modal: AnyComponent; ModalBody: AnyComponent; ModalFooter: AnyComponent;
   LoadingState: AnyComponent; ErrorState: AnyComponent; EmptyState: AnyComponent;
-  SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent; WorkspaceDetailRail: AnyComponent;
   DataTable: AnyComponent; DataTableRow: AnyComponent; DataTableCell: AnyComponent; DataTableChevronCell: AnyComponent;
-  PatchView: AnyComponent; ConfirmDialog: AnyComponent; OperationProgressDialog: AnyComponent; PluginSection: AnyComponent;
+  ConfirmDialog: AnyComponent; OperationProgressDialog: AnyComponent; PluginSection: AnyComponent;
   SettingsDocument: AnyComponent; SettingsGroup: AnyComponent; SettingsRow: AnyComponent;
   Slider: AnyComponent; AutoSaveStatus: AnyComponent; HelpTip: AnyComponent;
   // The host's own preview-plus-manage row, so the account drawer reads the same as its neighbours.

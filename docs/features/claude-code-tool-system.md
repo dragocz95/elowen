@@ -321,16 +321,16 @@ explicitly request (`BashTool.tsx:242`), and user/dynamic config can exclude spe
 sandboxing (`shouldUseSandbox.ts:19-30`, "not a security bug to be able to bypass excludedCommands... the
 sandbox permission system... is the actual security control").
 
-**Elowen.** Terminal execution has confined and direct paths. Workspace-scoped and explicitly force-confined
-execution goes through the `sandbox` plugin and requires a successful bubblewrap probe: it binds only resolved
-project/workspace roots, uses a restricted environment and HOME, and isolates namespaces. Fresh configuration
-also confines non-operator commands by default. Owners/admins run direct, and an operator may deliberately set
-`sandbox.confineNonOperators=false`, allowing granted non-operators to use the same direct foreground/background
-path. The shell permission rules in finding 7 still apply before either path.
+**Elowen.** Terminal execution has confined and direct paths. Confined execution goes through the `sandbox`
+plugin and requires a successful bubblewrap probe: it binds only resolved project roots, uses a restricted
+environment and HOME, and isolates namespaces. Fresh configuration also confines non-operator commands by
+default. Owners/admins run direct, and an operator may deliberately set `sandbox.confineNonOperators=false`,
+allowing granted non-operators to use the same direct foreground/background path. The shell permission rules
+in finding 7 still apply before either path.
 
 This is a meaningful improvement over the previous owner-only mitigation, but not a universal sandbox
 boundary: bubblewrap availability is probed at runtime, direct execution is intentionally unsandboxed, and a
-confined workspace still has whatever access its bound roots and network mode provide. The relevant ownership
+confined command still has whatever access its bound roots and network mode provide. The relevant ownership
 and confinement code lives in `plugins/sandbox/lib/execution.mjs` and `plugins/terminal/index.mjs`.
 
 **Gain.** This is the layer that would make finding 7's inevitable rule-matching gaps non-catastrophic: a
@@ -340,7 +340,7 @@ still can't do unbounded damage.
 **Cost/risk.** High. The confined path is implemented with Linux bubblewrap and still depends on host support,
 carefully resolved roots, HOME handling, and an explicit network mode. Direct execution remains outside that boundary for operators and for non-operators when the instance override disables confinement, so the two paths must not be conflated.
 
-**Verdict: PARTIAL in 0.28.24; retain as a high-priority hardening area.** The core workspace/delegated
+**Verdict: PARTIAL in 0.28.24; retain as a high-priority hardening area.** The core confinement/delegated
 boundary exists, but it is not universal and does not replace the shell permission rules. Future work should
 focus on fail-closed behavior when bubblewrap is unavailable and on auditing which operations are allowed to
 use direct execution, rather than copying Claude Code's single-process sandbox design.
@@ -467,7 +467,7 @@ be watching; Elowen's read-only sub-agent boundary is enforced structurally and 
 | # | Finding | Verdict | Priority | Why |
 |---|---|---|---|---|
 | 7 | Tree-sitter AST bash parsing (fail-closed) + per-flag command validation | **ADOPT** (parser) / **ADAPT** (flags) | High | Directly hardens shell safety; current hand-rolled segmenter carries the same parser-differential risk Claude Code moved away from — and produced a live false positive while this report was being written |
-| 8 | OS-level sandbox for shell execution | **PARTIAL in 0.28.24** | High | Workspace/forced confinement uses bubblewrap; operators and the explicit non-operator override still run direct |
+| 8 | OS-level sandbox for shell execution | **PARTIAL in 0.28.24** | High | Confinement uses bubblewrap; operators and the explicit non-operator override still run direct |
 | 5 | Hook input-rewriting on `tools.call.before` | **ADAPT** | Medium | Small, contained addition to an existing mechanism; explicitly do NOT externalize hooks into user-configurable shell commands (new supply-chain risk) |
 | 11 | Native `defer_loading` API flag instead of active-set removal | **ADAPT** (spike first) | Low–Medium | Would reduce prompt-cache churn Elowen already identified, but availability outside Claude Code's own API access is unconfirmed |
 | 1 | Per-input `isReadOnly`/`isConcurrencySafe`/`isDestructive` tool metadata | **ADAPT** | Low | Real gap only for input-dependent (e.g. MCP) tools; native tools already covered by name/pattern allow-lists |
