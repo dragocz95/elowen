@@ -57,6 +57,7 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
    *  capability this release does not have. */
   const nspawn = {
     ensureProjectImage: vi.fn(async () => { throw new Error('Nothing builds a root filesystem on the host'); }),
+    retireLegacySiteMachine: vi.fn(async (spec: any) => ({ retired: true, machine: `elowen-site-${spec.input.resource.id}-g${spec.input.generation}` })),
     containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
     create: vi.fn(async (spec: any) => {
@@ -836,11 +837,14 @@ describe('durable managed environment lifecycle', () => {
     expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
   });
 
-  it('keeps historical Site runtime rows dormant and out of readiness', async () => {
+  it('retires a running historical Site machine exactly once and retains its audit data', async () => {
     const { runtime, db, nspawn } = setup();
-    const spec = JSON.stringify({ input: { resource: { kind: 'site', id: 'retired-site' }, disk: { sourceImage: 'localhost/retired-site:1' } } });
-    db.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json)
-      VALUES('site','retired-site',7,4,'running','running',?,'{}')`).run(spec);
+    const stored = { input: { resource: { kind: 'site', id: 'retired-site' }, generation: 4,
+      disk: { id: 'b'.repeat(32), runtime: 'nspawn', sourceImage: 'site-base@1' } },
+    binding: { namespace: 'elowen' }, containerId: 'c'.repeat(64) };
+    const spec = JSON.stringify(stored);
+    db.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json,error)
+      VALUES('site','retired-site',7,4,'running','running',?,'{}','retained failure')`).run(spec);
     db.prepare(`INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json,status)
       VALUES('env_retired_site','site','retired-site',1,'retained-start',4,'{"kind":"start"}','pending')`).run();
     db.prepare(`INSERT INTO p_sandbox_runtime_snapshots(id,kind,resource_id,generation,spec_json,manifest_json,note)
@@ -848,16 +852,37 @@ describe('durable managed environment lifecycle', () => {
     db.prepare("INSERT INTO p_sandbox_runtime_logs(kind,resource_id,message) VALUES('site','retired-site','retained log')").run();
 
     await runtime.reconcile();
+    await runtime.reconcile();
     await runtime.revokeAccount(1);
 
+    expect(nspawn.retireLegacySiteMachine).toHaveBeenCalledTimes(1);
+    expect(nspawn.retireLegacySiteMachine).toHaveBeenCalledWith(stored);
     expect(nspawn.inspect).not.toHaveBeenCalled();
     expect(nspawn.create).not.toHaveBeenCalled();
-    expect(db.prepare("SELECT state,desired_state FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='retired-site'").get())
-      .toEqual({ state: 'running', desired_state: 'running' });
+    expect(nspawn.start).not.toHaveBeenCalled();
+    expect(nspawn.exec).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT state,desired_state,spec_json,error FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='retired-site'").get())
+      .toEqual({ state: 'stopped', desired_state: 'stopped', spec_json: spec, error: 'retained failure' });
     expect(db.prepare("SELECT status FROM p_sandbox_runtime_operations WHERE id='env_retired_site'").get()).toEqual({ status: 'pending' });
-    expect(db.prepare("SELECT note FROM p_sandbox_runtime_snapshots WHERE kind='site' AND resource_id='retired-site'").get()).toEqual({ note: 'audit' });
-    expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='site' AND resource_id='retired-site'").get()).toEqual({ message: 'retained log' });
+    expect(db.prepare("SELECT note,spec_json FROM p_sandbox_runtime_snapshots WHERE kind='site' AND resource_id='retired-site'").get())
+      .toEqual({ note: 'audit', spec_json: spec });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM p_sandbox_runtime_logs WHERE kind='site' AND resource_id='retired-site' AND message='retained log'").get())
+      .toEqual({ count: 1 });
+  });
 
+  it('leaves a deleted historical Site row untouched and out of readiness', async () => {
+    const { runtime, db, nspawn } = setup();
+    const spec = JSON.stringify({ input: { resource: { kind: 'site', id: 'deleted-site' }, generation: 8,
+      disk: { id: 'd'.repeat(32), runtime: 'nspawn', sourceImage: 'localhost/deleted-site:1' } },
+    binding: { namespace: 'elowen' }, containerId: 'e'.repeat(64) });
+    db.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json,error)
+      VALUES('site','deleted-site',7,8,'deleted','deleted',?,'{}','retained error')`).run(spec);
+
+    await runtime.reconcile();
+
+    expect(nspawn.retireLegacySiteMachine).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT state,desired_state,spec_json,error FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='deleted-site'").get())
+      .toEqual({ state: 'deleted', desired_state: 'deleted', spec_json: spec, error: 'retained error' });
     const readiness = await runtime.machineRuntimeReadiness({ accountUserId: 3 });
     expect(readiness.requirements.find((entry: any) => entry.id === 'runtime:legacy-references')).toMatchObject({ ok: true });
   });

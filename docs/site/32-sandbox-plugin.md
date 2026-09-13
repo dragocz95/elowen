@@ -121,7 +121,7 @@ Project boundaries remain the real gate. Every workspace operation, environment 
 - Snapshots are crash-consistent rather than database-consistent, and databases may need a separate export before a restore.
 - Resource limits are fixed at provisioning for an existing environment until an administrator changes them on the Project.
 - A new environment needs the machine runtime on the host: the privileged helper, the machine unit template and the polkit rule, installed by `elowen install` and `elowen update`. It also needs the published Project root filesystem, which the host downloads and verifies on first use. When either is unavailable, the first start refuses and names what is missing.
-- Historical Sandbox rows for the removed per-Site machine runtime remain stored as audit data. Sandbox does not expose, reconcile, recover or delete them automatically.
+- Historical Sandbox rows for the removed per-Site machine runtime remain stored as audit data. If an owned legacy Site machine is still active during upgrade, daemon reconciliation verifies its persisted machine binding, stops it, removes only its machine envelope and marks the retained row stopped. Sandbox exposes no Site lifecycle controls and leaves snapshots, storage, backups and UID allocations intact.
 - If legacy and current account HOME directories both exist after an upgrade, startup migration is refused and the readiness panel names the collision for an operator to resolve.
 
 For the account HOME, reset behavior and Git author, see [Projects, Sandbox & GitHub](projects-workflow). For plugin settings in general, see [Plugins](plugins).

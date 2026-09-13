@@ -61,9 +61,17 @@ describe('removed Site machine runtime', () => {
     expect(JSON.stringify(manifest.web)).not.toMatch(/SiteEnvironment|site environment runtime/i);
   });
 
-  it('retains historical Site uid allocation parsing only', () => {
+  it('retains only daemon retirement and historical Site uid allocation parsing', () => {
+    const runtime = read('plugins/sandbox/lib/environmentRuntime.mjs');
+    const client = read('plugins/sandbox/lib/nspawn.mjs');
     const helper = read('scripts/elowen-site-gateway.mjs');
+    expect(runtime).toContain('retireLegacySiteMachines');
+    expect(client).toContain('retireLegacySiteMachine');
+    expect(helper).toContain("'retire-legacy-site'");
     expect(helper).toContain("site:[a-z0-9]");
     expect(helper).not.toMatch(/elowen-\(project\|site\)|kind !== 'project' && kind !== 'site'/);
+    for (const path of ['src/plugins/environmentTypes.ts', 'src/plugins/api.ts', 'src/plugins/registry.ts']) {
+      expect(read(path), path).not.toMatch(/retireLegacySite|retire-legacy-site/);
+    }
   });
 });

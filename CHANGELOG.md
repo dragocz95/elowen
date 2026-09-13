@@ -12,9 +12,10 @@ This file is the full technical log. The notes users read in the app are the cur
 ### Removed
 
 - The separate per-Site systemd-nspawn runtime and its lifecycle, snapshot, image, storage and privileged data
-  paths have been removed. Historical Sandbox `kind='site'` rows remain as dormant audit data and historical
-  Site UID allocations remain readable; static, command and PHP sites, published gateway routes, runtime socket
-  brokerage and managed Project publication forwarders remain supported.
+  paths have been removed. On upgrade, Sandbox verifies and retires any machine still bound to a live historical
+  `kind='site'` row, then keeps the row, snapshots, storage, backups and UID allocation as audit data. Static,
+  command and PHP sites, published gateway routes, runtime socket brokerage and managed Project publication
+  forwarders remain supported.
 
 ## [0.28.44] - 2026-09-13
 

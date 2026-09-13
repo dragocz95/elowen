@@ -1,4 +1,5 @@
 #!/usr/bin/node
+import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync, chownSync, closeSync, constants, existsSync, fchmodSync, fchownSync, fstatSync, fsyncSync,
@@ -577,6 +578,10 @@ function runtimeSocketRequest(request) {
  *  filename component for the per-machine `.nspawn` file and unit drop-in — it is never used to derive
  *  a DISK path, which always comes from the trusted storage roots plus a validated resource and disk id. */
 const NSPAWN_MACHINE = /^elowen-project-[1-9][0-9]{0,15}-g[0-9]{1,9}$/;
+/** Accepted only by the daemon-owned retirement operation for machines created before Site lifecycle was removed. */
+const LEGACY_SITE_MACHINE = /^elowen-site-[a-z0-9][a-z0-9-]{0,63}-g[0-9]{1,9}$/;
+const MACHINECTL = '/usr/bin/machinectl';
+const CONTROL_DROPIN_PREFIX = '/etc/systemd/system.control/';
 /** The guest unit `systemd-run` creates inside the machine; bounded so it cannot be read as an option. */
 const NSPAWN_EXECUTION_UNIT = /^[a-zA-Z0-9][a-zA-Z0-9:_.-]{0,190}\.service$/;
 const SAFE_RESOURCE_TOKEN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -1836,6 +1841,115 @@ function nspawnTreeRemove(request, storage) {
   return { ok: true, path };
 }
 
+/** Parse the bounded `systemctl show` and `machinectl show` format used by the retirement proof. */
+function shownProperties(text) {
+  const values = {};
+  for (const line of String(text ?? '').split('\n')) {
+    const split = line.indexOf('=');
+    if (split > 0) values[line.slice(0, split)] = line.slice(split + 1);
+  }
+  return values;
+}
+
+function legacySiteRetirementRequest(request) {
+  const allowed = new Set(['domain', 'op', 'resource', 'generation', 'diskId', 'expectedId']);
+  if (Object.keys(request).some((key) => !allowed.has(key))) fail('the legacy Site retirement request has unknown fields');
+  const resource = typeof request.resource === 'string' && SAFE_RESOURCE_TOKEN.test(request.resource)
+    ? request.resource : fail('the legacy Site resource is invalid');
+  const generation = request.generation;
+  if (!Number.isSafeInteger(generation) || generation < 1 || generation > 1_000_000_000) fail('the legacy Site generation is invalid');
+  const diskId = typeof request.diskId === 'string' && SAFE_RESOURCE_TOKEN.test(request.diskId)
+    ? request.diskId : fail('the legacy Site disk is invalid');
+  const expectedId = typeof request.expectedId === 'string' && SAFE_SHA256.test(request.expectedId)
+    ? request.expectedId : fail('the legacy Site envelope binding is invalid');
+  const machine = `elowen-site-${resource}-g${generation}`;
+  if (!LEGACY_SITE_MACHINE.test(machine)) fail('the legacy Site machine name is invalid');
+  return { resource, generation, diskId, expectedId, machine };
+}
+
+function rootOwnedRetirementFile(path, maxBytes, options) {
+  const stat = lstatSync(path);
+  const owner = (options.readOwner ?? defaultReadOwner)(path);
+  if (!stat.isFile() || stat.nlink !== 1 || owner !== 0 || (stat.mode & 0o022) !== 0) fail('a legacy Site ownership record is untrusted');
+  if (stat.size > maxBytes) fail('a legacy Site ownership record exceeds its bound');
+  return (options.readText ?? defaultReadText)(path);
+}
+
+/** Stop and remove only the root-owned machine envelope left by the retired Site runtime. The database,
+ * disk tree, snapshots, backups and uid allocation stay untouched. The request carries no path and the
+ * helper derives the historical layout from the authenticated service user's home. */
+function retireLegacySiteMachine(request, _storage, options) {
+  const { resource, generation, diskId, expectedId, machine } = legacySiteRetirementRequest(request);
+  const runner = options.runner ?? defaultCommandRunner;
+  const user = serviceUser(runner, options.env ?? process.env);
+  const sitesDataDir = trustedStorageRoot(join(user.home, '.config', 'elowen', 'plugins-data', 'sites'));
+  const storage = Object.freeze({ sandboxDataDir: sitesDataDir });
+  const directory = join(sitesDataDir, resource, 'environment', 'disks', diskId);
+  const rootfsPath = join(directory, 'rootfs');
+  const identityPath = join(directory, '.elowen', 'identity.json');
+  const settingsRoot = trustedStorageRoot(options.nspawnSettingsRoot ?? NSPAWN_SETTINGS_ROOT);
+  const systemdRoot = trustedStorageRoot(options.systemdRoot ?? '/etc/systemd/system');
+  const settingsPath = join(settingsRoot, `${machine}.nspawn`);
+  const dropInDirectory = join(systemdRoot, `elowen-machine@${machine}.service.d`);
+  const dropInPath = join(dropInDirectory, '10-elowen.conf');
+  const unit = `elowen-machine@${machine}.service`;
+  const exists = options.exists ?? existsSync;
+  const settingsExists = exists(settingsPath);
+  const dropInExists = exists(dropInPath);
+  if (!settingsExists && !dropInExists) {
+    const shown = runner('/usr/bin/systemctl', ['show', unit, '-p', 'LoadState', '-p', 'ActiveState']);
+    if (!shown.ok) fail('the retired legacy Site machine state could not be established');
+    const state = shownProperties(shown.stdout);
+    if (['active', 'activating', 'deactivating', 'reloading'].includes(state.ActiveState)) {
+      fail('an active legacy Site machine has no ownership envelope');
+    }
+    if (state.LoadState === 'loaded') runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
+    return { ok: true, machine, unit, retired: false, alreadyRetired: true };
+  }
+  if (!settingsExists || !dropInExists) fail('the legacy Site machine ownership envelope is incomplete');
+
+  const rootfs = realpathSync(trustedPath(storage, rootfsPath));
+  const settings = rootOwnedRetirementFile(settingsPath, 256 * 1024, options);
+  const dropIn = rootOwnedRetirementFile(dropInPath, 64 * 1024, options);
+  let identity;
+  try { identity = JSON.parse(rootOwnedRetirementFile(trustedPath(storage, identityPath, { file: true }), 8192, options)); }
+  catch (cause) { throw new Error(`the legacy Site disk identity is invalid: ${cause.message}`); }
+  const expected = { namespace: 'elowen', kind: 'site', resource, generation, diskId, machine, runtime: 'nspawn' };
+  for (const [key, value] of Object.entries(expected)) {
+    if (identity?.[key] !== value) fail(`the legacy Site machine ownership does not match ${key}`);
+  }
+  if (typeof identity.specHash !== 'string' || !SAFE_SHA256.test(identity.specHash)
+    || !Number.isSafeInteger(identity.uidBase) || identity.uidBase < UID_RANGE_BASE || identity.uidSize !== UID_RANGE_SIZE) {
+    fail('the legacy Site disk identity is incomplete');
+  }
+  if ((options.readOwner ?? defaultReadOwner)(rootfs) !== identity.uidBase) fail('the legacy Site root filesystem ownership does not match its identity');
+  const actualId = createHash('sha256').update(JSON.stringify(['elowen', machine, diskId, rootfs, settings, dropIn])).digest('hex');
+  if (actualId !== expectedId) fail('the legacy Site machine envelope binding does not match its persisted record');
+
+  const shown = runner('/usr/bin/systemctl', ['show', unit, '-p', 'LoadState', '-p', 'FragmentPath', '-p', 'DropInPaths', '-p', 'Environment', '-p', 'ActiveState']);
+  if (!shown.ok) fail('the legacy Site machine unit could not be inspected');
+  const properties = shownProperties(shown.stdout);
+  const configuredDropIns = String(properties.DropInPaths ?? '').split(/\s+/).filter((path) => path && !path.startsWith(CONTROL_DROPIN_PREFIX));
+  if (properties.LoadState !== 'loaded' || properties.FragmentPath !== (options.machineUnitPath ?? MACHINE_UNIT_PATH)
+    || configuredDropIns.length !== 1 || configuredDropIns[0] !== dropInPath
+    || !String(properties.Environment ?? '').split(/\s+/).includes(`ELOWEN_MACHINE_DIRECTORY=${rootfs}`)) {
+    fail('the legacy Site machine unit does not match its ownership envelope');
+  }
+  if (['active', 'activating', 'deactivating', 'reloading'].includes(properties.ActiveState)) {
+    const registered = runner(MACHINECTL, ['show', machine, '-p', 'Unit', '-p', 'RootDirectory']);
+    const machineProperties = shownProperties(registered.stdout);
+    if (!registered.ok || machineProperties.Unit !== unit || machineProperties.RootDirectory !== rootfs) {
+      fail('the running legacy Site machine does not match its ownership envelope');
+    }
+  }
+
+  runRequired(runner, '/usr/bin/systemctl', ['stop', unit], 'legacy Site machine stop failed');
+  (options.removeFile ?? ((path) => rmSync(path, { force: true })))(settingsPath);
+  (options.removeTree ?? ((path) => rmSync(path, { recursive: true, force: true })))(dropInDirectory);
+  runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
+  return { ok: true, machine, unit, retired: true, alreadyRetired: false };
+}
+
 /** The envelope, and only the envelope. The disk outlives it: a repair removes an envelope whose
  *  specification changed and writes a new one over the same root filesystem, and storage removal is a
  *  separate operation with its own ownership proof on the runtime side. */
@@ -2140,6 +2254,7 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'set-limits': (request, _storage, options) => nspawnLifecycle(request, 'set-limits', options),
   freeze: (request, _storage, options) => nspawnMachineState(request, 'freeze', options),
   thaw: (request, _storage, options) => nspawnMachineState(request, 'thaw', options),
+  'retire-legacy-site': retireLegacySiteMachine,
   'tree-copy': nspawnTreeCopy,
   'tree-fingerprint': nspawnTreeFingerprint,
   'tree-preflight': nspawnTreePreflight,
@@ -2150,10 +2265,9 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'release-uid-range': releaseUidRange,
 });
 
-/** The operations that need no trusted storage root at all, so they never read the deployment record.
- *  `destroy` is one of them: it removes the machine's own configuration files, whose paths come from the
- *  validated machine name, and never touches the disk. */
-const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'destroy']);
+/** Operations that do not use the active Project storage root. Legacy Site retirement derives its one
+ * historical storage path from the authenticated service user's home and accepts no caller path. */
+const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'destroy', 'retire-legacy-site']);
 
 function nspawnLifecycle(request, action, options) {
   const runner = options.runner ?? defaultCommandRunner;

@@ -57,7 +57,7 @@ const PROBE_TIMEOUT_MS = 5_000;
  *  it — `write-envelope` re-checks the same rows and refuses. That split is the whole point: serving a
  *  project never changes the host, and an operator asking to prepare the host does. */
 const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw',
-  'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy', 'release-uid-range']);
+  'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy', 'release-uid-range', 'retire-legacy-site']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
  *  shape to read and one place to change. `domain` is what separates the nspawn dispatch table from the
@@ -158,6 +158,23 @@ function readIdentity(diskDirectory) {
   if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o022) !== 0) throw new Error('Untrusted environment disk identity');
   if (stat.size > 8192) throw new Error('Environment disk identity exceeds its bound');
   return JSON.parse(readFileSync(path, 'utf8'));
+}
+
+/** Convert a persisted legacy Site record into the only privileged request still allowed for it. The
+ * request carries no path, command or lifecycle action: the helper derives the historical storage layout
+ * and machine name, proves them against the root-owned identity and envelope, then only retires them. */
+function legacySiteRetirementFields(record, namespace) {
+  const input = record?.input;
+  const resource = input?.resource;
+  const disk = input?.disk;
+  if (namespace !== 'elowen' || record?.binding?.namespace !== namespace) throw new Error('Legacy Site machine namespace is invalid');
+  if (resource?.kind !== 'site' || typeof resource.id !== 'string') throw new Error('Legacy Site machine identity is invalid');
+  const siteId = resourceToken(resource.id);
+  if (!Number.isSafeInteger(input.generation) || input.generation < 1 || input.generation > 1_000_000_000) throw new Error('Legacy Site machine generation is invalid');
+  if (disk?.runtime !== 'nspawn' || typeof disk.id !== 'string') throw new Error('Legacy Site machine disk binding is invalid');
+  const diskId = resourceToken(disk.id);
+  if (typeof record.containerId !== 'string' || !/^[a-f0-9]{64}$/.test(record.containerId)) throw new Error('Legacy Site machine envelope binding is invalid');
+  return { resource: siteId, generation: input.generation, diskId, expectedId: record.containerId };
 }
 
 /** Concrete internal driver for systemd-nspawn machines, behind the runtime-neutral client interface.
@@ -333,6 +350,15 @@ export class NspawnClient {
       }),
       ...(typeof reply.detail === 'string' && reply.detail ? { detail: reply.detail.slice(0, 500) } : {}),
     };
+  }
+
+  async retireLegacySiteMachine(record) {
+    const fields = legacySiteRetirementFields(record, this.#namespace);
+    const reply = await this.#helper('retire-legacy-site', fields);
+    if (typeof reply.machine !== 'string' || (reply.retired === true) === (reply.alreadyRetired === true)) {
+      throw new Error('Invalid legacy Site machine retirement report');
+    }
+    return { machine: reply.machine, retired: reply.retired === true, alreadyRetired: reply.alreadyRetired === true };
   }
 
   async containerExists(spec) {

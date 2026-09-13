@@ -172,6 +172,19 @@ describe('nspawn envelope ownership', () => {
     chmodSync(identityPath, 0o666);
     await expect(client.inspect(spec)).rejects.toThrow(/Untrusted environment disk identity/);
   });
+
+  it('sends only a persisted binding to the legacy Site retirement operation', async () => {
+    const { client, requests, helperReply } = fixture();
+    const record = { input: { resource: { kind: 'site', id: 'retired-site' }, generation: 4,
+      disk: { id: 'b'.repeat(32), runtime: 'nspawn' } }, binding: { namespace: 'elowen' }, containerId: 'c'.repeat(64) };
+    helperReply['retire-legacy-site'] = (request: any) => ({ ok: true, machine: `elowen-site-${request.resource}-g${request.generation}`,
+      retired: true, alreadyRetired: false });
+
+    await expect(client.retireLegacySiteMachine(record)).resolves.toEqual({ machine: 'elowen-site-retired-site-g4', retired: true, alreadyRetired: false });
+    expect(requests).toEqual([{ domain: 'nspawn', op: 'retire-legacy-site', resource: 'retired-site', generation: 4,
+      diskId: 'b'.repeat(32), expectedId: 'c'.repeat(64) }]);
+    expect(MACHINE_PATTERN.test('elowen-site-retired-site-g4')).toBe(false);
+  });
 });
 
 describe('nspawn state vocabulary', () => {

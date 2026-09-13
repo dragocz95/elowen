@@ -1526,6 +1526,81 @@ describe('privileged helper: the disk identity record', () => {
   });
 });
 
+describe('privileged helper: legacy Site retirement', () => {
+  function legacySiteFixture() {
+    const home = join(scratch, `legacy-site-${randomUUID()}`);
+    const resource = 'retired-site';
+    const generation = 4;
+    const diskId = 'b'.repeat(32);
+    const machine = `elowen-site-${resource}-g${generation}`;
+    const unit = `elowen-machine@${machine}.service`;
+    const sitesDataDir = join(home, '.config', 'elowen', 'plugins-data', 'sites');
+    const directory = join(sitesDataDir, resource, 'environment', 'disks', diskId);
+    const rootfs = join(directory, 'rootfs');
+    const identityPath = join(directory, '.elowen', 'identity.json');
+    const snapshot = join(sitesDataDir, resource, 'environment', 'snapshots', 'kept', 'manifest.json');
+    const backup = join(sitesDataDir, resource, 'backups', 'kept.tar');
+    const nspawnSettingsRoot = join(home, 'nspawn');
+    const systemdRoot = join(home, 'systemd');
+    const machineUnitPath = join(home, 'elowen-machine@.service');
+    const settingsPath = join(nspawnSettingsRoot, `${machine}.nspawn`);
+    const dropInPath = join(systemdRoot, `elowen-machine@${machine}.service.d`, '10-elowen.conf');
+    for (const path of [rootfs, dirname(identityPath), dirname(snapshot), dirname(backup), dirname(settingsPath), dirname(dropInPath)]) {
+      mkdirSync(path, { recursive: true });
+    }
+    const settings = '[Exec]\nPrivateUsers=1073741824:65536\n';
+    const dropIn = `[Service]\nEnvironment=ELOWEN_MACHINE_DIRECTORY=${rootfs}\n`;
+    writeFileSync(settingsPath, settings, { mode: 0o644 });
+    writeFileSync(dropInPath, dropIn, { mode: 0o644 });
+    writeFileSync(snapshot, '{}');
+    writeFileSync(backup, 'backup');
+    writeFileSync(identityPath, JSON.stringify({ namespace: 'elowen', kind: 'site', resource, generation, diskId, machine,
+      runtime: 'nspawn', specHash: 'd'.repeat(64), uidBase: UID_RANGE_BASE, uidSize: 65_536 }), { mode: 0o640 });
+    const expectedId = createHash('sha256').update(JSON.stringify(['elowen', machine, diskId, rootfs, settings, dropIn])).digest('hex');
+    const calls: Call[] = [];
+    const runner = (file: string, args: string[]) => {
+      calls.push({ file, args });
+      if (file === '/usr/bin/getent') return { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` };
+      if (file === '/usr/bin/machinectl') return { ok: true, stdout: `Unit=${unit}\nRootDirectory=${rootfs}\n` };
+      if (file === '/usr/bin/systemctl' && args[0] === 'show') {
+        if (!existsSync(settingsPath)) return { ok: true, stdout: 'LoadState=not-found\nActiveState=inactive\n' };
+        return { ok: true, stdout: `LoadState=loaded\nFragmentPath=${machineUnitPath}\nDropInPaths=${dropInPath}\nEnvironment=ELOWEN_MACHINE_DIRECTORY=${rootfs}\nActiveState=active\n` };
+      }
+      return { ok: true, stdout: '' };
+    };
+    const request = { domain: 'nspawn', op: 'retire-legacy-site', resource, generation, diskId, expectedId };
+    const options = { env: environment, runner, nspawnSettingsRoot, systemdRoot, machineUnitPath,
+      readOwner: (path: string) => path === rootfs ? UID_RANGE_BASE : 0 };
+    return { request, options, calls, settingsPath, dropInPath, rootfs, identityPath, snapshot, backup, machine, unit };
+  }
+
+  it('stops and retires one owned legacy Site envelope exactly once without touching retained data', async () => {
+    const fixture = legacySiteFixture();
+
+    await expect(applyRequest(fixture.request, undefined, fixture.options)).resolves.toMatchObject({
+      machine: fixture.machine, unit: fixture.unit, retired: true, alreadyRetired: false,
+    });
+    expect(existsSync(fixture.settingsPath)).toBe(false);
+    expect(existsSync(fixture.dropInPath)).toBe(false);
+    for (const path of [fixture.rootfs, fixture.identityPath, fixture.snapshot, fixture.backup]) expect(existsSync(path), path).toBe(true);
+
+    await expect(applyRequest(fixture.request, undefined, fixture.options)).resolves.toMatchObject({
+      machine: fixture.machine, retired: false, alreadyRetired: true,
+    });
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args[0] === 'stop')).toHaveLength(1);
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args[0] === 'daemon-reload')).toHaveLength(1);
+  });
+
+  it('refuses to stop a legacy Site machine whose root-owned envelope does not match the persisted binding', async () => {
+    const fixture = legacySiteFixture();
+    await expect(applyRequest({ ...fixture.request, expectedId: 'f'.repeat(64) }, undefined, fixture.options))
+      .rejects.toThrow(/envelope binding does not match/);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl' && call.args[0] === 'stop')).toBe(false);
+    expect(existsSync(fixture.settingsPath)).toBe(true);
+    expect(existsSync(fixture.dropInPath)).toBe(true);
+  });
+});
+
 describe('privileged helper: disk tree primitives', () => {
   it('keeps one definition of what a tree IS, shared by the copy that checks itself', () => {
     const helper = readFileSync(HELPER_SOURCE, 'utf8');

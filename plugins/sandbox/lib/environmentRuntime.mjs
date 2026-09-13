@@ -304,6 +304,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   const previews = new Set();
   const publicationMutations = new Map();
   const publicationRecoveryStates = new Map();
+  const legacySiteRetirementErrors = new Map();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
     assertLive();
@@ -1183,6 +1184,38 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return null;
   }
 
+  /** Retire only machine-backed Site rows left by an older release. The persisted machine binding is the
+   * authority passed to the privileged ownership check; no Site lifecycle or execution path is restored.
+   * The external action and the row update cannot be one transaction, so the helper is idempotent and a
+   * crash between them repeats only the proof before converging the retained audit row to stopped. */
+  async function retireLegacySiteMachines() {
+    const candidates = store.all().filter((row) => row.kind === 'site' && row.state !== 'deleted'
+      && (row.state === 'running' || row.desired_state === 'running')
+      && row.spec?.input?.disk?.runtime === 'nspawn' && typeof row.spec?.containerId === 'string');
+    for (const row of candidates) {
+      const key = `${row.resource_id}:${row.generation}:${row.spec.containerId}`;
+      try {
+        await nspawn.retireLegacySiteMachine(row.spec);
+        store.transaction(() => {
+          const current = store.get('site', row.resource_id);
+          if (!current || current.state === 'deleted' || current.generation !== row.generation
+            || current.spec?.containerId !== row.spec.containerId) return;
+          current.state = 'stopped'; current.desired_state = 'stopped';
+          store.save(current);
+          store.log('site', current.resource_id, 'Legacy Site machine retired; retained audit data was left in place');
+        });
+        legacySiteRetirementErrors.delete(key);
+      } catch (cause) {
+        const message = `Legacy Site machine retirement failed: ${sanitize(cause.message ?? cause).slice(0, 1900)}`;
+        const current = store.get('site', row.resource_id);
+        if (!current || current.state === 'deleted' || current.generation !== row.generation
+          || current.spec?.containerId !== row.spec.containerId || legacySiteRetirementErrors.get(key) === message) continue;
+        legacySiteRetirementErrors.set(key, message);
+        store.log('site', current.resource_id, message);
+      }
+    }
+  }
+
   async function reconcile() {
     if (!daemon || disposed || reconciling) return;
     reconciling = true;
@@ -1211,6 +1244,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           op.status = 'failed'; op.error = sanitize(cause.message ?? cause).slice(0, 2000); store.saveOperation(op); publishOperation(op);
         }
       }
+      await retireLegacySiteMachines();
       // One map of every envelope that is up, found the way the runtime finds them: by machine-name prefix
       // over this namespace.
       const inventory = await nspawn.containerInventory(namespace);
