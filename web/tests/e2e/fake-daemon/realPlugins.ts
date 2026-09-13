@@ -118,6 +118,10 @@ function readPlugin(dir: string, name: string): RealPlugin | null {
       // lists them for an administrator, and no visibility probe narrows account/project.
       nav: arr(web.nav), account: arr(web.account), user: arr(web.user), project: arr(web.project),
       settings: arr(web.settings),
+      // The flag the project register filters its contributing bundles on. Dropping it here made every
+      // real plugin load as a nav/settings bundle and contribute nothing to a project card, so a managed
+      // card in the harness had no state and no resources however well the plugin worked.
+      ...(web.projectRows === true ? { projectRows: true } : {}),
       strings: (web.strings ?? {}) as Record<string, string>,
     },
     translations,

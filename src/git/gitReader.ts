@@ -31,6 +31,11 @@ const EMPTY: ProjectGit = { ...EMPTY_SNAPSHOT, branches: [], commits: [] };
  * result. */
 const NOT_A_REPOSITORY = /fatal: not a git repository/i;
 const UNBORN_HEAD = /does not have any commits yet/i;
+/** The three ways `rev-parse HEAD` says "this worktree has no branch to name", all of them git's own
+ *  verdict on the repository: no repository at all, and the two spellings of an unborn HEAD. Anything
+ *  else — a guest command that never started, a provider-shaped exit — is a broken environment and must
+ *  keep throwing rather than degrade into "no branch". */
+const NO_NAMEABLE_HEAD = /fatal: (not a git repository|ambiguous argument 'HEAD'|needed a single revision)/i;
 
 export type GitExecutor = (file: string, args: string[], options?: { maxBuffer?: number }) => Promise<{ stdout: string; stderr: string }>;
 
@@ -58,6 +63,24 @@ export class RealGitReader implements GitReader {
     if (!snapshot.isRepo) return EMPTY;
     const [branches, commits] = await Promise.all([this.branches(path), this.commits(path)]);
     return { ...snapshot, branches, commits };
+  }
+
+  /** The checked-out branch alone, or the short commit when HEAD is detached — the same two answers
+   *  `brain/service/gitBranch.ts` gives a host worktree, and `null` when there is no branch to name.
+   *
+   *  ONE git invocation, deliberately. This exists for the project register, which asks it once per
+   *  managed project, and every invocation there is a command inside a container: `read()` would be four
+   *  of them per card for three answers nothing in the register shows. `rev-parse` is asked for both
+   *  forms at once and the caller picks, so a detached HEAD costs no second call. */
+  async branch(path: string): Promise<string | null> {
+    try {
+      const { stdout } = await this.execute('git', ['-C', path, 'rev-parse', '--abbrev-ref', 'HEAD', '--short', 'HEAD']);
+      const [ref, short] = stdout.split('\n').map((line) => line.trim());
+      if (!ref) return null;
+      // `--abbrev-ref` answers the literal string `HEAD` for a detached checkout; the short commit on the
+      // next line is what that state is actually called.
+      return ref === 'HEAD' ? (short || null) : ref;
+    } catch (error) { this.recover(error, NO_NAMEABLE_HEAD); return null; }
   }
 
   private async status(path: string): Promise<GitStatus | null> {

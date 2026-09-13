@@ -108,13 +108,13 @@ const stripOf = async (slug: string): Promise<HTMLElement> => {
 };
 
 describe('project card: repository and container state', () => {
-  // The branch comes from the register's own bounded projection. It is never derived, never guessed, and
-  // a project the daemon reported none for simply has no branch slot — an empty one would read as a
-  // repository with no checkout.
-  it('shows the branch the register projection served, and nothing when it served none', async () => {
+  // The branch comes from the register's own bounded projection, whichever way the project runs: a host
+  // worktree is read from `.git/HEAD`, a managed one through its environment provider. The card does not
+  // know the difference and must not: it draws the branch it was served.
+  it('shows the branch the register projection served, for a host and a managed project alike', async () => {
     server.use(summaryOf(
       { projectId: 1, members: { total: 0, samples: [] }, branch: 'feat/cards', indicators: [] },
-      { projectId: 3, members: { total: 0, samples: [] }, indicators: [] },
+      { projectId: 3, members: { total: 0, samples: [] }, branch: 'release/2.0', indicators: [] },
     ));
     mount();
 
@@ -124,7 +124,25 @@ describe('project card: repository and container state', () => {
     expect(hostCard.querySelector('[data-project-branch]')!.getAttribute('title')).toBe('Checked-out branch: feat/cards');
 
     const managedCard = screen.getByRole('button', { name: 'Open project analysis' }).closest('[data-project-card]') as HTMLElement;
-    expect(managedCard.querySelector('[data-project-branch]')).toBeNull();
+    expect(within(managedCard).getByText('release/2.0')).toBeInTheDocument();
+    expect(managedCard.querySelector('[data-project-branch]')!.getAttribute('title')).toBe('Checked-out branch: release/2.0');
+  });
+
+  // Absent is absent. A project whose branch the daemon could not determine — a cold container, a
+  // directory that is not a repository, a provider that is not there — carries no branch slot at all;
+  // an empty one would read as a repository with nothing checked out.
+  it('draws no branch slot for a project the projection reported none for', async () => {
+    server.use(summaryOf(
+      { projectId: 1, members: { total: 0, samples: [] }, indicators: [] },
+      { projectId: 3, members: { total: 0, samples: [] }, indicators: [] },
+    ));
+    mount();
+    const hostCard = (await screen.findByRole('button', { name: 'Open project elowen' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(hostCard.querySelector('[data-project-card-open]')).not.toBeNull());
+
+    expect(hostCard.querySelector('[data-project-branch]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open project analysis' }).closest('[data-project-card]')!.querySelector('[data-project-branch]')).toBeNull();
+    expect(document.querySelectorAll('[data-project-branch]')).toHaveLength(0);
   });
 
   // A host project has no container, so there is nothing to measure. Three zeroed meters would be a

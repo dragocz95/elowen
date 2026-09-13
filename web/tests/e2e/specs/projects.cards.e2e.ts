@@ -38,20 +38,27 @@ const SUMMARY = PROJECTS.map((project, index) => ({
       id: i + 2, username: `clen${i}`, name: `Člen ${i}`, avatar: '',
     })),
   },
-  ...(project.executionKind === 'managed' ? {} : { branch: index === 1 ? 'feat/velmi-dlouhy-nazev-vetve' : 'main' }),
+  // A managed project has a branch too. The daemon reads a host worktree's `.git/HEAD` directly and a
+  // managed guest's through its environment provider; by the time the card sees it, it is one field.
+  branch: index === 1 ? 'feat/velmi-dlouhy-nazev-vetve' : index === 2 ? 'release/2.0' : 'main',
   indicators: [],
 }));
 
-async function prepare(page: Page, seed: SeedFixture, skin: 'studio-light' | 'studio-oled'): Promise<void> {
+/** Arms the REAL sandbox bundle as well as the register's own data. Without it a managed card has no
+ *  CPU, memory or disk on it, and the card's whole argument over the row — that the exact figures have
+ *  room at three across — would be measured against a card that has no figures. */
+async function prepare(page: Page, seed: SeedFixture, skin: 'studio-light' | 'studio-oled'): Promise<boolean> {
   await seed.response('config', { ...Seed.defaults.config, allowedSkins: ['default', 'studio-light', 'studio-oled'] });
   await seed.response('projects', PROJECTS);
   await seed.response('projects/summary', SUMMARY);
   await seed.response('users', [{ ...adminUser, id: 1 }]);
+  const armed = await seed.realPlugins(['sandbox'], 'cs');
   await page.context().addCookies([
     { name: 'elowen-locale', value: 'cs', domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
     { name: 'elowen-skin', value: skin, domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
   ]);
   await page.addInitScript(() => localStorage.setItem('elowen-locale', 'cs'));
+  return armed.includes('sandbox');
 }
 
 async function openRegister(page: Page): Promise<void> {
@@ -205,6 +212,60 @@ test.describe('the Project register card grid', () => {
     await app.keyboard.press('Home');
     await expect.poll(async () => strip.evaluate((node) => node.scrollLeft)).toBe(0);
     await app.screenshot({ path: `${SHOTS}/cards-team-320-light.png` });
+  });
+
+  // THE hierarchy the redesign was asked for, on ONE card, in a browser: a mark and a name, a state and
+  // a runtime, a team, three labelled resources with exact figures and meters, a branch, and a way in.
+  // A managed project is the only kind that has all of it at once, so it is the one measured.
+  test('shows a managed card its identity, state, team, CPU, RAM, disk, branch and way in', async ({ app, seed }) => {
+    test.skip(test.info().project.name !== 'authed', 'needs the authenticated shell');
+    const armed = await prepare(app, seed, 'studio-light');
+    test.skip(!armed, 'needs the sandbox bundle');
+    await app.setViewportSize({ width: 1440, height: 900 });
+    await openRegister(app);
+
+    const card = app.locator('[data-project-card]', { hasText: 'atelier' }).first();
+    // Identity: the mark, the name as a heading, and the execution target.
+    await expect(card.getByRole('heading', { name: 'atelier' })).toBeVisible();
+    await expect(card.locator('[data-project-runtime="managed"]')).toBeVisible();
+    // State: the plugin's own word, on screen rather than behind a hover.
+    await expect(card.locator('[data-project-row-status]')).toBeVisible();
+    // Team: an overlapping strip plus the control that names the whole team.
+    await expect(card.locator('[data-project-team="strip"] [data-slot="avatar"]').first()).toBeVisible();
+    await expect(card.locator('[data-project-team="detail"]')).toBeVisible();
+
+    // Measurement: three labelled resources, each with an exact figure. CPU and memory carry a meter
+    // against a real ceiling; disk has no configured quota, so it is the figure alone.
+    const metrics = card.locator('[data-project-row-metrics]');
+    await expect(metrics).toHaveCount(1);
+    await expect(metrics).toHaveAttribute('data-metrics-layout', 'rows');
+    await expect(card.locator('[data-metric]')).toHaveCount(3);
+    await expect(card.locator('[data-metric="cpu"][data-metric-state="ready"]')).toContainText('42');
+    await expect(card.locator('[data-metric="memory"][data-metric-state="ready"]')).toContainText('/');
+    await expect(card.locator('[data-metric="disk"][data-metric-state="absolute"]')).toContainText('512');
+    await expect(card.locator('[data-metric="cpu"] [role="progressbar"]')).toHaveCount(1);
+    await expect(card.locator('[data-metric="disk"] [role="progressbar"]'), 'no meter without a ceiling').toHaveCount(0);
+    await expect(card.locator('[data-metric="disk"] [data-metric-track="none"]')).toHaveCount(1);
+    // No host-state block: this project HAS a measured runtime, so nothing stands in for it.
+    await expect(card.locator('[data-project-host-state]')).toHaveCount(0);
+
+    // Repository and the way in.
+    await expect(card.locator('[data-project-branch]')).toContainText('release/2.0');
+    await expect(card.locator('[data-project-card-open]')).toBeVisible();
+
+    await card.screenshot({ path: `${SHOTS}/card-managed-1440-light.png` });
+    await app.screenshot({ path: `${SHOTS}/cards-managed-1440-light.png`, fullPage: true });
+
+    // The same card on a phone, where one column has to hold the identical hierarchy.
+    await app.setViewportSize({ width: 390, height: 844 });
+    await openRegister(app);
+    const phone = app.locator('[data-project-card]', { hasText: 'atelier' }).first();
+    await expect(phone.locator('[data-metric]')).toHaveCount(3);
+    await expect(phone.locator('[data-metric="cpu"]')).toContainText('42');
+    await expect(phone.locator('[data-project-branch]')).toContainText('release/2.0');
+    await expect(phone.locator('[data-project-card-open]')).toBeVisible();
+    await phone.screenshot({ path: `${SHOTS}/card-managed-390-light.png` });
+    await app.screenshot({ path: `${SHOTS}/cards-managed-390-light.png`, fullPage: true });
   });
 
   test('carries the same geometry on the dark skin', async ({ app, seed }) => {
