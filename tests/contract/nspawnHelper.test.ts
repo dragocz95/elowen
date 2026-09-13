@@ -15,6 +15,7 @@ import {
   commandOptionsFor,
   defaultCommandRunner,
   MACHINE_UNIT_PATH,
+  MACHINE_STORAGE_RECEIPT_PATH,
   MACHINE_FIREWALL_UNIT,
   MACHINE_FIREWALL_UNIT_NAME,
   MACHINE_FIREWALL_UNIT_PATH,
@@ -49,6 +50,7 @@ import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PA
 // @ts-expect-error the bundled Sandbox storage owner is plain ESM without declarations
 import { SNAPSHOT_TREE_FORMAT } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import {
+  MACHINE_STORAGE_RECEIPT_PATH as SHARED_MACHINE_STORAGE_RECEIPT_PATH,
   siteGatewayStorageRoots,
   encodeHelperRequest, HELPER_FRAME_HEADER_BYTES, SITE_GATEWAY_HELPER_ARGV, SITE_GATEWAY_HELPER_PATH,
 } from '../../src/shared/siteGateway.js';
@@ -60,8 +62,8 @@ const MACHINE = 'elowen-project-54-g3';
 const UNIT = `elowen-exec-g3-${'a'.repeat(32)}.service`;
 const environment = { SUDO_USER: 'azureuser', SUDO_UID: '1000', SUDO_GID: '1000' };
 const scratch = mkdtempSync(join(tmpdir(), 'elowen-nspawn-contract-'));
-// Exactly as the helper derives them in production: from the passwd home of the account sudo reports,
-// and from nothing a caller can reach.
+// The compatibility-default roots the helper derives from the passwd HOME when no root-owned custom
+// storage receipt is installed. No runtime request can name or widen them.
 const storage = storageRootsFor(scratch);
 /** How the runtime names an environment on the wire: the resource kind and its id in the string form
  *  the disk layout uses as a path segment. */
@@ -429,13 +431,9 @@ describe('privileged helper: host path derivation', () => {
     expect(paths.identity.startsWith(`${paths.directory}/`)).toBe(true);
   });
 
-  it('derives the storage roots from the invoking account, so a planted record cannot move them', async () => {
-    // They used to be read out of the deployment record, and that was a hole. The record is installed
-    // through a sudoers-pinned command whose source path is fixed and writable by the service user, and a
-    // sudoers grant binds to a USER, not to the code path it was written for. Anything running as the
-    // service account could therefore stage a record naming `/etc/systemd` as a storage root, run the
-    // pinned install, and every path check here would agree from the next request onwards — which is a
-    // tar unpacked as root, or a tree deleted as root, anywhere it liked.
+  it('keeps the passwd HOME storage layout as the default', async () => {
+    // An older install has no machine-storage receipt. Its path remains derived from the authenticated
+    // service user's passwd HOME, and a runtime request still has no field that can move the root.
     const home = join(scratch, 'derived-home');
     const derived = storageRootsFor(home);
     expect(derived).toEqual({
@@ -444,17 +442,80 @@ describe('privileged helper: host path derivation', () => {
     // The installer makes the same derivation for its own purposes, in a file that cannot import this one.
     expect(derived).toEqual(siteGatewayStorageRoots(home));
 
-    // End to end, with no storage handed in: the roots follow the passwd home sudo reports and nothing
-    // else, and a path a record might have blessed is still refused.
+    expect(MACHINE_STORAGE_RECEIPT_PATH).toBe(SHARED_MACHINE_STORAGE_RECEIPT_PATH);
+
+    // End to end, with no receipt or storage handed in: the roots follow the passwd home sudo reports and
+    // nothing else, and an arbitrary host path is still refused.
     const runner = (file: string) => (file === '/usr/bin/getent'
       ? { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` }
       : { ok: true, stdout: '' });
     const doomed = join(derived.sandboxDataDir, 'projects', '54', 'stale');
     mkdirSync(doomed, { recursive: true });
-    await applyRequest({ domain: 'nspawn', op: 'tree-remove', path: doomed }, undefined, { runner, env: environment });
+    const noReceipt = () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+    await applyRequest({ domain: 'nspawn', op: 'tree-remove', path: doomed }, undefined, { runner, env: environment, lstat: noReceipt });
     expect(existsSync(doomed)).toBe(false);
-    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: '/etc/systemd/nspawn' }, undefined, { runner, env: environment }))
+    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: '/etc/systemd/nspawn' }, undefined, { runner, env: environment, lstat: noReceipt }))
       .rejects.toThrow(/outside the trusted storage roots/);
+  });
+
+  it('accepts a custom Sandbox root only from a root-provisioned machine storage receipt', async () => {
+    const home = join(scratch, 'receipt-home');
+    const sandboxDataDir = join(scratch, 'custom-state', 'plugins-data', 'sandbox');
+    const doomed = join(sandboxDataDir, 'projects', '54', 'stale');
+    mkdirSync(doomed, { recursive: true });
+    const receiptPath = MACHINE_STORAGE_RECEIPT_PATH;
+    const receipt = `${JSON.stringify({ sandboxDataDir })}\n`;
+    const runner = (file: string) => (file === '/usr/bin/getent'
+      ? { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` }
+      : { ok: true, stdout: '' });
+    const lstat = (path: string) => ({
+      uid: 0, gid: 0, mode: path === receiptPath ? 0o100644 : 0o040755,
+      isSymbolicLink: () => false,
+      isDirectory: () => path !== receiptPath,
+      isFile: () => path === receiptPath,
+    });
+
+    const options = {
+      runner, env: environment, lstat,
+      readText: (path: string) => path === receiptPath ? receipt : '',
+    };
+    await applyRequest({ domain: 'nspawn', op: 'tree-remove', path: doomed }, undefined, options);
+
+    expect(existsSync(doomed)).toBe(false);
+    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: '/etc/systemd/nspawn' }, undefined, options))
+      .rejects.toThrow(/outside the trusted storage roots/);
+  });
+
+  it('fails closed on an unsafe or malformed machine storage receipt', async () => {
+    const home = join(scratch, 'unsafe-receipt-home');
+    const sandboxDataDir = join(scratch, 'unsafe-receipt-state', 'plugins-data', 'sandbox');
+    const target = join(sandboxDataDir, 'projects', '54', 'stale');
+    mkdirSync(target, { recursive: true });
+    const runner = (file: string) => (file === '/usr/bin/getent'
+      ? { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` }
+      : { ok: true, stdout: '' });
+    const attempt = (variant: 'owner' | 'mode' | 'symlink' | 'directory-symlink' | 'json') => applyRequest({
+      domain: 'nspawn', op: 'tree-remove', path: target,
+    }, undefined, {
+      runner, env: environment,
+      readText: () => variant === 'json' ? '{' : `${JSON.stringify({ sandboxDataDir })}\n`,
+      lstat: (path: string) => ({
+        uid: variant === 'owner' && path === MACHINE_STORAGE_RECEIPT_PATH ? 1000 : 0,
+        gid: 0,
+        mode: path === MACHINE_STORAGE_RECEIPT_PATH
+          ? (variant === 'mode' ? 0o100664 : 0o100644)
+          : 0o040755,
+        isSymbolicLink: () => variant === 'symlink' && path === MACHINE_STORAGE_RECEIPT_PATH
+          || variant === 'directory-symlink' && path === dirname(MACHINE_STORAGE_RECEIPT_PATH),
+        isDirectory: () => path !== MACHINE_STORAGE_RECEIPT_PATH,
+        isFile: () => path === MACHINE_STORAGE_RECEIPT_PATH,
+      }),
+    });
+
+    for (const variant of ['owner', 'mode', 'symlink', 'directory-symlink', 'json'] as const) {
+      await expect(attempt(variant), variant).rejects.toThrow(/machine storage receipt/);
+    }
+    expect(existsSync(target)).toBe(true);
   });
 
   it('changes a mount point it just created through the descriptor, never through the name again', () => {
@@ -1604,7 +1665,13 @@ describe('privileged helper: legacy Site retirement', () => {
       return { ok: true, stdout: '' };
     };
     const request = { domain: 'nspawn', op: 'retire-legacy-site', resource, generation, diskId, expectedId };
+    const customSandboxRoot = join(home, 'custom-state', 'plugins-data', 'sandbox');
     const options = { env: environment, runner, nspawnSettingsRoot, systemdRoot, machineUnitPath,
+      readText: (path: string) => path === MACHINE_STORAGE_RECEIPT_PATH
+        ? `${JSON.stringify({ sandboxDataDir: customSandboxRoot })}\n`
+        : readFileSync(path, 'utf8'),
+      lstat: (path: string) => ({ uid: 0, gid: 0, mode: path === MACHINE_STORAGE_RECEIPT_PATH ? 0o100644 : 0o040755,
+        isSymbolicLink: () => false, isDirectory: () => path !== MACHINE_STORAGE_RECEIPT_PATH, isFile: () => path === MACHINE_STORAGE_RECEIPT_PATH }),
       readOwner: (path: string) => path === rootfs ? UID_RANGE_BASE : 0 };
     return { request, options, calls, settingsPath, dropInPath, rootfs, identityPath, snapshot, backup, machine, unit };
   }

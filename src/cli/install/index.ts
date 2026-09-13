@@ -16,11 +16,14 @@ import { runOnboarding } from '../setup/wizard.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { INSTALL_INFO_PATH, buildInstallInfo, serializeInstallInfo, type InstallArtifacts, type InstallUnit } from '../installInfo.js';
 import {
+  MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE,
+  MACHINE_STORAGE_RECEIPT_PATH,
   SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE,
   SITE_GATEWAY_DEPLOYMENT_PATH,
   SITE_GATEWAY_HELPER_INSTALL_ARGS,
   SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_PATH,
+  siteGatewayStorageRoots,
 } from '../../shared/siteGateway.js';
 import { provisionMachineRuntime } from '../../privileged/publishedSitesGateway.js';
 import { must, aptInstall, step } from '../provision/exec.js';
@@ -203,19 +206,22 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
  * The install is deliberately NOT gated on a published-sites domain deployment: the same executable also
  * serves the machine runtime, whose readiness cannot depend on a Sites deployment mode. The domain half
  * of the record is written only when there is a domain, and stays required only by the operations that
- * read it. The storage roots are written always, because every environment operation derives its host
- * paths from them and from nothing the request carries. */
-export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment): Promise<boolean> {
+ * read it. Machine storage is a separate root-owned receipt, never a helper request field: the generic
+ * installer records the passwd-HOME default, while a custom deployment can install its actual state root
+ * through the same fixed receipt path during root provisioning. */
+export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment, home: string): Promise<boolean> {
   const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
   await r.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
   await r.writeFile(SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, `${JSON.stringify({
     ...(deploy.mode === 'domain' && deploy.domain ? { appHost: deploy.domain.toLowerCase() } : {}),
     daemonPort: DAEMON_PORT,
   }, null, 2)}\n`);
+  await r.writeFile(MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE, `${JSON.stringify(siteGatewayStorageRoots(home), null, 2)}\n`);
   await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH), dirname(SITE_GATEWAY_DEPLOYMENT_PATH)]);
   await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
   await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_PATH]);
-  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE]);
+  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE, MACHINE_STORAGE_RECEIPT_PATH]);
+  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE]);
   return true;
 }
 
@@ -287,7 +293,7 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
   } else {
     units = await step('Configuring systemd services', () => provisionSystemd(r, plan.user.username, home, plan.deploy));
 
-    await step('Installing privileged host helper', () => provisionSiteGatewayHelper(r, plan.deploy))
+    await step('Installing privileged host helper', () => provisionSiteGatewayHelper(r, plan.deploy, home))
       .then((created) => { siteGatewayHelperCreated = created; })
       .catch((e) => p.log.warn(`Privileged host helper unavailable: ${(e as Error).message}`));
 

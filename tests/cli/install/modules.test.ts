@@ -8,6 +8,7 @@ import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/insta
 import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs, provisionSiteGatewayHelper } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import { provisionMachineRuntime } from '../../../src/privileged/publishedSitesGateway.js';
+import { MACHINE_STORAGE_RECEIPT_PATH, siteGatewayStorageRoots } from '../../../src/shared/siteGateway.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
 function runner(over: Partial<Runner> = {}): Runner {
@@ -370,20 +371,23 @@ describe('install/provisionSiteGatewayHelper', () => {
   // unconditional; only the domain half of the record is conditional.
   it('installs the helper even without a published-sites domain deployment', async () => {
     const { r, writes, calls } = recordingRunner();
-    expect(await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' })).toBe(true);
+    const home = '/home/elowen';
+    expect(await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' }, home)).toBe(true);
     expect(calls.some(({ cmd, args }) => cmd === 'install' && args.includes('/usr/local/libexec/elowen-site-gateway'))).toBe(true);
-    const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
+    const record = JSON.parse(writes.find(({ path }) => path.endsWith('site-gateway.json'))!.content);
     expect(record.appHost).toBeUndefined();
-    // The record carries what Sites needs and nothing the root helper decides with. The storage roots
-    // used to live here, and the helper trusting them was how a record staged under a writable path could
-    // move what root would touch; the helper derives them from the invoking account instead.
-    expect(record.storage).toBeUndefined();
+    const receipt = JSON.parse(writes.find(({ path }) => path.endsWith('machine-storage.json'))!.content);
+    expect(receipt).toEqual(siteGatewayStorageRoots(home));
+    expect(calls).toContainEqual({
+      cmd: 'install',
+      args: ['-o', 'root', '-g', 'root', '-m', '0644', '/tmp/elowen-machine-storage.json', MACHINE_STORAGE_RECEIPT_PATH],
+    });
   });
 
   it('adds the domain record only when the deployment has one', async () => {
     const { r, writes } = recordingRunner();
-    await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' });
-    const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
+    await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' }, '/home/elowen');
+    const record = JSON.parse(writes.find(({ path }) => path.endsWith('site-gateway.json'))!.content);
     expect(record).toEqual({ appHost: 'agent.example.com', daemonPort: 4400 });
   });
 });

@@ -10,16 +10,18 @@ export const SITE_GATEWAY_HELPER_INSTALL_ARGS = [
  *  sudoers renderer, this constant and the plugin against each other. */
 export const SITE_GATEWAY_HELPER_ARGV = ['-n', SITE_GATEWAY_HELPER_PATH, ''] as const;
 export const SITE_GATEWAY_DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
-/** Staged under a fixed path and installed by the INSTALLER while it is already root, never through a
+/** Staged under fixed paths and installed by the INSTALLER while it is already root, never through a
  *  sudoers grant. A grant binds to a user, not to a code path, so a pinned install command whose source
- *  the service user can write is a way for that user to choose the file's contents. */
+ *  the service user can write is a way for that user to choose root-trusted contents. */
 export const SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE = '/tmp/elowen-site-gateway.json';
+export const MACHINE_STORAGE_RECEIPT_PATH = '/etc/elowen/machine-storage.json';
+export const MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE = '/tmp/elowen-machine-storage.json';
 export const SITE_GATEWAY_SUDOERS_PATH = '/etc/sudoers.d/elowen-site-gateway';
 
-/** Where a given service user's environment storage lives. The root-owned helper makes exactly this
- *  derivation from the passwd home of the account sudo reports, so nothing has to tell it where the
- *  storage is and no caller can move it; this copy exists for the installer, which cannot import the
- *  helper. `tests/contract/nspawnHelper.test.ts` holds the two together. */
+/** The default environment storage for a service user. The installer records this in a root-owned receipt;
+ *  deployments with a custom database root install the matching custom Sandbox root instead. This copy
+ *  exists because the standalone helper cannot import core code, and the contract test holds both sides
+ *  together. */
 export function siteGatewayStorageRoots(home: string): { sandboxDataDir: string } {
   const pluginData = `${home}/.config/elowen/plugins-data`;
   return { sandboxDataDir: `${pluginData}/sandbox` };

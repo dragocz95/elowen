@@ -11,6 +11,7 @@ const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = constants;
 import { dirname, join, normalize } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
+export const MACHINE_STORAGE_RECEIPT_PATH = '/etc/elowen/machine-storage.json';
 export const NGINX_PATH = '/etc/nginx/conf.d/elowen-sites-gateway.conf';
 export const STATE_PATH = '/var/lib/elowen/site-gateway.json';
 const LOCK_PATH = '/var/lib/elowen/site-gateway.lock';
@@ -840,31 +841,60 @@ function trustedStorageRoot(value) {
   return value;
 }
 
-/** The storage roots every machine path is held against, COMPUTED HERE from the passwd home of the
- *  account sudo says invoked this helper, and read from nowhere.
+/** The storage root every machine path is held against. The passwd HOME remains the compatibility default,
+ *  while a deployment whose DB and plugin state live elsewhere may install one root-owned receipt. The
+ *  receipt is separate from the Sites deployment record and there is no sudoers grant that can replace it:
+ *  a daemon request still names only an operation and paths below the already-trusted root.
  *
- *  They used to be read out of the deployment record, and that was a hole rather than a shortcut. The
- *  record is installed through a sudoers-pinned command whose source path is fixed and writable by the
- *  service user, and a sudoers grant binds to a USER, not to the code path that was meant to use it. So
- *  anything running as the service account could stage a record naming `/etc/systemd` as a storage root,
- *  run the pinned install, and from the very next request every path check in this file would agree that
- *  `/etc/systemd` is a legitimate place to unpack a tar as root or to delete a tree. The roots decide what
- *  root will touch, so they cannot come from anything the caller can reach.
- *
- *  `serviceUser` already resolves the name sudo reports through getent and refuses unless the passwd uid
- *  and gid match `SUDO_UID` and `SUDO_GID`, so the home below is the home of the account that actually
- *  invoked this process. `src/shared/siteGateway.ts` makes the same derivation for the installer; the two
- *  are held together by `tests/contract/nspawnHelper.test.ts`. */
-export function storageRootsFor(home) {
+ *  Trust is established before parsing a byte. Every component of the fixed receipt path must be a
+ *  root-owned, non-writable directory with no symlink, and the receipt itself must be a root-owned regular
+ *  file at exactly 0644. An absent receipt means the historical HOME layout; a present but unsafe or
+ *  malformed receipt fails closed rather than silently widening or falling back. */
+export function storageRootsFor(home, configuredSandboxDataDir) {
   if (typeof home !== 'string' || !home.startsWith('/')) fail('the invoking service user has no home directory');
-  const pluginData = join(home, '.config', 'elowen', 'plugins-data');
+  const fallback = join(home, '.config', 'elowen', 'plugins-data', 'sandbox');
   return Object.freeze({
-    sandboxDataDir: trustedStorageRoot(join(pluginData, 'sandbox')),
+    sandboxDataDir: trustedStorageRoot(configuredSandboxDataDir ?? fallback),
   });
 }
 
+function receiptStorageRoot(options) {
+  const inspect = options.lstat ?? lstatSync;
+  let receipt;
+  try {
+    receipt = inspect(MACHINE_STORAGE_RECEIPT_PATH);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const chain = ['/etc', dirname(MACHINE_STORAGE_RECEIPT_PATH), MACHINE_STORAGE_RECEIPT_PATH];
+  for (const path of chain) {
+    const stat = path === MACHINE_STORAGE_RECEIPT_PATH ? receipt : inspect(path);
+    if (stat.isSymbolicLink()) fail('a symlink appears in the machine storage receipt path');
+    if (stat.uid !== 0 || stat.gid !== 0) fail('the machine storage receipt path is not root-owned');
+    if (path === MACHINE_STORAGE_RECEIPT_PATH) {
+      if (!stat.isFile() || (stat.mode & 0o7777) !== 0o644) fail('the machine storage receipt is not a root-owned 0644 file');
+    } else if (!stat.isDirectory() || (stat.mode & 0o022) !== 0) {
+      fail('the machine storage receipt directory is not a protected root-owned directory');
+    }
+  }
+  let raw;
+  try {
+    const readText = options.readText ?? ((path) => readFileSync(path, 'utf8'));
+    raw = JSON.parse(readText(MACHINE_STORAGE_RECEIPT_PATH));
+  } catch {
+    fail('the machine storage receipt is not valid JSON');
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.keys(raw).length !== 1 || typeof raw.sandboxDataDir !== 'string') {
+    fail('the machine storage receipt is invalid');
+  }
+  return trustedStorageRoot(raw.sandboxDataDir);
+}
+
 function readStorageRoots(options) {
-  return storageRootsFor(serviceUser(options.runner ?? defaultCommandRunner, options.env ?? process.env).home);
+  const home = serviceUser(options.runner ?? defaultCommandRunner, options.env ?? process.env).home;
+  return storageRootsFor(home, receiptStorageRoot(options));
 }
 
 /** The root every machine path may resolve under. Project storage belongs to Sandbox. */
