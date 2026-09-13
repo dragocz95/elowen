@@ -132,11 +132,23 @@ const dialogSurfaceVariants = cva('overlay-surface flex flex-col focus:outline-n
       sheet: 'min-h-0 w-full',
       fullscreen: 'animate-pop-in relative min-h-0 w-full border',
     },
-    size: { sm: '', md: '', lg: '', xl: '' },
+    size: { sm: '', md: '', lg: '', xl: '', page: '' },
     width: { default: '', wide: '' },
   },
   compoundVariants: [
     { presentation: 'center', size: 'lg', class: 'h-[88dvh] w-[92vw] max-w-[90rem]' },
+    // The READING frame, taken by an intercepted page that is a stack of records rather than a data
+    // surface — `PageOverlay frame="reading"`, which Settings asks for and Account does not. `lg` beside
+    // it is the DATA window that wants every pixel a monitor has (a log table, a diagnostics run), so it
+    // grows to 90rem by 88dvh, and on a wide screen that leaves a settings record's label and its
+    // control most of a desk apart.
+    //
+    // The width is not a number of its own. `--content-max` (app/styles/tokens.css) is the single
+    // authority for how wide a workspace may grow; every shell and content surface already reads it and
+    // a skin moves it to suit its own measure, so restating a cap here is the one thing that token
+    // forbids. The height IS stated, because this frame has to hold still while sections of very
+    // different lengths are swapped through it.
+    { presentation: 'center', size: 'page', class: 'h-[min(88dvh,50rem)] w-[92vw] max-w-[var(--content-max)]' },
     { presentation: 'center', size: 'xl', class: 'max-h-[90dvh] w-full max-w-2xl' },
     { presentation: 'center', size: 'md', class: 'max-h-[88dvh] w-full max-w-lg' },
     { presentation: 'center', size: 'sm', class: 'max-h-[80dvh] w-full max-w-md' },

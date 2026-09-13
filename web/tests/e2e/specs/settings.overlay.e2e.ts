@@ -1,5 +1,18 @@
 import { test, expect } from '@playwright/test';
 
+/** THE NAVIGATION COLUMN'S CONTRACT, stated here because this is the only check that measures it against a
+ *  real browser rather than against a class name.
+ *
+ *  `SettingsView` declares the overlay's first grid track as `15rem`, which is 240px at the app's 16px
+ *  root. The assertion is an intentional TOLERANCE rather than an equality: the track is a grid column
+ *  whose rendered box picks up the aside's border on one side, and a platform that reserves a scrollbar
+ *  gutter inside the column takes a few pixels more. A hard `toBe(240)` would fail on those platforms for
+ *  a reason that has nothing to do with the design decision, and the previous `toBeGreaterThan(240)` was
+ *  a one-sided bound that a column of any width above it would satisfy — it passed the 18rem column this
+ *  replaced and would pass a 30rem one. The band is what actually holds the decision. */
+const NAV_COLUMN_PX = 240;
+const NAV_COLUMN_TOLERANCE_PX = 8;
+
 const authedOnly = (testInfo: { project: { name: string } }) =>
   test.skip(testInfo.project.name !== 'authed', 'needs the authenticated shell');
 
@@ -37,7 +50,7 @@ test('Settings intercepts navigation over chat and keeps canonical history', asy
   expect(geometry.dialog.height).toBeLessThan(geometry.viewport.height - 24);
   expect(Math.abs(geometry.dialog.x * 2 + geometry.dialog.width - geometry.viewport.width)).toBeLessThanOrEqual(2);
   expect(Math.abs(geometry.dialog.y * 2 + geometry.dialog.height - geometry.viewport.height)).toBeLessThanOrEqual(2);
-  expect(geometry.nav.width).toBeGreaterThan(240);
+  expect(Math.abs(geometry.nav.width - NAV_COLUMN_PX)).toBeLessThanOrEqual(NAV_COLUMN_TOLERANCE_PX);
   expect(geometry.content.x).toBeGreaterThan(geometry.nav.x + geometry.nav.width - 2);
 
   await page.getByRole('button', { name: /^Models/ }).click();
@@ -56,7 +69,7 @@ test('Settings refreshes as the canonical full page', async ({ page }, testInfo)
   await expect(page).toHaveURL(/\/settings\?cat=/);
 });
 
-test('the phone overlay uses one full-screen pane without nested scrolling', async ({ page }, testInfo) => {
+test('the phone overlay is one full-screen pane navigated by a persistent section strip', async ({ page }, testInfo) => {
   authedOnly(testInfo);
   await page.setViewportSize({ width: 1440, height: 900 });
   const dialog = await openFromChat(page);
@@ -68,20 +81,41 @@ test('the phone overlay uses one full-screen pane without nested scrolling', asy
   expect(box.y).toBeGreaterThanOrEqual(0);
   expect(box.y + box.height).toBeLessThanOrEqual(844);
 
-  await dialog.getByRole('button', { name: 'All settings' }).click();
-  await expect(dialog.getByRole('searchbox', { name: 'Search settings' })).toBeVisible();
-  await expect(dialog.getByRole('heading', { level: 1 })).toBeHidden();
+  // The strip is the phone's whole navigation: it stays on screen with the content instead of the content
+  // being traded away for a category list, and the column is simply not rendered at this width.
+  const strip = dialog.getByTestId('settings-navigation-tabs');
+  await expect(strip).toBeVisible();
+  await expect(dialog.getByRole('searchbox', { name: 'Search settings' })).toBeHidden();
 
   const scrolling = await dialog.evaluate((node) => {
     const visiblePanes = [...node.querySelectorAll<HTMLElement>('[data-testid="settings-overlay-layout"] > aside, [data-testid="settings-overlay-layout"] > section')]
       .filter((pane) => getComputedStyle(pane).display !== 'none');
+    const track = node.querySelector<HTMLElement>('[data-testid="settings-navigation-tabs"]')!;
     return {
       visiblePanes: visiblePanes.length,
       bodyOverflow: getComputedStyle(document.body).overflow,
+      // ONE scroller: the content pane. The strip scrolls sideways only, so nothing nests a second
+      // vertical scroll inside the screen the reader is already scrolling.
       paneOverflow: visiblePanes.map((pane) => getComputedStyle(pane).overflowY),
+      // NOT `getComputedStyle(track).overflowY`: a box with `overflow-x: auto` computes its other axis to
+      // `auto` too, by the CSS rule that a non-visible overflow on one axis forces the other. Whether the
+      // strip can actually be scrolled vertically is the question, and only its geometry answers it.
+      stripScrollsVertically: track.scrollHeight > track.clientHeight,
+      // The line runs off its own edge rather than off the dialog's.
+      stripWithinDialog: track.getBoundingClientRect().right <= node.getBoundingClientRect().right + 1,
+      documentOverflowsHorizontally: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     };
   });
   expect(scrolling.visiblePanes).toBe(1);
   expect(scrolling.bodyOverflow).toBe('hidden');
-  expect(scrolling.paneOverflow).toEqual(['visible']);
+  expect(scrolling.paneOverflow).toEqual(['auto']);
+  expect(scrolling.stripScrollsVertically).toBe(false);
+  expect(scrolling.stripWithinDialog).toBe(true);
+  expect(scrolling.documentOverflowsHorizontally).toBe(false);
+
+  // Moving between two sections is one tap, and the section just opened is still on screen.
+  await strip.getByRole('button', { name: 'Models' }).click();
+  await expect(page).toHaveURL('/settings?cat=models');
+  await expect(strip).toBeVisible();
+  await expect(strip.getByRole('button', { name: 'Models' })).toHaveAttribute('aria-current', 'page');
 });

@@ -11,7 +11,8 @@ interface ModalProps {
   title: string;
   onClose: () => void;
   children: ReactNode;
-  size?: 'lg' | 'xl' | 'md' | 'sm';
+  /** `page` is the intercepted-page frame and is owned by `PageOverlay`; the rest are ordinary dialogs. */
+  size?: 'lg' | 'xl' | 'md' | 'sm' | 'page';
   /** Optional leading icon shown in a badge before the title. */
   icon?: LucideIcon;
   /** Optional one-line subtitle under the title (e.g. the target id). */
