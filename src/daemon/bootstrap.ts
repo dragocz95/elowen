@@ -42,7 +42,7 @@ export function createWorkflowHostRpc(resolvePlugins: () => Promise<PluginRegist
       callerSessionId: caller.sessionId,
       // A delegated turn's ACCOUNT is its inherited contribution owner — its identity deliberately carries
       // none — so name it here rather than leave the engine to re-derive it from a scope shape. Without it
-      // a remote node that adds nodes of its own cannot name the workspace the whole workflow runs in.
+      // a remote node that adds nodes of its own acts without the account the whole workflow runs as.
       callerAccess: {
         ...caller.access,
         ...(caller.access.contributionUserId != null ? { accountUserId: caller.access.contributionUserId } : {}),

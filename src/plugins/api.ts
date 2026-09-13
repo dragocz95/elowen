@@ -310,8 +310,9 @@ export interface SessionSource {
      * current turn, not guessed from the durable room owner. */
     contributionUserId?: number | null;
     /** The ACCOUNT the delegating turn acts as — `ctx.currentAccess().accountUserId`, the host's ONE
-     *  resolver (contribution owner, else the verified identity). An explicit workspace assignment is
-     *  resolved against THIS, so a turn that can CREATE a Sandbox workspace can also delegate into it.
+     *  resolver (contribution owner, else the verified identity). A delegated child's account-owned state
+     *  is resolved against THIS, so a turn that may reach an account's projects and environment can also
+     *  delegate into them.
      *  Kept beside `contributionUserId`, which retains its narrower "whose personal contributions" meaning. */
     accountUserId?: number | null;
     /** Additional per-turn tool denies supplied by a platform. This can only NARROW the resolved account
@@ -1171,9 +1172,9 @@ export interface WorkflowExpansionCallerAccess {
   toolPolicy?: { allow?: string[]; deny?: string[] };
   permissionBoundary: NoninteractivePermissionBoundary | null;
   readOnly?: boolean;
-  /** The ACCOUNT the calling node acts as, so a node it adds can name the workspace the run is already in.
-   *  A delegated child carries no account identity, so this is its inherited contribution owner — the same
-   *  value `currentAccountUserId()` resolves inside the child's own turn. */
+  /** The ACCOUNT the calling node acts as, so a node it adds keeps the same account-owned scope the run
+   *  already has. A delegated child carries no account identity, so this is its inherited contribution
+   *  owner — the same value `currentAccountUserId()` resolves inside the child's own turn. */
   accountUserId?: number | null;
 }
 
@@ -1770,10 +1771,10 @@ export interface PluginContext {
    *  `ToolDefinition.execute`; it is fs-encoded by the host, so an exotic id cannot escape the directory.
    *  Ungated: it writes only inside the current turn's own spill directory, which that session can already
    *  write through `assertPathAllowed`. Resolves null when nothing readable can be stored — outside a
-   *  prompt turn (worker/cron runs own no conversation), inside a workspace-confined turn (whose logical
-   *  filesystem admits no absolute path), and when a different file already occupies the name. The caller
-   *  keeps whatever it does without a stored path. Rejects on a real write failure, and on a `text` above
-   *  the host's size ceiling — bounding what it produces is the caller's job, not this store's. */
+   *  prompt turn (worker/cron runs own no conversation), and when a different file already occupies the
+   *  name. The caller keeps whatever it does without a stored path. Rejects on a real write failure, and on
+   *  a `text` above the host's size ceiling — bounding what it produces is the caller's job, not this
+   *  store's. */
   persistToolOutput(input: { toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */

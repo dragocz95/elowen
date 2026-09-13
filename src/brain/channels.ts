@@ -1092,7 +1092,7 @@ export class ChannelSessionService {
         // Compared against the ADVERTISED cwd, never `ch.workDir`: a validated move updates the live
         // cwd, and comparing against it would make the supersede silently vanish exactly when the
         // static prompt — which PI wrote at spawn and never rewrites — is most stale.
-        const workspaceReminder = workDirReorientation(ch.advertisedWorkDir ?? ch.workDir, effectiveWorkDir.workDir);
+        const workDirReminder = workDirReorientation(ch.advertisedWorkDir ?? ch.workDir, effectiveWorkDir.workDir);
         try {
           // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
           // The two are different questions and both have to be asked: the grant says what an admin gave
@@ -1201,7 +1201,7 @@ export class ChannelSessionService {
                 // shared with every sibling fork and only the directive itself is new after the prefix.
                 text: forkChild ? buildForkChildMessage(turnText) : turnText,
                 afterUser: turnContext.afterUser,
-                workDirReorientation: workspaceReminder,
+                workDirReorientation: workDirReminder,
                 sessionChanges,
                 postCompaction,
                 // A room's turns are minutes apart with other people's messages in between, so an agent

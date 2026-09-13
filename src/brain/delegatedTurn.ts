@@ -53,8 +53,8 @@ export interface DelegatedTurnRequest {
 }
 
 export interface DelegatedTurnDeps {
-  /** Build a Policy from an explicit project-id set. The captured contribution account is required for
-   * Sandbox workspace roots, especially in a forked runner where the parent live session does not exist. */
+  /** Build a Policy from an explicit project-id set. The captured account is required to scope the child
+   *  to its own membership, especially in a forked runner where the parent live session does not exist. */
   policyForProjects?: (projectIds: number[], contributionUserId?: number) => Policy;
   identity: { forDelegatedTurn(scope: DelegatedExecutionScope, ownerUserId: number): TurnIdentity };
 }

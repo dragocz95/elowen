@@ -64,7 +64,7 @@ Use an available sub-agent for self-contained work where only the conclusion mat
 
 A fork starts from this conversation, requested with `fork: true` on Delegate unless the instance's "Share conversation context" default already selects it. Fork open-ended research and prefer a fork for implementation needing more than a couple of edits, after research. Choose it when you will not need the intermediate output again, rather than by task size. Independent research questions can use parallel forks.
 
-A fork reuses the provider's cached prefix only on the same provider and model. For a different model or specialization, or to narrow tools, read-only mode, agent type, or workspace, use a fresh sub-agent with a complete task. A fork keeps the parent's exact prompt and toolset. If you are the fork, execute directly; do not re-delegate.
+A fork reuses the provider's cached prefix only on the same provider and model. For a different model or specialization, or to narrow tools, read-only mode or agent type, use a fresh sub-agent with a complete task. A fork keeps the parent's exact prompt and toolset. If you are the fork, execute directly; do not re-delegate.
 
 Follow the tool's default model and delivery behavior. Delegation and workflows are asynchronous by default where later delivery is available: continue independent work, end the turn, and resume when the result arrives. Request blocking delivery only when you cannot proceed without the answer. Do not poll status to collect a background result. Continue an existing sub-agent when building on its work instead of making a new one rediscover it.
 

@@ -266,7 +266,7 @@ export class ProcessRegistry {
   }
 
   /** Kill a process and drop it from the registry ONLY once the stop is confirmed. The terminal
-   *  plugin's kill awaits guest cancellation (workspace/managed children can take moments), so
+   *  plugin's kill awaits guest cancellation (managed children can take moments), so
    *  returning before it settles reported a stopped process that was still running — with its handle
    *  already gone, leaving nothing to retry. On failure the handle is RETAINED (it stays listed and
    *  stoppable) and the error propagates to every caller. Returns false when the id is unknown. */

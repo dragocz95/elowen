@@ -699,7 +699,7 @@ export const sk = {
   projects: {
     newProject: 'Nový projekt',
     registry: 'Register projektov',
-    workspaceIntro: 'Pripojené pracovné priestory, stav repozitárov a projektová automatizácia na jednom mieste.',
+    workspaceIntro: 'Projekty, stav ich repozitárov a projektová automatizácia na jednom mieste.',
     registryReady: 'Register je dostupný',
     metricProjects: 'projektov',
     metricIcons: 'vlastných ikon',
@@ -1195,7 +1195,7 @@ export const sk = {
     maxStepsHint: "Najvyšší počet kôl s modelom pre jednu požiadavku. Chráni pred zacyklením. Rozsah 100–1 000 po 100, predvolené 200.",
     subagents: {
       forkParentContext: "Zdieľať kontext konverzácie",
-      forkParentContextHint: "Ak volanie Delegate neurčí inak, spustí sa subagent s touto konverzáciou: rovnaký systémový prompt, rovnaké nástroje a celá história, takže poskytovateľ prečíta uloženú cache namiesto toho, aby prefix účtoval znova. Cache je zdieľaná len dokiaľ dieťa nič nezužuje, takže takýto subagent nemôže dostať vlastnú sadu nástrojov, režim len na čítanie, typ subagenta ani workspace, a iný model nezdieľa cache vôbec.",
+      forkParentContextHint: "Ak volanie Delegate neurčí inak, spustí sa subagent s touto konverzáciou: rovnaký systémový prompt, rovnaké nástroje a celá história, takže poskytovateľ prečíta uloženú cache namiesto toho, aby prefix účtoval znova. Cache je zdieľaná len dokiaľ dieťa nič nezužuje, takže takýto subagent nemôže dostať vlastnú sadu nástrojov, režim len na čítanie ani typ subagenta, a iný model nezdieľa cache vôbec.",
     },
     limits: {
       title: "Limity",

@@ -745,7 +745,7 @@ export const en = {
   projects: {
     newProject: 'New project',
     registry: 'Project registry',
-    workspaceIntro: 'Connected workspaces, repository state and project-specific automation in one place.',
+    workspaceIntro: 'Projects, their repository state and project-specific automation in one place.',
     registryReady: 'Registry available',
     metricProjects: 'projects',
     metricIcons: 'custom icons',
@@ -1242,7 +1242,7 @@ export const en = {
     maxStepsHint: "Maximum model rounds per request. Prevents runaway loops. Range 100–1,000 in steps of 100; default 200.",
     subagents: {
       forkParentContext: "Share conversation context",
-      forkParentContextHint: "Unless a Delegate call says otherwise, a sub-agent starts with this conversation: the same system prompt, the same tools and the whole history, so the provider reads the cached prefix instead of billing it again. The cache is shared only while nothing narrows the child, so such a sub-agent cannot be given its own toolset, read-only mode, a sub-agent type or a workspace, and a different model shares no cache at all.",
+      forkParentContextHint: "Unless a Delegate call says otherwise, a sub-agent starts with this conversation: the same system prompt, the same tools and the whole history, so the provider reads the cached prefix instead of billing it again. The cache is shared only while nothing narrows the child, so such a sub-agent cannot be given its own toolset, read-only mode or a sub-agent type, and a different model shares no cache at all.",
     },
     limits: {
       title: "Limits",

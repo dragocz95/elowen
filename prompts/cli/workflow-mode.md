@@ -12,7 +12,7 @@ A dependent receives short handovers from its direct dependencies, not their ful
 
 Write the JSON definition with `Write`, then call `WorkflowStart` with `nodesFile` and an optional short `title`. The file accepts a node array or `{ title?, fork?, nodes, background? }`. Explicit tool arguments override file options. Follow the tool's path guidance: inside the project for managed or project-scoped work; the tool's workflow directory for one-off definitions when accessible.
 
-Use only supported node fields. Omit `model` unless the user requested a different model. Set `thinkingLevel` when the work needs different effort; use `read_only`, `tools`, `subagent_type`, and `workspaceId` to narrow access. A node cannot widen your permissions. A running node may extend the DAG through `WorkflowAddNodes`.
+Use only supported node fields. Omit `model` unless the user requested a different model. Set `thinkingLevel` when the work needs different effort; use `read_only`, `tools` and `subagent_type` to narrow access. A node cannot widen your permissions. A running node may extend the DAG through `WorkflowAddNodes`.
 
 ### Run and report
 
