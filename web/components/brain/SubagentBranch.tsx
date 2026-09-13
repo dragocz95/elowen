@@ -78,9 +78,10 @@ export interface SubagentBranchOptions {
   /** Which rows the reader has opened, by node key. */
   openKeys: ReadonlySet<string>;
   onToggleNode: (key: string) => void;
-  /** Follow a row into its transcript. The caller decides what "open" means for its surface; both
-   *  registers open a sub-agent READ-ONLY. */
-  onOpenSession: (sessionId: string) => void;
+  /** Follow a row into its transcript. The node travels with the id, because WHAT may be done there is
+   *  the host's per-read statement (`continuable`): an own child opens writable through the subagent
+   *  send seam, a foreign one read-only. */
+  onOpenSession: (sessionId: string, node: ConversationSubagentNode) => void;
 }
 
 /** The sub-agents that ran under one conversation, as rows to splice into a register's table.
@@ -141,7 +142,7 @@ export function subagentBranchRows(opts: SubagentBranchOptions): ReactNode[] {
           {followable ? (
             <button
               type="button"
-              onClick={() => onOpenSession(node.childSessionId!)}
+              onClick={() => onOpenSession(node.childSessionId!, node)}
               className="min-w-0 flex-1 truncate rounded-md text-left text-xs text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
             >
               {node.name}

@@ -147,10 +147,16 @@ describe('account process teardown — daemon → runner and back', () => {
   it('parses correlated account process frames and rejects invalid users or counts', () => {
     expect(parseDaemonMessage({ type: 'killAccountProcesses', requestId: 'k-1', userId: 7 }))
       .toEqual({ type: 'killAccountProcesses', requestId: 'k-1', userId: 7 });
-    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 2 }))
-      .toEqual({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 2 });
+    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 2, failed: ['p-3'] }))
+      .toEqual({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 2, failed: ['p-3'] });
     expect(parseDaemonMessage({ type: 'killAccountProcesses', requestId: 'k-1', userId: 0 })).toBeUndefined();
-    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: -1 })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: -1, failed: [] })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 0, failed: [''] })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'accountProcessesKilled', requestId: 'k-1', killed: 0, failed: [], error: 5 })).toBeUndefined();
+    expect(parseRunnerMessage({
+      type: 'accountProcessesKilled', requestId: 'k-1', killed: 0,
+      failed: Array.from({ length: 4_097 }, (_, index) => `p-${index}`),
+    })).toBeUndefined();
   });
 });
 
@@ -208,11 +214,14 @@ describe('runner process verbs — daemon → runner and back', () => {
       .toEqual({ type: 'processOutputResult', requestId: 'r-1', output: null });
     expect(parseRunnerMessage({ type: 'processKilled', requestId: 'r-1', killed: true }))
       .toEqual({ type: 'processKilled', requestId: 'r-1', killed: true });
+    expect(parseRunnerMessage({ type: 'processKilled', requestId: 'r-1', killed: false, error: 'unconfirmed' }))
+      .toEqual({ type: 'processKilled', requestId: 'r-1', killed: false, error: 'unconfirmed' });
     // One malformed row poisons the snapshot's authorization story — dropped whole, never repaired.
     expect(parseRunnerMessage({ type: 'processListResult', requestId: 'r-1', processes: [{ id: 'x' }] })).toBeUndefined();
     expect(parseRunnerMessage({ type: 'processListResult', requestId: 'r-1', processes: 'all' })).toBeUndefined();
     expect(parseRunnerMessage({ type: 'processOutputResult', requestId: 'r-1', output: 5 })).toBeUndefined();
     expect(parseRunnerMessage({ type: 'processKilled', requestId: 'r-1', killed: 'yes' })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processKilled', requestId: 'r-1', killed: false, error: 5 })).toBeUndefined();
   });
 
   it('parses the change frame (snapshot required) and the session sweep answer', () => {
@@ -221,18 +230,31 @@ describe('runner process verbs — daemon → runner and back', () => {
     // The snapshot rides the frame; a frame without one is dropped rather than read as a false empty.
     expect(parseRunnerMessage({ type: 'processesChanged', sessionId: 's-1' })).toBeUndefined();
     expect(parseRunnerMessage({ type: 'processesChanged' })).toBeUndefined();
-    expect(parseRunnerMessage({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: 3 }))
-      .toEqual({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: 3 });
-    expect(parseRunnerMessage({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: -1 })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: 2, failed: ['p-3'] }))
+      .toEqual({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: 2, failed: ['p-3'] });
+    expect(parseRunnerMessage({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: -1, failed: [] })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: 0, failed: 'p-3' })).toBeUndefined();
   });
 
-  it('parses heartbeat kill tokens and rejects malformed ones', () => {
-    expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: ['tok-1'] }))
-      .toEqual({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: ['tok-1'] });
+  it('parses immediate and heartbeat containment snapshots with bounded revisions and tokens', () => {
+    expect(parseRunnerMessage({ type: 'processContainment', revision: 2, killTokens: ['tok-1'] }))
+      .toEqual({ type: 'processContainment', revision: 2, killTokens: ['tok-1'] });
+    expect(parseRunnerMessage({
+      type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5,
+      containment: { revision: 2, killTokens: ['tok-1'] },
+    })).toEqual({
+      type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5,
+      containment: { revision: 2, killTokens: ['tok-1'] },
+    });
     expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5 }))
       .toEqual({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5 });
-    expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: [''] })).toBeUndefined();
-    expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: 'tok' })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processContainment', revision: -1, killTokens: [] })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processContainment', revision: 1, killTokens: [''] })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processContainment', revision: 1, killTokens: ['x'.repeat(129)] })).toBeUndefined();
+    expect(parseRunnerMessage({
+      type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5,
+      containment: { revision: 1, killTokens: 'tok' },
+    })).toBeUndefined();
   });
 
   it('carries completion mode, blockedRead and a project ref; rejects a bad one', () => {

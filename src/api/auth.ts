@@ -6,6 +6,9 @@ function isPublic(method: string, path: string, hasAvatarSig: boolean): boolean 
   if (path === '/health') return true;
   if (path === '/setup') return true; // fresh-install check, reachable before any user exists
   if (method === 'POST' && path === '/auth/login') return true;
+  // The active target token is revoked during the first successful return. Retrying a response lost after
+  // that point must still reach the route, which validates the exact target token + opaque proof itself.
+  if (method === 'POST' && (path === '/auth/impersonation/stop' || path === '/auth/impersonation/cancel')) return true;
   if (method === 'GET' && path === '/auth/sso/providers') return true;
   if (method === 'POST' && path === '/auth/sso/msteams/start') return true;
   if (method === 'POST' && path === '/auth/sso/msteams/callback') return true;

@@ -144,6 +144,9 @@ export interface ConversationSubagentNode {
   status: SubagentNodeStatus;
   childSessionId?: string;
   model?: string;
+  /** Caller-relative, marked per READ by the serving route: the CALLING account may write into this
+   *  transcript (its own drill-in, never another account's). The store read is caller-agnostic. */
+  continuable?: boolean;
   children: ConversationSubagentNode[];
   /** Set when this row's OWN children were cut by a bound, so a clipped branch is never presented as the
    *  whole story. */
@@ -888,6 +891,20 @@ export class BrainDelegationStore {
         WHERE parent_session_id = ? AND json_valid(state) AND json_extract(state, '$.status') = 'running'
         ORDER BY updated_at DESC, rowid DESC LIMIT ?`
     ).all(parentSessionId, capped) as { workflow_id: string }[]).map((row) => row.workflow_id);
+  }
+
+  /** The owning account of each named session, for the caller-relative eligibility a route computes
+   *  over one branch read (absent = no such row). Chunked like the branch walk itself, so one admin
+   *  register's answer can never become an unbounded parameter list. */
+  ownersOfSessions(sessionIds: readonly string[]): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const chunk of chunked(sessionIds)) {
+      const rows = this.db.prepare(
+        `SELECT id, user_id FROM brain_sessions WHERE id IN (${placeholders(chunk.length)})`
+      ).all(...chunk) as { id: string; user_id: number }[];
+      for (const row of rows) out.set(row.id, row.user_id);
+    }
+    return out;
   }
 
   /** The verified direct children of a whole LEVEL of conversations, keyed by child id. One query for

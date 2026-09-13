@@ -50,6 +50,11 @@ export class ChatState {
    *  used as fallbacks because a delegated session may select a different provider and model. */
   childView: { sessionId: string; model: string; provider: string; providerLabel: string; usageProvider: string; transcript: TranscriptModel; processes: ProcessInfo[]; loading: boolean; usage: BrainStatus['usage']; cards: BrainCard[]; artifacts: InlineArtifactCollection } | null = null;
   childAc: AbortController | null = null;
+  /** The levels ABOVE the focused child, most recent last (a drill-in pushes, Back pops). Each keeps
+   *  that level's transcript projection alive — not its stream: Back reopens it durably, and the
+   *  focused child's OWN rail row (name, model, reasoning level) is read from the level that
+   *  delegated it. Cleared wholesale when the parent conversation switches or the app stops. */
+  childTrail: { sessionId: string; transcript: TranscriptModel }[] = [];
   /** The ExitPlanMode call whose decision has already been put to the user, so a replayed terminal `idle`
    *  cannot ask again. Lives on the state rather than the stream because it must outlive a stream
    *  restart — a reconnect is exactly the case it exists to survive. */

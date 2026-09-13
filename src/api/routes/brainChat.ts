@@ -1,5 +1,5 @@
 import { parseBody } from '../validation.js';
-import { brainExecutionSchema, brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema } from '../schemas/brain.js';
+import { brainExecutionSchema, brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema, subagentModelSchema } from '../schemas/brain.js';
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import { logger } from '../../shared/logger.js';
 import type { ElowenApp, ElowenContext } from '../context.js';
@@ -17,14 +17,15 @@ function compactInstruction(v: unknown): string | undefined {
 }
 
 /** A `provider/model` spec sent as a bare `model` is split at its first slash when — and only when —
- *  the prefix is a configured provider id (a provider id never contains a slash, a model id may). */
-function splitCanonicalModelSpec(
-  sel: { provider?: string; model?: string }, providerIds: readonly string[],
-): { provider?: string; model?: string } {
+ *  the prefix is a configured provider id (a provider id never contains a slash, a model id may).
+ *  Generic on the selection shape so a schema-guaranteed `model: string` stays guaranteed through it. */
+function splitCanonicalModelSpec<T extends { provider?: string; model?: string }>(
+  sel: T, providerIds: readonly string[],
+): T {
   if (sel.provider || !sel.model) return sel;
   const parsed = parseElowenExec(sel.model);
   if (!parsed || !providerIds.includes(parsed.provider)) return sel;
-  return { provider: parsed.provider, model: parsed.model };
+  return { ...sel, provider: parsed.provider, model: parsed.model };
 }
 
 /** The `POST /brain/command` body: `name` selects the command and the remaining fields are per-command,
@@ -482,8 +483,22 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     // through the delegation's carried origin instead (see brain/spawnOrigin.ts) — the pin here only has
     // to cover the turns a human actually ordered.
     pinOrigin(c, body.session);
-    void brain.sendToSubagent(c.get('user').id, body.session, body.text).catch(() => { /* surfaced on the child's stream */ });
+    void brain.sendToSubagent(c.get('user').id, body.session, body.text, body.images).catch(() => { /* surfaced on the child's stream */ });
     return c.json({ ok: true });
+  }));
+
+  // Switch the model a drilled-in delegated child runs on. The web's model picker routes here while the
+  // user is INSIDE a child view — the same picker, the same catalog check, but the child's row is what
+  // changes (ownership + in-flight refusal inside switchSubagentModelForOwner; a canonical
+  // `<provider>/<model>` split exactly like POST /brain/model above).
+  app.post('/brain/subagent/model', withBrain(async (c, brain) => {
+    const { session, ...sel } = await parseBody(c, subagentModelSchema);
+    const selection = splitCanonicalModelSpec(sel, d.config.brainProviders().map((p) => p.id));
+    try { return c.json(brain.switchSubagentModelForOwner(c.get('user').id, session, selection)); }
+    catch (e) {
+      const status = (e as Error).message === 'unknown session' ? 404 : 409;
+      return c.json({ error: (e as Error).message }, status);
+    }
   }));
 
 }

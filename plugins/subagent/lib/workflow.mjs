@@ -1078,7 +1078,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       'The file may contain either a JSON array of node objects, or an object shaped as { title?, fork?, nodes: [...], background? }. Explicit title, fork, or background tool arguments override the corresponding values from the file, so one file can be reused as a template; a `background: false` in the file is honored just like the argument.',
       'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, thinkingLevel, fork, read_only, tools, subagent_type, and workspaceId. thinkingLevel sets that node\'s reasoning effort — omit it (or keep it low) for mechanical nodes, raise it for a node that has to design, debug something unexplained or review security-sensitive work; omitted, the node inherits your own. WorkflowStart.workspaceId sets the default explicit Sandbox workspace; a node workspaceId may only preserve or narrow its effective parent scope. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation, so put everything it needs in its task — unless you set fork, which starts it from this conversation\'s own prompt, tools and history.',
       'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. Independent nodes run in parallel, and a dependent receives a short handover from each of its DIRECT dependencies (not their full results, and nothing from further upstream) — so a node whose task needs an earlier finding must be reachable from it through the deps chain. For fully independent tasks, plain parallel delegate calls are simpler.',
-      'By default the call is ASYNCHRONOUS: it returns a handle immediately and the summary of every node is delivered to you in a NEW turn when the DAG finishes, so do other work and then end your turn rather than polling. Set background=false (as an argument, or in the file) to BLOCK until the whole DAG has finished and get every node\'s result inline. Either way the DAG itself is unchanged: independent nodes still run in parallel and a dependent node still waits for the nodes it depends on. A node whose dependency failed is reported as skipped.',
+      'By default the call is ASYNCHRONOUS: it returns a handle immediately and the summary of every node is delivered to you in a NEW turn when the DAG finishes, so do other work and then end your turn rather than polling. Set background=false (as an argument, or in the file) to BLOCK until the whole DAG has finished and get every node\'s result inline. On a surface that cannot deliver a later turn, the call blocks instead so the summary is not lost. Either way the DAG itself is unchanged: independent nodes still run in parallel and a dependent node still waits for the nodes it depends on. A node whose dependency failed is reported as skipped.',
       'If the result names failed or skipped nodes and the workflow is still held in memory, use WorkflowResume instead of starting over — it re-runs only unfinished nodes and leaves every completed node unchanged.',
     ].join(' '),
     parameters: Type.Object({
@@ -1160,7 +1160,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // Asynchronous by default, like Delegate: the explicit tool argument wins, then the file's own
       // setting (including an explicit `false` there), and only a workflow that mentions `background`
       // nowhere falls back to the default. Blocking is the deliberate `background: false`.
-      const background = p.background ?? fileOptions.background ?? true;
+      const requestedBackground = p.background ?? fileOptions.background ?? true;
       pruneWorkflows();
       // Only UNFINISHED workflows compete for the slot — a finished one sitting in memory for retention
       // is not "running" and must never block a new start (that was the bug: 16 quickly-finished
@@ -1168,8 +1168,11 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       const runningCount = [...workflows.values()].filter((wf) => wf.finishedAt === undefined).length;
       if (runningCount >= MAX_WORKFLOWS) return ok(`Error: too many workflows (${MAX_WORKFLOWS}) are running; wait for one to finish.`);
       // Capture the durable completion sink on the ORIGIN turn, before any node is scheduled — node turns
-      // run in their own scope where this accessor no longer resolves to this conversation.
+      // run in their own scope where this accessor no longer resolves to this conversation. A surface with
+      // no sink cannot promise asynchronous delivery, so its requested background run becomes a real
+      // foreground run: abort and Ctrl+B must see the same mode the tool call actually uses.
       const emitCompletion = ctx.workflowCompletionEmitter?.() ?? undefined;
+      const background = requestedBackground && Boolean(emitCompletion);
       const wf = {
         id: `wf-${randomUUID()}`,
         // THIS call — the origin's WorkflowStart. Every snapshot names it, so the host can persist the
@@ -1205,8 +1208,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         finished: false,
         finishedAt: undefined,
         resolveDone: undefined,
-        // A detach (Ctrl+B) or explicit background flips this on; foreground and background share ONE run.
-        background: background === true,
+        // A detach (Ctrl+B) or deliverable background request flips this on; foreground and background
+        // share ONE run.
+        background,
         emitCompletion,
         resolveDetached: undefined,
       };
@@ -1223,7 +1227,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
 
       // Foreground blocks on the DAG but lets Ctrl+B detach the wait; background returns the handle right
       // away — driveResult is the shared tail WorkflowResume reuses so both behave identically.
-      return driveResult(wf, completion, background === true);
+      return driveResult(wf, completion, background);
     },
   }), { hostFilesystem: true });
 
@@ -1304,6 +1308,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // the ones captured at the original Start are bound to a turn that is long over.
       wf.emit = ctx.workflowEmitter();
       wf.emitCompletion = ctx.workflowCompletionEmitter?.() ?? undefined;
+      // Delivery availability belongs to this resuming turn. If the original run was asynchronous but this
+      // surface cannot deliver a later turn, Resume blocks and must also become foreground for abort/detach.
+      if (wf.background && !wf.emitCompletion) wf.background = false;
       wf.parentAccess = access;
       writeJournal(wf); // the finish deleted the journal; the resumed run is interruptible again
       const completion = runToCompletion(wf).catch((e) => {

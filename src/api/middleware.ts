@@ -10,18 +10,16 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
   const users = d.users;
   app.use('*', authMiddleware(users, () => d.config.get().security.tokenTtlDays));
 
-  // Gate the project-scoped surface: a non-admin must be assigned to AT LEAST ONE project to touch
-  // activity/events/usage. This is only a coarse "has any access" pre-filter —
-  // every gated route family then scopes to the caller's accessible projects (accessibleProjects /
-  // canAccessProject / the SSE per-subscriber filter), so a user assigned to a non-home project sees
-  // exactly that project's data and nothing else. Keying on the daemon's home project would wrongly
-  // lock out users assigned only to other registered projects. Admin passes; no userProjects store
-  // (single-user mode) is a no-op with full access.
+  // Gate project-scoped aggregate reads: a non-admin must be assigned to at least one project to touch
+  // activity/usage. `/events` is intentionally absent: its own per-subscriber filter withholds every
+  // project event from an account with an empty assignment set while still delivering that account's
+  // memory nudges and safe instance-wide plugin/activity invalidations. Rejecting the stream itself made
+  // EventSource reconnect forever after impersonating an unassigned account.
   if (d.userProjects) {
     const up = d.userProjects;
     // Every core route family that exposes project data. Boundary-matched so a prefix collision cannot
     // sneak past the guard.
-    const GATED = ['/activity', '/events', '/usage'];
+    const GATED = ['/activity', '/usage'];
     app.use('*', async (c, next) => {
       const p = c.req.path;
       if (!GATED.some((g) => p === g || p.startsWith(g + '/'))) return next();

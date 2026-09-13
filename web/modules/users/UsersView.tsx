@@ -48,7 +48,9 @@ export function UsersView() {
   // Destructive account and role changes are staged separately so opening a confirmation cannot mutate data.
   const [confirmDelete, setConfirmDelete] = useState<ElowenUser | null>(null);
   const [confirmRole, setConfirmRole] = useState<ElowenUser | null>(null);
+  const [impersonatingId, setImpersonatingId] = useState<number | null>(null);
   const rolePendingRef = useRef(false);
+  const impersonationPendingRef = useRef(false);
 
   function mutationError(err: unknown, operation: 'create' | 'delete' | 'role'): string {
     const fallback = operation === 'create' ? t.users.createError : operation === 'delete' ? t.users.deleteError : t.users.updateError;
@@ -101,8 +103,17 @@ export function UsersView() {
     }
   }
 
-  function handleImpersonate(user: ElowenUser) {
-    void impersonateUser(user.id).catch(() => toast(t.users.impersonateError, 'error'));
+  async function handleImpersonate(user: ElowenUser): Promise<void> {
+    if (impersonationPendingRef.current) return;
+    impersonationPendingRef.current = true;
+    setImpersonatingId(user.id);
+    try {
+      await impersonateUser(user.id);
+    } catch {
+      toast(t.users.impersonateError, 'error');
+      setImpersonatingId(null);
+      impersonationPendingRef.current = false;
+    }
   }
 
   const data = useMemo(() => users.data ?? [], [users.data]);
@@ -122,7 +133,8 @@ export function UsersView() {
       ...(isAdmin && user.id !== me.data?.user?.id ? [{
         label: t.users.ctxImpersonate,
         icon: LogIn,
-        onSelect: () => handleImpersonate(user),
+        disabled: impersonatingId !== null,
+        onSelect: () => { void handleImpersonate(user); },
       }] : []),
       ...(isAdmin ? [{
         label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
@@ -154,7 +166,8 @@ export function UsersView() {
         ...(isAdmin && user.id !== me.data?.user?.id ? [{
           label: t.users.ctxImpersonate,
           icon: LogIn,
-          onClick: () => handleImpersonate(user),
+          disabled: impersonatingId !== null,
+          onClick: () => { void handleImpersonate(user); },
         }] : []),
         ...(isAdmin ? [{
           label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,

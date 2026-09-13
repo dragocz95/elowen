@@ -328,15 +328,18 @@ export class InputRouter {
     if (editing && keymap.isLeader(data)) { leader.arm(); context.render('input:leader-arm'); return { consume: true }; }
     const action = editing ? keymap.directAction(data) : null;
     // Ctrl+B is also the editor's standard backward-character chord. Claim it only while a real
-    // foreground delegate OR a running foreground command can be detached; otherwise PI's editor keeps its
-    // native cursor behavior.
-    if (action === 'subagent_background' && foregroundWork(stream, rt.processes).total === 0) return undefined;
+    // foreground delegate OR a running foreground command can be detached — counted on the session the
+    // user is LOOKING at (a focused child's own processes), never the hidden parent's; otherwise PI's
+    // editor keeps its native cursor behavior.
+    if (action === 'subagent_background' && foregroundWork(stream, rt.childView?.processes ?? rt.processes).total === 0) return undefined;
     if (action) { context.dispatchAction(action); return { consume: true }; }
     if (editing && editor.getText() === '' && data === '/') {
       context.openSlash();
       return undefined;
     }
-    if (editing && data === '@' && !rt.childView) {
+    // `@` works the same in a focused child: mentions expand LOCALLY into message content, so sending
+    // them to the viewed child widens nothing — it is text and images riding the child send seam.
+    if (editing && data === '@') {
       const cursor = editor.getCursor();
       const line = editor.getLines()[cursor.line] ?? '';
       const previous = cursor.col > 0 ? line[cursor.col - 1]! : '';

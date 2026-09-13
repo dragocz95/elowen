@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseBody } from '../validation.js';
-import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
+import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema, impersonationStopSchema } from '../schemas/auth.js';
 import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { isExecAllowedForUser, isOfferableExec } from '../../shared/execs.js';
 import { brainConfigFromElowen, configuredBrainProviders, DEFAULT_BRAIN_MODEL } from '../../brain/config.js';
@@ -20,7 +20,7 @@ import { PLATFORM_IDENTITIES, type PlatformLinkKey } from '../../shared/platform
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
 import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
 import { sanitizeNavSettings } from '../../store/navSettings.js';
-import { EmailConflictError, UsernameConflictError } from '../../store/userStore.js';
+import { EmailConflictError, ImpersonationConflictError, UsernameConflictError } from '../../store/userStore.js';
 import type { User } from '../../store/userStore.js';
 import { ProjectMembershipError } from '../../store/userProjectStore.js';
 import { clientOrigin } from '../clientIp.js';
@@ -652,20 +652,52 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ memoryCount, sessionCount, topModel });
   });
 
-  // Admin "sign in as" — issue a full-scope token for another user so an admin can see exactly what
-  // that user sees (support/debugging). Admin-only; the web BFF swaps the session cookie to this token
-  // and stashes the admin's own token so it can restore. The returned token is a normal token (revoked
-  // when the admin ends the impersonation via logout).
+  // Admin "sign in as" mints a target token plus an opaque return proof. The proof is useful only with
+  // that exact target token and is retained only for a bounded return/retry window, so the target never holds a
+  // reusable administrator credential. The store makes a duplicate request from one admin session
+  // idempotent, which also keeps rapid clicks from producing mismatched Set-Cookie responses.
   app.post('/users/:id/impersonate', (c) => {
     if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const actor = c.get('user'); // present: denyNonAdmin above rejects a request without one
+    const actor = c.get('user');
+    const actorToken = c.get('token');
+    if (!actorToken) return c.json({ error: 'unauthorized' }, 401);
     const id = Number(c.req.param('id'));
     if (id === actor.id) return c.json({ error: 'cannot impersonate yourself' }, 400);
     const target = users.get(id);
     if (!target) return c.json({ error: 'user not found' }, 404);
-    const token = users.issueToken(id);
-    log.warn(`admin ${actor.username} (#${actor.id}) is now impersonating ${target.username} (#${id})`);
-    return c.json({ token, user: target, tokenTtlDays: d.config.get().security.tokenTtlDays });
+    try {
+      const session = users.startImpersonation(actorToken, actor.id, id, d.config.get().security.tokenTtlDays);
+      log.warn(`admin ${actor.username} (#${actor.id}) is now impersonating ${target.username} (#${id})`);
+      return c.json({ ...session, user: target, tokenTtlDays: d.config.get().security.tokenTtlDays });
+    } catch (error) {
+      if (error instanceof ImpersonationConflictError) return c.json({ error: error.message }, 409);
+      throw error;
+    }
+  });
+
+  // Returning is an atomic exchange: the target token is revoked and a fresh admin token is minted. The
+  // exact target token + proof may read that same result again for a short lost-response retry window.
+  // The original admin token may be expired or revoked; it is never restored or exposed to the target.
+  app.post('/auth/impersonation/stop', async (c) => {
+    const authorization = c.req.header('authorization');
+    const currentToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+    if (!currentToken) return c.json({ error: 'unauthorized' }, 401);
+    const body = await parseBody(c, impersonationStopSchema);
+    const restored = users.stopImpersonation(body.returnCode, currentToken, d.config.get().security.tokenTtlDays);
+    if (!restored) return c.json({ error: 'invalid impersonation return' }, 403);
+    log.warn(`impersonation ended; restored admin ${restored.user.username} (#${restored.user.id})`);
+    return c.json({ ...restored, tokenTtlDays: d.config.get().security.tokenTtlDays });
+  });
+
+  // Logout may race a completed stop in another tab. The same proof + target token cancels either state
+  // atomically and revokes actor, target and any freshly restored token, so a late response has no authority.
+  app.post('/auth/impersonation/cancel', async (c) => {
+    const authorization = c.req.header('authorization');
+    const currentToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+    if (!currentToken) return c.json({ error: 'unauthorized' }, 401);
+    const body = await parseBody(c, impersonationStopSchema);
+    if (!users.cancelImpersonation(body.returnCode, currentToken, d.config.get().security.tokenTtlDays)) return c.json({ error: 'invalid impersonation return' }, 403);
+    return c.json({ ok: true });
   });
 
   // User ↔ project assignments. Only the bootstrap admin may view/manage them.

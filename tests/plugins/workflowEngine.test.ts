@@ -1598,7 +1598,7 @@ describe('workflow background + detach', () => {
    *  observed while still running (to detach it) and after it finishes (to see delivery). Captures the
    *  durable completions the engine emits and the registered control. */
   interface Hook { name: string; run(payload: unknown): unknown }
-  function bgHarness() {
+  function bgHarness(withCompletionSink = true) {
     const tools = new Map<string, Tool>();
     const controls = new Map<string, Ctrl>();
     const hooks: Hook[] = [];
@@ -1629,7 +1629,9 @@ describe('workflow background + detach', () => {
       currentModel: () => ({ provider: 'p', model: 'm' }),
       assertPathAllowed: assertTestPathAllowed,
       workflowEmitter: () => (u: (typeof snapshots)[number]) => { snapshots.push(u); },
-      workflowCompletionEmitter: () => (c: Completion) => { completions.push(c); },
+      workflowCompletionEmitter: () => withCompletionSink
+        ? (c: Completion) => { completions.push(c); }
+        : null,
       listModels: async () => [],
       toolNames: () => ['Read'],
     };
@@ -1640,6 +1642,27 @@ describe('workflow background + detach', () => {
     });
     return { tools, controls, hooks, completions, launched, finished, release, snapshots, stoppedSessions };
   }
+
+  it('falls back to a real foreground run when no completion sink can deliver later', async () => {
+    for (const [label, background] of [['default', undefined], ['explicit', true]] as const) {
+      const { tools, controls, completions, snapshots, release } = bgHarness(false);
+      const startP = tools.get('WorkflowStart')!.execute(`sinkless-${label}`, {
+        nodesFile: workflowFile([{ id: 'a', task: 'a' }]),
+        ...(background === undefined ? {} : { background }),
+      });
+      await new Promise((r) => setTimeout(r, 5));
+
+      expect(snapshots.at(-1)!.background).toBeUndefined();
+      expect(controls.get('workflow')!.cancelForSession({ sessionId: 'brain-parent' })).toEqual({ cancelled: 1 });
+      const res = await startP;
+      expect(res.content[0]!.text).toContain('status: cancelled');
+      expect(completions).toEqual([]);
+
+      release();
+      await new Promise((r) => setTimeout(r, 5));
+      expect(completions).toEqual([]);
+    }
+  });
 
   it('background=true returns a handle immediately and delivers the summary when the DAG finishes', async () => {
     const { tools, completions, finished, release } = bgHarness();

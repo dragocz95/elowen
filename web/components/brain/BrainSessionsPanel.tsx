@@ -473,8 +473,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
 
   /** The sub-agents that ran under one conversation, as a view of their own in place of the register.
    *
-   *  Following a row opens its transcript READ-ONLY: the daemon accepts no post into a delegated child, so
-   *  offering "continue" here would only fail at send. */
+   *  Following a row opens the child transcript the way the HOST marked it: continuable (the calling
+   *  account's own delegation) focuses it writable — sends ride the subagent send seam — while a
+   *  foreign child opens READ-ONLY, because reading another account's delegation never means writing
+   *  into it. */
   const agentsView = (target: { id: string; title: string }): ReactNode => {
     const rows = subagentBranchRows({
       conversation: target,
@@ -483,7 +485,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       rowDomId: (suffix) => agentRowDomId(target.id, suffix),
       openKeys: openAgentNodes,
       onToggleNode: (key) => toggle(setOpenAgentNodes)(key),
-      onOpenSession: (sessionId) => { openBrainSession(sessionId, false); afterOpen?.(); },
+      onOpenSession: (sessionId, node) => { openBrainSession(sessionId, node.continuable === true, true); afterOpen?.(); },
     });
     return (
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">

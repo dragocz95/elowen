@@ -533,6 +533,7 @@ const USER_REFERENCE_COLUMNS: readonly (readonly [table: string, column: string]
   ['brain_sessions', 'user_id'], ['brain_goals', 'user_id'],
   ['memories', 'user_id'], ['memory_events', 'user_id'], ['memory_categories', 'user_id'],
   ['user_projects', 'user_id'], ['user_prompts', 'user_id'], ['auth_tokens', 'user_id'],
+  ['auth_impersonations', 'admin_user_id'], ['auth_impersonations', 'target_user_id'],
   ['user_plugin_config', 'user_id'], ['plugin_secrets', 'owner_id'],
   ['user_external_identities', 'user_id'],
   ['usage_by_origin', 'user_id'], ['brain_session_origins', 'user_id'],

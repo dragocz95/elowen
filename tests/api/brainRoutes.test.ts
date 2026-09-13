@@ -39,7 +39,8 @@ function fakeBrain() {
   const startCalls: { id: number; opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number; surface?: 'web' | 'cli' } }[] = [];
   const readActivityCalls: { id: number; session: string; through: number; surface: 'web' | 'cli' }[] = [];
   const tapSnapshotCalls: { id: number; session: string; history?: { limit: number; before?: number } }[] = [];
-  const subagentSends: { id: number; session: string; text: string }[] = [];
+  const subagentSends: { id: number; session: string; text: string; images?: { data: string; mimeType: string }[] }[] = [];
+  const subagentModelSwitches: { id: number; session: string; sel: { provider?: string; model: string } }[] = [];
   const acceptedSendFailures: { session: string; message: string }[] = [];
   const turnRequests: Omit<TurnRequest, 'onAdmitted'>[] = [];
   const bindContextCalls: { id: number; channel: string; session: string }[] = [];
@@ -59,6 +60,7 @@ function fakeBrain() {
   let processes: ProcessInfo[] = [];
   let processOutputText: string | null = 'buffer';
   let unknownSessionError: Error | null = null;
+  let managedDeleteError: Error | null = null;
   let snapshotPending: BrainEvent[] = [{ type: 'text', delta: 'post-snapshot event' }];
   let snapshotPendingSync = false;
   let snapshotDelay: Promise<void> | undefined;
@@ -92,6 +94,7 @@ function fakeBrain() {
     readActivityCalls,
     tapSnapshotCalls,
     subagentSends,
+    subagentModelSwitches,
     acceptedSendFailures,
     turnRequests,
     get snapshotOffCalls() { return snapshotOffCalls; },
@@ -111,6 +114,7 @@ function fakeBrain() {
     __setProcesses: (list: ProcessInfo[]) => { processes = list; },
     __setProcessOutput: (text: string | null) => { processOutputText = text; },
     __failUnknownSession: () => { unknownSessionError = new Error('unknown session'); },
+    __failManagedDelete: (message: string | null) => { managedDeleteError = message ? new Error(message) : null; },
     isOwner: (_id: number) => owner,
     processes: (id: number, session?: string) => {
       processCalls.push({ id, session });
@@ -269,7 +273,13 @@ function fakeBrain() {
     messagesPage: (_id: number, session: string | undefined, opts: { limit: number; before?: number }) =>
       ({ items: [{ role: 'user', text: `page ${session ?? 'active'} l${opts.limit} b${opts.before ?? '-'}` }], hasMore: true, nextBefore: 7 }),
     preflightSubagentSend: () => { if (subagentPreflightError) throw subagentPreflightError; },
-    sendToSubagent: async (id: number, session: string, text: string) => { subagentSends.push({ id, session, text }); },
+    sendToSubagent: async (id: number, session: string, text: string, images?: { data: string; mimeType: string }[]) => { subagentSends.push({ id, session, text, ...(images ? { images } : {}) }); },
+    switchSubagentModelForOwner: (id: number, session: string, sel: { provider?: string; model: string }) => {
+      if (session === 'brain-ch-subagent-foreign') throw new Error('unknown session');
+      if (session === 'brain-ch-subagent-busy') throw new Error('that sub-agent has a turn in flight and cannot switch model — wait for it to finish');
+      subagentModelSwitches.push({ id, session, sel });
+      return { model: sel.model };
+    },
     searchMessages: (id: number, q: string) =>
       q.trim().length < 2 ? [] : [{ sessionId: `s-${id}`, sessionTitle: 'T', role: 'user', snippet: q, ts: '2026-01-01 00:00:00' }],
     bindContextCalls,
@@ -307,6 +317,15 @@ function fakeBrain() {
       if (sessionId === 'missing') return undefined;
       if (opts.maxBytes === 1) throw new Error('debug payload exceeds byte limit:42');
       return { items: [{ role: 'user', content: 'legacy' }], nextCursor: null, loadedBytes: 6, exact: false };
+    },
+    listManagedSessions: () => [],
+    deleteManagedSession: async () => {
+      if (managedDeleteError) throw managedDeleteError;
+      return 1;
+    },
+    deleteAllManagedSessions: async () => {
+      if (managedDeleteError) throw managedDeleteError;
+      return 2;
     },
     // Two conversations, so a limit=1 window has a real second page (hasMore).
     listSessions: (id: number, opts?: { limit?: number; offset?: number }) => {
@@ -411,6 +430,19 @@ const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authori
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('brain routes', () => {
+  it('returns 409 when managed session cleanup cannot confirm process cancellation', async () => {
+    const { app, adminTok, brain } = setup();
+    brain.__failManagedDelete('runner process cancellation was unconfirmed');
+
+    const one = await app.request('/brain/managed-sessions/brain-1', del(adminTok));
+    expect(one.status).toBe(409);
+    expect(await one.json()).toEqual({ error: 'session processes are still active' });
+
+    const all = await app.request('/brain/managed-sessions?scope=all', del(adminTok));
+    expect(all.status).toBe(409);
+    expect(await all.json()).toEqual({ error: 'session processes are still active' });
+  });
+
   it('serves an owned .htm only as an opaque attachment and 404s the same file for another user', async () => {
     const root = mkdtempSync(join(tmpdir(), 'brain-chat-files-'));
     pluginRoots.push(root);
@@ -732,6 +764,45 @@ describe('brain routes', () => {
     expect(accepted.status).toBe(200);
     await Promise.resolve(); // detached route continuation
     expect(brain.subagentSends).toEqual([{ id: 2, session: 'brain-ch-subagent-good', text: 'continue' }]);
+  });
+
+  it('carries image attachments on a sub-agent send and refuses an unsupported mimeType', async () => {
+    const { app, amyTok, brain } = setup();
+    const ok = await app.request('/brain/subagent/send', post(amyTok, {
+      session: 'brain-ch-subagent-good', text: 'read this screenshot',
+      images: [{ data: 'aGk=', mimeType: 'image/png' }],
+    }));
+    expect(ok.status).toBe(200);
+    await Promise.resolve(); // detached route continuation
+    expect(brain.subagentSends).toEqual([{
+      id: 2, session: 'brain-ch-subagent-good', text: 'read this screenshot',
+      images: [{ data: 'aGk=', mimeType: 'image/png' }],
+    }]);
+
+    const rejected = await app.request('/brain/subagent/send', post(amyTok, {
+      session: 'brain-ch-subagent-good', text: 'x',
+      images: [{ data: 'aGk=', mimeType: 'image/heic' }],
+    }));
+    expect(rejected.status).toBe(400);
+  });
+
+  it('routes a drilled-in child model switch to the sub-agent seam — success, in-flight and foreign refusals', async () => {
+    const { app, amyTok, brain } = setup();
+    const ok = await app.request('/brain/subagent/model', post(amyTok, {
+      session: 'brain-ch-subagent-good', provider: 'openai', model: 'gpt-9',
+    }));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ model: 'gpt-9' });
+    expect(brain.subagentModelSwitches).toEqual([
+      { id: 2, session: 'brain-ch-subagent-good', sel: { provider: 'openai', model: 'gpt-9' } },
+    ]);
+
+    const busy = await app.request('/brain/subagent/model', post(amyTok, { session: 'brain-ch-subagent-busy', model: 'gpt-9' }));
+    expect(busy.status).toBe(409);
+    const foreign = await app.request('/brain/subagent/model', post(amyTok, { session: 'brain-ch-subagent-foreign', model: 'gpt-9' }));
+    expect(foreign.status).toBe(404);
+    expect(await foreign.json()).toEqual({ error: 'unknown session' });
+    expect(brain.subagentModelSwitches).toHaveLength(1);
   });
 
   it('opt-in fixed-session stream starts with one durable + live snapshot frame', async () => {
@@ -1387,10 +1458,15 @@ describe('GET /brain/models allow-list', () => {
     expect((await app.request('/brain/model', post(tok, { model: 'relay/ollama/kimi' }))).status).toBe(200);
     expect((await app.request('/brain/model', post(tok, { model: 'ollama/kimi' }))).status).toBe(200);
     expect((await app.request('/brain/model', post(tok, { provider: 'relay', model: 'azure/deployment' }))).status).toBe(200);
+    // The drilled-in child route shares the same splitter — the child's row changes, not the parent's.
+    expect((await app.request('/brain/subagent/model', post(tok, { session: 'brain-ch-subagent-good', model: 'relay/ollama/kimi' }))).status).toBe(200);
     expect(brain.switchModelCalls.map((call) => call.sel)).toEqual([
       { provider: 'relay', model: 'ollama/kimi' }, // the prefix names a provider: split at the first slash
       { model: 'ollama/kimi' }, // no configured provider called `ollama`: a bare model id on the default provider
       { provider: 'relay', model: 'azure/deployment' }, // an explicit provider is never second-guessed
+    ]);
+    expect(brain.subagentModelSwitches).toEqual([
+      { id: admin.id, session: 'brain-ch-subagent-good', sel: { provider: 'relay', model: 'ollama/kimi' } },
     ]);
   });
 

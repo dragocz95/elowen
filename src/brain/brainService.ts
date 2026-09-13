@@ -454,6 +454,7 @@ export class BrainService {
     this.delegated = new DelegatedSessionService({
       store: d.store, sessions: this.sessions, channelService: this.channelService, identity: this.identity,
       users: d.users, policyForProjects: d.policyForProjects,
+      ownerAccessFor: (userId, rootSessionId) => this.ownerDelegatingAccess(userId, rootSessionId),
       sandbox: () => d.plugins?.peek()?.control('sandbox'),
       // A daemon-side delegated send (an owner drill-in, a DelegateContinue, a durable result delivery)
       // rehydrates the child from SQLite HERE, so the runner must not still be holding a live record for
@@ -572,12 +573,11 @@ export class BrainService {
       onConversationActivityChanged: d.onConversationActivityChanged,
       // A runner-hosted child's processes are invisible to the local sweep; the rows are about to go,
       // so this is the last moment ownership can still be resolved.
-      ...(d.subagentRunner ? {
+      ...(d.subagentRunner?.killSessionProcesses ? {
         // Awaitable and rejection-preserving: session teardown refuses to delete while the runner sweep
         // is unconfirmed, so a failed remote kill must REJECT here, not degrade to a log line.
-        killRunnerSessionProcesses: async (sessionId: string): Promise<void> => {
-          await d.subagentRunner?.killSessionProcesses?.(sessionId);
-        },
+        killRunnerSessionProcesses: (sessionId: string) =>
+          d.subagentRunner!.killSessionProcesses!(sessionId),
       } : {}),
     });
     this.processSvc = new SessionProcessService({
@@ -1346,6 +1346,33 @@ export class BrainService {
     }, row, continuation);
   }
 
+  /** Rebuild the CURRENT authority ceiling for a human continuing a delegated descendant from an owned
+   *  conversation. The durable scope was valid when spawned; account/project/tool/permission access may
+   *  have narrowed since, so the continuation compares against this fresh view before every dispatch. */
+  private ownerDelegatingAccess(userId: number, rootSessionId: string): DelegatingTurnAccess {
+    const root = this.d.store.getSession(rootSessionId);
+    if (!isOwnedUserSession(root, userId, rootSessionId)) throw new Error('delegated session is not rooted in an owner conversation');
+    const policy = this.d.policy?.(userId);
+    const settings = this.d.permissions?.(userId);
+    const toolPolicy = toolAuthorityForUser(this.d, userId);
+    return {
+      admin: policy?.allowedProjectIds === 'all',
+      projectIds: !policy || policy.allowedProjectIds === 'all' ? [] : [...policy.allowedProjectIds],
+      owner: true,
+      permissionBoundary: settings
+        ? noninteractivePermissionBoundary({ ruleset: buildPermissionRuleset(settings), yolo: false, unattendedAsks: settings.unattendedAsks })
+        : null,
+      settingsUserId: userId,
+      contributionUserId: userId,
+      accountUserId: userId,
+      ...(toolPolicy ? { toolPolicy: {
+        ...(toolPolicy.allow ? { allow: [...toolPolicy.allow] } : {}),
+        ...(toolPolicy.deny ? { deny: [...toolPolicy.deny] } : {}),
+      } } : {}),
+      projectRef: this.d.store.getProjectExecution(rootSessionId),
+    };
+  }
+
   /** D3 — never replay authority from disk unchecked. The workflow recovery journal lives in the plugin
    *  data dir, writable by the SAME uid the agent's Bash tool runs as, so a journaled boundary is
    *  untrusted input: an edited file (or simply a stale one — admin revoked, project unshared between
@@ -1469,8 +1496,16 @@ export class BrainService {
 
   /** Stop the streaming turn (the Esc key in chat clients) — on the active conversation, or on the
    *  caller's explicit `session` (a bound CLI). The agent settles into agent_end → the idle event, so
-   *  subscribed clients wind down on their own. */
+   *  subscribed clients wind down on their own.
+   *
+   *  An explicit DELEGATED child session is resolved through the durable ancestry predicate and stopped
+   *  with the targeted teardown: stopping the child the user drilled into must never cascade into the
+   *  hidden parent conversation. */
   async abort(userId: number, session?: string): Promise<void> {
+    if (session && isSubagentSession(session)) {
+      await this.delegated.stopForOwner(userId, session);
+      return;
+    }
     return this.teardown.abort(userId, session);
   }
 
@@ -2106,10 +2141,29 @@ export class BrainService {
     this.delegated.preflightSubagentSend(userId, sessionId);
   }
 
-  /** The owner talking INTO a delegated sub-agent's session — see DelegatedSessionService.sendToSubagent. */
-  async sendToSubagent(userId: number, sessionId: string, text: string): Promise<void> {
+  /** The owner talking INTO a delegated sub-agent's session — see DelegatedSessionService.sendToSubagent.
+   *  Optional image attachments ride into the child turn as content; see the schema bound on
+   *  POST /brain/subagent/send for the allowed shapes and caps. */
+  async sendToSubagent(userId: number, sessionId: string, text: string,
+    images?: { data: string; mimeType: string }[]): Promise<void> {
     if (this.draining || this.reloadingPlugins) throw new Error('the daemon is temporarily not admitting new work');
-    return this.delegated.sendToSubagent(userId, sessionId, text);
+    return this.delegated.sendToSubagent(userId, sessionId, text, images);
+  }
+
+  /** The owner's STOP of a delegated child they drilled into — the durable-ancestry twin of
+   *  {@link stopSubagent} that needs only the CALLER, not the parent id. */
+  stopSubagentForOwner(userId: number, childSessionId: string): Promise<{ stopped: boolean }> {
+    return this.delegated.stopForOwner(userId, childSessionId);
+  }
+
+  /** The owner's MODEL SWITCH for a delegated child they drilled into. Validated against the SAME
+   *  per-account model permission the ordinary /brain/model switch applies, then persisted on the
+   *  child's own row — see DelegatedSessionService.switchModelForOwner. */
+  switchSubagentModelForOwner(userId: number, childSessionId: string,
+    sel: { provider?: string; model: string }): { model: string } {
+    if (this.draining || this.reloadingPlugins) throw new Error('the daemon is temporarily not admitting new work');
+    if (!this.permissionSvc.selectionAllowed(userId, sel)) throw new Error('model not allowed for user');
+    return this.delegated.switchModelForOwner(userId, childSessionId, sel);
   }
 
   /** A delegating turn reading the final stored reply of one of its own sub-agents — see
@@ -2298,14 +2352,17 @@ export class BrainService {
    *  conversation. Async because a runner-hosted child's half is read live from the runner. See
    *  SessionProcessService.processes. */
   async processes(userId: number, sessionId?: string): Promise<ProcessInfo[]> {
+    if (sessionId && isSubagentSession(sessionId)) this.delegated.preflightOwnerRelation(userId, sessionId);
     return this.processSvc.processes(userId, sessionId);
   }
 
   async processOutput(userId: number, processId: string, sessionId?: string): Promise<string | null> {
+    if (sessionId && isSubagentSession(sessionId)) this.delegated.preflightOwnerRelation(userId, sessionId);
     return this.processSvc.processOutput(userId, processId, sessionId);
   }
 
   async killProcess(userId: number, processId: string, sessionId?: string): Promise<boolean> {
+    if (sessionId && isSubagentSession(sessionId)) this.delegated.preflightOwnerRelation(userId, sessionId);
     return this.processSvc.killProcess(userId, processId, sessionId);
   }
 
@@ -2320,7 +2377,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ detached: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('subagent');
     if (!control) return { detached: 0 };
@@ -2358,7 +2415,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ detached: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('terminal');
     if (!control) return { detached: 0 };
@@ -2377,7 +2434,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ killed: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('terminal');
     if (!control) return { killed: 0 };
@@ -2393,7 +2450,7 @@ export class BrainService {
     session?: string,
     client?: BoundClientRequest,
   ): Promise<{ detached: number }> {
-    const target = this.preflightSend(userId, session, client);
+    const target = this.preflightControlTarget(userId, session, client);
     const registry = await this.d.plugins?.get();
     const control = registry?.control('workflow');
     if (!control) return { detached: 0 };
@@ -2458,6 +2515,17 @@ export class BrainService {
       throw new Error('client session has stopped');
     }
     return target;
+  }
+
+  /** The session a CLIENT CONTROL action (Ctrl+B detach, stop-escalation kill) names: the caller's
+   *  ordinary conversation as {@link preflightSend} resolves it — or a delegated child whose complete
+   *  ancestry reaches that caller's own user conversation. Controls do not start another model turn, so
+   *  they keep the relation check even after access narrows; a user must still be able to stop old work.
+   *  The client generation fence applies only to user conversations — a focused child has no CLI binding. */
+  private preflightControlTarget(userId: number, session?: string, client?: BoundClientRequest): string {
+    if (!session || !isSubagentSession(session)) return this.preflightSend(userId, session, client);
+    this.delegated.preflightOwnerRelation(userId, session);
+    return session;
   }
 
   /** Whether the caller currently has a live conversation that a settings re-apply must wait for. */

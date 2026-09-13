@@ -470,7 +470,14 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       const pid = eventProjectId(e);
       return pid !== null && allowed.has(pid);
     };
-    const off = d.bus.subscribe(e => { if (visible(e)) void stream.writeSSE({ data: JSON.stringify(e), event: e.type }); });
+    const off = d.bus.subscribe(e => {
+      if (!visible(e)) return;
+      // An account with no project cannot open the detailed activity API. It still needs the invalidation
+      // so the shell can react if access is granted elsewhere, but the SSE frame must not disclose another
+      // account's session or platform target while its own project set is empty.
+      const payload = e.type === 'activity' && allowed?.size === 0 ? { type: 'activity' } : e;
+      void stream.writeSSE({ data: JSON.stringify(payload), event: e.type });
+    });
     c.req.raw.signal.addEventListener('abort', off);
     // Flush an immediate comment: a streamed response sends no HTTP headers until the first body byte,
     // so through the web BFF proxy the live channel would never connect on a quiet system. Comments

@@ -8,7 +8,7 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions, useBrainCommands, useConfig, QUERY_KEYS } from '../../lib/queries';
-import { elowenClient } from '../../lib/elowenClient';
+import { ElowenApiError, elowenClient } from '../../lib/elowenClient';
 import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainInlineArtifact, BrainInlineArtifactEvent, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainStreamSnapshotFrame, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, liveNarration, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
@@ -209,6 +209,9 @@ export interface BrainChatValue {
   loadSkill: (name: string) => void;
   queued: { id: string; text: string }[];
   readOnly: string | null;
+  /** The OWN delegated child currently focused (drill-in), if any: the composer stays and its sends
+   *  ride the subagent send seam — distinct from a read-only preview, which hides the composer. */
+  childFocus: string | null;
   activeSessionId: string | null;
   usage: BrainUsage | null;
   /** Project / LSP / MCP sections of the daemon's status poll — the telemetry panel's non-numeric half. */
@@ -238,7 +241,12 @@ export interface BrainChatValue {
   /** Commit the daemon-confirmed execution identity for both project selection surfaces. */
   selectProjectExecution: (target: NonNullable<BrainStatus['projectRef']>, session: string) => Promise<Awaited<ReturnType<typeof elowenClient.brainSetExecution>> | undefined>;
   openReadOnly: (sessionId: string) => Promise<void>;
+  /** The agents drill-in: focus one delegated child of the viewed transcript. Own children open
+   *  writable (sends ride the subagent send seam); from a read-only preview they stay read-only. */
+  focusSubagentSession: (sessionId: string) => Promise<void>;
   exitReadOnly: () => void;
+  /** Leave the focused child and return to the live active conversation (the Back control). */
+  exitChildFocus: () => void;
   deleteSession: (id: string, wasActive: boolean) => Promise<void>;
   onQueueRemove: (id: string) => void;
   onAnswer: (id: string, answers: AskAnswer[]) => Promise<void>;
@@ -440,6 +448,10 @@ function useBrainChatController(): BrainChatValue {
   // the set: it is newer truth, and queue ids are POSITIONAL, so a stale id would hide a different message.
   const [removingQueue, setRemovingQueue] = useState<ReadonlySet<string>>(() => new Set());
   const [readOnly, setReadOnly] = useState<string | null>(null);
+  /** The OWN delegated child currently focused (drill-in): its transcript replaces the view and the
+   *  composer STAYS, sending through the subagent send seam (steer while running, continue when idle).
+   *  Distinct from `readOnly` — a read-only preview (foreign/task session) keeps the composer hidden. */
+  const [childFocus, setChildFocus] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // The model catalog (lazily fetched, RBAC-filtered server-side) — the single source shared by the header
@@ -921,13 +933,18 @@ function useBrainChatController(): BrainChatValue {
       });
   }, [activityBoundaryVersion, activityWakeVersion, sessions.data, ready, reconnecting]);
 
-  // Route a "open this session" request: a continuable one (own web/CLI conversation) is resumed live;
-  // a non-continuable one (shared Discord channel / task worker) opens read-only.
-  const openRequest = (req: BrainOpenRequest): Promise<void> =>
-    req.continuable ? switchSession({ session: req.sessionId }) : openReadOnly(req.sessionId);
+  // Route a "open this session" request. A continuable own conversation is resumed live; a continuable
+  // DELEGATED child is focused writable (its sends ride the subagent send seam — the host read model
+  // marked the node continuable, so the durable ancestry was verified server-side); anything else
+  // (shared Discord channel, task worker, another account's session) opens read-only.
+  const openRequest = (req: BrainOpenRequest): Promise<void> => {
+    if (req.continuable && req.delegated) return openDelegatedChild(req.sessionId, true);
+    return req.continuable ? switchSession({ session: req.sessionId }) : openDelegatedChild(req.sessionId, false);
+  };
 
   const switchSession = async (opts: { session?: string; fresh?: boolean }): Promise<void> => {
     setReadOnly(null); // leaving any read-only preview
+    setChildFocus(null); // leaving any focused child
     await connect(opts);
     await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
   };
@@ -962,6 +979,20 @@ function useBrainChatController(): BrainChatValue {
     const submittedAttachments = attachments;
     setInput('');
     setAttachments([]);
+    // Focused delegated child: the message goes to THAT child through the subagent send seam — steered
+    // into its running turn, or a fresh child turn when idle. The server re-validates the durable
+    // ancestry on every send, so a stale or ineligible focus fails here with its precise reason.
+    if (childFocus) {
+      try { await elowenClient.brainSubagentSend(childFocus, text); }
+      catch (error) {
+        setInput((current) => current || submittedInput);
+        setAttachments((current) => current.length ? current : submittedAttachments);
+        // The daemon's precise refusal (foreign, recovery-required, no persisted scope) when it gave one.
+        const reason = error instanceof ElowenApiError ? (error.code ?? '') : '';
+        toast(reason || t.brainChat.sendError, 'error');
+      }
+      return;
+    }
     // No optimistic bubble: the daemon streams a `user` event (which flips busy on + renders the 'you'
     // turn) for both an immediate run and a queued delivery. `shown` rides as the clean display. The
     // binding lands the turn in THIS controller's conversation regardless of the server's active pointer.
@@ -976,15 +1007,19 @@ function useBrainChatController(): BrainChatValue {
     }
   };
 
-  // View a non-continuable session (a shared Discord channel or a task worker) read-only. Its snapshot is
-  // the authoritative child transcript, identity and cards; parent status/cache must never leak into it.
-  const openReadOnly = async (sessionId: string): Promise<void> => {
+  // Focus a non-bound session (a delegated child). Its snapshot is the authoritative child transcript,
+  // identity and cards; parent status/cache must never leak into it. `writable` keeps the composer
+  // alive and routes sends through the subagent send seam (the server re-checks the durable ancestry on
+  // every send); read-only is for a transcript this account may not write into at all.
+  const openDelegatedChild = async (sessionId: string, writable: boolean): Promise<void> => {
     stream.close();
     const generation = nextGeneration();
     setAsk(null); setNotice(''); setGoal(null); setArtifacts([]);
-    // The composer is about to be replaced by the read-only banner, so drop the in-flight marker at once.
-    setView((cur) => ({ ...cur, thinking: false }));
-    setReadOnly(sessionId);
+    setChildFocus(writable ? sessionId : null);
+    // The composer is about to be replaced by the read-only banner when not writable, so drop the
+    // in-flight marker at once.
+    setView((cur) => ({ ...cur, thinking: writable ? cur.thinking : false }));
+    setReadOnly(writable ? null : sessionId);
     // The parent identity is wrong for every child-specific control while the snapshot is in flight. Clear
     // it and address the child immediately; the atomic snapshot below fills the authoritative pair.
     setCurrentModel('');
@@ -1033,6 +1068,7 @@ function useBrainChatController(): BrainChatValue {
         openError: () => {
           toast(t.brainChat.searchOpenError, 'error');
           setReadOnly(null);
+          setChildFocus(null);
           setView(emptyView());
           void connectRef.current();
         },
@@ -1040,8 +1076,17 @@ function useBrainChatController(): BrainChatValue {
     });
   };
 
-  // Leave the read-only preview and return to the live active conversation.
+  const openReadOnly = (sessionId: string): Promise<void> => openDelegatedChild(sessionId, false);
+  /** The agents drill-in entry: an OWN delegated child (any depth) opens WRITABLE — sends and steers go
+   *  to that exact child through the subagent send seam. From a read-only preview (a foreign or task
+   *  session's transcript) the child opens read-only too: the preview does not establish ownership, and
+   *  ownership — never the id — is what may widen the composer. */
+  const focusSubagentSession = (sessionId: string): Promise<void> =>
+    openDelegatedChild(sessionId, !readOnly);
+
+  // Leave the read-only preview / the focused child and return to the live active conversation.
   const exitReadOnly = (): void => { setReadOnly(null); void connect(); };
+  const exitChildFocus = (): void => { setChildFocus(null); void connect(); };
 
   const deleteSession = async (id: string, wasActive: boolean): Promise<void> => {
     try {
@@ -1107,7 +1152,9 @@ function useBrainChatController(): BrainChatValue {
     }
     setAsk((cur) => (cur?.id === id ? null : cur));
   };
-  const abort = (): void => { void elowenClient.brainAbort(boundSessionRef.current).catch(() => undefined); };
+  // Explicit Stop intent — for the FOCUSED delegated child it stops THAT child (the daemon resolves it
+  // through the durable ancestry; the hidden parent keeps running), otherwise the bound conversation.
+  const abort = (): void => { void elowenClient.brainAbort(childFocus ?? boundSessionRef.current).catch(() => undefined); };
 
   // What the surface renders: the server's queue minus the items whose removal is in flight.
   const visibleQueue = useMemo(() => (removingQueue.size ? queued.filter((x) => !removingQueue.has(x.id)) : queued), [queued, removingQueue]);
@@ -1147,7 +1194,12 @@ function useBrainChatController(): BrainChatValue {
     // slower first click arriving after a newer choice and reverting the conversation on the server.
     modelQueueRef.current = modelQueueRef.current.catch(() => undefined).then(async () => {
       try {
-        const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
+        // Focused delegated child: the SAME picker switch, but the child's own row is what changes —
+        // the server persists the pick there and the child's next turn comes up on it. A refusal
+        // (turn in flight, foreign session) surfaces with its precise reason.
+        const { model } = childFocus
+          ? await elowenClient.brainSubagentSetModel({ provider: m.provider, model: m.model }, childFocus)
+          : await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
         if (latestModelRef.current !== m) return;
         setCurrentModel(model);
         // A catalog entry names the public identity only; the internal usage key arrives with the next
@@ -1167,10 +1219,20 @@ function useBrainChatController(): BrainChatValue {
   };
   const retryModel = (): void => { if (latestModelRef.current) runModel(latestModelRef.current); };
   // Switch the mode every following send is stamped with (the CLI's /plan|/build|/workflow, whose mode is
-  // likewise client state). Nothing is sent here — the mode takes effect on the NEXT turn.
+  // likewise client state). Nothing is sent here — the mode takes effect on the NEXT turn. A focused
+  // delegated child has no mode stamp at all (its send seam carries none), so a switch would silently
+  // do nothing for the conversation on screen: refuse it with the reason instead.
   const runMode = (mode: BrainWorkMode): void => {
+    if (childFocus) { toast(t.brainChat.childFocusCommandDisabled, 'error'); return; }
     setWorkMode(mode);
     toast(`${t.brainChat.modeSwitched} ${t.brainChat.workMode[mode]}`, 'ok');
+  };
+  // The reasoning picker is refused while a delegated child is focused: it writes the ACTIVE
+  // conversation's level AND the account default (POST /brain/think), and a child session is neither —
+  // the daemon would 409 with daemon-ese after the modal was already open. Say it up front instead.
+  const openReasoning = (v: boolean): void => {
+    if (v && childFocus) { toast(t.brainChat.childFocusCommandDisabled, 'error'); return; }
+    setReasoningOpen(v);
   };
   // The transcript carries the same submitted plan the daemon does — live on `tool_end`, and rebuilt from
   // history on every hydration — so it is what keeps the hydrated decision in step between snapshots, in
@@ -1185,7 +1247,7 @@ function useBrainChatController(): BrainChatValue {
   // A decision is open while the daemon is in plan mode, the turn that submitted the plan has settled, and
   // this tab has not already answered for that plan. Read-only previews are somebody else's conversation.
   const openPlanKey = planKey(pendingPlan);
-  const planDecision = daemonMode === 'plan' && !busy && !readOnly && openPlanKey && openPlanKey !== planDecided
+  const planDecision = daemonMode === 'plan' && !busy && !readOnly && !childFocus && openPlanKey && openPlanKey !== planDecided
     ? pendingPlan
     : null;
   const [planSubmitting, setPlanSubmitting] = useState(false);
@@ -1233,13 +1295,23 @@ function useBrainChatController(): BrainChatValue {
   // The CLI's skills picker submits `/skill:name` through the ordinary send path, and so does this: the
   // daemon recognizes the prefix and hands the slash to PI RAW, which expands it to the skill's full
   // instructions. The DAEMON renders the user turn (the `user` stream event), so nothing is echoed here.
+  // Inside a child view a skill load is a message too — it becomes the child's own turn through the
+  // same subagent send seam as typing into the focused composer.
   const loadSkill = (name: string): void => {
-    void elowenClient.brainSend(`/skill:${name}`, [], undefined, binding(), workMode)
+    void (childFocus
+      ? elowenClient.brainSubagentSend(childFocus, `/skill:${name}`)
+      : elowenClient.brainSend(`/skill:${name}`, [], undefined, binding(), workMode))
       .catch(() => toast(t.brainChat.sendError, 'error'));
   };
   const runSlash = async (cmd: SlashCommandDef, argument?: string): Promise<void> => {
     if (cmd.name === 'model') { setInput(''); setModelOpen(true); void loadModels(); return; }
     setInput('');
+    // Focused delegated child: the viewed composer's slash set shrinks to what a child actually
+    // supports. Prompt macros prefill and then ride the child send seam; /stop is the child's abort;
+    // the rest is parent-scoped (mode/reasoning/rename/actions/pickers) and is refused with the
+    // reason here — never executed against the hidden parent behind the view.
+    const childCapable = cmd.kind === 'prompt' || ['new', 'help', 'skills', 'tasks', 'stop'].includes(cmd.name);
+    if (childFocus && !childCapable) { toast(t.brainChat.childFocusCommandDisabled, 'error'); return; }
     try {
       if (cmd.name === 'new') { await startNewConversation(); return; }
       if (cmd.name === 'help') { setHelpOpen(true); return; }
@@ -1276,6 +1348,9 @@ function useBrainChatController(): BrainChatValue {
       // user types them and submits; the submit path expands the template (args or not).
       if (cmd.kind === 'prompt') { setInput(`/${cmd.name} `); return; }
       if (cmd.kind === 'action') {
+        // Only /stop reaches here while a child is focused (the gate above refused the rest) — and it
+        // means the VIEWED child's abort, the same intent as the header's Stop button.
+        if (childFocus) { abort(); return; }
         const r = await elowenClient.brainCommand(cmd.name, boundSessionRef.current, argument);
         if (r.data && Object.prototype.hasOwnProperty.call(r.data, 'goal')) setGoal(r.data.goal ?? null);
         toast(r.message ?? `/${cmd.name}`, 'ok');
@@ -1318,10 +1393,12 @@ function useBrainChatController(): BrainChatValue {
     // An empty launcher request means "focus". A non-empty dashboard request is appended to an existing
     // draft so opening the shared composer can never silently destroy unsent text.
     if (requestedText) setInput((current) => mergeBrainComposerText(current, requestedText));
-    if (readOnly) {
-      // A read-only preview has closed its EventSource and replaced the personal transcript. Reconnect
-      // before showing the composer so the seeded draft and the stream target the same conversation.
+    if (readOnly || childFocus) {
+      // A read-only preview or a focused child has closed the bound conversation's EventSource and
+      // replaced the view. Reconnect before showing the composer so the seeded draft and the stream
+      // target the same (parent) conversation.
       setReadOnly(null);
+      setChildFocus(null);
       void connect().then(bumpFocus).catch(() => { setReady(true); bumpFocus(); });
     } else {
       bumpFocus();
@@ -1416,12 +1493,12 @@ function useBrainChatController(): BrainChatValue {
 
   return {
     turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks,
+    reasoningOpen, setReasoningOpen: openReasoning, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks,
     pluginPicker, closePluginPicker: () => setPluginPicker(null),
     helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
-    queued: visibleQueue, readOnly, activeSessionId,
+    queued: visibleQueue, readOnly, childFocus, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, draft, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
-    openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
+    openReadOnly, focusSubagentSession, exitReadOnly, exitChildFocus, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
     models, currentModel, provider, providerLabel, usageProvider, setModel: (m) => runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError, modelStatus, retryModel,
     showThoughts: thoughts === 'show',
     setShowThoughts: (v) => setThoughts(v ? 'show' : 'hide'),

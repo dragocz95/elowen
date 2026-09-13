@@ -68,24 +68,9 @@ export interface ChatComposition {
   dispose(): void;
 }
 
-/** Window used when no per-user setting reached the CLI (older daemon, offline boot). Matches
- *  `TERMINAL_DEFAULTS.interruptConfirmMs`, the source of the configured value. */
-export const INTERRUPT_CONFIRM_MS = 1_800;
-
-/** Bounds mirroring the daemon's own clamp (`INTERRUPT_CONFIRM_BOUNDS` in store/terminalSettings.ts),
- *  re-applied here because the value arrives over the wire from a daemon whose version the CLI does not
- *  control. Nothing about this window touches key DECODING: `\x1b[A` is reassembled into an arrow key by
- *  pi-tui's stdin buffer on its own byte-driven 10 ms timeout, long before any consumer sees an Esc, so
- *  shortening the confirmation window cannot split an escape sequence. */
-const INTERRUPT_CONFIRM_BOUNDS: [min: number, max: number] = [500, 5000];
-
-/** The effective double-Esc window for this session: the user's Account → Terminal value, held inside the
- *  bounds above, or the built-in default when the daemon served none. */
-export function resolveInterruptConfirmMs(configured: number | undefined): number {
-  if (typeof configured !== 'number' || !Number.isFinite(configured)) return INTERRUPT_CONFIRM_MS;
-  const [min, max] = INTERRUPT_CONFIRM_BOUNDS;
-  return Math.min(max, Math.max(min, Math.round(configured)));
-}
+/** Window resolution, double-press arming and kill escalation live in the leaf interrupt module, shared
+ *  with the slash dispatcher (commands.ts) without making this file and it import each other. */
+import { escalationPress, resolveInterruptConfirmMs } from './interruptLadder.js';
 
 /** How long a transient notice stays above the composer. Long enough to read a line of confirmation
  *  after looking back at the screen, short enough that it is gone before it reads as state. */
@@ -110,26 +95,6 @@ const LONG_TOOL_COMPOSE_MARKER_MS = Number.isFinite(composeMarkerOverride) && co
 export function noticeAction(current: string, seen: string, sticky: boolean): 'idle' | 'arm' | 'cancel' {
   if (current === seen) return 'idle';
   return !current || sticky ? 'cancel' : 'arm';
-}
-
-/** Pure half of the double-Esc contract. The shell owns the expiry timer; this function makes the
- *  boundary deterministic in focused tests and prevents an old armed window from aborting a later turn. */
-export function interruptPress(armedUntil: number, now: number, windowMs = INTERRUPT_CONFIRM_MS): { armedUntil: number; abort: boolean } {
-  return armedUntil > now
-    ? { armedUntil: 0, abort: true }
-    : { armedUntil: now + windowMs, abort: false };
-}
-
-/** Pure half of the ESCALATING stop contract, layered over {@link interruptPress}. Once an abort has been
- *  requested for this turn (`stopRequested`), the turn may still be pinned by a long foreground command —
- *  PI's agent loop only re-checks its abort signal between tool calls — so a further Esc press escalates
- *  to a hard kill of that command instead of re-sending an abort the loop cannot act on. The escalation
- *  state lives client-side on purpose: the daemon never auto-escalates, so another client's innocent stop
- *  can never surprise-SIGKILL a running command. */
-export function escalationPress(stopRequested: boolean, armedUntil: number, now: number, windowMs = INTERRUPT_CONFIRM_MS): { armedUntil: number; action: 'arm' | 'abort' | 'kill' } {
-  if (stopRequested) return { armedUntil: 0, action: 'kill' };
-  const next = interruptPress(armedUntil, now, windowMs);
-  return { armedUntil: next.armedUntil, action: next.abort ? 'abort' : 'arm' };
 }
 
 /** The render shell: layout composition (chat stack vs start screen, telemetry panel), the render()
@@ -507,7 +472,7 @@ export function createChatComposition(
     showWorkflowModal({
       tui,
       editor,
-      getWorkflow: () => rt.transcript.workflows().find((w) => w.id === workflowId),
+      getWorkflow: () => stream.workflowStates().find((w) => w.id === workflowId),
       onDrill: (sessionId) => { void stream.openSubagent(sessionId); },
     });
   };
@@ -545,14 +510,14 @@ export function createChatComposition(
     const goal = goalMeta(rt.goal);
     const trimmedGoal = goal && opts.goalSuffix === false ? { primary: goal.primary, suffix: '' } : goal;
     const child = rt.childView;
-    // Drilled into a sub-agent: the meta row must describe the CHILD, not the parent. Its model, elapsed
-    // seconds and reasoning level all come from the matching subagent rail entry; its activity from the
-    // child transcript. Work mode stays the parent's — it is a session-wide setting the sub-agent
-    // inherits, not a per-agent one.
+    // Drilled into a sub-agent: the meta row must describe the CHILD, not the parent. Its model and
+    // elapsed seconds come from the child's own lane (usage/activityStartedAt ride the child snapshot);
+    // its reasoning level and name come from the level that DELEGATED it — the ancestor projection,
+    // because the active rail now lists the focused child's own children instead.
     // A workflow node is not on the subagent rail; its live seconds and level sit on the workflow snapshot.
     const childEntry = child
-      ? currentAgents.find((agent) => agent.sessionId === child.sessionId)
-        ?? currentWorkflows.flatMap((wf) => wf.nodes).find((node) => node.sessionId === child.sessionId)
+      ? stream.ancestorSubagentStates().find((agent) => agent.sessionId === child.sessionId)
+        ?? stream.ancestorWorkflowStates().flatMap((wf) => wf.nodes).find((node) => node.sessionId === child.sessionId)
       : undefined;
     // The child snapshot is authoritative. A parent rail entry may be stale after a model switch, and the
     // parent itself may use an entirely different model from this delegated session.
@@ -1195,11 +1160,14 @@ export function createChatComposition(
         }
         // Cycle main conversation → each sub-agent session → back to main (opencode-style).
         case 'subagent_cycle': stream.cycleSubagent(); return;
-        // Ctrl+B backgrounds whatever is waiting in the foreground: a delegate's blocked parent tool result
-        // and/or a running Bash command. Each detach resolves only that wait — the child channel or the
-        // process keeps running and its completion is delivered back to this conversation asynchronously.
+        // Ctrl+B backgrounds whatever is waiting in the foreground of the session the user is LOOKING
+        // at: a delegate's blocked parent tool result and/or a running Bash command. Drilled into a
+        // child, that is the child's own foreground work — the hidden parent's waits stay untouched.
+        // Each detach resolves only that wait — the child channel or the process keeps running and its
+        // completion is delivered back to its own conversation asynchronously.
         case 'subagent_background': {
-          const { subagents: fgSubagents, commands: fgCommands, workflows: fgWorkflows, total } = foregroundWork(stream, rt.processes);
+          const activeSession = rt.childView?.sessionId;
+          const { subagents: fgSubagents, commands: fgCommands, workflows: fgWorkflows, total } = foregroundWork(stream, rt.childView?.processes ?? rt.processes);
           if (total === 0) {
             rt.notice = color.dim('nothing running in the foreground to background');
             render('input:foreground-background-empty');
@@ -1208,12 +1176,13 @@ export function createChatComposition(
           rt.notice = color.dim('moving foreground work to the background…');
           rt.noticeSticky = true; // live progress — the outcome below replaces it and expires normally
           // Fire whichever detaches apply as ONE session task so a single combined notice reports all,
-          // instead of independent callbacks racing to overwrite rt.notice.
+          // instead of independent callbacks racing to overwrite rt.notice. An explicit child session
+          // carries no CLI binding — the daemon authorizes it through the durable ancestry instead.
           lifetime.runSession(
             () => Promise.all([
-              fgSubagents > 0 ? client.backgroundSubagents() : Promise.resolve({ detached: 0 }),
-              fgCommands > 0 ? client.backgroundCommands() : Promise.resolve({ detached: 0 }),
-              fgWorkflows > 0 ? client.backgroundWorkflows() : Promise.resolve({ detached: 0 }),
+              fgSubagents > 0 ? client.backgroundSubagents(activeSession) : Promise.resolve({ detached: 0 }),
+              fgCommands > 0 ? client.backgroundCommands(activeSession) : Promise.resolve({ detached: 0 }),
+              fgWorkflows > 0 ? client.backgroundWorkflows(activeSession) : Promise.resolve({ detached: 0 }),
             ]),
             ([subs, cmds, workflows]) => {
               const parts: string[] = [];
@@ -1234,6 +1203,11 @@ export function createChatComposition(
         // real queue tail by value and its `queue` snapshot reconciles (authoritative if the item was
         // already delivered in the meantime).
         case 'queue_remove': {
+          if (rt.childView) {
+            rt.notice = color.error('queued-message controls are unavailable while viewing a sub-agent because they belong to the parent conversation');
+            render('input:child-queue-disabled');
+            return;
+          }
           const last = rt.queued.at(-1);
           if (!last) { rt.notice = color.dim('no queued messages'); render('input:queue-remove-empty'); return; }
           rt.queued = rt.queued.slice(0, -1); // optimistic; the queue snapshot reconciles
@@ -1246,6 +1220,11 @@ export function createChatComposition(
           return;
         }
         case 'mode_toggle': {
+          if (rt.childView) {
+            rt.notice = color.error('work-mode switching is unavailable while viewing a sub-agent because child continuations keep their captured mode');
+            render('input:child-mode-disabled');
+            return;
+          }
           rt.workMode = rt.workMode === 'build' ? 'plan' : rt.workMode === 'plan' ? 'workflow' : 'build';
           rt.notice = color.dim(workModeNotice(rt.workMode, rt.brand.agentName));
           render('input:mode-toggle');
@@ -1284,7 +1263,11 @@ export function createChatComposition(
       telemetry,
       killProcess,
       openWorkflowModal,
-      openTaskActions: deps.openTaskActions,
+      openTaskActions: (taskId) => {
+        if (!rt.childView) { deps.openTaskActions(taskId); return; }
+        rt.notice = color.error('task actions are unavailable in the CLI child view because the task route is bound to the parent conversation');
+        render('input:child-task-disabled');
+      },
       rowBudget,
       subPanel,
       cardPanel,

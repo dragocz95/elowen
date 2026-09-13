@@ -183,7 +183,7 @@ export async function buildApp(opts: BuildOpts) {
       }).catch((e) => log.warn(`process panel projection for session ${sessionId} failed: ${e instanceof Error ? e.message : String(e)}`));
     });
     // If a runner dies ABRUPTLY (SIGKILL, crash), its graceful in-process sweep never runs and its
-    // detached children survive it. The last heartbeat's kill tokens are the only handle left: sweep
+    // detached children survive it. The latest private containment tokens are the only handle left: sweep
     // those trees by token — the terminal plugin's per-run env stamp, which survives new groups and
     // escaped descendants and cannot be confused by pid reuse.
     subagentRunner.attachRunnerExitTokensSink((killTokens) => {
@@ -314,9 +314,12 @@ export async function buildApp(opts: BuildOpts) {
       // refuses the delete unless every stop was confirmed.
       const local = await processRegistry.killWhere((handle) =>
         processHandleOwnedByAccount(handle, userId, (sessionId) => brainStore.getSession(sessionId)?.user_id));
-      const remote = subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0;
+      const remote = subagentRunner
+        ? await subagentRunner.killAccountProcesses(userId)
+        : { killed: 0, failed: [] };
       if (local.failed.length) throw new Error(`account ${userId} has ${local.failed.length} unconfirmed local process(es): ${local.failed.join(', ')}`);
-      return local.killed + remote;
+      if (remote.failed.length) throw new Error(`account ${userId} has ${remote.failed.length} unconfirmed runner process(es): ${remote.failed.join(', ')}`);
+      return local.killed + remote.killed;
     },
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
     platformsReady: () => platformsReady,

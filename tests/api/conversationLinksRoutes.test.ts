@@ -30,6 +30,8 @@ function setup(opts: {
   managed?: { id: string }[];
   /** Session rows the run-target resolution may find, keyed by id. Absent = no store at all. */
   rows?: Record<string, { user_id: number }>;
+  /** The production preflight seam used to decide whether one child is writable for this caller. */
+  preflightSubagentSend?: (userId: number, childSessionId: string) => void;
   /** The sub-agent branch the core store answers with, or a thrower to simulate a failed read. */
   branches?: (rootIds: readonly string[]) => ConversationSubagentBranches;
 } = {}) {
@@ -66,6 +68,7 @@ function setup(opts: {
   const brain = {
     listSessions: () => opts.mine ?? [],
     listManagedSessions: () => opts.managed ?? [],
+    preflightSubagentSend: (userId: number, childSessionId: string) => opts.preflightSubagentSend?.(userId, childSessionId),
   };
   const app = createServer({
     bus: new EventBus(),
@@ -296,7 +299,7 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
 
     expect(branchCalls).toEqual([['brain-2', 'brain-2-b']]);
     expect(body.subagentStatus).toBe('available');
-    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+    expect(body.subagents).toEqual({ 'brain-2': [node({ continuable: true })] });
     // The scheduled-job half is untouched by any of it.
     expect(body.status).toBe('available');
     expect(body.links.map((l) => l.jobId)).toEqual(['job-1']);
@@ -316,7 +319,7 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     expect(body.status).toBe('error');
     expect(body.links).toEqual([]);
     expect(body.subagentStatus).toBe('available');
-    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+    expect(body.subagents).toEqual({ 'brain-2': [node({ continuable: true })] });
   });
 
   it('keeps the sub-agent branch when the cron plugin is absent altogether', async () => {
@@ -328,7 +331,7 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     const { body } = await links(app, amyTok);
 
     expect(body.status).toBe('unavailable');
-    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+    expect(body.subagents).toEqual({ 'brain-2': [node({ continuable: true })] });
   });
 
   /** A failed core read is reported as a failure. Answering `available` with an empty map would tell the
@@ -419,5 +422,76 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     const { body } = await links(app, amyTok);
 
     expect(body.subagents['brain-2']![0]!.truncated).toBe(true);
+  });
+
+  /** Drill-in eligibility is a HOST statement, not a client guess. In the personal listing every
+   *  verified edge descends from the caller's own roots, so each child transcript is continuable —
+   *  nested ones included. */
+  it('marks every own child continuable in the personal listing, nested ones included', async () => {
+    const { app, amyTok } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      branches: () => ({
+        byConversation: {
+          'brain-2': [node({
+            children: [node({ key: 'sub:brain-ch-subagent-sub-c', childSessionId: 'brain-ch-subagent-sub-c' })],
+          })],
+        },
+        truncated: false,
+      }),
+    });
+
+    const { body } = await links(app, amyTok);
+    const root = body.subagents['brain-2']![0]!;
+
+    expect(root.continuable).toBe(true);
+    expect(root.children[0]!.continuable).toBe(true);
+  });
+
+  /** The admin register spans accounts and non-user roots. Writable drill-in belongs only to a branch
+   *  rooted in the calling account's own user conversation; child-row ownership alone cannot grant it. */
+  it('marks continuable per root in the admin register, leaving foreign and shared-channel branches read-only', async () => {
+    const { app, adminTok } = setup({
+      cron: () => [],
+      managed: [{ id: 'brain-2' }, { id: 'brain-1-own' }, { id: 'brain-ch-discord-shared' }],
+      preflightSubagentSend: (_userId, childSessionId) => {
+        if (childSessionId !== 'brain-ch-subagent-sub-own') throw new Error('read-only');
+      },
+      branches: () => ({
+        byConversation: {
+          'brain-2': [node()],
+          'brain-1-own': [node({ key: 'sub:brain-ch-subagent-sub-own', childSessionId: 'brain-ch-subagent-sub-own' })],
+          'brain-ch-discord-shared': [node({ key: 'sub:brain-ch-subagent-sub-shared', childSessionId: 'brain-ch-subagent-sub-shared' })],
+        },
+        truncated: false,
+      }),
+    });
+
+    const { body } = await links(app, adminTok, 'all');
+
+    expect(body.subagents['brain-2']![0]!.continuable).toBeUndefined();
+    expect(body.subagents['brain-1-own']![0]!.continuable).toBe(true);
+    expect(body.subagents['brain-ch-discord-shared']![0]!.continuable).toBeUndefined();
+  });
+
+  it('re-runs live continuation authorization on refetch after a stale writable snapshot', async () => {
+    let accessRevoked = false;
+    const { app, amyTok } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      preflightSubagentSend: () => {
+        if (accessRevoked) throw new Error('delegated scope exceeds current project access');
+      },
+      branches: () => ({ byConversation: { 'brain-2': [node()] }, truncated: false }),
+    });
+
+    const stale = (await links(app, amyTok)).body;
+    expect(stale.subagents['brain-2']![0]!.continuable).toBe(true);
+
+    accessRevoked = true;
+    const refreshed = (await links(app, amyTok)).body;
+
+    expect(stale.subagents['brain-2']![0]!.continuable).toBe(true);
+    expect(refreshed.subagents['brain-2']![0]!.continuable).toBeUndefined();
   });
 });

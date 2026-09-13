@@ -37,7 +37,7 @@ import type { PendingAbort } from '../brain/session/liveRegistry.js';
 import { logger } from '../shared/logger.js';
 import type { BrainEvent } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
-import type { ProcessInfo } from '../brain/processRegistry.js';
+import type { ProcessInfo, ProcessSweepResult } from '../brain/processRegistry.js';
 import { channelSessionId, channelIdOf } from '../brain/sessionId.js';
 import { SubagentRunnerUnavailable, type DelegatedTurnRequest, type DelegatedTurnRunner } from '../brain/delegatedTurn.js';
 import { SubagentRunnerHost, type RunnerHeartbeat, type SubagentRunnerHostDeps } from './runnerHost.js';
@@ -541,9 +541,12 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
     return this.queue.depth + remote.reduce((sum, count) => sum + count, 0);
   }
 
-  async killAccountProcesses(userId: number): Promise<number> {
-    const killed = await Promise.all(this.runners.map((entry) => entry.host.killAccountProcesses(userId)));
-    return killed.reduce((sum, count) => sum + count, 0);
+  async killAccountProcesses(userId: number): Promise<ProcessSweepResult> {
+    const results = await Promise.all(this.runners.map((entry) => entry.host.killAccountProcesses(userId)));
+    return {
+      killed: results.reduce((sum, result) => sum + result.killed, 0),
+      failed: results.flatMap((result) => result.failed),
+    };
   }
 
   /** Every runner's background processes, concatenated. Each host either answers or rejects — a wedged
@@ -576,9 +579,12 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
    *  sweep's remote half, matching what `ProcessRegistry.killSession` does for the daemon's own. A
    *  wedged runner rejects and that rejection propagates: the caller must learn the sweep is
    *  UNCONFIRMED, not mistake it for zero. */
-  async killSessionProcesses(sessionId: string): Promise<number> {
-    const killed = await Promise.all(this.runners.map((entry) => entry.host.killSessionProcesses(sessionId)));
-    return killed.reduce((sum, count) => sum + count, 0);
+  async killSessionProcesses(sessionId: string): Promise<ProcessSweepResult> {
+    const results = await Promise.all(this.runners.map((entry) => entry.host.killSessionProcesses(sessionId)));
+    return {
+      killed: results.reduce((sum, result) => sum + result.killed, 0),
+      failed: results.flatMap((result) => result.failed),
+    };
   }
 
   reset(reason: string): void {

@@ -5,7 +5,7 @@ import type { CardRegistry } from '../cards.js';
 import type { InlineArtifactRegistry } from '../inlineArtifacts.js';
 import type { ChannelSessionService } from '../channels.js';
 import type { ElicitationRegistry } from '../elicitation.js';
-import { processRegistry } from '../processRegistry.js';
+import { processRegistry, type ProcessSweepResult } from '../processRegistry.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry, PendingAbort } from '../session/liveRegistry.js';
@@ -37,7 +37,7 @@ interface SessionTeardownDeps {
   /** Stop every background process the sub-agent runners hold for ONE session. A runner-hosted child's
    *  handles live in the RUNNER's registry, which the local sweep cannot reach; the sweep fires before
    *  the session rows disappear, because ownership resolution dies with them. */
-  killRunnerSessionProcesses?: (sessionId: string) => Promise<void>;
+  killRunnerSessionProcesses?: (sessionId: string) => Promise<ProcessSweepResult>;
 }
 
 /** The destructive session lifecycle, split out of BrainService: interrupting a running turn (Esc/Stop),
@@ -59,7 +59,7 @@ export class SessionTeardownService {
   private readonly idleClock: IdleSessionClock;
   private readonly resolvePlugins: () => Promise<PluginRegistry | undefined>;
   private readonly onConversationActivityChanged?: (sessionId: string) => void;
-  private readonly killRunnerSessionProcesses?: (sessionId: string) => Promise<void>;
+  private readonly killRunnerSessionProcesses?: (sessionId: string) => Promise<ProcessSweepResult>;
   constructor(deps: SessionTeardownDeps) {
     this.store = deps.store;
     this.sessions = deps.sessions;
@@ -430,20 +430,33 @@ export class SessionTeardownService {
    *  A delete spares nothing, unlike a stop: a detached delegate or a background workflow keeps burning
    *  tokens for an inbox that has ceased to exist. */
   private async teardownDeletedSession(userId: number, id: string): Promise<void> {
-    // Processes FIRST and awaited: a sweep that cannot confirm its kills must abort the delete while
-    // every ownership row still exists — a silently-half-deleted conversation is unrecoverable, a
-    // refused one is retryable (every step below is idempotent).
-    await this.cleanupProcessesForTree(id);
-    this.cancelDelegatedWorkFor(id);
-    this.elicitation.cancelForSession(id, 'conversation deleted'); // release a parked turn before dropping its session
-    this.goals.cancelGoalContinuation(id);
-    this.artifacts.closeSession(id);
-    this.cards.clearSession(id);
-    if (isChannelSession(id)) this.sessions.channelDispose(channelIdOf(id));
-    else this.sessions.dispose(id);
-    // The in-memory pointer must not survive the row it names, or status/send would keep answering for a
-    // conversation that no longer exists (lifecycle.activeSessionId trusts the pointer verbatim).
-    if (this.sessions.activeIdFor(userId) === id) this.sessions.clearActive(userId);
+    // Fence and quiesce every source of new processes BEFORE the final sweep. Sweeping first lets a live
+    // turn or workflow spawn another child while its session rows are being deleted, orphaning the process.
+    const live = this.sessions.get(id);
+    if (live) this.sessions.markDisposing(id);
+    try {
+      this.elicitation.cancelForSession(id, 'conversation deleted');
+      if (isChannelSession(id)) {
+        await this.channelService.abort(channelIdOf(id), { origin: 'parent_teardown', reason: 'conversation deleted' });
+      } else if (live) {
+        await abortSessionWork(live.session);
+      }
+      await this.cancelDelegatedWorkFor(id);
+      // A sweep that cannot confirm its kills aborts the delete while every ownership row still exists. The
+      // refused operation is retryable because all preceding cancellation steps are idempotent.
+      await this.cleanupProcessesForTree(id);
+      this.goals.cancelGoalContinuation(id);
+      this.artifacts.closeSession(id);
+      this.cards.clearSession(id);
+      if (isChannelSession(id)) this.sessions.channelDispose(channelIdOf(id));
+      else this.sessions.dispose(id);
+      // The in-memory pointer must not survive the row it names, or status/send would keep answering for a
+      // conversation that no longer exists (lifecycle.activeSessionId trusts the pointer verbatim).
+      if (this.sessions.activeIdFor(userId) === id) this.sessions.clearActive(userId);
+    } catch (e) {
+      if (live) this.sessions.clearDisposing(id);
+      throw e;
+    }
   }
 
   /** Stop the DELEGATED work a deleted conversation is still driving: the workflow DAG that keeps
@@ -451,18 +464,16 @@ export class SessionTeardownService {
    *  delivered. cleanupProcessesForTree reaches only the shell processes those children spawned, never
    *  the agent turns themselves.
    *
-   *  Fired and logged rather than awaited: the workflow control lives behind the plugin registry (async)
-   *  while neither delete entry point awaits it — the same contract the terminal teardown above uses.
-   *  Cancel the engine BEFORE the children, or it relaunches a node the moment an aborted one settles. */
-  private cancelDelegatedWorkFor(id: string): void {
+   *  Awaited before the process sweep: otherwise a child can start a process after the sweep and before
+   *  its ownership rows disappear. Cancel the engine BEFORE the children, or it relaunches a node the
+   *  moment an aborted one settles. */
+  private async cancelDelegatedWorkFor(id: string): Promise<void> {
     const children = this.sessions.childrenOf(id);
-    void (async () => {
-      await this.cancelWorkflowsFor(id);
-      for (const child of children) {
-        if (isChannelSession(child)) await this.channelService.abort(channelIdOf(child), { origin: 'parent_teardown', reason: 'conversation deleted' });
-        this.sessions.setChildRunning(id, child, false);
-      }
-    })().catch((e) => logger('brain').error(`delegated teardown failed for ${id}`, e));
+    await this.cancelWorkflowsFor(id);
+    for (const child of children) {
+      if (isChannelSession(child)) await this.channelService.abort(channelIdOf(child), { origin: 'parent_teardown', reason: 'conversation deleted' });
+      this.sessions.setChildRunning(id, child, false);
+    }
   }
 
   /** Delete ANY of the owner's brain sessions by id (admin panel) — disposing a live conversation or
@@ -475,9 +486,24 @@ export class SessionTeardownService {
     // caller reaches across accounts only by saying so. Teardown runs as the session's REAL owner --
     // passing the admin here would clean up the wrong user's terminals and processes.
     if (scope === 'own' && row.user_id !== userId) return 0;
-    await this.teardownDeletedSession(row.user_id, id);
-    this.store.deleteSession(id);
-    return 1;
+    // Reserve the same session lock as ordinary delete. The disposing fence then has a lock to queue new
+    // sends behind, and the row cannot disappear while a concurrent turn is still settling into it.
+    this.fenceDeletedSession(id);
+    return this.serial(id, async () => {
+      const current = this.store.getSession(id);
+      if (!current || (scope === 'own' && current.user_id !== userId)) {
+        this.sessions.clearDisposing(id);
+        return 0;
+      }
+      try {
+        await this.teardownDeletedSession(current.user_id, id);
+      } catch (e) {
+        this.sessions.clearDisposing(id);
+        throw e;
+      }
+      this.store.deleteSession(id);
+      return 1;
+    });
   }
 
   /** Stop the background processes of `id` and its whole delegated subtree, BOTH halves awaited: the
@@ -486,13 +512,19 @@ export class SessionTeardownService {
    *  may still be running). The tree is collected from the run rows BEFORE any of it is torn down. */
   private async cleanupProcessesForTree(id: string): Promise<void> {
     const stack = [id];
+    const seen = new Set(stack);
     for (let index = 0; index < stack.length; index += 1) {
-      for (const child of this.store.getSubagentRuns(stack[index]!)) stack.push(child.sessionId);
+      for (const child of this.store.getSubagentRuns(stack[index]!)) {
+        if (!seen.has(child.sessionId)) { seen.add(child.sessionId); stack.push(child.sessionId); }
+      }
     }
     for (const sessionId of stack) {
-      const { failed } = await processRegistry.killSession(sessionId);
-      if (failed.length) throw new Error(`session ${sessionId} has ${failed.length} unconfirmed local process(es): ${failed.join(', ')}`);
-      await this.killRunnerSessionProcesses?.(sessionId);
+      const local = await processRegistry.killSession(sessionId);
+      if (local.failed.length) throw new Error(`session ${sessionId} has ${local.failed.length} unconfirmed local process(es): ${local.failed.join(', ')}`);
+      const remote = await this.killRunnerSessionProcesses?.(sessionId);
+      if (remote?.failed.length) {
+        throw new Error(`session ${sessionId} has ${remote.failed.length} unconfirmed runner process(es): ${remote.failed.join(', ')}`);
+      }
     }
   }
 
@@ -503,8 +535,11 @@ export class SessionTeardownService {
   private descendantSessionIds(id: string): string[] {
     const out: string[] = [];
     const stack = [id];
+    const seen = new Set(stack);
     for (let index = 0; index < stack.length; index += 1) {
-      for (const child of this.store.getSubagentRuns(stack[index]!)) { out.push(child.sessionId); stack.push(child.sessionId); }
+      for (const child of this.store.getSubagentRuns(stack[index]!)) {
+        if (!seen.has(child.sessionId)) { seen.add(child.sessionId); out.push(child.sessionId); stack.push(child.sessionId); }
+      }
     }
     return out;
   }

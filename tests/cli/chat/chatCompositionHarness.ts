@@ -162,8 +162,11 @@ export function compositionHarness(options: {
   const stream = {
     subagentStates: () => [],
     workflowStates: () => [],
+    ancestorSubagentStates: () => [],
+    ancestorWorkflowStates: () => [],
     openSubagent: async () => {},
     closeSubagent: () => {},
+    exitSubagent: () => {},
     cycleSubagent: () => {},
     openStream: () => {},
     restartStream: () => {},

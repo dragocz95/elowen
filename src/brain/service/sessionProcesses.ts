@@ -162,7 +162,8 @@ export class SessionProcessService {
     const snapshot = remoteKill.find((process) => process.id === processId);
     if (!snapshot || snapshot.completionMode === 'foreground' || !this.ownsSnapshot(userId, snapshot)) return false;
     if (sessionId && snapshot.sessionId !== this.ownedProcessSession(userId, sessionId)) return false;
-    return (await this.killRemoteProcess?.(processId, snapshot.sessionId!)) ?? false;
+    try { return (await this.killRemoteProcess?.(processId, snapshot.sessionId!)) ?? false; }
+    catch (e) { throw new Error(`process stop unconfirmed: ${e instanceof Error ? e.message : String(e)}`); }
   }
 
   /** The registry kill is confirmed-or-nothing: a failure leaves the handle in place and rejects, which

@@ -733,9 +733,13 @@ describe('ProviderRequestRecorder — effective-speed timing', () => {
     const failed = rows.map((entry) => JSON.parse(entry.content) as AssistantMessage & { effectiveMs?: number; firstContentMs?: number }).find((m) => m.stopReason === 'error');
     const ok = rows.map((entry) => JSON.parse(entry.content) as AssistantMessage & { effectiveMs?: number; firstContentMs?: number }).find((m) => m.stopReason === 'stop');
     expect(failed).toBeDefined();
-    expect(failed?.effectiveMs).toBe(2100); // the failed attempt's own window
+    expect(failed?.effectiveMs).toBe(2100); // the failed attempt's own diagnostic window
     expect(ok?.effectiveMs).toBe(5900); // 100 + 2000 + 3000 backoff + 800 — counted ONCE
     expect(ok?.firstContentMs).toBeUndefined(); // no honest single wait-to-first-content across retries
+    const aggregate = f.brain.usageByModel(7)[0]!.usage;
+    expect(aggregate.output).toBe(4); // billing keeps both provider-reported attempts
+    expect(aggregate.effectiveMeasuredOutput).toBe(2); // speed keeps only the delivered response
+    expect(aggregate.effectiveTps).toBeCloseTo(2 / 5.9);
   });
 
   it('keeps compaction summaries unstamped (effective speed is a chat-request figure)', async () => {
