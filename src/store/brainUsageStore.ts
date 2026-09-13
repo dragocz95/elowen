@@ -87,13 +87,25 @@ const producingProvider = (src: string, path: string, modelPath: string, fallbac
 // keeps a JSON scalar (a row that is just `null` or a number) out of the assistant side, and `je.type`
 // keeps a bucket element that is a scalar — including a DOUBLE-SERIALIZED bucket, a JSON string whose
 // text happens to be an object — out of the fan-out. Every numeric field goes through {@link numeric}.
+const safeJson = (src: string): string => `CASE WHEN json_valid(${src}) THEN ${src} ELSE '{}' END`;
+const safeContentArray = (src: string): string =>
+  `CASE WHEN json_type(${safeJson(src)}, '$.content') = 'array'
+          THEN json_extract(${safeJson(src)}, '$.content') ELSE '[]' END`;
+
+const hasInvalidEffectiveContent = (src: string): string =>
+  `(COALESCE(json_type(${safeJson(src)}, '$.content'), '') <> 'array'
+    OR EXISTS (SELECT 1 FROM json_each(${safeContentArray(src)}) AS block
+                 WHERE block.type <> 'object'))`;
+
 const hasToolCallContent = (src: string): string =>
-  `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(${src}) AND json_type(${src}, '$.content') = 'array'
-                                           THEN json_extract(${src}, '$.content') ELSE '[]' END) AS block
-            WHERE json_extract(block.value, '$.type') = 'toolCall')`;
+  `(EXISTS (SELECT 1 FROM json_each(${safeContentArray(src)}) AS block
+              WHERE CASE WHEN block.type = 'object'
+                         THEN json_extract(block.value, '$.type') = 'toolCall'
+                         ELSE 0 END))`;
 
 const successfulEffectiveMessage = (src: string): string =>
-  `COALESCE(json_extract(${src}, '$.stopReason'), '') NOT IN ('error', 'aborted')
+  `COALESCE(json_extract(${safeJson(src)}, '$.stopReason'), '') NOT IN ('error', 'aborted')
+   AND NOT ${hasInvalidEffectiveContent(src)}
    AND NOT ${hasToolCallContent(src)}`;
 
 const trustedEffectiveRollup = (src: string): string =>
@@ -310,6 +322,9 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
       // An assistant message — attribute to the identity it recorded. Empty fields are resolved from the
       // session only by the SQL reader, which still has that session row; the persisted rollup never guesses.
       const at = typeof c.timestamp === 'number' ? c.timestamp : 0;
+      const validEffectiveContent = Array.isArray(c.content) && c.content.every((block) =>
+        !!block && typeof block === 'object' && !Array.isArray(block)
+        && (block as { type?: unknown }).type !== 'toolCall');
       fold(bucketFor(
         row.usage_epoch ?? 0,
         typeof c.provider === 'string' ? c.provider : '',
@@ -317,8 +332,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
         c.providerIdentity === 'config', at,
       ), c.usage, at, 1,
         { durationMs: num(c.durationMs), output: num(c.usage.output) },
-        c.stopReason === 'error' || c.stopReason === 'aborted' ||
-        (Array.isArray(c.content) && c.content.some((block) => block && typeof block === 'object' && (block as { type?: unknown }).type === 'toolCall'))
+        c.stopReason === 'error' || c.stopReason === 'aborted' || !validEffectiveContent
           ? { effectiveMs: 0, output: 0 }
           : { effectiveMs: num(c.effectiveMs), output: num(c.usage.output) });
     }
@@ -356,8 +370,9 @@ export class BrainUsageStore {
 
   private hasUsageRollup(): boolean {
     if (!this.hasUsageRollupTable()) return false;
-    const row = this.db.prepare('SELECT ready FROM brain_usage_rollup_state WHERE id = 1').get() as { ready: number } | undefined;
-    return row?.ready === 1;
+    const row = this.db.prepare('SELECT ready, effective_pair_version AS effectivePairVersion FROM brain_usage_rollup_state WHERE id = 1')
+      .get() as { ready: number; effectivePairVersion: number } | undefined;
+    return row?.ready === 1 && row.effectivePairVersion >= 2;
   }
 
   /** Advance the user's logical accounting generation. Historical transcript/projection rows remain

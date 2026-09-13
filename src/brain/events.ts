@@ -756,9 +756,12 @@ function usageOf(session: AgentSession): BrainUsage {
  *  Failed and aborted attempts are not completed calls, so the previous completion still answers. Once
  *  the latest completion is found, an absent timing stamp or usable output makes the speed unknown rather
  *  than exposing an older call from another turn or model. Compaction summaries are not assistant rows. */
-function hasToolCallContent(message: { content?: unknown }): boolean {
-  return Array.isArray(message.content)
-    && message.content.some((block) => block && typeof block === 'object' && (block as { type?: unknown }).type === 'toolCall');
+function hasIneligibleEffectiveContent(message: { content?: unknown }): boolean {
+  if (!Array.isArray(message.content)) return true;
+  return message.content.some((block) => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) return true;
+    return (block as { type?: unknown }).type === 'toolCall';
+  });
 }
 
 function latestEffectiveCall(session: AgentSession): Pick<BrainUsage, 'effectiveTps' | 'firstContentMs'> {
@@ -766,7 +769,7 @@ function latestEffectiveCall(session: AgentSession): Pick<BrainUsage, 'effective
     const m = session.messages[i] as { role?: string; stopReason?: string; usage?: { output?: number }; content?: unknown } & EffectiveRequestTiming;
     if (m.role !== 'assistant') continue;
     if (m.stopReason === 'error' || m.stopReason === 'aborted') continue;
-    const tps = hasToolCallContent(m) ? null : speedOf(m.usage?.output ?? 0, m.effectiveMs ?? 0);
+    const tps = hasIneligibleEffectiveContent(m) ? null : speedOf(m.usage?.output ?? 0, m.effectiveMs ?? 0);
     return {
       ...(tps != null ? { effectiveTps: tps } : {}),
       ...(m.firstContentMs != null ? { firstContentMs: m.firstContentMs } : {}),

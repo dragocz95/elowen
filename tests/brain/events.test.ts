@@ -328,6 +328,7 @@ describe('sessionUsageSnapshot — effective speed', () => {
   const msg = (over: Record<string, unknown> = {}) => ({
     role: 'assistant', stopReason: 'stop',
     usage: { input: 10, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 110, cost: { total: 0 } },
+    content: [{ type: 'text', text: 'answer' }],
     ...over,
   });
 
@@ -354,6 +355,13 @@ describe('sessionUsageSnapshot — effective speed', () => {
       msg({ effectiveMs: 90_000, stopReason: 'aborted', usage: { input: 5, output: 3, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 8, cost: { total: 0 } } }),
     ]);
     expect(usage.effectiveTps).toBeCloseTo(100); // the completed 100/1s call, not the aborted tail
+  });
+
+  it('withholds speed when the latest content is missing, non-array, or contains a scalar block', () => {
+    for (const content of [undefined, 'text', [{ type: 'text', text: 'ok' }, 'broken']]) {
+      const usage = snapshot([msg({ effectiveMs: 1000 }), msg({ effectiveMs: 1000, content })]);
+      expect(usage.effectiveTps).toBeUndefined();
+    }
   });
 
   it('withholds speed for a thinking-only generation that also contains a tool call', () => {
