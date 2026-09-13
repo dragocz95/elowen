@@ -8,10 +8,14 @@ const REPO_LEASE_MS = 30_000;
 
 export function initSandboxDb(ctx) {
   const db = ctx.db();
-  db.migrate([{
-    version: 1,
-    up(m) {
-      m.exec(`
+  db.migrate(SANDBOX_MIGRATIONS);
+  return db;
+}
+
+const workspaceTablesMigration = {
+  version: 1,
+  up(m) {
+    m.exec(`
         CREATE TABLE IF NOT EXISTS p_sandbox_workspaces (
           id TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL,
@@ -69,8 +73,10 @@ export function initSandboxDb(ctx) {
         );
       `);
     },
-  }, {
-    version: 2,
+};
+
+const leaseKindsMigration = {
+  version: 2,
     // A supervised background runtime is a third kind of held execution, and the original CHECK named
     // only the two that existed. SQLite cannot widen a CHECK in place, so the table is rebuilt: the
     // rows are live leases of processes that may still be running, which is exactly why they are copied
@@ -101,8 +107,10 @@ export function initSandboxDb(ctx) {
           ON p_sandbox_execution_leases(workspace_id, expires_at);
       `);
     },
-  }, {
-    version: 7,
+};
+
+const workspaceRetirementMigration = {
+  version: 7,
     // The account-owned Git workspaces are gone: their rows described worktrees a removed subsystem cut,
     // so nothing reads them and leaving them behind would only misdescribe what this plugin owns. The
     // state that DOES survive is migrated rather than discarded — the lease table is copied across again
@@ -131,9 +139,16 @@ export function initSandboxDb(ctx) {
         CREATE INDEX p_sandbox_execution_leases_resource ON p_sandbox_execution_leases(resource_kind,resource_id,runtime_generation);
       `);
     },
-  }, environmentMigration, guestFileMigration, environmentProgressMigration, environmentPublicationMigration]);
-  return db;
-}
+};
+
+/** The plugin's declared steps. The order they are listed in is NOT the order they run in: `migrate` sorts
+ *  by version, and the environment, guest-file, progress and publication steps from the neighbouring modules
+ *  slot in between the numbers here. Exported so a test can reproduce the state a live instance is at just
+ *  BEFORE one step — by applying every other one — and then prove what that step alone does to it. */
+export const SANDBOX_MIGRATIONS = [
+  workspaceTablesMigration, leaseKindsMigration, workspaceRetirementMigration,
+  environmentMigration, guestFileMigration, environmentProgressMigration, environmentPublicationMigration,
+];
 
 function processExists(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
