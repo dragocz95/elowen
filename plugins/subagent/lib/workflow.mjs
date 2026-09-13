@@ -161,9 +161,8 @@ const delegableAccess = (access) => ({
   ...(access.readOnly ? { readOnly: true } : {}),
   ...(access.contributionUserId != null ? { contributionUserId: access.contributionUserId } : {}),
   // The ACCOUNT the child acts as, kept beside the narrower contribution owner. Dropping it left a node
-  // that adds nodes of its own unable to name the workspace its whole workflow already runs in.
+  // that adds nodes of its own unable to carry the account its whole workflow runs under.
   ...(access.accountUserId != null ? { accountUserId: access.accountUserId } : {}),
-  ...(access.workspaceRef ? { workspaceRef: { ...access.workspaceRef } } : {}),
 });
 // Some models (seen: Qwen max preview) double-escape non-ASCII in tool-call JSON, so the parsed title
 // still carries literal backslash-u sequences ("Docs \u2014 write" instead of "Docs — write"). The title
@@ -220,11 +219,10 @@ const NODE_SHAPE = Type.Object({
   deps: Type.Optional(Type.Array(Type.String(), { description: 'Ids of nodes that must finish before this one starts. Omit for a root node.' })),
   model: Type.Optional(Type.String({ description: 'Run this node on a DIFFERENT model (value from DelegateModels). Omit to inherit yours.' })),
   thinkingLevel: Type.Optional(Type.String({ minLength: 1, description: THINKING_LEVEL_HINT })),
-  fork: Type.Optional(Type.Boolean({ description: 'FORK the conversation this workflow was started from: this node begins with that conversation\'s system prompt, tools and full history, and its task becomes the directive. Fork a node whose work depends on what the origin conversation already knows; leave it off for an independent step. Refused together with tools, read_only, subagent_type or workspaceId, each of which would rewrite the prompt cache the fork exists to reuse.' })),
+  fork: Type.Optional(Type.Boolean({ description: 'FORK the conversation this workflow was started from: this node begins with that conversation\'s system prompt, tools and full history, and its task becomes the directive. Fork a node whose work depends on what the origin conversation already knows; leave it off for an independent step. Refused together with tools, read_only or subagent_type, each of which would rewrite the prompt cache the fork exists to reuse.' })),
   read_only: Type.Optional(Type.Boolean({ description: 'Give this node read-only tools and the non-destructive shell clamp (explore/report, no delegation). The clamp denies destructive commands; it does not prevent writing a file through redirection.' })),
   tools: Type.Optional(Type.Array(Type.String(), { description: 'Give this node EXACTLY these tools (names from your own toolset). Narrows only.' })),
   subagent_type: Type.Optional(Type.String({ description: 'Run this node as a named sub-agent TYPE (from the delegate tool\'s type list) — it supplies the role prompt and toolset (a read-only type already includes the non-destructive shell clamp). Omit for a generic node.' })),
-  workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Explicit Sandbox workspace for this node. It may only preserve or narrow the effective parent workspace scope.' })),
 });
 
 /** Register the workflow tools on the subagent plugin. `getRun` returns the host channel handler once
@@ -234,38 +232,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   /** id -> workflow. In-memory only (mirrors delegate's `jobs`): a workflow does not survive a daemon
    *  restart, and its node child sessions persist on their own. */
   const workflows = new Map();
-  const sameWorkspaceRef = (a, b) => a?.workspaceId === b?.workspaceId && a?.projectId === b?.projectId;
-  const resolveWorkspaceRef = (access, requestedWorkspaceId) => {
-    const requested = typeof requestedWorkspaceId === 'string' ? requestedWorkspaceId.trim() : '';
-    const inherited = access.workspaceRef;
-    if (!requested) return inherited ? { ...inherited } : undefined;
-    if (inherited && requested !== inherited.workspaceId) {
-      throw new Error('a workspace-scoped workflow node cannot switch to a sibling workspace');
-    }
-    // The HOST's resolver, not a copy of it here. Resolving a workspace needs the Sandbox control, which is
-    // restricted to the plugins that own process launch — so the local version this replaces resolved to
-    // nothing for every real workflow while a mocked control kept its tests green, and a turn that had just
-    // created a workspace was refused it by WorkflowStart. The account and the project ceiling travel in the
-    // host-stamped boundary; the sibling-switch rule stays here because it is the workflow's own.
-    const resolved = ctx.resolveWorkspaceScope({
-      admin: access.admin,
-      projectIds: access.projectIds,
-      accountUserId: access.accountUserId,
-      ...(inherited ? { workspaceRef: inherited } : {}),
-    }, requested);
-    if (!resolved) throw new Error('workspace not found in the current project scope');
-    if (inherited && !sameWorkspaceRef(inherited, resolved)) {
-      throw new Error('a workspace-scoped workflow node cannot switch to a sibling workspace');
-    }
-    return resolved;
-  };
-  const resolveNodeWorkspaces = (nodes, parentAccess, defaultWorkspaceRef) => nodes.map((node) => {
-    const workspaceRef = node.workspaceId
-      ? resolveWorkspaceRef(parentAccess, node.workspaceId)
-      : defaultWorkspaceRef ?? parentAccess.workspaceRef;
-    const { workspaceId: _workspaceId, ...rest } = node;
-    return { ...rest, ...(workspaceRef ? { workspaceRef } : {}) };
-  });
 
   // Shared with delegate's background jobs, from one operator knob — see lib/retention.mjs.
   const resultRetentionMs = resolveResultRetentionMs(ctx.config);
@@ -308,7 +274,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         parentAccess: wf.parentAccess ?? null,
         parentModel: wf.parentModel ?? null,
         parentCwd: wf.parentCwd ?? null,
-        workspaceRef: wf.workspaceRef ?? null,
         nodes: wf.nodes,
         nodeParentAccess: [...wf.nodeParentAccess],
         nodeParentModel: [...wf.nodeParentModel],
@@ -397,7 +362,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         task: n.task.length > SNAPSHOT_TASK_PREVIEW ? `${n.task.slice(0, SNAPSHOT_TASK_PREVIEW)}…` : n.task,
         status: s.status,
         deps: n.deps,
-        ...(n.workspaceRef ? { workspaceRef: n.workspaceRef } : {}),
         ...(s.sessionId ? { sessionId: s.sessionId } : {}),
         ...(s.detail ? { detail: s.detail } : {}),
         ...(s.tokens !== undefined ? { tokens: s.tokens } : {}),
@@ -421,7 +385,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       wf.emit({
         id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}),
         status: wf.status, ...(wf.background ? { background: true } : {}),
-        ...(wf.workspaceRef ? { workspaceRef: wf.workspaceRef } : {}), nodes,
+        nodes,
       });
     }
     catch (e) { ctx.logger.warn(`workflow snapshot fan-out failed: ${errorText(e)}`); }
@@ -561,10 +525,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ...(toolPolicy ? { toolPolicy } : {}),
       model,
       parentSessionId: wf.originSessionId,
-      ...(!node.workspaceRef && !wf.workspaceRef && !parentAccess.workspaceRef && wf.parentCwd ? { cwd: wf.parentCwd } : {}),
-      ...(node.workspaceRef ?? wf.workspaceRef ?? parentAccess.workspaceRef
-        ? { workspaceRef: node.workspaceRef ?? wf.workspaceRef ?? parentAccess.workspaceRef }
-        : {}),
+      ...(wf.parentCwd ? { cwd: wf.parentCwd } : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
       // read_only selects the host-side read-only MODE (preset toolset + minted boundary), same as delegate.
       ...(node.readOnly ? { readOnly: true } : {}),
@@ -837,24 +798,18 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     const { nodes: validatedNodes, error } = mergeWorkflowNodes(wf.nodes, rawNodes);
     if (error) throw new Error(error);
     const effectiveParentAccess = childAccess ?? wf.parentAccess;
-    const workspaceCeiling = wf.workspaceRef ?? effectiveParentAccess.workspaceRef;
-    if (wf.workspaceRef && effectiveParentAccess.workspaceRef && !sameWorkspaceRef(wf.workspaceRef, effectiveParentAccess.workspaceRef)) {
-      throw new Error('the workflow node caller is scoped to a different workspace');
-    }
-    const scopedParentAccess = workspaceCeiling ? { ...effectiveParentAccess, workspaceRef: workspaceCeiling } : effectiveParentAccess;
-    const nodes = resolveNodeWorkspaces(validatedNodes, scopedParentAccess, workspaceCeiling);
-    for (const node of nodes) {
+    for (const node of validatedNodes) {
       wf.nodes.push(node);
       wf.state.set(node.id, freshNodeState());
       if (childAccess) {
-        wf.nodeParentAccess.set(node.id, scopedParentAccess);
+        wf.nodeParentAccess.set(node.id, effectiveParentAccess);
         if (callerModel) wf.nodeParentModel.set(node.id, callerModel);
       }
     }
     writeJournal(wf);
     snapshot(wf);
     tick(wf);
-    return { added: nodes.map((node) => node.id) };
+    return { added: validatedNodes.map((node) => node.id) };
   };
 
   /** Boot resume of a restart-orphaned workflow (see WorkflowRecoveryControl in core's api.ts). Core has
@@ -866,7 +821,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
    *  boot; the journal was captured by this same daemon from a genuine turn, and an exact match is what
    *  lets node sessions respawn at all), and the workflow is forced to BACKGROUND — the origin's blocking
    *  turn died with the restart, so the hook-provided durable sink is the only path its summary has. */
-  const resumeInterrupted = async ({ workflowId, parentSessionId, toolCallId, trustedWorkspaceRef, trustedNodeWorkspaceRefs, hooks }) => {
+  const resumeInterrupted = async ({ workflowId, parentSessionId, toolCallId, hooks }) => {
     if (!getRun()) return { resumed: false, reason: 'the delegated run handler is not connected' };
     if (workflows.has(workflowId)) return { resumed: false, reason: 'already held in memory' };
     let raw;
@@ -878,22 +833,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       deleteJournal(workflowId); // mismatched/corrupt — it can never resume anything, so stop it lingering
       return { resumed: false, reason: 'recovery journal does not match the claimed workflow' };
     }
-    const journalWorkspaceRef = isRecord(raw.workspaceRef) ? raw.workspaceRef : undefined;
-    if ((trustedWorkspaceRef || journalWorkspaceRef) && !sameWorkspaceRef(trustedWorkspaceRef, journalWorkspaceRef)) {
-      deleteJournal(workflowId);
-      return { resumed: false, reason: 'the journal workspace does not match the trusted workflow snapshot' };
-    }
-    const trustedNodes = trustedNodeWorkspaceRefs ?? {};
     for (const rawNode of raw.nodes) {
       if (!isRecord(rawNode) || typeof rawNode.id !== 'string') {
         deleteJournal(workflowId);
         return { resumed: false, reason: 'the recovery journal contains a malformed workflow node' };
-      }
-      const journalRef = isRecord(rawNode.workspaceRef) ? rawNode.workspaceRef : undefined;
-      const trustedRef = trustedNodes[rawNode.id];
-      if ((trustedRef || journalRef) && !sameWorkspaceRef(trustedRef, journalRef)) {
-        deleteJournal(workflowId);
-        return { resumed: false, reason: `node "${rawNode.id}" workspace does not match the trusted workflow snapshot` };
       }
     }
 
@@ -915,12 +858,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         if (!isRecord(rawNode) || typeof rawNode.id !== 'string') return 'malformed journaled workflow node';
         const inherited = nodeAccess.get(rawNode.id) ?? raw.parentAccess;
         if (!isRecord(inherited)) return 'malformed journaled node boundary';
-        const workspaceRef = isRecord(rawNode.workspaceRef)
-          ? rawNode.workspaceRef
-          : isRecord(raw.workspaceRef) ? raw.workspaceRef : inherited.workspaceRef;
-        if (!workspaceRef) continue;
-        const scoped = hooks.validateBoundary({ ...inherited, workspaceRef });
-        if (!scoped.ok) return scoped.reason ?? 'a journaled node workspace was rejected';
       }
       return undefined;
     })();
@@ -944,7 +881,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       parentAccess: raw.parentAccess,
       parentModel: isRecord(raw.parentModel) ? raw.parentModel : undefined,
       parentCwd: typeof raw.parentCwd === 'string' && raw.parentCwd ? raw.parentCwd : undefined,
-      workspaceRef: isRecord(raw.workspaceRef) ? raw.workspaceRef : undefined,
       emit: (update) => hooks.emit(update),
       originSessionId: parentSessionId,
       originPrincipal: raw.originPrincipal,
@@ -1076,7 +1012,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     description: [
       `Run a DAG of sub-agents whose complete definition lives in a JSON file. Before calling this tool, use Write to create that file, then pass its path as nodesFile. Do not pass nodes inline. Inside a MANAGED project, write it into the project itself, for example the relative path workflow.json: that is where your Write lands and the only filesystem readable there, so the host path below does not exist for you. Otherwise, when your session has unrestricted filesystem access, write it under ${workflowDir} (it already exists) so the run leaves nothing behind in the user's project; a project-scoped session cannot write there and must use a path inside an accessible repository, which is also the right choice for a definition you want to keep and version.`,
       'The file may contain either a JSON array of node objects, or an object shaped as { title?, fork?, nodes: [...], background? }. Explicit title, fork, or background tool arguments override the corresponding values from the file, so one file can be reused as a template; a `background: false` in the file is honored just like the argument.',
-      'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, thinkingLevel, fork, read_only, tools, subagent_type, and workspaceId. thinkingLevel sets that node\'s reasoning effort — omit it (or keep it low) for mechanical nodes, raise it for a node that has to design, debug something unexplained or review security-sensitive work; omitted, the node inherits your own. WorkflowStart.workspaceId sets the default explicit Sandbox workspace; a node workspaceId may only preserve or narrow its effective parent scope. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation, so put everything it needs in its task — unless you set fork, which starts it from this conversation\'s own prompt, tools and history.',
+      'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, thinkingLevel, fork, read_only, tools and subagent_type. thinkingLevel sets that node\'s reasoning effort — omit it (or keep it low) for mechanical nodes, raise it for a node that has to design, debug something unexplained or review security-sensitive work; omitted, the node inherits your own. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation, so put everything it needs in its task — unless you set fork, which starts it from this conversation\'s own prompt, tools and history.',
       'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. Independent nodes run in parallel, and a dependent receives a short handover from each of its DIRECT dependencies (not their full results, and nothing from further upstream) — so a node whose task needs an earlier finding must be reachable from it through the deps chain. For fully independent tasks, plain parallel delegate calls are simpler.',
       'By default the call is ASYNCHRONOUS: it returns a handle immediately and the summary of every node is delivered to you in a NEW turn when the DAG finishes, so do other work and then end your turn rather than polling. Set background=false (as an argument, or in the file) to BLOCK until the whole DAG has finished and get every node\'s result inline. On a surface that cannot deliver a later turn, the call blocks instead so the summary is not lost. Either way the DAG itself is unchanged: independent nodes still run in parallel and a dependent node still waits for the nodes it depends on. A node whose dependency failed is reported as skipped.',
       'If the result names failed or skipped nodes and the workflow is still held in memory, use WorkflowResume instead of starting over — it re-runs only unfinished nodes and leaves every completed node unchanged.',
@@ -1086,7 +1022,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       title: Type.Optional(Type.String({ description: 'Override the file\'s title. Human label shown in the CLI panel: AT MOST 4 WORDS, in the user\'s language, no trailing punctuation (the UI appends an ellipsis).' })),
       fork: Type.Optional(Type.Boolean({ description: 'Default for every node that does not set `fork` itself. On, each node starts from THIS conversation\'s prompt, tools and history instead of a clean context; a node may still override it. Overrides the file\'s own `fork` field.' })),
       background: Type.Optional(Type.Boolean({ description: 'How this call delivers the workflow summary, overriding the file\'s own setting. Omitted (the default) and true both start the DAG asynchronously and deliver the summary in a NEW turn; false blocks until the whole DAG has finished and returns it inline. It changes delivery only — never the order in which nodes run.' })),
-      workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Default explicit Sandbox workspace for workflow nodes. Omit for legacy project-scope behavior; an active workspace binding is not inherited as the logical root, but nodes spawned from a bound conversation still start in that worktree, where shell commands whose working directory is inside the workspace run in the workspace container, and a read_only node has no Write tool and no scratch directory there, so it must return its plan or document as its node result.' })),
     }),
     execute: async (toolCallId, p) => {
       if (!getRun()) return ok('Error: workflows are not wired up on this server.');
@@ -1109,7 +1044,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
           ? await ctx.readManagedProjectFile(p.nodesFile)
           : readFileSync(ctx.assertPathAllowed(p.nodesFile), 'utf8'));
       } catch (e) {
-        const message = ctx.sanitizePathOutput(errorText(e));
+        const message = errorText(e);
         if (e instanceof SyntaxError) {
           return ok(`Error: workflow file "${p.nodesFile}" contains invalid JSON (${message}). Fix the JSON syntax in the file, then call WorkflowStart again.`);
         }
@@ -1139,23 +1074,13 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (error) return ok(`Error: workflow file "${p.nodesFile}": ${actionableNodeError(rawNodes, error, index)}.`);
       // Resolved before the node pass below, which applies it to every node that stayed silent.
       const forkDefault = p.fork !== undefined ? p.fork === true : fileOptions.fork === true;
-      let parentAccess = ctx.currentAccess();
-      let workspaceRef;
-      let nodes;
-      try {
-        workspaceRef = resolveWorkspaceRef(parentAccess, p.workspaceId);
-        parentAccess = workspaceRef ? { ...parentAccess, workspaceRef } : parentAccess;
-        // The file-level default applies only where a node stayed silent, so a per-node `fork` always wins.
-        // A node that narrows itself is left alone: dag.mjs refuses the pair, and a blanket default must
-        // not turn a deliberately read-only node into a rejected workflow.
-        const withFork = forkDefault
-          ? validatedNodes.map((n) => (n.fork || n.tools || n.readOnly || n.subagentType || n.workspaceId
-            ? n : { ...n, fork: true }))
-          : validatedNodes;
-        nodes = resolveNodeWorkspaces(withFork, parentAccess, workspaceRef);
-      } catch (e) {
-        return ok(`Error: ${errorText(e)}.`);
-      }
+      const parentAccess = ctx.currentAccess();
+      // The file-level default applies only where a node stayed silent, so a per-node `fork` always wins.
+      // A node that narrows itself is left alone: dag.mjs refuses the pair, and a blanket default must
+      // not turn a deliberately read-only node into a rejected workflow.
+      const nodes = forkDefault
+        ? validatedNodes.map((n) => (n.fork || n.tools || n.readOnly || n.subagentType ? n : { ...n, fork: true }))
+        : validatedNodes;
       const title = p.title !== undefined ? p.title : fileOptions.title;
       // Asynchronous by default, like Delegate: the explicit tool argument wins, then the file's own
       // setting (including an explicit `false` there), and only a workflow that mentions `background`
@@ -1187,10 +1112,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         nodeParentModel: new Map(),
         parentAccess,
         parentModel: ctx.currentModel() ?? undefined,
-        ...(workspaceRef ? { workspaceRef } : {}),
         // The origin turn's working directory, inherited by every node so a node's tools resolve against
         // the SAME project the workflow was launched in, never the daemon's `/`.
-        parentCwd: workspaceRef || parentAccess.workspaceRef ? undefined : ctx.currentWorkDir?.(),
+        parentCwd: ctx.currentWorkDir?.(),
         emit: ctx.workflowEmitter(),
         originSessionId,
         originPrincipal,
@@ -1229,7 +1153,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // away — driveResult is the shared tail WorkflowResume reuses so both behave identically.
       return driveResult(wf, completion, background);
     },
-  }), { hostFilesystem: true });
+  }));
 
   ctx.registerTool(defineTool({
     name: 'WorkflowResume', label: 'Resume a workflow',
@@ -1345,7 +1269,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     parameters: Type.Object({
       workflowId: Type.String({ description: 'The id of the RUNNING workflow to extend — from WorkflowStart, WorkflowStatus, or the briefing of the node you are running as.' }),
       fork: Type.Optional(Type.Boolean({ description: 'Default for every added node that does not set `fork` itself. On, each starts from the workflow\'s ORIGIN conversation — its prompt, tools and history — instead of a clean context.' })),
-      workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Default explicit Sandbox workspace for every added node that does not declare its own workspaceId.' })),
       nodes: Type.Array(NODE_SHAPE, { description: 'The nodes to add: each with a new unique id, a self-contained task, and optional deps on existing or newly added node ids (no cycles).' }),
     }),
     // `_id` is THIS call's tool id, and this tool usually runs inside a NODE's own turn. It is
@@ -1364,15 +1287,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         const rpc = ctx.workflowExpansionRpc?.();
         // A runner may itself own a NESTED workflow started by one of its turns. Prefer that local DAG;
         // only an id absent from this process crosses upward to the daemon-owned parent workflow.
-        const withWorkspace = p.workspaceId
-          ? p.nodes.map((node) => node.workspaceId ? node : { ...node, workspaceId: p.workspaceId })
-          : p.nodes;
         // The call-level default applies only where a node stayed silent, and never to one that narrows
         // itself — dag.mjs refuses that pair, and a blanket default must not reject the caller's own node.
         const nodes = p.fork
-          ? withWorkspace.map((node) => (node.fork || node.tools || node.read_only || node.subagent_type || node.workspaceId
+          ? p.nodes.map((node) => (node.fork || node.tools || node.read_only || node.subagent_type
             ? node : { ...node, fork: true }))
-          : withWorkspace;
+          : p.nodes;
         let result;
         if (local) result = addNodesFromSession(p.workflowId, nodes, undefined, ctx.currentAccess(), ctx.currentModel());
         else if (rpc) result = await rpc.addNodes({ workflowId: p.workflowId, nodes });

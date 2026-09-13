@@ -64,14 +64,12 @@ function normalizeNode(raw, knownIds) {
   if (raw.fork === true) node.fork = true;
   const subagentType = str(raw.subagent_type);
   if (subagentType) node.subagentType = subagentType;
-  const workspaceId = str(raw.workspaceId);
-  if (workspaceId) node.workspaceId = workspaceId;
   // A fork inherits the ORIGIN conversation's prompt, tools and history byte for byte, so anything that
   // would narrow this node changes that prefix and the cache it exists to reuse. Checked last, once every
   // narrowing field is resolved, and refused BY NAME: a workflow file is written once and read by a person.
   if (node.fork) {
     const conflict = node.tools ? 'tools' : node.readOnly ? 'read_only'
-      : node.subagentType ? 'subagent_type' : node.workspaceId ? 'workspaceId' : undefined;
+      : node.subagentType ? 'subagent_type' : undefined;
     if (conflict) {
       return { error: `node "${id}" combines fork with ${conflict}; a fork inherits the conversation's exact prompt, toolset and working directory, so drop ${conflict} or drop fork` };
     }

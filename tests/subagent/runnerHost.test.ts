@@ -709,7 +709,7 @@ describe('SubagentRunnerHost — the background-process verbs', () => {
 
     child.reply({
       type: 'processesChanged', sessionId: 'brain-ch-subagent-sub-dlg-1',
-      processes: [{ id: 'bg-1', command: 'sleep 5', cwd: '/tmp', startedAt: '2026-01-01T00:00:00.000Z', sessionId: 'brain-ch-subagent-sub-dlg-1', running: true, exitCode: null, workspaceId: null }],
+      processes: [{ id: 'bg-1', command: 'sleep 5', cwd: '/tmp', startedAt: '2026-01-01T00:00:00.000Z', sessionId: 'brain-ch-subagent-sub-dlg-1', running: true, exitCode: null }],
     });
     expect(seen).toEqual([{ sessionId: 'brain-ch-subagent-sub-dlg-1', processes: [expect.objectContaining({ id: 'bg-1' })] }]);
 

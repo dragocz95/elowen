@@ -57,7 +57,6 @@ function guestCommandFailure(file, error, sanitize) {
 export function managedFiles(ctx, signal) {
   const project = ctx.currentAccess().projectRef;
   if (project?.kind !== 'managed') return null;
-  if (ctx.currentAccess().workspaceRef) throw new Error('a legacy exact workspace cannot widen into a managed project');
   const accountUserId = ctx.currentAccountUserId();
   if (!Number.isSafeInteger(accountUserId) || accountUserId < 1) throw new Error('managed files require an acting account');
   const provider = () => {

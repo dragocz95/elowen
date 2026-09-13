@@ -3,7 +3,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bindingRef, resolveDelegatedWorkspace, type WorkspaceAccessCeiling } from '../../src/brain/workspaceScope.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const workflowFilesDir = mkdtempSync(resolve(repoRoot, '.workflow-engine-test-'));
@@ -44,23 +43,6 @@ const { registerWorkflow } = await import(resolve(repoRoot, 'plugins/subagent/li
 // caught it was the very function the double replaced.
 const { dependencyContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
   dependencyContextChunks(raw: unknown, totalChars?: number): string[];
-};
-
-/** The Sandbox ROWS are faked; the resolution rules are not. The harness serves `ctx.resolveWorkspaceScope`
- *  out of the host's own resolver, so a change to how a workspace is admitted is felt here rather than by a
- *  second implementation living in the test. */
-const fakeSandboxControl = {
-  workspacesFor: ({ userId }: { userId: number }) => (userId === 1
-    ? ['ws_root', 'ws_node', 'ws_child'].map((workspaceId) => ({
-      workspaceId, projectId: 1, path: `/host/${workspaceId}`, label: workspaceId, branch: 'b', baseRef: 'main',
-    }))
-    : []),
-  resolveWorkspace: ({ accountUserId, workspace }: { accountUserId: number; workspace: { workspaceId: string; projectId: number } }) =>
-    ({ accountUserId, ...workspace, path: `/host/${workspace.workspaceId}` }),
-} as unknown as Parameters<typeof resolveDelegatedWorkspace>[0];
-const testWorkspaceScope = (access: WorkspaceAccessCeiling, workspaceId?: string) => {
-  const binding = resolveDelegatedWorkspace(fakeSandboxControl, access, workspaceId);
-  return binding ? bindingRef(binding) : undefined;
 };
 
 interface Tool {
@@ -117,7 +99,7 @@ function harness(opts: {
   gate = null;
   const tools = new Map<string, Tool>();
   const controls = new Map<string, WorkflowControl>();
-  const snapshots: { id: string; toolCallId: string; title?: string; status: string; workspaceRef?: { workspaceId: string; projectId: number }; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string; model?: string; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] }[] = [];
+  const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string; model?: string; thinkingLevel?: string }[] }[] = [];
   const launched: string[] = [];
   /** The context chunks each node was actually handed, by task — what the child can see, not what we hoped. */
   const contexts = new Map<string, string[]>();
@@ -126,8 +108,8 @@ function harness(opts: {
   const attempts = new Map<string, number>();
   /** Every launch as the host saw it: which channel the node ran in, and the VERBATIM task it received.
    *  A resume is only real if the channel id repeats — that is what puts the retry back in the same session. */
-  const runs: { task: string; channelId: string; fullTask: string; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] = [];
-  const run = async (source: { access?: { context?: string[]; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
+  const runs: { task: string; channelId: string; fullTask: string; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string }[] = [];
+  const run = async (source: { access?: { context?: string[]; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
     // A resumed node is handed its task plus a trailing resume note. Everything keyed by identity here
     // (launch order, session id, FAIL_ONCE attempts) must key on the TASK, or a retry would read as a
     // different node and FAIL_ONCE would fail forever.
@@ -138,7 +120,6 @@ function harness(opts: {
       ...(source.access?.toolPolicy !== undefined ? { toolPolicy: source.access.toolPolicy } : {}),
       ...(source.access?.model !== undefined ? { model: source.access.model } : {}),
       ...(source.access?.thinkingLevel !== undefined ? { thinkingLevel: source.access.thinkingLevel } : {}),
-      ...(source.access?.workspaceRef !== undefined ? { workspaceRef: source.access.workspaceRef } : {}),
     });
     contexts.set(task, source.access?.context ?? []);
     if (!opts.lateSession) onEvent({ type: 'session', sessionId: `s-${task}` });
@@ -183,7 +164,7 @@ function harness(opts: {
   /** Mutable so a test can narrow the caller's access boundary between a start and a resume, the way an
    *  operator revoking a project or disabling tools does to a real conversation. */
   const access: {
-    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean; contributionUserId?: number; accountUserId?: number; workspaceRef?: { workspaceId: string; projectId: number }; projectRef?: { kind: 'managed'; projectId: number } };
+    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean; contributionUserId?: number; accountUserId?: number; projectRef?: { kind: 'managed'; projectId: number } };
   } = {
     current: { ...TEST_ACCESS, toolPolicy: opts.toolPolicyAllow ? { allow: opts.toolPolicyAllow } : undefined },
   };
@@ -192,8 +173,6 @@ function harness(opts: {
   const stoppedSessions: string[] = [];
   /** What the engine warned about — the only channel it has for a failure it cannot itself recover from. */
   const warnings: string[] = [];
-  /** Every sibling control the engine asked for. `sandbox` must never appear: the real registry refuses it. */
-  const controlsAsked: string[] = [];
   /** Paths the engine put through the HOST path guard, and paths it read from the guest. A managed turn
    *  must appear only in the second list: the two routes never mix. */
   const pathGuardCalls: string[] = [];
@@ -218,11 +197,8 @@ function harness(opts: {
     // mount, so guidance can name the directory the caller is actually standing in.
     workDir: () => (access.current.projectRef?.kind === 'managed' ? '/managed-project' : workflowFilesDir),
     // Exactly what the real registry hands the subagent plugin: NO Sandbox control — it is restricted to the
-    // plugins that own process launch (CONTROL_CONSUMERS in src/plugins/registry.ts) — and the host's own
-    // workspace resolver instead. A harness that mocked the control is what let the engine ship a resolution
-    // path that resolved to nothing in production while every test passed.
-    control: (name: string) => { controlsAsked.push(name); return undefined; },
-    resolveWorkspaceScope: testWorkspaceScope,
+    // plugins that own process launch (CONTROL_CONSUMERS in src/plugins/registry.ts).
+    control: () => undefined,
     // The real `assertPathAllowed` refuses EVERY host path on a managed project turn (pathGuard.ts):
     // the guest is a different filesystem, so there is nothing on the host to resolve against.
     assertPathAllowed: (path: string) => {
@@ -240,7 +216,6 @@ function harness(opts: {
       if (contents === undefined) throw new Error(`cannot find ${path.split('/').pop()}.`);
       return contents;
     },
-    sanitizePathOutput: (text: string) => text,
     workflowEmitter: () => (u: (typeof snapshots)[number]) => { snapshots.push(u); },
     workflowCompletionEmitter: () => (c: { toolCallId: string; status: string; result: string; run?: number }) => { completions.push(c); },
     // The gated variant must also RESOLVE the model: returning [] makes buildNodeAccess throw
@@ -265,7 +240,7 @@ function harness(opts: {
   registerWorkflow(ctx, () => run, helpers);
   /** Everything the node can read, as one string — the chunks are a transport detail, not the content. */
   const contextOf = (task: string) => (contexts.get(task) ?? []).join('\n\n');
-  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, controlsAsked, completions, pathGuardCalls, managedReads };
+  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, completions, pathGuardCalls, managedReads };
 }
 
 describe('workflow engine', () => {
@@ -276,7 +251,6 @@ describe('workflow engine', () => {
     if (!start) throw new Error('WorkflowStart was not registered');
 
     expect(start.parameters?.properties).toHaveProperty('nodesFile');
-    expect(start.parameters?.properties).toHaveProperty('workspaceId');
     expect(start.parameters?.properties).not.toHaveProperty('nodes');
     expect(start.parameters?.required).toContain('nodesFile');
     expect(start.description).toContain('use Write');
@@ -292,110 +266,6 @@ describe('workflow engine', () => {
       nodesFile: workflowFile({ title: 'From file', nodes: [{ id: 'object', task: 'object' }] }),
     });
     expect(launched).toEqual(['array', 'object']);
-  });
-
-  it('applies WorkflowStart.workspaceId as an immutable workspace ceiling', async () => {
-    const { tools, runs } = harness();
-    const start = tools.get('WorkflowStart');
-    if (!start) throw new Error('WorkflowStart was not registered');
-    await start.execute('workspace-default', {
-      background: false,
-      nodesFile: workflowFile([
-        { id: 'default', task: 'default' },
-        { id: 'explicit', task: 'explicit', workspaceId: 'ws_root' },
-      ]),
-      workspaceId: 'ws_root',
-    });
-    expect(runs.find((run) => run.task === 'default')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
-    expect(runs.find((run) => run.task === 'explicit')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
-    const rejected = await start.execute('workspace-sibling', {
-      background: false,
-      nodesFile: workflowFile([{ id: 'sibling', task: 'sibling', workspaceId: 'ws_node' }]),
-      workspaceId: 'ws_root',
-    });
-    expect(rejected.content[0]?.text).toContain('cannot switch to a sibling workspace');
-    const add = tools.get('WorkflowAddNodes');
-    expect(add?.parameters?.properties).toHaveProperty('workspaceId');
-  });
-
-  /** The account a workspace is resolved against is the host's ONE account resolver (`accountUserId` on
-   *  currentAccess): the contribution owner when the turn has one, else the verified identity. A turn
-   *  with an identity but no contribution scope — SandboxCreateWorkspace succeeds there — used to make
-   *  WorkflowStart throw "Sandbox workspace scope is unavailable" because the plugin read only
-   *  `contributionUserId`. */
-  it('resolves WorkflowStart.workspaceId through the account resolver when the turn has identity but no contribution scope', async () => {
-    const { tools, runs, access } = harness();
-    const { contributionUserId: _dropped, ...withoutContribution } = access.current;
-    access.current = { ...withoutContribution, accountUserId: 1 };
-    const start = tools.get('WorkflowStart');
-    if (!start) throw new Error('WorkflowStart was not registered');
-    const result = await start.execute('workspace-account', {
-      background: false,
-      nodesFile: workflowFile([{ id: 'node', task: 'account-node' }]),
-      workspaceId: 'ws_root',
-    });
-    expect(result.content[0]?.text).not.toContain('Sandbox workspace scope is unavailable');
-    expect(runs.find((run) => run.task === 'account-node')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
-  });
-
-  /** The engine must never reach for the Sandbox control. That control is restricted to the plugins that own
-   *  process launch, so the subagent plugin's `ctx.control('sandbox')` is `undefined` in every real daemon —
-   *  which is exactly how a live WorkflowStart failed with "Sandbox workspace scope is unavailable" in the
-   *  same conversation that had just created the workspace, while the mocked-control tests all passed. */
-  it('assigns a workspace with no Sandbox control of its own, and never asks for one', async () => {
-    const { tools, runs, controlsAsked } = harness();
-    const start = tools.get('WorkflowStart');
-    if (!start) throw new Error('WorkflowStart was not registered');
-    const result = await start.execute('workspace-no-control', {
-      background: false,
-      nodesFile: workflowFile([{ id: 'node', task: 'no-control-node' }]),
-      workspaceId: 'ws_root',
-    });
-    expect(result.content[0]?.text).not.toContain('Sandbox workspace scope is unavailable');
-    expect(runs.find((run) => run.task === 'no-control-node')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
-    expect(controlsAsked).not.toContain('sandbox');
-  });
-
-  /** An account-less turn — an unlinked sender in a shared room, instance automation — resolves no account
-   *  at all, and a workspace belongs to an account. It has to be refused rather than resolved against
-   *  whoever happens to own the Sandbox rows. */
-  it('refuses a workspace when the turn names no account', async () => {
-    const { tools, launched, access } = harness();
-    const { contributionUserId: _c, accountUserId: _a, ...anonymous } = access.current;
-    access.current = anonymous;
-    const start = tools.get('WorkflowStart');
-    if (!start) throw new Error('WorkflowStart was not registered');
-    const result = await start.execute('workspace-anonymous', {
-      background: false,
-      nodesFile: workflowFile([{ id: 'node', task: 'anonymous-node' }]),
-      workspaceId: 'ws_root',
-    });
-    expect(result.content[0]?.text).toContain('requires a linked Elowen account');
-    expect(launched).toEqual([]);
-  });
-
-  /** A node that adds nodes of its own runs under a CAPTURED boundary, not the live turn. That boundary
-   *  dropped the account, so a dynamically added node could not name the workspace its own workflow was
-   *  already running in. */
-  it('lets a node add a node into the workspace the workflow already runs in', async () => {
-    const h = harness();
-    let release!: () => void;
-    gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
-    const start = h.tools.get('WorkflowStart')!.execute('ws-expand', {
-      background: false,
-      nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
-      workspaceId: 'ws_root',
-    });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
-    const workflowId = h.snapshots[0]!.id;
-    h.sessionId.current = 's-root';
-    const added = await h.tools.get('WorkflowAddNodes')!.execute('ws-expand-add', {
-      workflowId, nodes: [{ id: 'leaf', task: 'leaf', workspaceId: 'ws_root' }],
-    });
-    expect(added.content[0]?.text).toContain('leaf');
-    release();
-    await start;
-    expect(h.runs.find((run) => run.task === 'leaf')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
   });
 
   /** A refusal returned as ordinary text is persisted with `isError: false`, so the transcript records a
@@ -2334,8 +2204,6 @@ describe('workflow recovery journal + boot resume', () => {
   type ResumeControl = {
     resumeInterrupted(input: {
       workflowId: string; parentSessionId: string; toolCallId: string;
-      trustedWorkspaceRef?: { workspaceId: string; projectId: number };
-      trustedNodeWorkspaceRefs?: Record<string, { workspaceId: string; projectId: number }>;
       hooks: {
         emit: (u: unknown) => void;
         complete: (c: { id: string; toolCallId: string; status: string; result: string }) => void;
@@ -2547,39 +2415,6 @@ describe('workflow recovery journal + boot resume', () => {
     expect(dependent).toContain('## Handover from node "a"');
     expect(dependent).toContain('done:a-old'); // the journaled result, derived into a bounded handover
     expect(dependent).toContain('wrote no handover');
-  });
-
-  it('treats the durable workflow snapshot as the workspace authority and rejects a tampered journal', async () => {
-    const h1 = harness();
-    h1.access.current.workspaceRef = { workspaceId: 'ws-trusted', projectId: 1 };
-    gate = { task: 'a-anchor', promise: new Promise<void>(() => { /* interrupted */ }) };
-    void h1.tools.get('WorkflowStart')!.execute('call-anchor', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a-anchor' }]) });
-    await until(() => h1.snapshots.length > 0);
-    const trusted = h1.snapshots[0]!;
-    expect(trusted.workspaceRef).toEqual({ workspaceId: 'ws-trusted', projectId: 1 });
-    expect(trusted.nodes[0]!.workspaceRef).toEqual({ workspaceId: 'ws-trusted', projectId: 1 });
-
-    const path = journalPathOf(trusted.id);
-    const journal = JSON.parse(readFileSync(path, 'utf8')) as { workspaceRef: { workspaceId: string }; nodes: { workspaceRef?: { workspaceId: string } }[] };
-    journal.workspaceRef.workspaceId = 'ws-sibling';
-    journal.nodes[0]!.workspaceRef!.workspaceId = 'ws-sibling';
-    writeFileSync(path, JSON.stringify(journal));
-
-    const h2 = harness();
-    const outcome = await resumeControlOf(h2).resumeInterrupted({
-      workflowId: trusted.id, parentSessionId: 'brain-parent', toolCallId: 'call-anchor',
-      trustedWorkspaceRef: trusted.workspaceRef,
-      trustedNodeWorkspaceRefs: { a: trusted.nodes[0]!.workspaceRef! },
-      hooks: {
-        emit: () => {}, complete: () => { throw new Error('must not complete a refused resume'); },
-        stopChild: async () => ({ stopped: true }),
-        validateBoundary: () => { throw new Error('journal workspace must be rejected before access validation'); },
-      },
-    });
-    expect(outcome.resumed).toBe(false);
-    expect(outcome.reason).toContain('trusted workflow snapshot');
-    expect(h2.launched).toEqual([]);
-    expect(existsSync(path)).toBe(false);
   });
 
   it('refuses to resume when core rejects a journaled boundary, and runs nothing (D3)', async () => {
