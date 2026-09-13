@@ -21,6 +21,9 @@ This file is the full technical log. The notes users read in the app are the cur
   settings and fixed-position firewall rules while isolated environments accept no inbound mapping.
 - Machine environments carry their environment file into the guest, use an explicit read-only uplink resolver,
   and expose structured readiness for root filesystems, virtualization, networking, DNS and firewall state.
+- The web and CLI can drill into an owned delegated session at any nesting depth. The focused child owns its
+  transcript, composer, process rail, stop action, model selection and skill turns, while unsupported
+  parent-scoped actions are refused instead of being applied to the hidden parent.
 
 ### Changed
 
@@ -29,9 +32,31 @@ This file is the full technical log. The notes users read in the app are the cur
   the typed privileged helper instead of a broad service-user Polkit grant.
 - Sites delegates host provisioning and readiness to Sandbox. Its setup page links to the Sandbox host runtime,
   and the obsolete Sites provisioning and readiness routes have been removed.
+- `Delegate`, `DelegateContinue` and `WorkflowStart` run in the background by default when the originating
+  conversation has a durable completion sink. Explicit `background: false` remains blocking, including a false
+  value stored in a workflow file, while a surface that cannot receive a later completion stays in the
+  foreground so no result is lost.
+- Effective tokens per second now means the provider output over the complete successful logical request,
+  including response-header wait, prompt processing, queueing, retries and backoff. Failed or aborted retry
+  prefixes, unversioned compacted history and legacy post-header samples remain unknown and are not mixed into
+  the effective figure or its duration-weighted average.
+- Plugin controls are now two-sided dependencies. Enabling a consumer still requires a provider, and disabling
+  or removing the last provider is refused while an enabled consumer depends on it, with the blocking plugin
+  named in the administration UI.
 
 ### Fixed
 
+- Administrator impersonation now changes identity inside the SPA without a document reload. Every tab tears
+  down account-scoped streams and cached data before cookies change, then loads the new identity or rolls the
+  transition back without leaving the shell frozen between accounts.
+- Background processes started in sub-agent runners publish live process and private containment snapshots.
+  Conversation and account deletion now quiesce delegated work before sweeping the whole session tree, refuse
+  when any stop is unconfirmed and retain retryable ownership rows; an abrupt runner exit uses the latest
+  containment revision to stop escaped descendants.
+- The plugin Data panel now bounds recursive measurement and reports unreadable entries and partial totals
+  instead of failing or presenting a confident empty result for protected environment filesystems.
+- `/health` now reports whether platform adapters have started, separating an open HTTP port from a daemon that
+  is ready to admit delegation and channel work.
 - Environment deletion now releases a uid range only after the storage root, machine envelope and systemd
   drop-in are gone. Canonical and legacy disk aliases are validated for one consistent range and removed
   together, while active ranges, snapshots, backups and sources remain protected.
@@ -43,6 +68,15 @@ This file is the full technical log. The notes users read in the app are the cur
 - The machine firewall unit repairs rule ordering on every run and retires exact older managed rules before it
   installs the current guarded forward, return, DHCP and host-protection rules.
 
+### Security
+
+- Administrator impersonation stores only an opaque one-time return proof in the impersonated browser session.
+  Returning atomically revokes the target and original actor tokens and mints a fresh administrator token; the
+  exact proof and target token may only replay the committed result during a short lost-response retry window.
+- Cached root filesystem artifacts are rehashed before privileged extraction. Site data export binds to the
+  verified opened directory without following a replacement symlink, while import requires a stopped machine,
+  bounds archive members and declared size, checks free space and swaps the staged tree atomically.
+
 ### Removed
 
 - Removed the Podman environment runtime and the legacy identity migration surface. An environment owned by the
@@ -52,8 +86,9 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ### Compatibility
 
-- The core version is `0.28.44`. Sites requires core `0.28.44` because its cleanup, publication and host-runtime
-  setup use the completed Sandbox nspawn contract.
+- The core version is `0.28.44`. The Sites `0.11.3-chetty.1` registry candidate requires core `0.28.44` because
+  its cleanup, publication and host-runtime setup use the completed Sandbox nspawn contract. Editor `0.4.3`
+  requires core `0.28.42` and adds managed Project and System roots with directory-by-directory loading.
 - Plugin UI API remains 16, shared-helper API remains 4, and the minimum Node.js version remains 22.12.0.
 
 ## [0.28.43] - 2026-09-12
