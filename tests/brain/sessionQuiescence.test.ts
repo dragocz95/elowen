@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
 import {
+  isSparedChildSession,
   sessionHasWorkInFlight,
   sparedChildSessionIds,
   type SessionQuiescenceDeps,
@@ -126,5 +127,15 @@ describe('sparedChildSessionIds', () => {
       { status: 'running', background: true, nodes: [{ status: 'running', sessionId: 'node-1' }, { status: 'done', sessionId: 'node-2' }] },
       { status: 'running', background: false, nodes: [{ status: 'running', sessionId: 'fg-node' }] },
     ]), 'p')).toEqual(new Set(['node-1']));
+  });
+
+  it('recognizes a spared child from its durable parent relation for top-level channel resets', () => {
+    const durableStore = {
+      getSession: (sessionId: string) => sessionId === 'bg' ? { parent_session_id: 'p' } : undefined,
+      getSubagentRuns: () => [{ status: 'running', background: true, sessionId: 'bg' }],
+      getWorkflowRuns: () => [],
+    } as unknown as Parameters<typeof isSparedChildSession>[0];
+    expect(isSparedChildSession(durableStore, 'bg')).toBe(true);
+    expect(isSparedChildSession(durableStore, 'other')).toBe(false);
   });
 });

@@ -64,6 +64,17 @@ export function sparedChildSessionIds(
   return spared;
 }
 
+/** Whether `sessionId` itself is one of the durable background children the canonical parent-teardown
+ *  rule spares. Channel prompt refresh uses this for top-level registry entries as well as child walks. */
+export function isSparedChildSession(
+  store: Pick<BrainStore, 'getSession' | 'getSubagentRuns' | 'getWorkflowRuns'>,
+  sessionId: string,
+): boolean {
+  const parentSessionId = store.getSession(sessionId)?.parent_session_id;
+  return parentSessionId !== null && parentSessionId !== undefined
+    && sparedChildSessionIds(store, parentSessionId).has(sessionId);
+}
+
 /** Whether this conversation has WORK in flight — a running turn, anything queued behind it, a parked
  *  question, a still-running child/workflow/background job, or an armed goal continuation. Deliberately
  *  FAIL-CLOSED: every uncertain signal counts as busy, because each caller either destroys a live

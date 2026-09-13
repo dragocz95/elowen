@@ -16,7 +16,10 @@ function setup() {
   store.createSession({ id: child, userId: 1, model: 'test', parentSessionId: parent,
     delegatedAccess: { admin: true, projectIds: [], owner: true, permissionBoundary: null },
   });
-  store.upsertSubagentRun(parent, { id: 'call', sessionId: child, status: 'running', task: 'test', tools: 0, seconds: 0 });
+  store.upsertSubagentRun(parent, {
+    id: 'call', sessionId: child, status: 'running', task: 'test', tools: 0, seconds: 0,
+    background: true, autoDeliver: true,
+  });
   store.setDelegationBootId('new');
   const [run] = store.claimRecoverableRuns(30_000);
   const registry = new LiveSessionRegistry();

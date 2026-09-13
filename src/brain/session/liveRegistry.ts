@@ -181,10 +181,20 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
       if (!this.hasActiveChildren(parentSessionId)) onIdle();
     });
   }
-  clearChildren(parentSessionId: string): void {
-    const had = this.children.delete(parentSessionId);
+  clearChildren(parentSessionId: string, keep?: ReadonlySet<string>): void {
+    const claims = this.children.get(parentSessionId);
+    if (!claims) return;
+    if (!keep || keep.size === 0) this.children.delete(parentSessionId);
+    else {
+      for (const childSessionId of claims.keys()) {
+        if (!keep.has(childSessionId)) claims.delete(childSessionId);
+      }
+      if (claims.size === 0) this.children.delete(parentSessionId);
+    }
+    // onChildrenChanged is the parent's 0↔n BUSY edge, not a per-child list notification.
+    if (this.children.has(parentSessionId)) return;
     this.resolveChildIdleWaiters(parentSessionId);
-    if (had) this.onChildrenChanged?.(parentSessionId);
+    this.onChildrenChanged?.(parentSessionId);
   }
   private resolveChildIdleWaiters(parentSessionId: string): void {
     const waiters = this.childIdleWaiters.get(parentSessionId);

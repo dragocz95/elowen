@@ -58,12 +58,20 @@ import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './se
 import { abortSessionWork } from './session/abortSessionWork.js';
 import { steerCustomMessage } from './session/steerCustomMessage.js';
 import { continueInterruptedTurn } from './session/continueTurn.js';
+import { isSparedChildSession, sparedChildSessionIds } from './service/sessionQuiescence.js';
 import { execRefSpec, fromRegistryProvider } from '../shared/execs.js';
 
 /** How a delegated steer ended: `delivered` = the message provably reached the child's context (its
  *  durable user row exists); `idle` = the child was not mid-turn here, or its turn ended before the queue
  *  drained the message — which was then removed, so the caller can (and must) deliver it another way. */
 export type DelegatedSteerOutcome = 'delivered' | 'idle';
+
+export interface ChannelResetOptions {
+  /** Prompt-only refreshes keep already-running background delegates on their existing prompt. Omitted for
+   *  runtime/plugin replacement, whose handlers and tool registry are being torn down. */
+  intent?: 'prompt_refresh';
+  settingsFilter?: (settingsUserId: number) => boolean;
+}
 
 /** How often a pending delegated steer re-checks the child's transcript/queue for its verdict. */
 const STEER_POLL_MS = 100;
@@ -1635,7 +1643,12 @@ export class ChannelSessionService {
     await this.abortTree(channelId, new Set(), abort);
   }
 
-  private async abortTree(channelId: string, seen: Set<string>, abort: PendingAbort): Promise<void> {
+  private async abortTree(
+    channelId: string,
+    seen: Set<string>,
+    abort: PendingAbort,
+    spareBackgroundDelegates = false,
+  ): Promise<void> {
     if (seen.has(channelId)) return;
     seen.add(channelId);
     const sessionId = channelSessionId(channelId);
@@ -1675,10 +1688,13 @@ export class ChannelSessionService {
         ...this.d.registry.childrenOf(sessionId),
         ...(abort.origin === 'user_stop' ? this.d.store.recoveringSubagentSessionIds(sessionId) : []),
       ]);
+      const spared = spareBackgroundDelegates ? sparedChildSessionIds(this.d.store, sessionId) : new Set<string>();
       for (const child of descendants) {
-        if (isChannelSession(child)) await this.abortTree(channelIdOf(child), seen, abort);
+        if (!spared.has(child) && isChannelSession(child)) {
+          await this.abortTree(channelIdOf(child), seen, abort, spareBackgroundDelegates);
+        }
       }
-      this.d.registry.clearChildren(sessionId);
+      this.d.registry.clearChildren(sessionId, spared);
       const ch = this.d.registry.channelGet(channelId);
       if (!ch) {
         if (this.d.registry.isActiveChild(sessionId)) {
@@ -1705,21 +1721,29 @@ export class ChannelSessionService {
    *  the exact same tree teardown a platform `/stop` does — BEFORE disposing, and only under the
    *  channel's own lock so a concurrent send() cannot straddle the teardown.
    *
-   *  `settingsFilter` narrows the reset to the channel sessions COMPOSED FROM one account (a change to
-   *  that account's instructions or persona, which must not touch anyone else's room); omitted, every
-   *  channel is reset (a plugin reload, which genuinely is global).
+   *  `options.settingsFilter` narrows the reset to the channel sessions COMPOSED FROM one account (a
+   *  change to that account's instructions or persona, which must not touch anyone else's room); omitted,
+   *  every channel is reset (a plugin reload, which genuinely is global). `intent: 'prompt_refresh'` is the
+   *  one non-destructive variant: it leaves running durable background descendants on their existing prompt.
    *
    *  Matched on the id the session was composed from, never on who owns the row — the same rule
    *  BrainService.applyAutoCompactSettings follows, and for the same reason: a room belongs to whoever
    *  opened it, so keying this on ownership respawned the wrong rooms in both directions. The opener's
    *  save reset a room already composed for somebody else (pushing the opener's instructions back into
    *  it), while the writer whose instructions the room actually renders saw nothing happen at all. */
-  async resetChannels(reason: string, settingsFilter?: (settingsUserId: number) => boolean): Promise<void> {
+  async resetChannels(reason: string, options: ChannelResetOptions = {}): Promise<void> {
+    const spareBackgroundDelegates = options.intent === 'prompt_refresh';
     const targets = this.d.registry.channelEntries()
-      .filter(([, ch]) => !settingsFilter || settingsFilter(ch.settingsUserId))
+      .filter(([, ch]) => !options.settingsFilter || options.settingsFilter(ch.settingsUserId))
+      .filter(([, ch]) => !spareBackgroundDelegates || !isSparedChildSession(this.d.store, ch.sessionId))
       .map(([channelId]) => channelId);
     await Promise.all(targets.map(async (channelId) => {
-      await this.abortTree(channelId, new Set(), { origin: 'parent_teardown', reason });
+      await this.abortTree(
+        channelId,
+        new Set(),
+        { origin: 'parent_teardown', reason },
+        spareBackgroundDelegates,
+      );
       // The abort above interrupts any turn but does not itself remove the record — a concurrent send()
       // that is already mid-turn is still running its callback under the channel lock, so queue the
       // actual dispose behind it instead of tearing the record down out from under that turn.
