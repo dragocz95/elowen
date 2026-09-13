@@ -12,7 +12,7 @@ import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createEnvironmentDiskSpec, createBoundSiteSpec, withContainerLimits, normalizeEnvironmentNetwork, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { NspawnClient } from './nspawn.mjs';
-import { selectRuntimeClient, unsupportedRuntime, UNSUPPORTED_RUNTIME_MESSAGE } from './runtimeClient.mjs';
+import { selectRuntimeClient, unsupportedRuntime, UNSUPPORTED_RUNTIME_MESSAGE, usesNspawnRuntime } from './runtimeClient.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
 import { RootfsArtifactStore } from './rootfsArtifacts.mjs';
 import { ARTIFACT_MIRROR_SETTING, PROJECT_ARTIFACT, artifactReference, isLegacyImageReference, knownReferences } from './rootfsCatalog.mjs';
@@ -200,17 +200,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     readinessCache = { at: Date.now(), value };
     return value;
   }
-  /** How many environments still name a container image rather than a published root filesystem.
+  /** How many non-deleted environments belong to a runtime this release cannot drive.
    *
    *  One query over the stored specifications and nothing else: a disk is never opened to answer it,
-   *  because this is polled. The rows are read whole and the legacy rule is applied in one place, so the
-   *  count cannot drift from the guard that actually refuses such a reference. */
+   *  because this is polled. The same predicate selects the actual runtime client, so historical rootfs
+   *  provenance cannot make readiness disagree with the environment's persisted owner. */
   function legacyReferenceRow() {
-    const stored = db.prepare("SELECT json_extract(spec_json,'$.input.disk.sourceImage') AS reference FROM p_sandbox_runtimes WHERE kind IN ('project','site') AND state<>'deleted'").all();
-    const pending = stored.filter((entry) => isLegacyImageReference(entry.reference)).length;
-    return { id: 'runtime:legacy-references', label: 'Environment root filesystem identity', ok: pending === 0,
+    const stored = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind IN ('project','site') AND state<>'deleted'").all();
+    const pending = stored.filter((entry) => !usesNspawnRuntime(JSON.parse(entry.spec_json).input)).length;
+    return { id: 'runtime:legacy-references', label: 'Environment runtime ownership', ok: pending === 0,
       detail: pending === 0
-        ? 'every environment names a published root filesystem'
+        ? 'every environment belongs to systemd-nspawn'
         : `${pending} environment${pending === 1 ? '' : 's'} still ${pending === 1 ? 'belongs' : 'belong'} to the removed Podman runtime. ${UNSUPPORTED_RUNTIME_MESSAGE}` };
   }
   const readinessArea = (id) => {

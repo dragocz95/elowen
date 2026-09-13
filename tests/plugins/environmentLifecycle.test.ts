@@ -1531,6 +1531,45 @@ describe('a new environment on a machine host', () => {
     expect(specOf(sql).input.disk.runtime).toBe('nspawn');
   });
 
+  it('reports runtime ownership from disk.runtime regardless of historical source images', async () => {
+    const { runtime, sql } = await machineProject();
+    const base = sql.prepare("SELECT spec_json,limits_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const insert = (id: number, state: string, runtimeName: string | undefined, sourceImage: string) => {
+      const spec = JSON.parse(base.spec_json);
+      spec.input.resource.id = id;
+      spec.input.image = sourceImage;
+      spec.input.disk.sourceImage = sourceImage;
+      if (runtimeName === undefined) delete spec.input.disk.runtime;
+      else spec.input.disk.runtime = runtimeName;
+      sql.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json)
+        VALUES('project',?,?,1,?,'running',?,?)`).run(String(id), id, state, JSON.stringify(spec), base.limits_json);
+    };
+    const legacyImage = 'localhost/elowen-project-base:historical';
+    const artifactImage = PROJECT_ROOTFS;
+
+    const nspawn = specOf(sql);
+    nspawn.input.image = legacyImage;
+    nspawn.input.disk.sourceImage = legacyImage;
+    sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(nspawn));
+    insert(8, 'running', 'nspawn', artifactImage);
+    insert(9, 'running', undefined, artifactImage);
+    insert(10, 'running', 'podman', artifactImage);
+    insert(11, 'deleted', undefined, legacyImage);
+
+    const first = await runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    expect(first.items.find((item: any) => item.id === 'runtime:legacy-references')).toMatchObject({ ok: false,
+      detail: expect.stringContaining('2 environments still belong to the removed Podman runtime') });
+
+    const supported = JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='9'").get() as any).spec_json);
+    supported.input.disk.runtime = 'nspawn';
+    supported.input.disk.sourceImage = legacyImage;
+    sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='9'").run(JSON.stringify(supported));
+    sql.prepare("UPDATE p_sandbox_runtimes SET state='deleted' WHERE kind='project' AND resource_id='10'").run();
+
+    const mutated = await runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    expect(mutated.items.find((item: any) => item.id === 'runtime:legacy-references')).toMatchObject({ ok: true });
+  });
+
   it('reports the missing rows through the project overview, and the runtime once it is decided', async () => {
     const unready = setup({}, 'unready');
     const overview = await unready.runtime.projectOverview(input);

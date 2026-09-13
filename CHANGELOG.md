@@ -9,6 +9,20 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ## [Unreleased]
 
+## [0.28.45] - 2026-09-13
+
+### Fixed
+
+- Sandbox host readiness now determines environment ownership from the persisted disk runtime, matching the
+  runtime client that actually starts, restores and materializes the environment. Historical Podman image names
+  retained by valid systemd-nspawn disks no longer produce a false deletion warning, while non-deleted rows with
+  a missing or unsupported runtime remain reported as legacy.
+
+### Compatibility
+
+- The core version is `0.28.45`. Plugin UI API remains 16, shared-helper API remains 4, and the minimum Node.js
+  version remains 22.12.0.
+
 ## [0.28.44] - 2026-09-13
 
 ### Added

@@ -88,9 +88,10 @@
 export const UNSUPPORTED_RUNTIME_MESSAGE = 'This environment belongs to the removed Podman runtime. Delete the managed Project or Site that owns it, then create it again; this build only creates systemd-nspawn environments from published root filesystems.';
 export const unsupportedRuntime = () => Object.assign(new Error(UNSUPPORTED_RUNTIME_MESSAGE), { code: 'unsupported_runtime', status: 409 });
 
+export const usesNspawnRuntime = (spec) => spec?.disk?.runtime === 'nspawn';
+
 export function selectRuntimeClient(spec, clients) {
-  const runtime = spec?.disk?.runtime;
-  if (runtime !== 'nspawn') throw unsupportedRuntime();
+  if (!usesNspawnRuntime(spec)) throw unsupportedRuntime();
   if (!clients.nspawn) throw new Error('This environment runs on systemd-nspawn, which is unavailable');
   return clients.nspawn;
 }
