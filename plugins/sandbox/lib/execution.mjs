@@ -6,6 +6,7 @@ import {
 } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { activeExecutionLeases, createExecutionLease, withRepoLease } from './db.mjs';
+import { provenLegacyWorktrees, pruneLegacyWorktreeMetadata } from './legacyWorktrees.mjs';
 
 const BWRAP = '/usr/bin/bwrap';
 const CMD_VAR = 'ELOWEN_SANDBOX_CMD';
@@ -443,7 +444,20 @@ export function resetUserHome({ db, dataDir, userId, expectedGeneration }) {
   return { generation: nextGeneration };
 }
 
-export function removeUserData(dataDir, userId) {
+/** Remove everything this plugin holds for one account, including what an older release left here.
+ *
+ *  The retired account-owned workspaces were REAL Git worktrees cut from the person's own Project
+ *  repositories, so deleting their directories also has to clear the administrative entry each repository
+ *  still holds for them. Which repositories those are is PROVEN while the trees are still there — after
+ *  the deletion nothing is left to prove it against — and only those are pruned, once their directories
+ *  are gone. A prune that cannot be completed is reported, not thrown: the account's data is already
+ *  deleted, and refusing the deletion afterwards would leave an account that can never be removed. */
+export async function removeUserData(dataDir, userId, opts = {}) {
+  const proven = provenLegacyWorktrees(join(userRoot(dataDir, userId), 'workspaces'));
   rmSync(userRoot(dataDir, userId), { recursive: true, force: true });
+  const failures = await pruneLegacyWorktreeMetadata(proven, { timeoutMs: opts.pruneTimeoutMs });
+  for (const failure of failures) {
+    opts.warn?.(`legacy workspace metadata for account ${userId} could not be pruned in ${failure.commonDir}: ${failure.message}`);
+  }
 }
 

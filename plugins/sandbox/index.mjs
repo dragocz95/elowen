@@ -73,7 +73,7 @@ export async function register(ctx) {
     // `registerUserRemoved`. The durable account list is the authority, not the directory.
     const knownUsers = new Set(ctx.host.stores().usersRead.list().map((user) => user.id));
     for (const userId of listUserRoots(dataDir)) {
-      if (!knownUsers.has(userId)) removeUserData(dataDir, userId);
+      if (!knownUsers.has(userId)) await removeUserData(dataDir, userId, { warn: (message) => ctx.logger.warn(message) });
     }
     await environments.reconcile();
   });
@@ -82,7 +82,7 @@ export async function register(ctx) {
 
   ctx.registerUserRemoved(async (userId) => {
     await environments.revokeAccount(userId);
-    removeUserData(dataDir, userId);
+    await removeUserData(dataDir, userId, { warn: (message) => ctx.logger.warn(message) });
   });
 
   ctx.registerHook({
