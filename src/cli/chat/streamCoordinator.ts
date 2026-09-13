@@ -250,9 +250,6 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           render('stream:inline_artifact');
           return;
         }
-        if (!fromSnapshot && (event.type === 'tool_output' || event.type === 'tool_end') && event.metadataChanged) {
-          void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:tool'); });
-        }
         if (event.type === 'session-event') {
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:session-event'); });
         }
