@@ -371,16 +371,18 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       socket.once('error', () => resolve(''));
       socket.once('timeout', () => { socket.destroy(); resolve(''); });
     });
-    await client.startPublication(spec, 'inbound-denied-proof', ['/usr/bin/python3', '-m', 'http.server', '3211', '--bind', '0.0.0.0']);
+    await client.startPublication(spec, 'inbound-denied-proof',
+      ['/usr/bin/python3', '-m', 'http.server', String(DENIED_HOST_PORT), '--bind', '0.0.0.0']);
     let deniedLocal = { stdout: '', stderr: '' } as Verdict;
     for (const deadline = Date.now() + 20_000; Date.now() < deadline && deniedLocal.stdout.trim() !== '200';) {
-      deniedLocal = await guest(['/usr/bin/curl', '-sS', '-m', '3', '-o', '/dev/null', '-w', '%{http_code}', 'http://127.0.0.1:3211/']);
+      deniedLocal = await guest(['/usr/bin/curl', '-sS', '-m', '3', '-o', '/dev/null', '-w', '%{http_code}',
+        `http://127.0.0.1:${DENIED_HOST_PORT}/`]);
       if (deniedLocal.stdout.trim() !== '200') await new Promise((resolve) => setTimeout(resolve, 500));
     }
     expect(deniedLocal.stdout.trim(), deniedLocal.stderr).toBe('200');
     expect(await requestHostPort(DENIED_HOST_PORT)).toBe('');
     await client.stopPublication(spec, 'inbound-denied-proof');
-    measured.push(`undeclared host port ${DENIED_HOST_PORT} denied while guest :3211 answered locally`);
+    measured.push(`undeclared host and guest port ${DENIED_HOST_PORT} denied externally and answered locally`);
 
     await client.startPublication(spec, 'inbound-proof', ['/usr/bin/python3', '-m', 'http.server', '3210', '--bind', '0.0.0.0']);
     let localInbound = { stdout: '', stderr: '' } as Verdict;

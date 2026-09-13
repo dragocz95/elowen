@@ -279,9 +279,8 @@ async function uninstall() {
   finally { release(); }
   for (const key of ranges.retired) console.log(`nspawn proof host: gave back the uid range of ${key}`);
   if (ranges.kept.length === 0) rmSync(PROOF_UID_RANGE_REGISTRY, { force: true });
-  rmSync(RECEIPT_PATH, { force: true });
   // Verified, not assumed: an artefact this run created must be gone, and one it did not create must
-  // still be there.
+  // still be there. An incomplete cleanup keeps its receipt so another uninstall can resume it.
   const failures = [...firewallFailures, ...ranges.kept.map((key) => `${key} keeps its uid range: its disk tree is still on this host`)];
   for (const artefact of artefacts) {
     const owned = receipt.owned.includes(artefact.id);
@@ -290,8 +289,13 @@ async function uninstall() {
     if (owned && artefact.removeParent && existsSync(dirname(artefact.path))) failures.push(`${dirname(artefact.path)} is still present`);
     if (!owned && !present) failures.push(`${artefact.path} was not this run's and is now missing`);
   }
-  if (existsSync(RECEIPT_PATH)) failures.push(`${RECEIPT_PATH} is still present`);
   if (existsSync(PROOF_UID_RANGE_REGISTRY) && ranges.kept.length === 0) failures.push(`${PROOF_UID_RANGE_REGISTRY} is still present`);
+  if (failures.length === 0) {
+    rmSync(RECEIPT_PATH, { force: true });
+    if (existsSync(RECEIPT_PATH)) failures.push(`${RECEIPT_PATH} is still present`);
+  } else if (!existsSync(RECEIPT_PATH)) {
+    failures.push(`${RECEIPT_PATH} is missing after incomplete cleanup`);
+  }
   for (const line of failures) console.error(`nspawn proof host: ${line}`);
   console.log(failures.length ? 'nspawn proof host: CLEANUP INCOMPLETE' : 'nspawn proof host: cleanup verified');
   return failures.length === 0;
