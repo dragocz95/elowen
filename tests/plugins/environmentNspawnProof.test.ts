@@ -67,10 +67,10 @@ if (!existsSync(RECEIPT_PATH)) {
 // an envelope carrying one until the host can isolate it. Without these the suite cannot create anything
 // at all, so it says which rule is missing rather than failing thirteen times over.
 const FIREWALL_RULE_IDS = ['firewall:forward-out', 'firewall:forward-back', 'firewall:machine-dhcp',
-  'firewall:host-guard', 'firewall:host-guard6'];
+  'firewall:host-return', 'firewall:host-guard', 'firewall:host-return6', 'firewall:host-guard6'];
 if (!blockers.length) {
   // Asked of the privileged side, not of `iptables`. The service account cannot read the tables at all,
-  // so checking them from here would report every rule absent on a host where all five are installed —
+  // so checking them from here would report every rule absent on a host where all managed rules are installed —
   // and the readiness report is the answer that actually gates `write-envelope` anyway.
   try {
     const probe = new NspawnClient({ artifacts: new RootfsArtifactStore({ dataDir: tmpdir() }), helperPath: PROOF_HELPER, namespace: 'elowen' });
@@ -155,6 +155,16 @@ const freeHostPort = () => new Promise<number>((resolve, reject) => {
 const INBOUND_HOST_PORT = await freeHostPort();
 let DENIED_HOST_PORT = await freeHostPort();
 while (DENIED_HOST_PORT === INBOUND_HOST_PORT) DENIED_HOST_PORT = await freeHostPort();
+const requestHostPort = (host: string, port: number) => new Promise<string>((resolve) => {
+  const socket = createConnection({ host, port });
+  const chunks: Buffer[] = [];
+  socket.setTimeout(3000);
+  socket.once('connect', () => socket.write('GET / HTTP/1.0\r\nHost: localhost\r\n\r\n'));
+  socket.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+  socket.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  socket.once('error', () => resolve(''));
+  socket.once('timeout', () => { socket.destroy(); resolve(''); });
+});
 
 describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a real host', () => {
   const paths = { sandboxDataDir: storageRoots?.sandboxDataDir ?? '/nonexistent', namespace: 'elowen' };
@@ -203,6 +213,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
   const cgroup = (name: string) => readFileSync(join('/sys/fs/cgroup/machine.slice', unit, name), 'utf8').trim();
   const identity = () => JSON.parse(readFileSync(join(diskDirectory, '.elowen', 'identity.json'), 'utf8'));
   const measured: string[] = [];
+  let lastInboundGateway: string | undefined;
 
   beforeAll(async () => {
     // The disk comes from the image the way a real environment's does: the rootless export is done by the
@@ -270,6 +281,11 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(['running', 'degraded']).toContain(await client.systemRunning(spec, { timeoutMs: 180_000 }));
     expect((await client.inspect(spec))!.state).toBe('running');
     expect(machineList()).toContain(spec.name);
+    const owningUnit = execFileSync('/usr/bin/machinectl', ['show', spec.name, '-p', 'Unit', '--value'],
+      { encoding: 'utf8', timeout: 30_000 }).trim();
+    expect(owningUnit).toBe(unit);
+    expect(systemctlShow(unit, 'ExecStart')).toContain('--keep-unit');
+    measured.push(`machine lifecycle owner: ${owningUnit} with --keep-unit`);
 
     const status = await guest(['/bin/cat', '/proc/self/status']);
     const field = (name: string) => /^(\S+)/.exec(new RegExp(`^${name}:\\s+(.*)$`, 'm').exec(status.stdout)?.[1] ?? '')?.[1] ?? '';
@@ -357,20 +373,23 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       const blocked = await guest(['/usr/bin/python3', '-c',
         `import socket,sys;s=socket.socket();s.settimeout(5);sys.exit(0 if s.connect_ex(('${gateway}',4499))==0 else 1)`], { timeoutMs: 60_000 });
       expect(blocked.code, 'the guest reached a host port over its link').not.toBe(0);
+
+      const sshReachableFromHost = await new Promise<boolean>((resolve) => {
+        const socket = createConnection({ host: gateway, port: 22 });
+        socket.setTimeout(3000);
+        socket.once('connect', () => { socket.destroy(); resolve(true); });
+        socket.once('error', () => resolve(false));
+        socket.once('timeout', () => { socket.destroy(); resolve(false); });
+      });
+      expect(sshReachableFromHost, 'the host SSH listener must be open for this guard check to prove anything').toBe(true);
+      const sshBlocked = await guest(['/usr/bin/python3', '-c',
+        `import socket,sys;s=socket.socket();s.settimeout(5);sys.exit(0 if s.connect_ex(('${gateway}',22))==0 else 1)`], { timeoutMs: 60_000 });
+      expect(sshBlocked.code, 'the guest reached the host SSH listener over its machine link').not.toBe(0);
+      measured.push('host SSH stayed unreachable from the guest while the host listener was open');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
 
-    const requestHostPort = (port: number) => new Promise<string>((resolve) => {
-      const socket = createConnection({ host: '127.0.0.1', port });
-      const chunks: Buffer[] = [];
-      socket.setTimeout(3000);
-      socket.once('connect', () => socket.write('GET / HTTP/1.0\r\nHost: localhost\r\n\r\n'));
-      socket.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-      socket.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-      socket.once('error', () => resolve(''));
-      socket.once('timeout', () => { socket.destroy(); resolve(''); });
-    });
     await client.startPublication(spec, 'inbound-denied-proof',
       ['/usr/bin/python3', '-m', 'http.server', String(DENIED_HOST_PORT), '--bind', '0.0.0.0']);
     let deniedLocal = { stdout: '', stderr: '' } as Verdict;
@@ -380,7 +399,8 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       if (deniedLocal.stdout.trim() !== '200') await new Promise((resolve) => setTimeout(resolve, 500));
     }
     expect(deniedLocal.stdout.trim(), deniedLocal.stderr).toBe('200');
-    expect(await requestHostPort(DENIED_HOST_PORT)).toBe('');
+    expect(await requestHostPort(gateway, DENIED_HOST_PORT)).toBe('');
+    expect(await requestHostPort('127.0.0.1', DENIED_HOST_PORT)).toBe('');
     await client.stopPublication(spec, 'inbound-denied-proof');
     measured.push(`undeclared host and guest port ${DENIED_HOST_PORT} denied externally and answered locally`);
 
@@ -393,14 +413,34 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(localInbound.stdout.trim(), localInbound.stderr).toBe('200');
     let inbound = '';
     for (const deadline = Date.now() + 20_000; Date.now() < deadline && !inbound.includes('200 OK');) {
-      inbound = await requestHostPort(INBOUND_HOST_PORT);
+      inbound = await requestHostPort(gateway, INBOUND_HOST_PORT);
       if (!inbound.includes('200 OK')) await new Promise((resolve) => setTimeout(resolve, 500));
     }
     expect(inbound, unitDiagnostics(unit, envelope.nspawn)).toContain('200 OK');
+    expect(await requestHostPort('127.0.0.1', INBOUND_HOST_PORT)).toBe('');
     await client.stop(spec);
-    expect(await requestHostPort(INBOUND_HOST_PORT)).toBe('');
-    measured.push(`inbound tcp: host 127.0.0.1:${INBOUND_HOST_PORT} reached guest :3210 and closed after stop`);
+    expect(await requestHostPort(gateway, INBOUND_HOST_PORT)).toBe('');
+    measured.push(`inbound tcp: host ${gateway}:${INBOUND_HOST_PORT} reached guest :3210, loopback stayed closed, and forwarding closed after stop`);
+
     await boot();
+    let restartedGateway: string | undefined;
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline && restartedGateway === undefined;) {
+      const route = await guest(['/usr/bin/ip', '-4', 'route', 'show', 'default']);
+      restartedGateway = (route.stdout.match(/default via (\d+\.\d+\.\d+\.\d+)/) ?? [])[1];
+      if (restartedGateway === undefined) await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    expect(restartedGateway).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    lastInboundGateway = restartedGateway;
+    await client.startPublication(spec, 'inbound-proof', ['/usr/bin/python3', '-m', 'http.server', '3210', '--bind', '0.0.0.0']);
+    let restartedInbound = '';
+    for (const deadline = Date.now() + 20_000; Date.now() < deadline && !restartedInbound.includes('200 OK');) {
+      restartedInbound = await requestHostPort(restartedGateway!, INBOUND_HOST_PORT);
+      if (!restartedInbound.includes('200 OK')) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect(restartedInbound, unitDiagnostics(unit, envelope.nspawn)).toContain('200 OK');
+    expect(await requestHostPort('127.0.0.1', INBOUND_HOST_PORT)).toBe('');
+    await client.stopPublication(spec, 'inbound-proof');
+    measured.push(`native inbound tcp recovered after restart on host ${restartedGateway}:${INBOUND_HOST_PORT}`);
   }, 10 * 60_000);
 
   it('runs the execution matrix: streams, exit codes, stdin, a large output, a timeout and a cancellation', async () => {
@@ -745,6 +785,8 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
 
     expect(machineList()).not.toContain(spec.name);
     expect(machineList()).not.toContain(SITE_ID);
+    expect(lastInboundGateway).toBeTruthy();
+    expect(await requestHostPort(lastInboundGateway!, INBOUND_HOST_PORT)).toBe('');
     expect(existsSync(envelope.nspawn)).toBe(false);
     expect(existsSync(envelope.dropIn)).toBe(false);
     expect(existsSync(spec.storageRoot)).toBe(false);

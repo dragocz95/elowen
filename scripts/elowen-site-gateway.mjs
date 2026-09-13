@@ -715,14 +715,14 @@ const MACHINE_INTERFACE = 've-+';
  *  neither the outbound accept nor anything in Docker's own chains, and falls through to the FORWARD DROP
  *  policy Docker installs. A machine that can send and never receive looks like a name-resolution fault
  *  and is not one. The two DOCKER-USER rules do not overlap, so their order relative to each other is
- *  free; the DHCP exception still has to precede the INPUT guard.
+ *  free; the DHCP exception and stateful native-DNAT return path still have to precede the INPUT guard.
  *
- *  IPv6 needs only the guard, and that is a statement about this host rather than about IPv6. Measured:
- *  the host carries no global IPv6 address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets
- *  nothing but a link-local address on its side of the link. There is no v6 path off the box to keep
- *  open, and the one v6 reach that does exist is the guest to the host's link-local address, which the
- *  guard closes. If the host ever gains IPv6 connectivity this needs measuring again, because a global
- *  address would put v6 forwarding in play and the set above would no longer be complete. */
+ *  IPv6 needs the same stateful return rule before its guard. Measured, this host carries no global IPv6
+ *  address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets nothing but a link-local address on
+ *  its side of the link. There is no v6 path off the box to keep open, while a future native IPv6 port map
+ *  still needs its established replies admitted without opening a new guest-to-host connection. If the
+ *  host ever gains IPv6 connectivity this needs measuring again, because a global address would put v6
+ *  forwarding in play and the set above would no longer be complete. */
 export const NSPAWN_FIREWALL_RULES = Object.freeze([
   Object.freeze({
     id: 'firewall:forward-out',
@@ -752,20 +752,38 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     why: 'the host runs the address server for the link, so the guard below must not cover it',
   }),
   Object.freeze({
-    id: 'firewall:host-guard',
-    label: 'Machine-to-host guard',
+    id: 'firewall:host-return',
+    label: 'Machine native port return path',
     binary: '/usr/sbin/iptables',
     insertAt: 2,
     chain: 'INPUT',
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-host-return', '-j', 'ACCEPT']),
+    why: 'a host-originated native nspawn DNAT connection returns through INPUT and must pass before the machine-to-host guard',
+  }),
+  Object.freeze({
+    id: 'firewall:host-guard',
+    label: 'Machine-to-host guard',
+    binary: '/usr/sbin/iptables',
+    insertAt: 3,
+    chain: 'INPUT',
     spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-host-guard', '-j', 'DROP']),
     why: 'everything else a machine addresses to the host arrives here, not on FORWARD',
+  }),
+  Object.freeze({
+    id: 'firewall:host-return6',
+    label: 'Machine native port return path (IPv6)',
+    binary: '/usr/sbin/ip6tables',
+    insertAt: 1,
+    chain: 'INPUT',
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-host-return6', '-j', 'ACCEPT']),
+    why: 'an IPv6 native nspawn DNAT connection needs the same stateful return path without admitting a new host connection',
   }),
   Object.freeze({
     id: 'firewall:host-guard6',
     label: 'Machine-to-host guard (IPv6)',
     binary: '/usr/sbin/ip6tables',
     chain: 'INPUT',
-    insertAt: 1,
+    insertAt: 2,
     spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-host-guard6', '-j', 'DROP']),
     why: 'the link carries IPv6 link-local addressing, which the IPv4 table does not see',
   }),
@@ -800,7 +818,7 @@ export const MACHINE_FIREWALL_UNIT_PATH = `/etc/systemd/system/${MACHINE_FIREWAL
  *
  *  A packet filter keeps nothing across a reboot on its own, and this host has no persistence package
  *  installed. Leaving that to the operator meant that after any restart no environment could be created
- *  until somebody remembered five commands, and reporting it loudly does not make the host less broken.
+ *  until somebody remembered every managed rule, and reporting it loudly does not make the host less broken.
  *
  *  Ordering is the whole design. Docker rebuilds its chains when it starts, so a unit that ran before it
  *  would leave the guard missing while machines are running; this one is ordered after `docker.service`

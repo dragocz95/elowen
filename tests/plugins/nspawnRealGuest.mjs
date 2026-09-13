@@ -27,7 +27,7 @@ const MACHINE_UNIT_TEMPLATE = '/etc/systemd/system/elowen-machine@.service';
 /** An ordinary environment comes up with a virtual ethernet, and the privileged side refuses to write an
  *  envelope carrying one until the host can isolate it. Without these nothing can be created at all. */
 const FIREWALL_RULE_IDS = ['firewall:forward-out', 'firewall:forward-back', 'firewall:machine-dhcp',
-  'firewall:host-guard', 'firewall:host-guard6'];
+  'firewall:host-return', 'firewall:host-guard', 'firewall:host-return6', 'firewall:host-guard6'];
 
 export const blockers = [];
 if (process.platform !== 'linux') blockers.push('the host is not Linux');

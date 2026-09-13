@@ -653,6 +653,9 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(MACHINE_UNIT_TEMPLATE).toContain('--directory=${ELOWEN_MACHINE_DIRECTORY}');
     expect(MACHINE_UNIT_TEMPLATE).toContain('--link-journal=no');
     expect(MACHINE_UNIT_TEMPLATE).toContain('--settings=trusted');
+    // systemd 255 keeps the nspawn parent and container in this service unit. Port= is handled by nspawn's
+    // own event loop and does not require a separate machine scope.
+    expect(MACHINE_UNIT_TEMPLATE).toContain('--keep-unit');
     expect(MACHINE_UNIT_TEMPLATE).toContain('Slice=machine.slice');
     expect(MACHINE_UNIT_TEMPLATE).toContain('DevicePolicy=closed');
     expect(MACHINE_UNIT_TEMPLATE).not.toContain('/var/lib/machines');
@@ -931,19 +934,24 @@ describe('privileged helper: host artefacts and readiness', () => {
     // The plan first placed this guard in FORWARD. A packet a machine sends to an address the host holds
     // is delivered locally, so the routing decision hands it to INPUT and a FORWARD rule never sees it.
     //
-    // IPv6 gets the guard and nothing else, and that is a fact about this host rather than about IPv6:
-    // measured, it carries no global IPv6 address and the ip6tables FORWARD policy is ACCEPT, so there is
-    // no v6 path off the box to hold open. It needs measuring again if the host ever gains v6 reach.
+    // Native nspawn DNAT keeps its own nftables map, but replies to a host-originated connection return
+    // from the machine link through INPUT. Admit only conntrack replies before the blanket host guard, so
+    // the declared port works without opening SSH or any other NEW machine-to-host connection.
+    const returns = NSPAWN_FIREWALL_RULES.filter((rule) => rule.id.startsWith('firewall:host-return'));
+    expect(returns).toHaveLength(2);
+    expect(returns.every((rule) => rule.chain === 'INPUT' && rule.spec.includes('RELATED,ESTABLISHED'))).toBe(true);
+    expect(returns.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
     const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.spec.includes('DROP'));
     expect(guards).toHaveLength(2);
     expect(guards.every((rule) => rule.chain === 'INPUT')).toBe(true);
     expect(guards.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
-    // IPv4 DHCP is first and its guard second; IPv6 has no lease exception and its guard is first.
+    // IPv4 DHCP is first, then the native-port return path and guard. IPv6 starts with return then guard.
     const lease = NSPAWN_FIREWALL_RULES.find((rule) => rule.id === 'firewall:machine-dhcp')!;
     expect(lease.spec.join(' ')).toContain('-p udp -m udp --dport 67');
     expect(lease.insertAt).toBe(1);
-    expect(guards.map((rule) => rule.insertAt)).toEqual([2, 1]);
-    expect(guards.every((rule) => firewallRuleCommand(rule).includes('-I INPUT'))).toBe(true);
+    expect(returns.map((rule) => rule.insertAt)).toEqual([2, 1]);
+    expect(guards.map((rule) => rule.insertAt)).toEqual([3, 2]);
+    expect([...returns, ...guards].every((rule) => firewallRuleCommand(rule).includes('-I INPUT'))).toBe(true);
   });
 
   it('prepares a fresh host end to end, and the second run changes nothing', async () => {

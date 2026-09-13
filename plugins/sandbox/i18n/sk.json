@@ -195,7 +195,7 @@
       "networkIsolated": "Iba izolovaný loopback",
       "networkIsolatedHint": "Komunikovať môžu iba procesy vnútri prostredia. Odchádzajúci prístup aj prichádzajúce presmerovanie sú vypnuté.",
       "inboundPorts": "Prichádzajúce porty",
-      "inboundPortsHint": "Presmeruje neprivilegovaný port hostiteľa na jeden TCP alebo UDP port vnútri prostredia.",
+      "inboundPortsHint": "Presmeruje neprivilegovaný port na adresách hostiteľa mimo loopback na jeden TCP alebo UDP port vnútri prostredia. Loopback hostiteľa zostáva zatvorený.",
       "addInboundPort": "Pridať port",
       "removeInboundPort": "Odobrať port",
       "noInboundPorts": "Do tohto prostredia nie sú presmerované žiadne porty hostiteľa.",
