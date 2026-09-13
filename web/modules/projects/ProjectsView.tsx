@@ -35,7 +35,7 @@ import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { requestEnvironmentAction } from '../../lib/environmentActions';
-import { usePluginProjectRows, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
+import { usePluginProjectRows, type PluginProjectRowMetrics, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
 import type { ProjectSummary } from '../../lib/types';
 
 function MissingProjectPathBadge({ label }: { label: string }) {
@@ -66,6 +66,49 @@ function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
     >
       {status.busy ? <Spinner size="md" tone={tone} label={status.label} /> : <Icon size={16} role="img" aria-label={status.label} />}
     </span>
+  );
+}
+
+function ProjectRowMetrics({ metrics, compact = false }: { metrics?: PluginProjectRowMetrics; compact?: boolean }) {
+  if (!metrics || !Array.isArray(metrics.items) || metrics.items.length === 0) return null;
+  const items = metrics.items.slice(0, 3);
+  const loading = items.every((item) => item.state === 'loading');
+  return (
+    <div
+      role={loading ? 'status' : 'group'}
+      aria-label={metrics.label}
+      data-project-row-metrics
+      data-compact={compact || undefined}
+      className={`grid min-w-0 grid-cols-3 gap-2 ${compact ? 'mt-2' : 'w-full'}`}
+    >
+      {items.map((item) => {
+        const percent = typeof item.percent === 'number' && Number.isFinite(item.percent) ? Math.max(0, Math.min(100, item.percent)) : null;
+        const fill = percent !== null && percent >= 90 ? 'bg-destructive' : percent !== null && percent >= 70 ? 'bg-warning' : 'bg-primary';
+        const title = item.valueText ?? `${item.label}: ${item.value}`;
+        return (
+          <div key={item.id} className="min-w-0" title={title} data-metric-state={item.state ?? 'ready'}>
+            <div className="mb-1 flex min-w-0 items-baseline justify-between gap-1 text-[9px] leading-none">
+              <span className="truncate font-semibold uppercase tracking-[0.08em] text-muted-foreground">{item.label}</span>
+              <span className="truncate text-foreground">{item.value}</span>
+            </div>
+            <div
+              className={`h-1 overflow-hidden rounded-full bg-muted ${item.state === 'unknown' ? 'border border-dashed border-border bg-transparent' : ''}`}
+              {...(percent === null ? { 'aria-hidden': true } : {
+                role: 'progressbar',
+                'aria-label': item.label,
+                'aria-valuemin': 0,
+                'aria-valuemax': 100,
+                'aria-valuenow': percent,
+                'aria-valuetext': title,
+              })}
+            >
+              {percent !== null ? <span className={`block h-full rounded-full ${fill}`} style={{ width: `${percent}%` }} /> : null}
+              {item.state === 'loading' ? <span className="block h-full w-2/5 animate-pulse rounded-full bg-muted-foreground/30" /> : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -376,11 +419,12 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(14rem,1.2fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
+                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.15fr) minmax(14rem,1.35fr) minmax(12rem,1fr) minmax(13rem,1.05fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
                       <DataTableRow header>
                         <DataTableCell header lines={1}>{t.projects.columnProject}</DataTableCell>
                         <DataTableCell header priority="wide" lines={1}>{t.projects.columnPath}</DataTableCell>
                         <DataTableCell header priority="wide" lines={1}>{t.projects.columnSummary}</DataTableCell>
+                        <DataTableCell header priority="wide" lines={1}>{t.projects.columnResources}</DataTableCell>
                         {/* The state track carries a glyph, not a name of its own: each row's glyph is
                             named by the state label the plugin itself reports. */}
                         <DataTableCell header labelHidden lines={1}>{t.projects.columnStatus}</DataTableCell>
@@ -417,14 +461,15 @@ export function ProjectsView() {
                               <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/60">
                                 <ProjectIcon project={project} size={project.icon ? 28 : 16} className="text-muted-foreground" />
                               </span>
-                              <span className="flex min-w-0 flex-1 flex-col">
+                              <div className="flex min-w-0 flex-1 flex-col">
                                 <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
                                 <span data-project-compact-path className="flex min-w-0 items-center gap-1.5 @min-[56rem]:hidden">
                                   <Folder size={10} className="shrink-0 text-muted-foreground" aria-hidden />
                                   <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.executionKind === 'managed' ? s.managed : project.path}</span>
                                   {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                                 </span>
-                              </span>
+                                <div className="@min-[56rem]:hidden"><ProjectRowMetrics metrics={pluginRows.metricsFor(project.id)} compact /></div>
+                              </div>
                             </DataTableCell>
                             <DataTableCell priority="wide" lines="auto" title={project.path} className="font-mono text-xs text-muted-foreground">
                               <span className="flex min-w-0 items-center gap-1.5">
@@ -434,6 +479,7 @@ export function ProjectsView() {
                               </span>
                             </DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
+                            <DataTableCell priority="wide" lines="auto"><ProjectRowMetrics metrics={pluginRows.metricsFor(project.id)} /></DataTableCell>
                             {/* The state glyph sits at the row's far end, one narrow track left of the row
                                 actions. A row whose plugin says nothing leaves the track empty, so the
                                 actions never move as states arrive and go. */}

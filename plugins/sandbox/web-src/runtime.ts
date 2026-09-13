@@ -108,6 +108,7 @@ type PluginProjectComponent = ComponentType<{ plugin: string; panelId: string; p
  *  a state per project, the actions that state allows, and the dialogs those actions raise. */
 type PluginProjectRowsHook = (input: { projects: Project[] }) => {
   status?: Record<number, { label: string; icon?: string; tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }>;
+  metrics?: Record<number, { label: string; items: { id: string; label: string; value: string; valueText?: string; percent?: number; state?: 'ready' | 'loading' | 'stopped' | 'unavailable' | 'unknown' }[] }>;
   actions?: Record<number, { id: string; label: string; icon?: string; disabled?: boolean; tone?: 'danger'; onSelect: () => void }[]>;
   overlay?: unknown;
 };

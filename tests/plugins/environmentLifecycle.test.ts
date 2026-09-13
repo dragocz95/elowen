@@ -127,6 +127,11 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     // holds, and the machine client implements it through the privileged helper.
     siteDataArchive: vi.fn(async () => {}),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
+    resourceUsageBatch: vi.fn(async (entries: any[]) => entries.map(({ spec, state }) => ({
+      cpu: state === 'running' ? { state: 'ready', usedCpus: 0.5, percent: 50 } : { state: 'stopped', usedCpus: null, percent: null },
+      memory: state === 'running' ? { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: spec.limits.memoryMb * 1024 * 1024 } : { state: 'stopped', usedBytes: null, limitBytes: spec.limits.memoryMb * 1024 * 1024 },
+      disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+    }))),
     // The rows the helper reports, in the helper's own shape. `unready` carries the details a real host
     // returns, because what the runtime does with them — quoting them back in its refusal — is the thing
     // worth proving, and an empty detail would prove nothing.
@@ -153,6 +158,34 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
 describe('durable managed environment lifecycle', () => {
+  it('batches resource usage only after fresh Project authorization', async () => {
+    const { runtime, nspawn, members } = setup();
+    const cold = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 });
+    expect(cold.projects).toEqual([expect.objectContaining({
+      projectId: 7,
+      environment: expect.objectContaining({ state: 'unprovisioned', limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } }),
+      resources: expect.objectContaining({ disk: { state: 'ready', usedBytes: 0, limitBytes: null } }),
+    })]);
+    expect(nspawn.resourceUsageBatch).not.toHaveBeenCalled();
+
+    await runtime.requestEnvironment({ ...input, requestId: 'usage-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const live = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 });
+    expect(live.projects[0]).toMatchObject({
+      environment: { state: 'running' },
+      resources: {
+        cpu: { state: 'ready', usedCpus: 0.5, percent: 50 },
+        memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
+        disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+      },
+    });
+    expect(nspawn.resourceUsageBatch).toHaveBeenCalledWith([expect.objectContaining({ state: 'running', spec: expect.objectContaining({ name: 'elowen-project-7-g1' }) })]);
+
+    members.delete(2);
+    await expect(runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 })).rejects.toMatchObject({ code: 'project_forbidden', status: 403 });
+    expect(nspawn.resourceUsageBatch).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps one rootfs disk across envelope recreation and limit changes, then deletes it after handles', async () => {
     const { runtime, nspawn, storage, containers, diskFiles } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'disk-start', action: { kind: 'start' } });

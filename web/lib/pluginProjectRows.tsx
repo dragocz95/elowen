@@ -34,6 +34,20 @@ export interface PluginProjectRowStatus {
   busy?: boolean;
 }
 
+interface PluginProjectRowMetric {
+  id: string;
+  label: string;
+  value: string;
+  valueText?: string;
+  percent?: number;
+  state?: 'ready' | 'loading' | 'stopped' | 'unavailable' | 'unknown';
+}
+
+export interface PluginProjectRowMetrics {
+  label: string;
+  items: PluginProjectRowMetric[];
+}
+
 /** One plugin-owned entry of a project row's action menu. */
 interface PluginProjectRowAction {
   /** Stable within the plugin; the host keys the menu entry by `<plugin>:<id>`. */
@@ -48,6 +62,7 @@ interface PluginProjectRowAction {
 interface PluginProjectRowContribution {
   /** Keyed by project id. A project the plugin has nothing to say about is simply absent. */
   status?: Record<number, PluginProjectRowStatus>;
+  metrics?: Record<number, PluginProjectRowMetrics>;
   actions?: Record<number, PluginProjectRowAction[]>;
   /** Rendered by the host once, outside the rows: dialogs the plugin's own actions raise. */
   overlay?: ReactNode;
@@ -68,6 +83,7 @@ export interface PluginProjectRows {
    *  status track holds a single glyph. The first contributing bundle that has something to say about this
    *  project says it — actions merge across bundles, states deliberately do not. */
   statusFor(projectId: number): PluginProjectRowStatus | undefined;
+  metricsFor(projectId: number): PluginProjectRowMetrics | undefined;
   actionsFor(projectId: number): (PluginProjectRowAction & { plugin: string })[];
   /** Mount this inside the register: the contributing bundles run here, and their overlays render here. */
   hosts: ReactNode;
@@ -81,6 +97,7 @@ function signatureOf(contributions: Map<string, PluginProjectRowContribution>): 
   return JSON.stringify([...contributions].map(([plugin, contribution]) => [
     plugin,
     contribution.status ?? {},
+    contribution.metrics ?? {},
     Object.fromEntries(Object.entries(contribution.actions ?? {}).map(([id, actions]) => [
       id,
       actions.map((action) => [action.id, action.label, action.icon ?? '', action.tone ?? '', action.disabled === true]),
@@ -120,6 +137,13 @@ export function usePluginProjectRows(projects: Project[]): PluginProjectRows {
       for (const contribution of frames.current.values()) {
         const status = contribution.status?.[projectId];
         if (status) return status;
+      }
+      return undefined;
+    },
+    metricsFor: (projectId) => {
+      for (const contribution of frames.current.values()) {
+        const metrics = contribution.metrics?.[projectId];
+        if (metrics) return metrics;
       }
       return undefined;
     },

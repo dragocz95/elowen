@@ -20,7 +20,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 /** A complete host-side envelope for one machine: the disk with its identity record, the two root-owned
  *  configuration files, and a `systemctl show` answer that matches all of them. Each test then breaks
  *  exactly one of those facts and asserts that the ownership proof refuses. */
-function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean, outputLimitBytes?: number, network?: any } = {}) {
+function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean, outputLimitBytes?: number, network?: any, now?: () => number, diskUsageTtlMs?: number } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-test-'));
   roots.push(root);
   const configRoot = join(root, 'config');
@@ -34,6 +34,14 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
     ...(options.network ? { network: options.network } : {}), ...(options.previewBroker ? { previewBroker: true } : {}) }, paths);
   mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
   for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
+  const cgroupRoot = join(root, 'cgroup');
+  const machineCgroup = join(cgroupRoot, 'machine.slice', unitFor(spec.name));
+  mkdirSync(machineCgroup, { recursive: true });
+  const writeCgroup = ({ usageUsec, memoryBytes }: { usageUsec: number; memoryBytes: number }) => {
+    writeFileSync(join(machineCgroup, 'cpu.stat'), `usage_usec ${usageUsec}\nuser_usec 0\nsystem_usec 0\n`);
+    writeFileSync(join(machineCgroup, 'memory.current'), String(memoryBytes));
+  };
+  writeCgroup({ usageUsec: 1_000_000, memoryBytes: 256 * 1024 * 1024 });
   const diskDirectory = dirname(spec.disk.rootfsPath);
   const rootfs = realpathSync(spec.disk.rootfsPath);
   mkdirSync(join(diskDirectory, '.elowen'), { recursive: true });
@@ -66,6 +74,7 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
   const calls: { file: string, args: string[] }[] = [];
   const helperReply: Record<string, any> = {
     exec: { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false, stdout: '', stderr: '' },
+    'tree-sizes': (request: { paths: string[] }) => ({ ok: true, usages: request.paths.map((path) => ({ path, allocatedBytes: 512 * 1024 * 1024 })) }),
   };
   const render = (record: Record<string, string>) => Object.entries(record).map(([key, value]) => `${key}=${value}`).join('\n');
   const executor = {
@@ -96,9 +105,11 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
     ensure: vi.fn(async () => ({ path: blob, digest: ARTIFACT_DIGEST, sizeBytes: 15, fetched: false })),
     collect: vi.fn(() => []),
   };
-  const client = new NspawnClient({ executor, artifacts, configRoot, namespace: spec.namespace,
-    ...(options.outputLimitBytes === undefined ? {} : { outputLimitBytes: options.outputLimitBytes }) });
-  return { root, configRoot, paths, spec, disk: spec.disk, diskDirectory, identityPath, identity, writeIdentity,
+  const client = new NspawnClient({ executor, artifacts, configRoot, cgroupRoot, namespace: spec.namespace,
+    ...(options.outputLimitBytes === undefined ? {} : { outputLimitBytes: options.outputLimitBytes }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.diskUsageTtlMs === undefined ? {} : { diskUsageTtlMs: options.diskUsageTtlMs }) });
+  return { root, configRoot, cgroupRoot, machineCgroup, writeCgroup, paths, spec, disk: spec.disk, diskDirectory, identityPath, identity, writeIdentity,
     envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, executor, artifacts, blob, client, rootfs };
 }
 
@@ -218,6 +229,86 @@ describe('nspawn machine inventory', () => {
     const { client, spec } = fixture();
     const inventory = await client.containerInventory('elowen');
     expect([...inventory]).toEqual([[spec.name, 'running']]);
+  });
+});
+
+describe('nspawn resource telemetry', () => {
+  it('samples the parent machine cgroup and caches one disk batch', async () => {
+    let now = 1_000;
+    const state = fixture({ now: () => now, diskUsageTtlMs: 300_000 });
+    mkdirSync(join(state.machineCgroup, 'supervisor'), { recursive: true });
+    writeFileSync(join(state.machineCgroup, 'supervisor', 'cpu.stat'), 'usage_usec 999999999\n');
+    writeFileSync(join(state.machineCgroup, 'supervisor', 'memory.current'), String(999 * 1024 * 1024));
+
+    const first = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    expect(first).toEqual([{
+      cpu: { state: 'sampling', usedCpus: null, percent: null },
+      memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
+      disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+    }]);
+    expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1);
+
+    now += 30_000;
+    state.writeCgroup({ usageUsec: 16_000_000, memoryBytes: 384 * 1024 * 1024 });
+    const second = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    expect(second[0]).toMatchObject({
+      cpu: { state: 'ready', usedCpus: 0.5, percent: 50 },
+      memory: { state: 'ready', usedBytes: 384 * 1024 * 1024 },
+      disk: { state: 'ready', usedBytes: 512 * 1024 * 1024 },
+    });
+    expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1);
+
+    now += 300_001;
+    state.helperReply['tree-sizes'] = (request: { paths: string[] }) => ({ ok: true, usages: request.paths.map((path) => ({ path, allocatedBytes: 768 * 1024 * 1024 })) });
+    const stopped = await state.client.resourceUsageBatch([{ spec: state.spec, state: 'stopped' }]);
+    expect(stopped[0]).toEqual({
+      cpu: { state: 'stopped', usedCpus: null, percent: null },
+      memory: { state: 'stopped', usedBytes: null, limitBytes: 1024 * 1024 * 1024 },
+      disk: { state: 'ready', usedBytes: 768 * 1024 * 1024, limitBytes: null },
+    });
+    expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(2);
+  });
+
+  it('shares one in-flight disk refresh between concurrent readers', async () => {
+    const state = fixture();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    state.helperReply['tree-sizes'] = async (request: { paths: string[] }) => {
+      await gate;
+      return { ok: true, usages: request.paths.map((path) => ({ path, allocatedBytes: 4096 })) };
+    };
+    const first = state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    const second = state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    await vi.waitFor(() => expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1));
+    release?.();
+    await Promise.all([first, second]);
+    expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(1);
+  });
+
+  it('isolates missing CPU, memory and disk counters', async () => {
+    const cpuMissing = fixture();
+    rmSync(join(cpuMissing.machineCgroup, 'cpu.stat'));
+    expect((await cpuMissing.client.resourceUsageBatch([{ spec: cpuMissing.spec, state: 'running' }]))[0]).toMatchObject({
+      cpu: { state: 'unavailable' },
+      memory: { state: 'ready', usedBytes: 256 * 1024 * 1024 },
+      disk: { state: 'ready' },
+    });
+
+    const memoryMissing = fixture();
+    rmSync(join(memoryMissing.machineCgroup, 'memory.current'));
+    expect((await memoryMissing.client.resourceUsageBatch([{ spec: memoryMissing.spec, state: 'running' }]))[0]).toMatchObject({
+      cpu: { state: 'sampling' },
+      memory: { state: 'unavailable' },
+      disk: { state: 'ready' },
+    });
+
+    const diskMissing = fixture();
+    diskMissing.helperReply['tree-sizes'] = (request: { paths: string[] }) => ({ ok: true, usages: request.paths.map((path) => ({ path, error: 'unavailable' })) });
+    expect((await diskMissing.client.resourceUsageBatch([{ spec: diskMissing.spec, state: 'running' }]))[0]).toMatchObject({
+      cpu: { state: 'sampling' },
+      memory: { state: 'ready' },
+      disk: { state: 'unavailable', usedBytes: null },
+    });
   });
 });
 

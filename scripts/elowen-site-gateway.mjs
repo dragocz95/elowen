@@ -600,6 +600,8 @@ export const POLKIT_RULE_PATH = '/etc/polkit-1/rules.d/49-elowen-nspawn.rules';
 const NSPAWN_SETTINGS_ROOT = '/etc/systemd/nspawn';
 const NSPAWN_UID_STATE_PATH = '/var/lib/elowen/nspawn-uid-ranges.json';
 const PYTHON = '/usr/bin/python3';
+const DU = '/usr/bin/du';
+export const RESOURCE_USAGE_TIMEOUT_MS = 15_000;
 
 /** Each environment owns a FIXED host uid range, allocated once and recorded in the disk identity. A
  *  per-boot range would re-chown the whole rootfs every time a tree is cloned; a fixed one makes the
@@ -1777,6 +1779,26 @@ function treeRunner(options) {
   return (file, args) => runner(file, args, { timeoutMs: DISK_TREE_TIMEOUT_MS });
 }
 
+/** Resource polling has a short budget and one `du` process for the complete visible batch. The paths are
+ *  trusted storage descendants and `--one-file-system` keeps the read inside each environment disk. */
+function nspawnTreeSizes(request, storage, options) {
+  if (!Array.isArray(request.paths) || request.paths.length < 1 || request.paths.length > 1000) fail('the disk usage batch is invalid');
+  const paths = request.paths.map((path) => trustedPath(storage, path));
+  if (new Set(paths).size !== paths.length) fail('the disk usage batch is invalid');
+  const runner = options.runner ?? defaultCommandRunner;
+  const result = runner(DU, ['--summarize', '--one-file-system', '--block-size=1', '--null', '--', ...paths], { timeoutMs: RESOURCE_USAGE_TIMEOUT_MS });
+  const measured = new Map();
+  for (const row of String(result.stdout || '').split('\0').filter(Boolean)) {
+    const match = /^([0-9]+)\t(.+)$/.exec(row);
+    const allocatedBytes = Number(match?.[1]);
+    if (!match || !paths.includes(match[2]) || measured.has(match[2]) || !Number.isSafeInteger(allocatedBytes)) fail('the disk usage batch is invalid');
+    measured.set(match[2], allocatedBytes);
+  }
+  return { ok: true, usages: paths.map((path) => measured.has(path)
+    ? { path, allocatedBytes: measured.get(path) }
+    : { path, error: 'unavailable' }) };
+}
+
 function nspawnTreeCopy(request, storage, options) {
   const source = trustedPath(storage, request.sourcePath);
   // The destination exists already: the daemon creates it with the mode and ownership it then has to
@@ -2476,6 +2498,7 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'tree-copy': nspawnTreeCopy,
   'tree-fingerprint': nspawnTreeFingerprint,
   'tree-preflight': nspawnTreePreflight,
+  'tree-sizes': nspawnTreeSizes,
   'tree-sync': nspawnTreeSync,
   'tree-remove': (request, storage) => nspawnTreeRemove(request, storage),
   'tree-verify': nspawnTreeVerify,
@@ -2658,7 +2681,7 @@ const SITES_LOCK_FREE_OPERATIONS = Object.freeze([
   'status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket',
 ]);
 const NSPAWN_LOCK_FREE_OPERATIONS = Object.freeze([
-  'status', 'exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-verify',
+  'status', 'exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-sizes', 'tree-verify',
 ]);
 
 export function helperRequestNeedsMutationLock(request) {
