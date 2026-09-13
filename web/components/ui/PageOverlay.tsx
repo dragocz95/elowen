@@ -13,14 +13,21 @@ import { useMobileViewport } from '../../lib/useMobile';
  *  is simply never mounted then).
  *
  *  Everything about that presentation is the same for both, which is why it is stated once here instead
- *  of twice: the centered desktop window, the phone's full screen, the page z-band UNDER the drawers the
- *  page itself opens (`standsInForPage`, see components/ui/Modal.tsx), and closing by walking back through
- *  history to wherever the reader came from. The two overlays differ in nothing but their title, their
- *  icon and their content. */
-export function PageOverlay({ title, icon, children, 'data-testid': testId }: {
+ *  of twice: the phone's full screen, the page z-band UNDER the drawers the page itself opens
+ *  (`standsInForPage`, see components/ui/Modal.tsx), and closing by walking back through history to
+ *  wherever the reader came from.
+ *
+ *  `frame` is the ONE axis on which the two are allowed to differ, and it is opt-in so that adding a
+ *  third intercepted page cannot silently inherit a measure chosen for Settings. `window` is the frame
+ *  both pages have always had. `reading` caps the centered window at the shared content measure and at a
+ *  fixed height, for a page whose content is a stack of records read left to right — Settings, whose
+ *  label and control sit at opposite edges of the frame. A caller that does not ask, does not get it. */
+export function PageOverlay({ title, icon, children, frame = 'window', 'data-testid': testId }: {
   title: string;
   icon: LucideIcon;
   children: ReactNode;
+  /** `window` is the shared centered frame; `reading` caps it at `--content-max` and a fixed height. */
+  frame?: 'window' | 'reading';
   /** Addresses the overlay surface itself from a test. */
   'data-testid'?: string;
 }) {
@@ -35,7 +42,7 @@ export function PageOverlay({ title, icon, children, 'data-testid': testId }: {
     <Modal
       title={title}
       icon={icon}
-      size="page"
+      size={frame === 'reading' ? 'page' : 'lg'}
       intent="inspect"
       presentation={mobile ? 'fullscreen' : 'center'}
       standsInForPage

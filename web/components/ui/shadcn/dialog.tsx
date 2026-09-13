@@ -137,15 +137,18 @@ const dialogSurfaceVariants = cva('overlay-surface flex flex-col focus:outline-n
   },
   compoundVariants: [
     { presentation: 'center', size: 'lg', class: 'h-[88dvh] w-[92vw] max-w-[90rem]' },
-    // `page` is the INTERCEPTED-PAGE frame (`/settings`, `/account` — see components/ui/PageOverlay.tsx),
-    // and the reason it is not `lg`: `lg` is a data surface that wants every pixel a window can give it
-    // (a log table, a diagnostics run), so it grows to 90rem × 88dvh and on a wide monitor that is a
-    // 1440 × 1200 sheet of mostly empty column. A settings page is a READING surface with a fixed
-    // measure — a navigation column and a stack of records — and past roughly 72rem the records stop
-    // getting easier to read and start getting harder, because the eye has to travel the whole width
-    // between a label and its control. The height is capped for the same reason the width is: it is the
-    // frame that holds still while sections of different lengths are swapped through it.
-    { presentation: 'center', size: 'page', class: 'h-[min(88dvh,50rem)] w-[92vw] max-w-[72rem]' },
+    // The READING frame, taken by an intercepted page that is a stack of records rather than a data
+    // surface — `PageOverlay frame="reading"`, which Settings asks for and Account does not. `lg` beside
+    // it is the DATA window that wants every pixel a monitor has (a log table, a diagnostics run), so it
+    // grows to 90rem by 88dvh, and on a wide screen that leaves a settings record's label and its
+    // control most of a desk apart.
+    //
+    // The width is not a number of its own. `--content-max` (app/styles/tokens.css) is the single
+    // authority for how wide a workspace may grow; every shell and content surface already reads it and
+    // a skin moves it to suit its own measure, so restating a cap here is the one thing that token
+    // forbids. The height IS stated, because this frame has to hold still while sections of very
+    // different lengths are swapped through it.
+    { presentation: 'center', size: 'page', class: 'h-[min(88dvh,50rem)] w-[92vw] max-w-[var(--content-max)]' },
     { presentation: 'center', size: 'xl', class: 'max-h-[90dvh] w-full max-w-2xl' },
     { presentation: 'center', size: 'md', class: 'max-h-[88dvh] w-full max-w-lg' },
     { presentation: 'center', size: 'sm', class: 'max-h-[80dvh] w-full max-w-md' },
