@@ -18,13 +18,10 @@ export const MACHINE_STORAGE_RECEIPT_PATH = '/etc/elowen/machine-storage.json';
 export const MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE = '/tmp/elowen-machine-storage.json';
 export const SITE_GATEWAY_SUDOERS_PATH = '/etc/sudoers.d/elowen-site-gateway';
 
-/** The default environment storage for a service user. The installer records this in a root-owned receipt;
- *  deployments with a custom database root install the matching custom Sandbox root instead. This copy
- *  exists because the standalone helper cannot import core code, and the contract test holds both sides
- *  together. */
-export function siteGatewayStorageRoots(home: string): { sandboxDataDir: string } {
-  const pluginData = `${home}/.config/elowen/plugins-data`;
-  return { sandboxDataDir: `${pluginData}/sandbox` };
+/** The default plugin-data root for a service user. The installer records this one root in a root-owned
+ *  receipt; the standalone helper derives its isolated `sandbox` and `sites` children from it. */
+export function siteGatewayPluginDataDir(home: string): string {
+  return `${home}/.config/elowen/plugins-data`;
 }
 
 /** Eight decimal digits and a newline, naming the byte length of the JSON request that follows. */

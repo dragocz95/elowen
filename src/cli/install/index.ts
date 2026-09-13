@@ -23,7 +23,7 @@ import {
   SITE_GATEWAY_HELPER_INSTALL_ARGS,
   SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_PATH,
-  siteGatewayStorageRoots,
+  siteGatewayPluginDataDir,
 } from '../../shared/siteGateway.js';
 import { provisionMachineRuntime } from '../../privileged/publishedSitesGateway.js';
 import { must, aptInstall, step } from '../provision/exec.js';
@@ -216,7 +216,7 @@ export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment, 
     ...(deploy.mode === 'domain' && deploy.domain ? { appHost: deploy.domain.toLowerCase() } : {}),
     daemonPort: DAEMON_PORT,
   }, null, 2)}\n`);
-  await r.writeFile(MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE, `${JSON.stringify(siteGatewayStorageRoots(home), null, 2)}\n`);
+  await r.writeFile(MACHINE_STORAGE_RECEIPT_INSTALL_SOURCE, `${JSON.stringify({ pluginDataDir: siteGatewayPluginDataDir(home) }, null, 2)}\n`);
   await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH), dirname(SITE_GATEWAY_DEPLOYMENT_PATH)]);
   await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
   await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_PATH]);

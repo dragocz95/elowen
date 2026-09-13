@@ -8,7 +8,7 @@ import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/insta
 import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs, provisionSiteGatewayHelper } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import { provisionMachineRuntime } from '../../../src/privileged/publishedSitesGateway.js';
-import { MACHINE_STORAGE_RECEIPT_PATH, siteGatewayStorageRoots } from '../../../src/shared/siteGateway.js';
+import { MACHINE_STORAGE_RECEIPT_PATH, siteGatewayPluginDataDir } from '../../../src/shared/siteGateway.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
 function runner(over: Partial<Runner> = {}): Runner {
@@ -377,7 +377,7 @@ describe('install/provisionSiteGatewayHelper', () => {
     const record = JSON.parse(writes.find(({ path }) => path.endsWith('site-gateway.json'))!.content);
     expect(record.appHost).toBeUndefined();
     const receipt = JSON.parse(writes.find(({ path }) => path.endsWith('machine-storage.json'))!.content);
-    expect(receipt).toEqual(siteGatewayStorageRoots(home));
+    expect(receipt).toEqual({ pluginDataDir: siteGatewayPluginDataDir(home) });
     expect(calls).toContainEqual({
       cmd: 'install',
       args: ['-o', 'root', '-g', 'root', '-m', '0644', '/tmp/elowen-machine-storage.json', MACHINE_STORAGE_RECEIPT_PATH],
