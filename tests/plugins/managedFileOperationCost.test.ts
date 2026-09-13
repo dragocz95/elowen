@@ -124,6 +124,22 @@ function setup() {
       };
       return { ok: true };
     }
+    if (request.op === 'start') {
+      unit!.ActiveState = 'active';
+      unit!.SubState = 'running';
+      return { ok: true };
+    }
+    if (request.op === 'stop') {
+      unit!.ActiveState = 'inactive';
+      unit!.SubState = 'dead';
+      return { ok: true };
+    }
+    if (request.op === 'set-limits') {
+      unit!.MemoryMax = String(request.limits.memoryMb * 1024 * 1024);
+      unit!.TasksMax = String(request.limits.pidsLimit);
+      unit!.CPUQuotaPerSecUSec = request.limits.cpus === 1 ? '1s' : `${request.limits.cpus * 1000}ms`;
+      return { ok: true };
+    }
     if (request.op === 'exec') {
       const argv: string[] = request.argv;
       if (argv[0] === '/usr/bin/python3') {
