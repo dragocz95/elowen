@@ -11,6 +11,7 @@ const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = constants;
 import { dirname, join, normalize } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
+export const MACHINE_STORAGE_RECEIPT_PATH = '/etc/elowen/machine-storage.json';
 export const NGINX_PATH = '/etc/nginx/conf.d/elowen-sites-gateway.conf';
 export const STATE_PATH = '/var/lib/elowen/site-gateway.json';
 const LOCK_PATH = '/var/lib/elowen/site-gateway.lock';
@@ -840,53 +841,77 @@ function trustedStorageRoot(value) {
   return value;
 }
 
-/** The storage roots every machine path is held against, COMPUTED HERE from the passwd home of the
- *  account sudo says invoked this helper, and read from nowhere.
+/** The plugin-data root from which this helper derives separate `sandbox` and `sites` children. The
+ *  passwd HOME remains the compatibility default, while a deployment whose DB and plugin state live
+ *  elsewhere may install one root-owned receipt. The receipt is separate from the Sites deployment record
+ *  and there is no sudoers grant that can replace it: a daemon request still names only an operation and
+ *  paths below the child root that owns that operation.
  *
- *  They used to be read out of the deployment record, and that was a hole rather than a shortcut. The
- *  record is installed through a sudoers-pinned command whose source path is fixed and writable by the
- *  service user, and a sudoers grant binds to a USER, not to the code path that was meant to use it. So
- *  anything running as the service account could stage a record naming `/etc/systemd` as a storage root,
- *  run the pinned install, and from the very next request every path check in this file would agree that
- *  `/etc/systemd` is a legitimate place to unpack a tar as root or to delete a tree. The roots decide what
- *  root will touch, so they cannot come from anything the caller can reach.
- *
- *  `serviceUser` already resolves the name sudo reports through getent and refuses unless the passwd uid
- *  and gid match `SUDO_UID` and `SUDO_GID`, so the home below is the home of the account that actually
- *  invoked this process. `src/shared/siteGateway.ts` makes the same derivation for the installer; the two
- *  are held together by `tests/contract/nspawnHelper.test.ts`. */
-export function storageRootsFor(home) {
+ *  Trust is established before parsing a byte. Every component of the fixed receipt path must be a
+ *  root-owned, non-writable directory with no symlink, and the receipt itself must be a root-owned regular
+ *  file at exactly 0644. An absent receipt means the historical HOME layout; a present but unsafe or
+ *  malformed receipt fails closed rather than silently widening or falling back. */
+export function storageRootsFor(home, configuredPluginDataDir) {
   if (typeof home !== 'string' || !home.startsWith('/')) fail('the invoking service user has no home directory');
-  const pluginData = join(home, '.config', 'elowen', 'plugins-data');
+  const pluginDataDir = trustedStorageRoot(configuredPluginDataDir ?? join(home, '.config', 'elowen', 'plugins-data'));
   return Object.freeze({
-    sandboxDataDir: trustedStorageRoot(join(pluginData, 'sandbox')),
+    pluginDataDir,
+    sandboxDataDir: trustedStorageRoot(join(pluginDataDir, 'sandbox')),
+    sitesDataDir: trustedStorageRoot(join(pluginDataDir, 'sites')),
   });
 }
 
+function receiptPluginDataRoot(options) {
+  const inspect = options.lstat ?? lstatSync;
+  let receipt;
+  try {
+    receipt = inspect(MACHINE_STORAGE_RECEIPT_PATH);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const chain = ['/etc', dirname(MACHINE_STORAGE_RECEIPT_PATH), MACHINE_STORAGE_RECEIPT_PATH];
+  for (const path of chain) {
+    const stat = path === MACHINE_STORAGE_RECEIPT_PATH ? receipt : inspect(path);
+    if (stat.isSymbolicLink()) fail('a symlink appears in the machine storage receipt path');
+    if (stat.uid !== 0 || stat.gid !== 0) fail('the machine storage receipt path is not root-owned');
+    if (path === MACHINE_STORAGE_RECEIPT_PATH) {
+      if (!stat.isFile() || (stat.mode & 0o7777) !== 0o644) fail('the machine storage receipt is not a root-owned 0644 file');
+    } else if (!stat.isDirectory() || (stat.mode & 0o022) !== 0) {
+      fail('the machine storage receipt directory is not a protected root-owned directory');
+    }
+  }
+  let raw;
+  try {
+    const readText = options.readText ?? ((path) => readFileSync(path, 'utf8'));
+    raw = JSON.parse(readText(MACHINE_STORAGE_RECEIPT_PATH));
+  } catch {
+    fail('the machine storage receipt is not valid JSON');
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.keys(raw).length !== 1 || typeof raw.pluginDataDir !== 'string') {
+    fail('the machine storage receipt is invalid');
+  }
+  return trustedStorageRoot(raw.pluginDataDir);
+}
+
 function readStorageRoots(options) {
-  return storageRootsFor(serviceUser(options.runner ?? defaultCommandRunner, options.env ?? process.env).home);
+  const home = serviceUser(options.runner ?? defaultCommandRunner, options.env ?? process.env).home;
+  return storageRootsFor(home, receiptPluginDataRoot(options));
 }
 
-/** The root every machine path may resolve under. Project storage belongs to Sandbox. */
-function trustedRoots(storage) {
-  return [storage.sandboxDataDir];
-}
-
-/** Re-validate a path the request names. The runtime derives paths this helper cannot re-derive from an
- *  id alone — a snapshot tree, a `.pending` staging directory, an export archive — so they arrive whole
- *  and are held against the trusted roots here instead: normalized, strictly inside a root, and with no
- *  symlink in any component. The directories under those roots are written by the service user and by
- *  guests, so a symlink planted anywhere along the path would redirect a root-owned copy or removal.
+/** Re-validate a path below one owning plugin root. Project operations call this only with `/sandbox`;
+ *  legacy Site retirement calls it only with sibling `/sites`, so neither domain can cross into the other.
+ *  Runtime-derived snapshot and staging paths still arrive whole because the helper cannot re-derive them
+ *  from ids alone.
  *
  *  Nothing is CREATED here. The daemon makes its own staging and snapshot directories with the ownership
  *  and mode it then has to read back; a directory created by root at 0700 would be one the daemon could
  *  no longer traverse. */
-export function trustedPath(storage, value, { file = false, allowMissing = false } = {}) {
+function trustedPathWithin(root, value, { file = false, allowMissing = false } = {}) {
   if (typeof value !== 'string' || !value.startsWith('/') || normalize(value) !== value || value.endsWith('/')
     || /[\0\r\n]/.test(value)) fail('the requested path is invalid');
-  if (!trustedRoots(storage).some((root) => value.startsWith(`${root}/`))) {
-    fail('the requested path is outside the trusted storage roots');
-  }
+  if (!value.startsWith(`${root}/`)) fail('the requested path is outside the trusted storage roots');
   const parts = value.slice(1).split('/');
   let current = '';
   for (let index = 0; index < parts.length; index++) {
@@ -904,6 +929,10 @@ export function trustedPath(storage, value, { file = false, allowMissing = false
     if (last && file ? !stat.isFile() : !stat.isDirectory()) fail('the requested path is not of the expected kind');
   }
   return value;
+}
+
+export function trustedPath(storage, value, options) {
+  return trustedPathWithin(storage.sandboxDataDir, value, options);
 }
 
 /** Mirrors `createEnvironmentDiskSpec` in the Sandbox plugin, which is the single owner of this layout;
@@ -1863,14 +1892,12 @@ function rootOwnedRetirementFile(path, maxBytes, options) {
 }
 
 /** Stop and remove only the root-owned machine envelope left by the retired Site runtime. The database,
- * disk tree, snapshots, backups and uid allocation stay untouched. The request carries no path and the
- * helper derives the historical layout from the authenticated service user's home. */
-function retireLegacySiteMachine(request, _storage, options) {
+ * disk tree, snapshots, backups and uid allocation stay untouched. The request carries no path: the Sites
+ * root is the sibling derived from the same root-owned plugin-data receipt as active Sandbox storage. */
+function retireLegacySiteMachine(request, storage, options) {
   const { resource, generation, diskId, expectedId, machine } = legacySiteRetirementRequest(request);
   const runner = options.runner ?? defaultCommandRunner;
-  const user = serviceUser(runner, options.env ?? process.env);
-  const sitesDataDir = trustedStorageRoot(join(user.home, '.config', 'elowen', 'plugins-data', 'sites'));
-  const storage = Object.freeze({ sandboxDataDir: sitesDataDir });
+  const sitesDataDir = storage.sitesDataDir;
   const directory = join(sitesDataDir, resource, 'environment', 'disks', diskId);
   const rootfsPath = join(directory, 'rootfs');
   const identityPath = join(directory, '.elowen', 'identity.json');
@@ -1895,11 +1922,11 @@ function retireLegacySiteMachine(request, _storage, options) {
   }
   if (!settingsExists || !dropInExists) fail('the legacy Site machine ownership envelope is incomplete');
 
-  const rootfs = realpathSync(trustedPath(storage, rootfsPath));
+  const rootfs = realpathSync(trustedPathWithin(sitesDataDir, rootfsPath));
   const settings = rootOwnedRetirementFile(settingsPath, 256 * 1024, options);
   const dropIn = rootOwnedRetirementFile(dropInPath, 64 * 1024, options);
   let identity;
-  try { identity = JSON.parse(rootOwnedRetirementFile(trustedPath(storage, identityPath, { file: true }), 8192, options)); }
+  try { identity = JSON.parse(rootOwnedRetirementFile(trustedPathWithin(sitesDataDir, identityPath, { file: true }), 8192, options)); }
   catch (cause) { throw new Error(`the legacy Site disk identity is invalid: ${cause.message}`); }
   const expected = { namespace: 'elowen', kind: 'site', resource, generation, diskId, machine, runtime: 'nspawn' };
   for (const [key, value] of Object.entries(expected)) {
@@ -2253,9 +2280,8 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'release-uid-range': releaseUidRange,
 });
 
-/** Operations that do not use the active Project storage root. Legacy Site retirement derives its one
- * historical storage path from the authenticated service user's home and accepts no caller path. */
-const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'destroy', 'retire-legacy-site']);
+/** Operations that do not use either root derived from the plugin-data receipt. */
+const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'destroy']);
 
 function nspawnLifecycle(request, action, options) {
   const runner = options.runner ?? defaultCommandRunner;
