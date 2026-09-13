@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useState, type ReactNode } from 'react';
 import { SettingsNavigation } from '../../../modules/settings/SettingsNavigation';
 import { settingsSections } from '../../../modules/settings/categories';
-import { LanguageProvider } from '../../../lib/i18n';
+import { interpolate, LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PluginUiListing } from '../../../lib/types';
 
@@ -135,8 +135,9 @@ describe('SettingsNavigation', () => {
       expect(screen.queryByText(section.description)).toBeNull();
     }
 
+    const system = settingsSections(en, 'Elowen AI').find((section) => section.id === 'system')!;
     const row = screen.getByRole('button', { name: /^System/ }).parentElement!;
-    const help = within(row).getByRole('button', { name: en.common.help });
+    const help = within(row).getByRole('button', { name: interpolate(en.common.helpFor, { label: system.label }) });
     fireEvent.click(help);
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent(en.settings.systemSectionHint);
@@ -172,5 +173,44 @@ describe('SettingsNavigation', () => {
 
     fireEvent.click(control);
     expect(onNavigate).toHaveBeenCalledWith('/settings?cat=models', 'models');
+  });
+
+  /** The mark floats OVER a control stretched across the whole record, so 16px of glyph was the entire
+   *  target a pointer had to hit and everything around it navigated. It carries its own 24x24 hit area
+   *  now — and a name of its own, or the column reads as a dozen buttons called "Help" in a screen
+   *  reader's element list and to voice control. */
+  it('names every help mark after its record and gives each one a target of its own', () => {
+    const onNavigate = vi.fn();
+    function HelpTargetHarness() {
+      const [query, setQuery] = useState('');
+      return (
+        <SettingsNavigation
+          t={en}
+          sections={settingsSections(en, 'Elowen AI')}
+          pluginEntries={[]}
+          active="system"
+          query={query}
+          onQueryChange={setQuery}
+          onNavigate={onNavigate}
+          onOpenPlugin={vi.fn()}
+        />
+      );
+    }
+    render(<HelpTargetHarness />, { wrapper: W });
+
+    const sections = settingsSections(en, 'Elowen AI');
+    const names = sections.map((section) => interpolate(en.common.helpFor, { label: section.label }));
+    expect(new Set(names).size, 'two sections would share one accessible name').toBe(sections.length);
+    // `getByRole` is exact and rejects a duplicate, so this also proves no two marks answer to one name.
+    expect(screen.queryByRole('button', { name: en.common.help })).toBeNull();
+
+    for (const name of names) {
+      const help = screen.getByRole('button', { name });
+      // jsdom computes no Tailwind geometry; the inset pseudo-element IS the enlarged target (HelpTip).
+      expect(help).toHaveClass('before:-inset-1', "before:content-['']");
+      fireEvent.click(help);
+    }
+    // Every one of them revealed its hint, and not one of them navigated.
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 });

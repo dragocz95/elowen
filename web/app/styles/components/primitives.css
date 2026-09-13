@@ -79,6 +79,15 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
    the canvas (see the takeover rule below), so its cards keep the canvas-relative ground. */
 .overlay-surface:not(.workspace-takeover) {
   --color-document: var(--color-popover);
+  /* …and with it the tint DERIVED from it. A custom property is substituted where it is DECLARED, so
+     `--color-sticky` — stated once on the root as 6% ink mixed into the document ground — is already a
+     literal by the time it is inherited here, and re-basing the ground above cannot reach it. A sticky
+     table header or register toolbar inside an overlay therefore kept the canvas-relative tone: on the
+     built-in design #121111, which is DARKER than the #151515 surface it is stuck to, so the step that
+     should lift a header off the rows under it points the wrong way. Restating the root's derivation
+     against the overlay's own ground is what keeps the relation; the formula is the one in tokens.css
+     and must stay identical to it (tests/globals.test.ts pins the pair). */
+  --color-sticky: color-mix(in srgb, var(--color-document) 94%, var(--color-foreground) 6%);
 }
 
 /* ── Presentation ───────────────────────────────────────────────────────────────────────────────────

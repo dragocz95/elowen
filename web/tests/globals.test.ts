@@ -162,10 +162,20 @@ describe('design tokens', () => {
   // #151515 window — near-black blocks on a distinctly lighter surface, and the relation inverts on the
   // light skin. Re-basing it on the overlay's own ground at the one place the overlay is painted is what
   // lifts those inner surfaces for every skin; a takeover is excluded because it IS the page.
+  //
+  // The tint DERIVED from that ground has to move with it. A custom property is substituted where it is
+  // declared, so `--color-sticky` reaches an overlay as the literal the root computed and the re-basing
+  // above cannot reach it: sticky table and register headers kept a tone mixed from the canvas. The
+  // derivation is restated in the same rule, in the same words as tokens.css — the computed relation is
+  // measured in tests/lib/designTokens.test.ts.
   it('re-bases the document ground on the overlay it is rendered in, takeovers excepted', () => {
     expect(components).toMatch(
       /\.overlay-surface:not\(\.workspace-takeover\)\s*\{[^}]*--color-document:\s*var\(--color-popover\)/,
     );
+    const formula = 'color-mix(in srgb, var(--color-document) 94%, var(--color-foreground) 6%)';
+    expect(css).toContain(`--color-sticky: ${formula}`);
+    expect(/\.overlay-surface:not\(\.workspace-takeover\)\s*\{[^}]*\}/.exec(components)?.[0] ?? '')
+      .toContain(`--color-sticky: ${formula}`);
   });
 
   // An intercepted route presented as an overlay stands in for its page, so it ranks under the drawers

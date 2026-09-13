@@ -5,6 +5,7 @@ import { ChevronRight, Search, type LucideIcon } from 'lucide-react';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { PluginUiListing } from '../../lib/types';
 import { HelpTip } from '../../components/ui/HelpTip';
+import { interpolate } from '../../lib/i18n';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { pluginDetailSectionHref, pluginSectionHref } from '../../lib/pluginNav';
 import { settingsSectionHref, type SettingsCategory, type SettingsSectionDescriptor } from './categories';
@@ -35,8 +36,11 @@ interface SettingsNavigationProps {
  *  button is markup no browser treats as two controls: the help would be unreachable from the keyboard
  *  and pressing it would navigate. Stretched, the record keeps one tab stop, the help keeps its own, and
  *  the help — positioned, and after the stretched control in DOM — takes its own pointer events, so
- *  revealing it never navigates. */
-function SettingsNavRow({ label, hint, icon: Icon, active = false, onActivate }: {
+ *  revealing it never navigates. The help carries its OWN 24x24 hit area (see `HelpTip`), because a 16px
+ *  mark floating over a full-width navigation control turns every near miss into a navigation, and it is
+ *  named after the record it belongs to rather than being the twelfth button called "Help". */
+function SettingsNavRow({ t, label, hint, icon: Icon, active = false, onActivate }: {
+  t: LocaleDict;
   label: string;
   hint?: string;
   icon: LucideIcon;
@@ -57,7 +61,7 @@ function SettingsNavRow({ label, hint, icon: Icon, active = false, onActivate }:
         <Icon size={16} strokeWidth={1.75} />
       </span>
       <span id={labelId} className="min-w-0 truncate text-sm font-medium text-foreground">{label}</span>
-      {hint ? <HelpTip align="left">{hint}</HelpTip> : null}
+      {hint ? <HelpTip align="left" label={interpolate(t.common.helpFor, { label })}>{hint}</HelpTip> : null}
       <ChevronRight size={15} className="ml-auto shrink-0 text-muted-foreground" aria-hidden />
     </div>
   );
@@ -127,6 +131,7 @@ export function SettingsNavigation({ t, sections, pluginEntries, active, query, 
             return (
               <div key={section.id}>
                 <SettingsNavRow
+                  t={t}
                   label={section.label}
                   hint={section.description}
                   icon={Icon}
@@ -157,7 +162,7 @@ export function SettingsNavigation({ t, sections, pluginEntries, active, query, 
                 <div key={id}>
                   {/* A plugin deck has no sentence of its own in the listing, so this record carries no
                       help mark — the same row anatomy with one optional part left out. */}
-                  <SettingsNavRow label={label} icon={Icon} onActivate={() => onOpenPlugin(href)} />
+                  <SettingsNavRow t={t} label={label} icon={Icon} onActivate={() => onOpenPlugin(href)} />
                   {matchedSections.length > 0 ? (
                     <p className="mb-2 ml-7 border-l border-border px-5 py-1 text-xs leading-5 text-muted-foreground">
                       {matchedSections.slice(0, 3).map((setting) => setting.label).join(' · ')}

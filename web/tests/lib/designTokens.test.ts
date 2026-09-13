@@ -15,6 +15,7 @@ import { SKINS, SKIN_FAMILY_SHEETS } from '../../lib/skins';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const tokensCss = readFileSync(join(root, 'app', 'styles', 'tokens.css'), 'utf-8');
+const primitivesCss = readFileSync(join(root, 'app', 'styles', 'components', 'primitives.css'), 'utf-8');
 const brainChatSurface = readFileSync(join(root, 'modules', 'advisor', 'BrainChatSurface.tsx'), 'utf-8');
 const skinCss = (skin: string) => readFileSync(join(root, 'skins', skin, 'skin.css'), 'utf-8');
 const sharedCss = (sheet: string) => readFileSync(join(root, 'skins', sheet), 'utf-8');
@@ -328,6 +329,73 @@ describe('text contrast', () => {
 
   it.each([...SKINS])('skin "%s" keeps every text step at WCAG AA on its own surfaces', (skin) => {
     assertReadable(skin, palette(skin));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Overlay grounds
+// ---------------------------------------------------------------------------------------------------
+
+/** The tokens an overlay surface re-bases on ITSELF, read from the single rule that owns them in
+ *  app/styles/components/primitives.css. */
+function overlayDeclarations(): Record<string, string> {
+  const rule = /\.overlay-surface:not\(\.workspace-takeover\)\s*\{([^}]*)\}/.exec(stripComments(primitivesCss));
+  expect(rule, 'primitives.css no longer carries the overlay ground rule').toBeTruthy();
+  return declarations(rule![1]!);
+}
+
+/** What a token IS on an overlay surface, computed the way the CASCADE computes it rather than the way a
+ *  reader skims the stylesheet: a custom property declared on the root is substituted THERE, so every
+ *  design's tokens arrive here as literals and a `var()` inside one of them can never see a ground the
+ *  overlay re-based. Only what the overlay rule declares itself is resolved against the overlay.
+ *
+ *  That distinction IS the defect this measures — resolving the root's derivation lazily would report the
+ *  colour the fix produces even from a stylesheet that never had it. */
+function overlayPalette(skin: string | null): Record<string, string> {
+  const root = palette(skin);
+  const inherited = Object.fromEntries(
+    Object.entries(root).map(([token, value]) => [token, resolveColour(value, root) ?? value]),
+  );
+  return { ...inherited, ...overlayDeclarations() };
+}
+
+describe('overlay surfaces', () => {
+  it('derives the sticky tint where the ground moves, from the same formula as the page', () => {
+    const declared = overlayDeclarations();
+    expect(declared['--color-document']).toBe('var(--color-popover)');
+    // Restated, not reinvented: a second formula is a second design, and the one in tokens.css is what
+    // every skin — including forks this repo cannot see — is measured against.
+    expect(declared['--color-sticky'], 'the derived tint must be restated where the ground moves')
+      .toBe(baseTokens['--color-sticky']);
+  });
+
+  it.each([null, ...SKINS])('design "%s" keeps an overlay body and its sticky headers on one ground', (skin) => {
+    const design = skin ?? 'default';
+    const tokens = overlayPalette(skin);
+    const hex = (token: string) => {
+      const resolved = resolveColour(tokens[token] ?? '', tokens);
+      expect(resolved, `${design}: ${token} must resolve to a literal colour on an overlay`).toMatch(HEX_COLOUR);
+      return resolved!;
+    };
+
+    // The body of an overlay is grounded on the surface the overlay itself is painted with…
+    const ground = hex('--color-document');
+    expect(ground, `${design}: an overlay's ground is the surface it is painted on`).toBe(hex('--color-popover'));
+
+    // …and a sticky table header or toolbar inside it is ONE step off that ground, toward the ink — the
+    // relation tokens.css states for the page. Inherited from the root it was a step off the CANVAS
+    // instead: on the built-in design #121111 inside a #151515 window, a header DARKER than the rows it
+    // is stuck to, and the same inversion the other way round on a light design.
+    const sticky = hex('--color-sticky');
+    const ink = hex('--color-foreground');
+    expect(sticky, `${design}: a sticky header must still be a step off the overlay ground`).not.toBe(ground);
+    expect(
+      Math.sign(luminance(sticky) - luminance(ground)),
+      `${design}: the sticky tint leans away from the ink instead of toward it`,
+    ).toBe(Math.sign(luminance(ink) - luminance(ground)));
+    // A tint, not a second material: the step stays far below what separates two surfaces of the ramp.
+    const step = contrast(sticky, ground);
+    expect(step, `${design}: the sticky tint stands ${step.toFixed(2)}:1 off its overlay ground`).toBeLessThan(1.5);
   });
 });
 
