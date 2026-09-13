@@ -77,7 +77,7 @@ describe('root filesystem artifact catalogue', () => {
     // filesystem and there is no rule that turns a tag into an artifact. The refusal has to say that, and
     // it must not guess a conversion.
     for (const legacy of ['localhost/elowen-project-base:9f2c1d', 'docker.io/library/debian:bookworm-slim', 'ghcr.io/x/y:1']) {
-      expect(() => parseArtifactReference(legacy), legacy).toThrow(/removed Podman runtime.*Delete the managed Project or Site/);
+      expect(() => parseArtifactReference(legacy), legacy).toThrow(/removed Podman runtime.*Delete the managed Project/);
       let code: string | undefined;
       try { parseArtifactReference(legacy); } catch (cause) { code = (cause as { code?: string }).code; }
       expect(code, legacy).toBe('unsupported_runtime');

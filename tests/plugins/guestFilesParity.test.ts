@@ -149,6 +149,34 @@ describe('guestFiles helper parity', () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
   });
 
+  it('exports bounded application metadata with modes and safe relative symlinks', () => {
+    const dir = join(root, 'export-manifest');
+    mkdirSync(join(dir, 'bin'), { recursive: true });
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    const start = join(dir, 'bin', 'start');
+    writeFileSync(start, '#!/bin/sh\nexec node ../lib/server.js\n');
+    chmodSync(start, 0o755);
+    writeFileSync(join(dir, 'lib', 'server.js'), 'console.log("ready")\n');
+    symlinkSync('../lib/server.js', join(dir, 'bin', 'server.js'));
+
+    const reply = runHelper({ kind: 'export-manifest', path: dir });
+    expect(reply.ok).toBe(true);
+    if (!reply.ok) return;
+    expect(reply.result).toMatchObject({ kind: 'export-manifest', root: dir, mode: 0o755 });
+    expect(reply.result.entries).toEqual([
+      { path: 'bin', kind: 'directory', mode: 0o755 },
+      { path: 'bin/server.js', kind: 'symlink', mode: 0o777, target: '../lib/server.js' },
+      { path: 'bin/start', kind: 'file', mode: 0o755, size: 37, version: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      { path: 'lib', kind: 'directory', mode: 0o755 },
+      { path: 'lib/server.js', kind: 'file', mode: 0o644, size: 21, version: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    ]);
+
+    symlinkSync('../../outside', join(dir, 'unsafe'));
+    const unsafe = runHelper({ kind: 'export-manifest', path: dir });
+    expect(unsafe.ok).toBe(false);
+    if (!unsafe.ok) expect(unsafe.error.code).toBe('unsafe_symlink');
+  });
+
   // The traversal that used to be driven from the host, one container round trip per directory. These
   // run the real helper against real trees, because the bounds are the whole point and an in-memory
   // stand-in cannot exercise a deadline or an output budget.

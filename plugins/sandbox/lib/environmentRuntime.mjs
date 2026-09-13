@@ -1,15 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import { join, posix } from 'node:path';
-import { exportProjectTree, removeOwnedArtifact } from './environmentExport.mjs';
 import { manageWorktrees } from './managedWorktrees.mjs';
-import { createSiteImageService } from './environmentSiteImages.mjs';
-import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore, hostOperationView, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createEnvironmentDiskSpec, createBoundSiteSpec, withContainerLimits, normalizeEnvironmentNetwork, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
+import { createContainerSpec, createEnvironmentDiskSpec, withContainerLimits, normalizeEnvironmentNetwork, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { NspawnClient } from './nspawn.mjs';
 import { selectRuntimeClient, unsupportedRuntime, UNSUPPORTED_RUNTIME_MESSAGE, usesNspawnRuntime } from './runtimeClient.mjs';
@@ -45,13 +42,6 @@ const STEP_PLANS = {
   network: [['quiesce', 1], ['stop', 2], ['apply', 1], ['boot', 2]],
   delete: [['stop', 2], ['containers', 2], ['storage', 2], ['records', 1]],
 };
-/** Every Sites-only action and the image jobs: one step, honestly unlabelled, rather than a fabricated
- *  breakdown of work whose shape nobody has described. */
-const DEFAULT_STEPS = [['work', 1]];
-/** Two of the steps above are a PROJECT's: waiting for the guest system bus, and the quiesce that
- *  cancels leases and guest transfers. A Site takes neither, so declaring them to a Site's watcher
- *  would name work that is never going to happen. */
-const PROJECT_STEPS = ['ready', 'quiesce'];
 /** The file operations that CHANGE the tree. They need write authority and they serialize against each
  *  other; everything else observes and does neither. One list, because a kind that counted as a mutation
  *  for permissions but not for serialization — or the reverse — is exactly the sort of drift that turns
@@ -62,6 +52,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *  established again after a container restart and the same one has to be found. */
 export const publicationSocketName = (publicationId) => `pub-${publicationRuntimeToken(publicationId)}.sock`;
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
+const protocolError = (message) => error('guest_protocol', message, 500);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function positive(value, label) {
   if (!Number.isSafeInteger(value) || value <= 0) throw error('invalid_input', `Invalid ${label}`, 400);
@@ -106,21 +97,16 @@ function configuredNetwork(config) {
     ? { mode: 'isolated', inboundPorts: [] }
     : { mode: 'shared', inboundPorts: [] };
 }
-function action(value, kind) {
+function action(value) {
   if (!value || typeof value !== 'object') throw error('invalid_action', 'An environment action is required', 400);
-  // `recreate` is a project-only repair: it removes the container this runtime can no longer verify and
-  // builds a new one from the current specification. The storage volumes are untouched, so the project's
-  // files come back with it — which is exactly why it is an explicit action and never an automatic one.
-  const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'],
-    ...(kind === 'project' ? { recreate: [], network: ['network'] } : {}),
-    ...(kind === 'site' ? { prepare: [], 'cleanup-stage': [], 'provision-image': ['imageKind'], 'import-data': ['artifactId'], 'export-data': ['artifactId'], 'remove-artifact': ['artifactId'], 'export-project': ['artifactId'] } : {}) };
-  if (value.imageKind !== undefined && !['base', 'static', 'node'].includes(value.imageKind)) throw error('invalid_action', 'Unknown fixed Sites image recipe', 400);
-  for (const key of ['artifactId', 'snapshotId']) if (value[key] !== undefined && (typeof value[key] !== 'string' || !/^[A-Za-z0-9_.:-]{1,160}$/.test(value[key]))) throw error('invalid_action', 'Invalid retained artifact identity', 400);
+  const fields = { start: [], stop: [], restart: [], recreate: [], delete: [], snapshot: ['note', 'includeData'],
+    restore: ['snapshotId', 'restoreData'], limits: ['limits'], network: ['network'] };
+  if (value.snapshotId !== undefined && (typeof value.snapshotId !== 'string' || !/^[A-Za-z0-9_.:-]{1,160}$/.test(value.snapshotId))) throw error('invalid_action', 'Invalid retained snapshot identity', 400);
   if (!Object.hasOwn(fields, value.kind) || Object.keys(value).some((key) => key !== 'kind' && !fields[value.kind].includes(key))) throw error('invalid_action', 'Invalid environment action', 400);
   if (value.kind === 'snapshot' && value.note !== undefined && (typeof value.note !== 'string' || value.note.length > 2000)) throw error('invalid_action', 'Snapshot note exceeds its bound', 400);
   for (const key of ['includeData', 'restoreData']) if (value[key] !== undefined && typeof value[key] !== 'boolean') throw error('invalid_action', 'Invalid data policy', 400);
-  if (kind === 'project' && (value.includeData === false || value.restoreData === false)) throw error('invalid_action', 'Project snapshots and restores require every component', 400);
-  for (const key of ['artifactId', 'snapshotId', 'imageKind']) if (fields[value.kind].includes(key) && typeof value[key] !== 'string') throw error('invalid_action', `Missing ${key}`, 400);
+  if (value.includeData === false || value.restoreData === false) throw error('invalid_action', 'Project snapshots and restores require every component', 400);
+  if (fields[value.kind].includes('snapshotId') && typeof value.snapshotId !== 'string') throw error('invalid_action', 'Missing snapshotId', 400);
   if (value.kind === 'limits') return { kind: 'limits', limits: limits(value.limits) };
   if (value.kind === 'network') return { kind: 'network', network: network(value.network) };
   return { ...value };
@@ -155,7 +141,7 @@ function command(input, synchronous = false) {
 }
 function fileOperation(op) {
   if (UPLOAD_KINDS.includes(op?.kind)) return validateUploadOperation(op);
-  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
+  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], 'export-manifest': [], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
   if (op?.followSymlinks !== undefined && typeof op.followSymlinks !== 'boolean') throw error('invalid_operation', 'followSymlinks must be boolean', 400);
   if (!op || !Object.hasOwn(keys, op.kind) || Object.keys(op).some((key) => !['kind', 'path', ...keys[op.kind]].includes(key))) throw error('invalid_operation', 'Invalid guest file operation', 400);
   guestPath(op.path);
@@ -165,8 +151,68 @@ function fileOperation(op) {
   return op;
 }
 
-/** One underlying coordinator for projects and Sites. Forks only write durable intents and execute
- * already-running validated targets. Only daemon reconciliation performs container lifecycle changes. */
+const EXPORT_MANIFEST_ENTRIES = 60_000;
+const EXPORT_MANIFEST_BYTES = 16 * 1024 * 1024 * 1024;
+const exactKeys = (value, keys) => Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const exportMode = (value) => Number.isInteger(value) && value >= 0 && value <= 0o777;
+function exportPath(value) {
+  return typeof value === 'string' && value !== '' && value.length <= 4096 && !value.includes('\0')
+    && !posix.isAbsolute(value) && posix.normalize(value) === value && value !== '..' && !value.startsWith('../');
+}
+/** The guest helper is inside the Project trust boundary, but its stdout still crosses a protocol boundary.
+ * Validate the bounded manifest here so every plugin receives one typed shape rather than each consumer
+ * deciding which malformed paths, modes or hashes it is willing to accept. */
+function exportManifestResult(value) {
+  if (!value || typeof value !== 'object' || !exactKeys(value, ['kind', 'root', 'mode', 'entries'])
+    || value.kind !== 'export-manifest' || typeof value.root !== 'string' || value.root.length > 4096
+    || !value.root.startsWith('/') || value.root.includes('\0') || posix.normalize(value.root) !== value.root
+    || !exportMode(value.mode) || !Array.isArray(value.entries) || value.entries.length > EXPORT_MANIFEST_ENTRIES) {
+    throw protocolError('Invalid Project export manifest');
+  }
+  const paths = new Map();
+  let previous = null;
+  let total = 0;
+  for (const entry of value.entries) {
+    if (!entry || typeof entry !== 'object' || !exportPath(entry.path) || !exportMode(entry.mode)
+      || (previous !== null && entry.path <= previous) || paths.has(entry.path)) {
+      throw protocolError('Invalid Project export manifest entry');
+    }
+    previous = entry.path;
+    if (entry.kind === 'file') {
+      if (!exactKeys(entry, ['path', 'kind', 'mode', 'size', 'version']) || !Number.isSafeInteger(entry.size)
+        || entry.size < 0 || typeof entry.version !== 'string' || !/^[a-f0-9]{64}$/.test(entry.version)) {
+        throw protocolError('Invalid Project export file metadata');
+      }
+      total += entry.size;
+      if (!Number.isSafeInteger(total) || total > EXPORT_MANIFEST_BYTES) throw protocolError('Project export manifest exceeds its byte bound');
+    } else if (entry.kind === 'directory') {
+      if (!exactKeys(entry, ['path', 'kind', 'mode'])) throw protocolError('Invalid Project export directory metadata');
+    } else if (entry.kind === 'symlink') {
+      if (!exactKeys(entry, ['path', 'kind', 'mode', 'target']) || typeof entry.target !== 'string'
+        || entry.target === '' || entry.target.length > 4096 || entry.target.includes('\0') || posix.isAbsolute(entry.target)) {
+        throw protocolError('Invalid Project export symlink metadata');
+      }
+      const resolved = posix.normalize(posix.join(posix.dirname(entry.path), entry.target));
+      if (resolved === '..' || resolved.startsWith('../') || posix.isAbsolute(resolved)) throw protocolError('Project export symlink leaves its root');
+    } else throw protocolError('Unsupported Project export entry');
+    paths.set(entry.path, entry);
+  }
+  for (const entry of value.entries) {
+    let parent = posix.dirname(entry.path);
+    while (parent !== '.') {
+      if (paths.get(parent)?.kind !== 'directory') throw protocolError('Project export manifest has invalid ancestry');
+      parent = posix.dirname(parent);
+    }
+    if (entry.kind === 'symlink') {
+      const resolved = posix.normalize(posix.join(posix.dirname(entry.path), entry.target));
+      if (resolved !== '.' && !paths.has(resolved)) throw protocolError('Project export symlink target is absent');
+    }
+  }
+  return value;
+}
+
+/** One coordinator for managed Project environments. Forks only write durable intents and execute
+ * already-running validated targets. Only daemon reconciliation performs machine lifecycle changes. */
 export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen',
   artifacts = new RootfsArtifactStore({ dataDir, logger: ctx.logger, ...(ctx.config?.[ARTIFACT_MIRROR_SETTING] ? { baseUrl: ctx.config[ARTIFACT_MIRROR_SETTING] } : {}) }),
   nspawn = new NspawnClient({ artifacts, namespace, outputLimitBytes: 16 * 1024 * 1024 }),
@@ -206,7 +252,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  because this is polled. The same predicate selects the actual runtime client, so historical rootfs
    *  provenance cannot make readiness disagree with the environment's persisted owner. */
   function legacyReferenceRow() {
-    const stored = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind IN ('project','site') AND state<>'deleted'").all();
+    const stored = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND state<>'deleted'").all();
     const pending = stored.filter((entry) => !usesNspawnRuntime(JSON.parse(entry.spec_json).input)).length;
     return { id: 'runtime:legacy-references', label: 'Environment runtime ownership', ok: pending === 0,
       detail: pending === 0
@@ -295,7 +341,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!readiness.ready) throw error('runtime_not_ready', `This host cannot run an environment yet — ${readinessRefusal(readiness)}`);
     const disk = row.spec.input.disk;
     row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: disk.sourceImage, runtime: 'nspawn' },
-      diskPathsFor(row.spec), disk.id, disk.componentGeneration);
+      row.spec.paths, disk.id, disk.componentGeneration);
     delete row.spec.runtimePending;
     store.save(row);
     store.log(row.kind, row.resource_id, 'environment will run on the machine runtime');
@@ -309,7 +355,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       return await runtimeFor(spec).exec(spec, randomUUID().replaceAll('-', ''), argv, { ...options, persistent: true });
     },
   });
-  let sites;
   let disposed = false;
   const AUTO_RECOVERY_DELAYS_MS = [0, 30_000, 120_000, 600_000];
   // Longer than every retry delay, so a container that dies when attempt four becomes eligible cannot be
@@ -320,6 +365,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   const previews = new Set();
   const publicationMutations = new Map();
   const publicationRecoveryStates = new Map();
+  const legacySiteRetirementErrors = new Map();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
     assertLive();
@@ -333,68 +379,31 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (ref?.kind !== 'managed' || Object.keys(ref).some((key) => !['kind', 'projectId'].includes(key))) throw error('managed_required', 'An explicit managed Project is required', 400);
     return positive(ref.projectId, 'project');
   };
-  async function authorize(kind, id, userId, manage = false, internal = false) {
+  async function authorize(id, userId, manage = false, internal = false) {
     if (!internal) account(userId);
     else if (!stores().usersRead.list().some((user) => user.id === userId) || !stores().usersRead.mayUsePlugin(userId, 'sandbox')) throw error('account_forbidden', 'Account access is unavailable', 403);
-    if (kind === 'project') {
-      const scope = ctx.currentAccess();
-      // The narrowing below is a TURN's: a selected Project, an exact workspace, the policy's project list.
-      // An authenticated API request has none of those — it is an identity, so `projectIds` is empty and
-      // `admin` false even for an administrator, and reading them as a turn scope refused every member and
-      // every admin on their own Project. `apiRequest` is the host's positive marker for that scope and is
-      // the only thing that skips the narrowing; absence still denies, so no policy is never a way in. What
-      // authorizes the request is what authorized it before it reached here (`auth.accessibleProjects` on
-      // the API surface) plus the freshly resolved membership below, which revocation still refuses.
-      if (!internal && !scope.apiRequest && ctx.currentAccountUserId() != null && (scope.workspaceRef || (scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
-      const project = stores().projects.get(Number(id));
-      if (!project || project.executionKind !== 'managed' || !(manage ? stores().userProjects.canManage(userId, project.id) : stores().userProjects.canAccess(userId, project.id))) throw error('project_forbidden', 'Project access is denied', 403);
-      return project;
-    }
-    resourceToken(String(id));
-    if (!sites) throw error('sites_unavailable', 'The Sites runtime authority is unavailable', 503);
-    const registration = await sites.resolve({ siteId: String(id), accountUserId: userId, access: manage ? 'manage' : 'read' });
-    if (!registration || registration.siteId !== String(id)) throw error('site_forbidden', 'Site access is denied', 403);
-    return registration;
-  }
-  function siteRecord(registration, generation) {
-    const effective = limits(registration.limits);
-    const resource = { kind: 'site', id: registration.siteId };
-    const disk = registration.persistentRootfs
-      ? createEnvironmentDiskSpec({ resource, image: registration.image }, { sitesDataDir: registration.sitesDataDir, namespace }, randomUUID().replaceAll('-', ''))
-      : undefined;
-    return { registration, input: { resource, generation, image: registration.image, ...(disk ? { disk } : {}), network: registration.network,
-      workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
-      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir },
-      // A Site without a persistent disk is a legacy image-backed environment and has no runtime to pick.
-      ...(disk ? { runtimePending: true } : {}) };
+    const scope = ctx.currentAccess();
+    // The narrowing below is a TURN's: a selected Project, an exact workspace, the policy's project list.
+    // An authenticated API request has none of those, so `apiRequest` is the host's positive marker for
+    // that scope. Membership is resolved again below so revocation still refuses the operation.
+    if (!internal && !scope.apiRequest && ctx.currentAccountUserId() != null && (scope.workspaceRef || (scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
+    const project = stores().projects.get(Number(id));
+    if (!project || project.executionKind !== 'managed' || !(manage ? stores().userProjects.canManage(userId, project.id) : stores().userProjects.canAccess(userId, project.id))) throw error('project_forbidden', 'Project access is denied', 403);
+    return project;
   }
   /** Where this project is mounted inside its own container — persisted with the row, so renaming the
    *  project later cannot silently change a running container's identity. */
   const rootOf = (row) => row.spec.input.workspaceTarget;
   function specFor(record) {
     const input = { ...record.input, limits: record.creationLimits ?? record.input.limits };
-    const base = input.resource.kind === 'site'
-      ? createBoundSiteSpec(input, record.binding)
-      : createContainerSpec(input, record.paths);
+    const base = createContainerSpec(input, record.paths);
     const spec = same(input.limits, record.input.limits) ? base : withContainerLimits(base, record.input.limits);
     return record.containerId ? bindContainerIdentity(spec, record.containerId) : spec;
   }
-  const siteBinding = (value, relative = true) => Object.fromEntries(Object.entries(value).filter(([key]) => !['limits', 'initialIntent', 'snapshotRetention', 'staging'].includes(key)
-    && !(relative && key === 'sourcePath' && typeof value.sourceRel === 'string')).sort(([a], [b]) => a.localeCompare(b)));
-  const upgradesLegacySiteBinding = (stored, authority) => {
-    if (typeof stored?.sourceRel === 'string' || typeof authority?.sourceRel !== 'string') return false;
-    const candidate = { ...authority };
-    delete candidate.sourceRel;
-    return same(siteBinding(stored, false), siteBinding(candidate, false));
-  };
-  async function rowFor(kind, id, userId, manage = false, internal = false, allowBindingHandover = false) {
-    const authority = await authorize(kind, id, userId, manage, internal);
-    let row = store.get(kind, id);
-    if (kind === 'site') {
-      if (!row) throw error('site_not_registered', 'Register the trusted Site binding before requesting lifecycle work');
-      if (!allowBindingHandover && !same(siteBinding(authority), siteBinding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
-    }
-    if (row && kind === 'project' && !row.spec.input.workspaceTarget) {
+  async function rowFor(id, userId, manage = false, internal = false) {
+    const authority = await authorize(id, userId, manage, internal);
+    let row = store.get('project', id);
+    if (row && !row.spec.input.workspaceTarget) {
       // A row built against `/workspace` predates the named project mount, and therefore predates this
       // runtime entirely: its envelope was hashed from a specification this release no longer produces.
       // Filling the mount point in would silently rewrite that identity, so the row is named and refused.
@@ -409,7 +418,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // start; until then the disk record carries no runtime, which is what keeps the serialization of a
       // row that never starts identical to the rows written before the runtime became explicit.
       const spec = { input: { resource, generation: 1, image: PROJECT_ROOTFS, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit }, network: configuredNetwork(ctx.config) }, paths, runtimePending: true };
-      row = store.insert(kind, id, Number(id), spec, effective);
+      row = store.insert('project', id, Number(id), spec, effective);
     }
     return row;
   }
@@ -433,9 +442,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return { name: readiness.ready ? 'nspawn' : null, pending: true, readiness };
   }
 
-  const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
-    generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null,
-    limits: effectiveLimits(row.limits), network: effectiveNetwork(row.spec) });
+  const view = (row) => ({ projectId: Number(row.resource_id), generation: row.generation, state: row.state,
+    desiredState: row.desired_state, lastError: row.error ?? null, limits: effectiveLimits(row.limits), network: effectiveNetwork(row.spec) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
 
   /** The one place an operation's live state leaves this process. Everything a watcher needs travels in
@@ -464,7 +472,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   const checkpoint = (op, values) => { Object.assign(op.checkpoint, values); store.saveOperation(op); publishOperation(op, false); };
   const stepPlan = (op) => (op.kind === HOST_KIND
     ? [['host', 2], ...knownReferences().map((reference) => [`rootfs:${reference}`, 10]), ['verify', 1]]
-    : (STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS).filter(([id]) => op.kind === 'project' || !PROJECT_STEPS.includes(id)));
+    : STEP_PLANS[op.action?.kind]);
   const declareSteps = (op) => { op.steps = stepPlan(op).map(([id]) => id); op.step_index = 0; op.percent = 0; };
   /** Declare the step list on the durable row as the operation is claimed. An operation RESUMED after a
    *  restart already declared it and reached a position its checkpoints kept, so only one that never
@@ -497,9 +505,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   const sanitize = (text) => String(text).split(dataDir).join('[environment-storage]');
 
   async function assertNoPublishedSites(id) {
-    if (sites && !sites.projectDependents) throw error('sites_preflight_unavailable', 'Sites must provide publication-dependency preflight before Project deletion');
-    const published = sites ? await sites.projectDependents(Number(id)) : [];
-    if (published.length || store.all().some((site) => site.kind === 'site' && site.project_id === Number(id) && site.state !== 'deleted')) throw error('published_sites_exist', 'Transfer or delete this Project\'s published Sites before deleting the Project');
+    if (store.publications(Number(id)).length) throw error('published_sites_exist', 'Transfer or delete this Project\'s published Sites before deleting the Project');
   }
 
   function assertNetworkPortsAvailable(id, requested) {
@@ -517,30 +523,23 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
   }
 
-  async function request(kind, id, input) {
+  async function request(id, input) {
     assertLive();
     account(input.accountUserId, true);
-    if (kind === 'project' && releasingAdoptions.has(Number(id))) throw error('environment_busy', 'An adopted workspace is being released');
-    const requested = action(input.action, kind);
-    const bindingHandover = kind === 'site' && requested.kind === 'delete' && input.handover === true;
-    await rowFor(kind, id, input.accountUserId, true, false, bindingHandover);
-    if (requested.kind === 'delete' && kind === 'project') await assertNoPublishedSites(id);
+    if (releasingAdoptions.has(Number(id))) throw error('environment_busy', 'An adopted workspace is being released');
+    const requested = action(input.action);
+    await rowFor(id, input.accountUserId, true);
+    if (requested.kind === 'delete') await assertNoPublishedSites(id);
     if (input.requestId !== undefined && !isRequestId(input.requestId)) throw error('invalid_request_id', 'Invalid idempotency key', 400);
     return store.transaction(() => {
       account(input.accountUserId, true);
-      if (kind === 'project' && !stores().userProjects.canManage(input.accountUserId, Number(id))) throw error('project_forbidden', 'Project access was revoked', 403);
-      const row = store.get(kind, id);
+      if (!stores().userProjects.canManage(input.accountUserId, Number(id))) throw error('project_forbidden', 'Project access was revoked', 403);
+      const row = store.get('project', id);
       if (!row) throw error('environment_missing', 'Environment metadata changed');
-      let active = store.active(kind, id);
-      const prior = input.requestId ? store.prior(kind, id, input.accountUserId, input.requestId) : null;
+      let active = store.active('project', id);
+      const prior = input.requestId ? store.prior('project', id, input.accountUserId, input.requestId) : null;
       if (prior && !same(prior.action, requested)) throw error('request_conflict', 'Idempotency key belongs to another action');
-      if (prior && prior.status !== 'failed') {
-        if (bindingHandover && prior.checkpoint.bindingHandover !== true) {
-          prior.checkpoint.bindingHandover = true;
-          store.saveOperation(prior);
-        }
-        return operationView(prior);
-      }
+      if (prior && prior.status !== 'failed') return operationView(prior);
       assertGeneration(row, input.expectedGeneration);
       if (requested.kind === 'limits' && !stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change resource limits', 403);
       if (requested.kind === 'network' && !stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change environment networking', 403);
@@ -548,45 +547,35 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (row.state === 'deleted') throw error('environment_deleted', 'The environment has been deleted');
       if (row.desired_state === 'deleted' && requested.kind !== 'delete') throw error('environment_deleting', 'The environment is deleting');
       if (prior) {
-        if (bindingHandover) prior.checkpoint.bindingHandover = true;
         if (!active) { prior.status = 'pending'; prior.error = null; store.saveOperation(prior); }
-        else if (bindingHandover) store.saveOperation(prior);
         return operationView(prior);
       }
       if (active?.status === 'pending' && active.checkpoint.autoRecovery && ['stop', 'delete'].includes(requested.kind)) {
         active.status = 'failed'; active.error = `Superseded by explicit ${requested.kind}`; store.saveOperation(active); active = null;
       }
       if (active) {
-        if (!input.requestId && active.user_id === input.accountUserId && same(active.action, requested)) {
-          if (bindingHandover) { active.checkpoint.bindingHandover = true; store.saveOperation(active); }
-          return operationView(active);
-        }
+        if (!input.requestId && active.user_id === input.accountUserId && same(active.action, requested)) return operationView(active);
         throw error('environment_busy', 'An environment lifecycle operation is already pending');
       }
       const op = store.enqueue(row, input.accountUserId, requested, input.requestId);
-      if (bindingHandover) op.checkpoint.bindingHandover = true;
       if (requested.kind === 'delete') {
-        if (kind === 'project' && !stores().projects.beginDeletion(Number(id))) throw error('project_deletion_changed', 'Core Project deletion intent could not be recorded');
+        if (!stores().projects.beginDeletion(Number(id))) throw error('project_deletion_changed', 'Core Project deletion intent could not be recorded');
         row.desired_state = 'deleted'; row.state = 'deleting';
       }
       else if (['start', 'restart', 'recreate'].includes(requested.kind)) row.desired_state = 'running';
       else if (requested.kind === 'stop') row.desired_state = 'stopped';
       store.save(row);
-      // The declared step list exists from the moment the intent is durable, so the caller's very first
-      // frame can name what is about to happen rather than an empty bar labelled "pending".
       declareSteps(op);
       store.saveOperation(op);
       return operationView(op);
     });
   }
 
-  async function getOperation(kind, input) {
+  async function getOperation(input) {
     account(input.accountUserId);
     const op = store.getOperation(input.operationId);
-    if (!op || op.kind !== kind) return null;
-    if (!(op.action.kind === 'delete' && op.status === 'succeeded' && op.user_id === input.accountUserId)) await authorize(kind, op.resource_id, input.accountUserId, true);
-    // The single read a watcher makes before it starts listening: the operation AND the log tail the live
-    // event carries, so a dialog opened mid-flight shows the same thing a dialog opened at the start does.
+    if (!op || op.kind !== 'project') return null;
+    if (!(op.action.kind === 'delete' && op.status === 'succeeded' && op.user_id === input.accountUserId)) await authorize(op.resource_id, input.accountUserId, true);
     return { ...operationView(op), logTail: store.logTail(op.kind, op.resource_id, 40) };
   }
 
@@ -595,20 +584,20 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  nothing it would not observe a moment later and cost two runtime invocations to say it. The durable
    *  record checks above still run either way, so a stopped or pending environment is still refused here,
    *  cheaply and without ever reaching the container. */
-  async function ready(kind, id, userId, verifyRuntime = true) {
-    let row = await rowFor(kind, id, userId);
+  async function ready(id, userId, verifyRuntime = true) {
+    let row = await rowFor(id, userId);
     if (row.state === 'unprovisioned') {
-      await request(kind, id, { accountUserId: userId, action: { kind: 'start' } });
+      await request(id, { accountUserId: userId, action: { kind: 'start' } });
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
         assertLive();
         if (daemon) await reconcile();
-        row = await rowFor(kind, id, userId);
-        if (!store.active(kind, id)) break;
+        row = await rowFor(id, userId);
+        if (!store.active('project', id)) break;
         await wait(100);
       }
     }
-    if (store.active(kind, id)) throw error('environment_pending', 'Environment lifecycle work is pending; retry after the operation completes', 503);
+    if (store.active('project', id)) throw error('environment_pending', 'Environment lifecycle work is pending; retry after the operation completes', 503);
     if (row.state !== 'running') throw error('environment_stopped', `Environment is ${row.state}; request an explicit start`);
     const current = specFor(row.spec);
     if (verifyRuntime && (await runtimeFor(current).inspect(current))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
@@ -626,7 +615,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
 
   async function mint(row, userId, kind) {
-    await authorize(row.kind, row.resource_id, userId);
+    await authorize(row.resource_id, userId);
     return store.transaction(() => {
       const current = store.get(row.kind, row.resource_id);
       if ((row.kind === 'project' && releasingAdoptions.has(Number(row.resource_id))) || !current || current.generation !== row.generation || current.state !== 'running' || store.active(row.kind, row.resource_id)) throw error('environment_busy', 'Environment changed before execution could be leased');
@@ -681,7 +670,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       projectId: row.project_id, runtimeGeneration: row.generation,
       async heartbeat() {
         if (released) return;
-        try { await authorize(row.kind, row.resource_id, lease.user_id); }
+        try { await authorize(row.resource_id, lease.user_id); }
         catch (cause) { await this.cancel(); throw cause; }
         const current = db.prepare('SELECT cancel_requested FROM p_sandbox_execution_leases WHERE id=?').get(lease.id);
         if (!current || current.cancel_requested) throw error('execution_revoked', 'Managed execution was revoked', 403);
@@ -756,7 +745,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const id = projectId(input.projectRef);
     account(userId, true);
     if (input.workspace || ctx.currentAccess().workspaceRef) throw error('workspace_pinned', 'A legacy narrow workspace cannot widen into a managed Project', 403);
-    const row = await ready('project', id, userId, false);
+    const row = await ready(id, userId, false);
     const program = command(input.command);
     const cwd = guestPath(input.cwd ?? rootOf(row));
     const leased = await mint(row, userId, input.leaseKind);
@@ -782,17 +771,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     account(input.accountUserId, MUTATING_FILE_KINDS.has(op.kind));
     // An upload keeps the readiness probe: its transport does its own staging before any guest command,
     // so the execution's ownership check is not the very next thing to run.
-    const row = await ready('project', id, input.accountUserId, UPLOAD_KINDS.includes(op.kind));
+    const row = await ready(id, input.accountUserId, UPLOAD_KINDS.includes(op.kind));
     assertGeneration(row, input.expectedGeneration);
     const perform = async () => {
       if (UPLOAD_KINDS.includes(op.kind)) return await transfers.perform({ row, accountUserId: input.accountUserId, operation: op });
       const result = await runGuest(row, input.accountUserId, ['/usr/bin/python3', '-c', FILE_HELPER], { input: JSON.stringify(op), timeoutMs: 120000 });
       if (result.truncated) throw error('output_limit', 'Guest file output exceeded its bound');
       let reply;
-      try { reply = JSON.parse(result.stdout); } catch { throw error('guest_protocol', 'Invalid guest file response'); }
+      try { reply = JSON.parse(result.stdout); } catch { throw protocolError('Invalid guest file response'); }
       if (!reply?.ok || result.code !== 0) throw error(reply?.error?.code ?? 'guest_file_error', reply?.error?.message ?? 'Guest file operation failed');
-      if (reply.result?.kind !== op.kind) throw error('guest_protocol', 'Guest response kind differs from the requested operation');
-      return reply.result;
+      if (reply.result?.kind !== op.kind) throw protocolError('Guest response kind differs from the requested operation');
+      return op.kind === 'export-manifest' ? exportManifestResult(reply.result) : reply.result;
     };
     // Only the operations that CHANGE the tree serialize against each other. Holding one exclusive
     // repository lease across every file operation meant a batch of independent reads ran strictly one at
@@ -840,38 +829,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
     const stopped = await runtimeFor(spec).inspect(spec);
     if (stopped && !['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('stop_unverified', 'Container stop could not be verified');
-    if (row.kind === 'site') await sites.afterStop(row.resource_id);
-  }
-  async function refreshSiteSourceBinding(row, userId) {
-    if (row.kind !== 'site' || typeof row.spec.registration?.sourceRel !== 'string') return null;
-    const previousSourcePath = row.spec.binding.sourcePath;
-    const registration = await authorize('site', row.resource_id, userId, true);
-    if (registration.sourceRel !== row.spec.registration.sourceRel) throw error('site_binding_changed', 'The trusted Site source reference changed', 409);
-    row.spec.registration = registration;
-    row.spec.binding.sourcePath = registration.sourcePath;
-    return { previousSourcePath, sourcePath: registration.sourcePath };
-  }
-  async function rebuildMovedSiteContainer(row, op) {
-    if (row.kind !== 'site' || !row.spec.containerId || typeof row.spec.registration?.sourceRel !== 'string') return;
-    const previousRow = { ...row, spec: JSON.parse(JSON.stringify(row.spec)) };
-    const moved = await refreshSiteSourceBinding(row, op.user_id);
-    if (!moved || moved.previousSourcePath === moved.sourcePath) { store.save(row); return; }
-    ctx.logger.info(`site ${row.resource_id}: source path moved from ${moved.previousSourcePath} to ${moved.sourcePath}, rebuilding container`);
-    const previous = specFor(previousRow.spec);
-    await cancelLeases(previousRow);
-    const current = await runtimeFor(previous).inspect(previous);
-    if (current) {
-      if (current.state === 'paused') await runtimeFor(previous).unpause(previous);
-      if (['running', 'paused', 'stopping'].includes(current.state)) {
-        await runtimeFor(previous).stop(previous);
-        const stopped = await runtimeFor(previous).inspect(previous);
-        if (stopped && !['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('stop_unverified', 'Container stop could not be verified');
-        await sites.afterStop(row.resource_id);
-      }
-      await runtimeFor(previous).remove(previous);
-    }
-    delete row.spec.containerId;
-    store.save(row);
   }
   async function ensureInitialContainer(row, op) {
     let spec = specFor(row.spec);
@@ -887,30 +844,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       spec = specFor(row.spec);
       current = await runtimeFor(spec).inspect(spec);
     }
-    if (!current && row.kind === 'site') {
-      await refreshSiteSourceBinding(row, op.user_id);
-      store.save(row);
-      spec = specFor(row.spec);
-      current = await runtimeFor(spec).inspect(spec);
-    }
     if (current && !op.checkpoint.creating) throw error('container_unclaimed', 'A container exists without this creation checkpoint');
     if (!op.checkpoint.creating) checkpoint(op, { creating: true });
-    if (!current) {
-      if (row.kind === 'site') {
-        await sites.beforeCreate?.(row.resource_id);
-        if (!spec.disk || row.spec.diskSeeded !== true) {
-          const seed = await sites.containerSeed?.(row.resource_id);
-          if (seed) {
-            if (seed.kind !== 'data') throw error('invalid_site_seed', 'Sites returned an invalid container seed');
-            // Legacy rows seed every replacement rootfs. Persistent disks consume the bootstrap once and
-            // retain the installed application and system configuration across envelope replacement.
-            await runtimeFor(spec).siteDataArchive(spec, 'import', seed.archivePath);
-          }
-          if (spec.disk) { row.spec.diskSeeded = true; store.save(row); }
-        }
-      }
-      current = await runtimeFor(spec).create(spec);
-    }
+    if (!current) current = await runtimeFor(spec).create(spec);
     row.spec.containerId = current.id;
     store.save(row);
     return current;
@@ -929,7 +865,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
 
   async function startRow(row, op) {
     step(op, 'image');
-    await rebuildMovedSiteContainer(row, op);
     if (!row.spec.containerId) {
       await decideRuntime(row);
       // Fetching the published root filesystem is the one part of a start that can take minutes, and it
@@ -946,7 +881,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const current = await ensureInitialContainer(row, op);
     const spec = specFor(row.spec);
     step(op, 'boot');
-    if (row.kind === 'site') await sites.beforeStart(row.resource_id);
     if (current.state === 'paused') await runtimeFor(spec).unpause(spec);
     else if (current.state !== 'running') await runtimeFor(spec).start(spec);
     if ((await runtimeFor(spec).inspect(spec))?.state !== 'running') throw error('start_unverified', 'Container start could not be verified');
@@ -955,12 +889,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // runs through `systemd-run` and therefore needs the guest system bus. Waiting for it here is its own
     // step because it is the part of a start that can take a while, and because a guest whose boot never
     // finishes is then reported as exactly that instead of a dbus error from the initialize command.
-    if (row.kind === 'project') {
-      step(op, 'ready', null);
-      await runtimeFor(spec).waitForSystemBus(spec);
-    }
+    step(op, 'ready', null);
+    await runtimeFor(spec).waitForSystemBus(spec);
     step(op, 'initialize');
-    if (row.kind === 'project' && !op.checkpoint.initialized) {
+    if (!op.checkpoint.initialized) {
       const result = await runtimeFor(spec).exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: `set -eu\nif [ ! -e ${root}/.git ]; then\n git init -b main ${root}\n git -C ${root} -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n`, timeoutMs: 30000, persistent: true });
       if (result.code !== 0) throw error('initialization_failed', result.stderr || 'Project initialization failed');
       checkpoint(op, { initialized: true });
@@ -968,147 +900,34 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // The container is up and its system bus answers, so the forwarders it lost with the previous one
     // can be established again. The socket files outlive the container, hence `establishPublication`
     // removing them rather than trusting what is there.
-    if (row.kind === 'project') await establishPublications(row);
+    await establishPublications(row);
     row.state = 'running'; row.error = null; store.save(row);
   }
 
-  async function snapshot(row, op, snapshotId, note, includeData = true) {
+  async function snapshot(row, op, snapshotId, note) {
     const spec = specFor(row.spec);
     const existing = store.snapshot(row.kind, row.resource_id, snapshotId);
     if (existing) return JSON.parse(existing.manifest_json);
     const capture = async () => {
-      if (row.kind === 'project' && !op.checkpoint.worktrees) checkpoint(op, { worktrees: db.prepare('SELECT * FROM p_sandbox_managed_worktrees WHERE project_id=?').all(row.project_id) });
+      if (!op.checkpoint.worktrees) checkpoint(op, { worktrees: db.prepare('SELECT * FROM p_sandbox_managed_worktrees WHERE project_id=?').all(row.project_id) });
       let manifest;
       try { manifest = await storage.readSnapshot(spec, snapshotId); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-      if (!manifest) manifest = await storage.snapshot(spec, snapshotId, { includeData });
-      if (row.kind === 'project') manifest = { ...manifest, worktrees: op.checkpoint.worktrees };
+      if (!manifest) manifest = await storage.snapshot(spec, snapshotId);
+      manifest = { ...manifest, worktrees: op.checkpoint.worktrees };
       store.saveSnapshot(row, snapshotId, manifest, note);
       return manifest;
     };
-    return row.kind === 'project' ? await withRepoLease(db, `managed-worktrees:${row.project_id}`, capture) : await capture();
+    return await withRepoLease(db, `managed-worktrees:${row.project_id}`, capture);
   }
-
-  async function pruneSiteSnapshots(row, op) {
-    const registration = await authorize('site', row.resource_id, op.user_id, true, true);
-    const keep = registration.snapshotRetention;
-    if (keep === undefined) return;
-    if (!Number.isSafeInteger(keep) || keep < 1 || keep > 1000) throw error('invalid_retention', 'Invalid Sites snapshot retention');
-    const retained = store.snapshots('site', row.resource_id);
-    for (const saved of retained.slice(keep)) {
-      const manifest = JSON.parse(saved.manifest_json);
-      // A snapshot of a disk is a copy of its trees and owns no image, so reading `image.reference` here
-      // threw on the environment's own stored manifest and took the whole snapshot operation with it.
-      // The comparison it guarded has no equivalent either: it kept the snapshot whose committed image the
-      // environment was still running from, and a disk snapshot shares nothing with the disk it came from.
-      // What remains worth protecting is the snapshot this very operation just took.
-      if (saved.id === op.snapshot_id) continue;
-      const spec = specFor(JSON.parse(saved.spec_json));
-      await runtimeFor(spec).removeSnapshotStorage(spec, manifest.snapshotId);
-      db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=? AND id=?').run('site', row.resource_id, saved.id);
-    }
-  }
-
-  const siteImages = createSiteImageService({ artifacts, store, db, account,
-    userExists: (id) => stores().usersRead.list().some((user) => user.id === id),
-    isAdmin: (id) => stores().usersRead.isAdmin(id) && stores().usersRead.mayUsePlugin(id, 'sandbox'),
-    authorizeSite: (id, userId) => authorize('site', id, userId, true),
-    resolveSnapshotImage: (input) => sites?.resolveSnapshotImage?.(input),
-  });
-  const siteCleanup = createSiteCleanupService({ store, siteRecord, normalizeLimits: limits,
-    userExists: (id) => stores().usersRead.list().some((user) => user.id === id),
-    resolveCleanup: (input) => sites?.resolveCleanup?.(input),
-  });
-
-  async function performSiteAction(row, op) {
-    const registration = await authorize('site', row.resource_id, op.user_id, true, true);
-    const spec = specFor(row.spec);
-    const kind = op.action.kind;
-    if (kind === 'provision-image') {
-      // A fixed root filesystem is the HOST's, not one Site's: the artifact is identical for every Site
-      // on that recipe and is held once in the shared store. There is nothing per-Site left to compare,
-      // so this makes sure the host holds the verified bytes and stops.
-      await siteImages.provision(op.action.imageKind);
-      return;
-    }
-    if (kind === 'prepare') {
-      if (!row.spec.containerId) await storage.prepare(spec);
-      const current = await ensureInitialContainer(row, op);
-      row.state = current?.state === 'running' ? 'running' : 'stopped';
-      row.desired_state = row.state; store.save(row); return;
-    }
-    if (kind === 'cleanup-stage') {
-      if (!registration.staging) throw error('site_not_staging', 'Only an unpublished conversion binding may be cleaned up as staging');
-      await stopRow(row);
-      if (await runtimeFor(spec).inspect(spec)) await runtimeFor(spec).remove(spec);
-      await runtimeFor(spec).removeGenerationStorage(spec);
-      row.state = 'deleted'; row.desired_state = 'deleted'; store.save(row); return;
-    }
-    if (!sites.resolveArtifact) throw error('site_artifact_missing', 'Sites did not provide retained artifact resolution');
-    const artifact = await sites.resolveArtifact({ siteId: row.resource_id, accountUserId: op.user_id, artifactId: op.action.artifactId, action: kind });
-    if (!artifact) throw error('site_artifact_forbidden', 'The retained Sites artifact is unavailable', 403);
-    if (op.checkpoint.artifact && !same(op.checkpoint.artifact, artifact)) throw error('site_artifact_changed', 'The retained artifact binding changed');
-    if (!op.checkpoint.artifact) checkpoint(op, { artifact });
-    if (kind === 'import-data' || kind === 'export-data') {
-      if (artifact.kind !== 'data') throw error('invalid_site_artifact', 'A retained data archive is required');
-      if (kind === 'import-data' && !registration.staging) throw error('site_not_staging', 'Data import requires an unpublished conversion binding');
-      if (op.checkpoint.archiveCompleted) return;
-      await cancelLeases(row);
-      const current = await runtimeFor(spec).inspect(spec);
-      if (kind === 'import-data' && current?.state === 'running') throw error('site_running', 'Stop the conversion target before seeding its data');
-      let paused = false;
-      try {
-        if (kind === 'export-data' && current?.state === 'running') { await runtimeFor(spec).pause(spec); paused = true; }
-        await runtimeFor(spec).siteDataArchive(spec, kind === 'import-data' ? 'import' : 'export', artifact.archivePath);
-        checkpoint(op, { archiveCompleted: true });
-      } finally { if (paused || (current?.state === 'running' && (await runtimeFor(spec).inspect(spec))?.state === 'paused')) await runtimeFor(spec).unpause(spec); }
-      return;
-    }
-    if (kind === 'remove-artifact') {
-      if (artifact.kind === 'snapshot') {
-        if (artifact.archivePath && !op.checkpoint.archiveRemoved) { removeOwnedArtifact(artifact.archivePath); checkpoint(op, { archiveRemoved: true }); }
-        db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=? AND id=?').run('site', row.resource_id, artifact.snapshotId);
-      } else if (artifact.kind === 'data') {
-        if (!op.checkpoint.archiveRemoved) { removeOwnedArtifact(artifact.archivePath); checkpoint(op, { archiveRemoved: true }); }
-      } else throw error('invalid_site_artifact', 'Source publication is not an artifact deletion capability');
-      return;
-    }
-    if (kind === 'export-project') {
-      if (artifact.kind !== 'project-source' || artifact.destinationPath !== registration.sourcePath) throw error('invalid_site_source', 'Publication destination must match the trusted Sites source binding');
-      if (op.checkpoint.sourceExported) return;
-      const source = await ready('project', projectId(artifact.project), op.user_id);
-      const invoke = async (operation) => {
-        const result = await runGuest(source, op.user_id, ['/usr/bin/python3', '-c', FILE_HELPER], { input: JSON.stringify(operation), timeoutMs: 120000 });
-        if (result.truncated) throw error('export_limit', 'Guest publication output exceeded its bound');
-        const reply = JSON.parse(result.stdout);
-        if (result.code !== 0 || !reply.ok) throw error(reply.error?.code ?? 'guest_export_error', reply.error?.message ?? 'Guest publication failed');
-        return reply.result;
-      };
-      const manifest = await invoke({ kind: 'export-manifest', path: guestPath(artifact.guestPath) });
-      await exportProjectTree({ destination: artifact.destinationPath, operationId: op.id, manifest,
-        readChunk: (path, offset, length) => invoke({ kind: 'read', path: posix.join(manifest.root, path), maxBytes: 262144, offset, length }),
-        verify: async () => { if (!same(manifest, await invoke({ kind: 'export-manifest', path: artifact.guestPath }))) throw error('source_changed', 'Publication source changed during export'); },
-      });
-      checkpoint(op, { sourceExported: true }); return;
-    }
-    throw error('invalid_site_action', 'Unknown Sites lifecycle action');
-  }
-
-  /** Where a specification RECORD's disk directories are derived from. A Site's roots come from its
-   *  trusted binding and a project's from its stored paths; both are host-derived, never carried in the
-   *  record's disk field, which is why the disk spec is rebuilt from them rather than copied. */
-  const diskPathsFor = (record) => record.input.resource.kind === 'site'
-    ? { sitesDataDir: record.binding.sitesDataDir, namespace: record.binding.namespace }
-    : record.paths;
 
   async function perform(row, op) {
     const kind = op.action.kind;
-    if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore', 'network'].includes(kind)) {
+    if (['stop', 'restart', 'snapshot', 'restore', 'network'].includes(kind)) {
       step(op, 'quiesce');
       await cancelLeases(row);
       await transfers.quiesce({ row });
     }
-    if (row.kind === 'site' && ['prepare', 'cleanup-stage', 'provision-image', 'import-data', 'export-data', 'remove-artifact', 'export-project'].includes(kind)) return await performSiteAction(row, op);
     if (kind === 'start' || kind === 'restart') {
       row.state = 'starting'; store.save(row);
       if (kind === 'restart' && !op.checkpoint.stopped) { step(op, 'stop'); await stopRow(row); checkpoint(op, { stopped: true }); }
@@ -1141,9 +960,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (!op.snapshot_id) { op.snapshot_id = `snapshot-${op.id.slice(4)}`; store.saveOperation(op); }
       await cancelLeases(row);
       step(op, 'capture');
-      await snapshot(row, op, op.snapshot_id, op.action.note, op.action.includeData !== false);
+      await snapshot(row, op, op.snapshot_id, op.action.note);
       step(op, 'record');
-      if (row.kind === 'site') await pruneSiteSnapshots(row, op);
     } else if (kind === 'restore') {
       const saved = store.snapshot(row.kind, row.resource_id, op.action.snapshotId);
       if (!saved) throw error('snapshot_missing', 'Snapshot is not retained for this environment');
@@ -1169,7 +987,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           // A restore replaces the disk, never the runtime that reads it: the snapshot is a copy of THIS
           // environment's tree, already owned by whichever uid range its runtime uses.
           next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image, runtime: old.spec.input.disk.runtime },
-            diskPathsFor(next), randomUUID().replaceAll('-', ''));
+            next.paths, randomUUID().replaceAll('-', ''));
         } else {
           if (old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A legacy snapshot requires a legacy environment');
           next.input.image = manifest.image.reference;
@@ -1178,18 +996,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         delete next.containerId;
         checkpoint(op, { newSpec: next });
       }
-      if (row.kind === 'site' && typeof op.checkpoint.newSpec.registration?.sourceRel === 'string') {
-        const targetRow = { ...row, spec: op.checkpoint.newSpec };
-        await refreshSiteSourceBinding(targetRow, op.user_id);
-        op.checkpoint.newSpec = targetRow.spec;
-        checkpoint(op, { newSpec: op.checkpoint.newSpec });
-      }
       let target = specFor(op.checkpoint.newSpec);
       step(op, 'import');
       if (!op.checkpoint.imported) {
-        // A Site that keeps its data across a restore is served by the disk restore itself: the snapshot
-        // simply carries no `data` tree and the current one is kept in place. The branch that used to
-        // check a preserving copy into a named volume belonged to environments that had volumes.
         await storage.restoreVolumes(specFor(source), storageId, target);
         checkpoint(op, { imported: true });
       }
@@ -1199,7 +1008,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (restored && !op.checkpoint.newSpec.containerId && !op.checkpoint.targetCreating) throw error('restore_target_unclaimed', 'The restore target has no creation checkpoint');
       if (!restored) {
         checkpoint(op, { targetCreating: true });
-        if (row.kind === 'site') await sites.beforeCreate?.(row.resource_id);
         restored = await runtimeFor(target).create(target);
       }
       if (!op.checkpoint.newSpec.containerId) {
@@ -1209,18 +1017,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       step(op, 'boot');
       if (op.checkpoint.wasRunning) {
-        if (row.kind === 'site') await sites.beforeStart(row.resource_id);
         if ((await runtimeFor(target).inspect(target))?.state !== 'running') await runtimeFor(target).start(target);
         if ((await runtimeFor(target).inspect(target))?.state !== 'running') throw error('restore_start_failed', 'Restored container did not start');
       }
       step(op, 'switch');
       if (!op.checkpoint.switched) store.transaction(() => {
-        if (row.kind === 'project') {
-          const worktrees = JSON.parse(saved.manifest_json).worktrees ?? [];
-          db.prepare('DELETE FROM p_sandbox_managed_worktrees WHERE project_id=?').run(row.project_id);
-          for (const item of worktrees) db.prepare('INSERT INTO p_sandbox_managed_worktrees(id,project_id,created_by,label,path,branch,base_ref,base_commit,state) VALUES(?,?,?,?,?,?,?,?,?)')
-            .run(item.id, row.project_id, item.created_by, item.label, item.path, item.branch, item.base_ref, item.base_commit, item.state);
-        }
+        const worktrees = JSON.parse(saved.manifest_json).worktrees ?? [];
+        db.prepare('DELETE FROM p_sandbox_managed_worktrees WHERE project_id=?').run(row.project_id);
+        for (const item of worktrees) db.prepare('INSERT INTO p_sandbox_managed_worktrees(id,project_id,created_by,label,path,branch,base_ref,base_commit,state) VALUES(?,?,?,?,?,?,?,?,?)')
+          .run(item.id, row.project_id, item.created_by, item.label, item.path, item.branch, item.base_ref, item.base_commit, item.state);
         row.spec = op.checkpoint.newSpec; row.generation = row.spec.input.generation;
         row.state = op.checkpoint.wasRunning ? 'running' : 'stopped'; row.error = null; store.save(row);
         checkpoint(op, { switched: true });
@@ -1278,7 +1083,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         op.checkpoint.switched = true; store.saveOperation(op);
       });
     } else if (kind === 'delete') {
-      if (row.kind === 'project') await assertNoPublishedSites(row.resource_id);
+      await assertNoPublishedSites(row.resource_id);
       step(op, 'stop');
       await stopRow(row);
       // An environment that never picked a runtime never built anything: no envelope, no disk, no storage
@@ -1324,16 +1129,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
         db.prepare('DELETE FROM p_sandbox_execution_leases WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
         db.prepare('DELETE FROM p_sandbox_file_uploads WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
-        if (row.kind === 'project') db.prepare('DELETE FROM p_sandbox_managed_worktrees WHERE project_id=?').run(row.project_id);
-        if (row.kind === 'project' && !stores().projects.finishDeletion(Number(row.resource_id))) throw error('project_finalize_failed', 'Core Project deletion could not be finalized');
-        // A project's runtime row goes with the project: core has just removed the rows that made the
-        // environment reachable, so a tombstone would only be one dead row per deleted project. A Site
-        // keeps its own: a re-published Site resumes from the generation that row records.
-        if (row.kind === 'project') {
-          store.removeProjectPublications(row.project_id);
-          db.prepare('DELETE FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
-        }
-        else { row.state = 'deleted'; row.error = null; store.save(row); }
+        db.prepare('DELETE FROM p_sandbox_managed_worktrees WHERE project_id=?').run(row.project_id);
+        if (!stores().projects.finishDeletion(Number(row.resource_id))) throw error('project_finalize_failed', 'Core Project deletion could not be finalized');
+        store.removeProjectPublications(row.project_id);
+        db.prepare('DELETE FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
         op.status = 'succeeded'; op.error = null; store.saveOperation(op);
       });
     }
@@ -1345,14 +1144,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       ...stores().usersRead.list().map((user) => user.id),
     ].filter((id) => id !== null && id !== undefined))];
     for (const userId of candidates) {
-      try { await authorize(row.kind, row.resource_id, userId, true, true); return userId; }
+      try { await authorize(row.resource_id, userId, true, true); return userId; }
       catch { /* Try another currently authorized account. */ }
     }
     return null;
   }
 
   async function queueAutomaticRecovery(row, observed) {
-    if (row.desired_state !== 'running' || row.state === 'deleted' || (row.kind === 'project' && !rootOf(row))) return;
+    if (row.desired_state !== 'running' || row.state === 'deleted' || !rootOf(row)) return;
     const history = store.recentOperations(row.kind, row.resource_id, OPERATION_HISTORY);
     const previousIndex = history.findIndex((op) => op.checkpoint.autoRecovery);
     // A successful explicit start is the operator taking ownership of recovery again. Automatic attempts
@@ -1446,6 +1245,38 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return null;
   }
 
+  /** Retire only machine-backed Site rows left by an older release. The persisted machine binding is the
+   * authority passed to the privileged ownership check; no Site lifecycle or execution path is restored.
+   * The external action and the row update cannot be one transaction, so the helper is idempotent and a
+   * crash between them repeats only the proof before converging the retained audit row to stopped. */
+  async function retireLegacySiteMachines() {
+    const candidates = store.all().filter((row) => row.kind === 'site' && row.state !== 'deleted'
+      && (row.state === 'running' || row.desired_state === 'running')
+      && row.spec?.input?.disk?.runtime === 'nspawn' && typeof row.spec?.containerId === 'string');
+    for (const row of candidates) {
+      const key = `${row.resource_id}:${row.generation}:${row.spec.containerId}`;
+      try {
+        await nspawn.retireLegacySiteMachine(row.spec);
+        store.transaction(() => {
+          const current = store.get('site', row.resource_id);
+          if (!current || current.state === 'deleted' || current.generation !== row.generation
+            || current.spec?.containerId !== row.spec.containerId) return;
+          current.state = 'stopped'; current.desired_state = 'stopped';
+          store.save(current);
+          store.log('site', current.resource_id, 'Legacy Site machine retired; retained audit data was left in place');
+        });
+        legacySiteRetirementErrors.delete(key);
+      } catch (cause) {
+        const message = `Legacy Site machine retirement failed: ${sanitize(cause.message ?? cause).slice(0, 1900)}`;
+        const current = store.get('site', row.resource_id);
+        if (!current || current.state === 'deleted' || current.generation !== row.generation
+          || current.spec?.containerId !== row.spec.containerId || legacySiteRetirementErrors.get(key) === message) continue;
+        legacySiteRetirementErrors.set(key, message);
+        store.log('site', current.resource_id, message);
+      }
+    }
+  }
+
   async function reconcile() {
     if (!daemon || disposed || reconciling) return;
     reconciling = true;
@@ -1474,13 +1305,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           op.status = 'failed'; op.error = sanitize(cause.message ?? cause).slice(0, 2000); store.saveOperation(op); publishOperation(op);
         }
       }
+      await retireLegacySiteMachines();
       // One map of every envelope that is up, found the way the runtime finds them: by machine-name prefix
       // over this namespace.
       const inventory = await nspawn.containerInventory(namespace);
       const runningContainers = new Set([...inventory.entries()].filter(([, state]) => state === 'running').map(([name]) => name));
-      for (const row of store.all()) {
-        if (!['project', 'site'].includes(row.kind) || row.desired_state !== 'running' || store.active(row.kind, row.resource_id)) continue;
-        if (row.kind === 'project' && (!rootOf(row) || releasingAdoptions.has(Number(row.resource_id)))) continue;
+      for (const row of store.all().filter((entry) => entry.kind === 'project')) {
+        if (row.desired_state !== 'running' || store.active('project', row.resource_id)) continue;
+        if (!rootOf(row) || releasingAdoptions.has(Number(row.resource_id))) continue;
         const spec = specFor(row.spec);
         if (inventory.get(spec.name) === 'running') continue;
         // A machine this runtime cannot verify (a mismatched specification, a helper error) is not a
@@ -1495,8 +1327,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       for (const op of store.operations()) {
         if (disposed) break;
-        if (op.kind === HOST_KIND) continue;
-        if (op.kind === 'project' && releasingAdoptions.has(Number(op.resource_id))) continue;
+        if (op.kind !== 'project') continue;
+        if (releasingAdoptions.has(Number(op.resource_id))) continue;
         if (op.status === 'running' && !ownerProvablyDead({ outer_pid: op.owner_pid, runner_identity: op.owner_identity })) continue;
         let claimed = false;
         try {
@@ -1508,15 +1340,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           });
           if (!claimed) continue;
           beginSteps(op);
-          if (op.kind === 'image') {
-            await siteImages.authorizeJob(op);
-            const provisioned = await siteImages.provision(op.action.imageKind);
-            checkpoint(op, provisioned);
-            op.status = 'succeeded'; op.error = null; op.percent = 100; store.saveOperation(op); publishOperation(op);
-            continue;
-          }
-          const row = op.user_id === null ? await siteCleanup.rowForOperation(op) : await rowFor(op.kind, op.resource_id, op.user_id, true, true,
-            op.kind === 'site' && op.action.kind === 'delete' && op.checkpoint.bindingHandover === true);
+          const row = await rowFor(op.resource_id, op.user_id, true, true);
           const expected = op.checkpoint.switched ? op.checkpoint.newSpec.input.generation : op.generation;
           if (row.generation !== expected) throw error('generation_changed', 'Queued environment generation changed');
           store.log(row.kind, row.resource_id, `${op.action.kind} started (${op.id})`);
@@ -1539,12 +1363,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           publishOperation(op);
         }
       }
-      for (const row of store.all()) {
-        if (row.kind === 'project' && releasingAdoptions.has(Number(row.resource_id))) continue;
-        if (store.active(row.kind, row.resource_id)) continue;
+      for (const row of store.all().filter((entry) => entry.kind === 'project')) {
+        if (releasingAdoptions.has(Number(row.resource_id))) continue;
+        if (store.active('project', row.resource_id)) continue;
         for (const leased of store.leases(row.kind, row.resource_id)) {
           let allowed = true;
-          try { await authorize(row.kind, row.resource_id, leased.user_id, false, true); } catch { allowed = false; }
+          try { await authorize(row.resource_id, leased.user_id, false, true); } catch { allowed = false; }
           const dead = ownerProvablyDead(leased);
           if (!allowed || leased.cancel_requested || dead) {
             try { const handle = leaseHandle(row, leased); await handle.cancel(); if (dead) await handle.release(); }
@@ -1592,17 +1416,16 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } finally { reconciling = false; }
   }
 
-  async function snapshots(kind, id, userId) {
-    if (kind === 'project') await authorize(kind, id, userId, true);
-    else await rowFor(kind, id, userId, true);
-    return store.snapshots(kind, id).map((entry) => ({ id: entry.id, generation: entry.generation, createdAt: entry.created_at, consistency: 'crash-consistent', completeProject: JSON.parse(entry.manifest_json).completeProject, note: entry.note }));
+  async function snapshots(id, userId) {
+    await authorize(id, userId, true);
+    return store.snapshots('project', id).map((entry) => ({ id: entry.id, generation: entry.generation, createdAt: entry.created_at, consistency: 'crash-consistent', completeProject: JSON.parse(entry.manifest_json).completeProject, note: entry.note }));
   }
-  async function logs(kind, id, userId, lines = 200) {
-    const row = await rowFor(kind, id, userId, true);
+  async function logs(id, userId, lines = 200) {
+    const row = await rowFor(id, userId, true);
     if (!Number.isSafeInteger(lines) || lines < 1 || lines > 1000) throw error('invalid_limit', 'Log line limit must be between 1 and 1000', 400);
-    const lifecycle = store.logs(kind, id);
-    if (row.state !== 'running' || store.active(kind, id)) return { lifecycle, journal: '' };
-    const result = await runGuest(row, userId, ['/usr/bin/journalctl', '--no-pager', '-n', String(lines)], { kind: 'sites', timeoutMs: 30000 });
+    const lifecycle = store.logs('project', id);
+    if (row.state !== 'running' || store.active('project', id)) return { lifecycle, journal: '' };
+    const result = await runGuest(row, userId, ['/usr/bin/journalctl', '--no-pager', '-n', String(lines)], { kind: 'files', timeoutMs: 30000 });
     if (result.code !== 0) throw error('journal_failed', result.stderr || 'Guest journal read failed');
     return { lifecycle, journal: result.stdout };
   }
@@ -1610,7 +1433,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function managedWorktrees(input) {
     const id = projectId(input.project);
     account(input.accountUserId, input.action?.kind !== 'list');
-    const row = await ready('project', id, input.accountUserId);
+    const row = await ready(id, input.accountUserId);
     return await manageWorktrees({ db, runGuest, row, userId: input.accountUserId, action: input.action, root: rootOf(row) });
   }
 
@@ -1703,7 +1526,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if ((await runtimeFor(running).inspect(running))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
       } else {
         account(input.accountUserId, true);
-        row = await ready('project', id, input.accountUserId);
+        row = await ready(id, input.accountUserId);
         // The record first: it is the whole of the durability claim, and a transport that cannot be
         // established on this attempt is then reconciliation's to establish rather than something the
         // caller has to remember to ask for again.
@@ -1737,7 +1560,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (reconciling || releasingAdoptions.has(id)) throw error('environment_busy', 'Environment reconciliation is already running');
     releasingAdoptions.add(id);
     try {
-      const project = await authorize('project', id, input.accountUserId, true);
+      const project = await authorize(id, input.accountUserId, true);
       if (!project.adoptedPath) throw error('project_not_adopted', 'Project was not adopted', 409);
       await assertNoPublishedSites(id);
       const row = store.get('project', id);
@@ -1787,7 +1610,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     account(input.accountUserId, true);
     const id = projectId(input.project);
     if (!Number.isSafeInteger(input.port) || input.port < 1 || input.port > 65535) throw error('invalid_port', 'Invalid guest preview port', 400);
-    const row = await ready('project', id, input.accountUserId);
+    const row = await ready(id, input.accountUserId);
     const spec = specFor(row.spec);
     const leased = await mint(row, input.accountUserId, 'preview');
     const handle = leaseHandle(row, leased);
@@ -1826,7 +1649,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const projects = [];
     const measurable = [];
     for (const id of input.projectIds) {
-      await authorize('project', id, input.accountUserId, true);
+      await authorize(id, input.accountUserId, false);
       const row = store.get('project', id);
       const environment = row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
         limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) };
@@ -1851,35 +1674,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
 
   const control = {
-    async projectWorkspaceHostPath(input) {
-      assertLive();
-      const id = positive(input?.projectId, 'project');
-      const project = stores().projects.get(id);
-      if (!project || project.lifecycle !== 'active') throw error('project_missing', 'The source Project is unavailable', 404);
-      if (project.executionKind === 'host') return hostPath(project.path);
-      if (project.executionKind !== 'managed') throw error('project_unavailable', 'The source Project has no workspace', 409);
-      const row = store.get('project', id);
-      if (project.adoptedPath && !row?.spec.containerId) {
-        try { lstatSync(project.adoptedPath); return hostPath(project.adoptedPath); }
-        catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-      }
-      const record = row?.spec ?? {
-        input: { resource: { kind: 'project', id }, generation: 1, image: PROJECT_ROOTFS,
-          previewBroker: true, workspaceTarget: managedGuestRoot(project.slug, id), limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) },
-        paths: { sandboxDataDir: dataDir, namespace },
-      };
-      const workspace = specFor(record).volumes.find((volume) => volume.component === 'workspace');
-      if (!workspace) throw error('workspace_missing', 'The source Project workspace is unavailable', 409);
-      return workspace.path;
-    },
-    discoverSiteSnapshotImage(input) { assertLive(); return siteImages.discoverSnapshot(input); },
-    siteImageStatus(input) { assertLive(); return siteImages.status(input); },
-    provisionSiteImage(input) { assertLive(); return siteImages.request(input); },
-    requestSiteCleanup(input) { assertLive(); return siteCleanup.request(input); },
     projectPreviewBinding, projectPublicationBinding, projectPublicationRelease, releaseAdoptedWorkspace,
     async environmentFor(input) {
       const id = projectId(input.project);
-      await authorize('project', id, input.accountUserId, true);
+      await authorize(id, input.accountUserId, true);
       const row = store.get('project', id);
       // An unprovisioned project has no stored limits yet, so it reports the defaults it WOULD be
       // created with rather than the built-in figures the administrator may have moved away from.
@@ -1891,85 +1689,20 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const id = projectId(input.project);
       const operations = store.recentOperations('project', id, OPERATION_HISTORY).map(operationView);
       return { environment, runtime: await runtimeView(store.get('project', id)),
-        snapshots: await snapshots('project', id, input.accountUserId), operations };
+        snapshots: await snapshots(id, input.accountUserId), operations };
     },
-    requestEnvironment: (input) => request('project', projectId(input.project), input),
+    requestEnvironment: (input) => request(projectId(input.project), input),
     machineRuntimeReadiness: async (input) => {
       account(input.accountUserId, false);
       if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may read host runtime readiness', 403);
       return await machineReadiness();
     },
     provisionMachineRuntime,
-    environmentOperation: (input) => getOperation('project', input), projectFiles, revokeProjectAccess,
-    environmentSnapshots: (input) => snapshots('project', projectId(input.project), input.accountUserId),
-    environmentLogs: (input) => logs('project', projectId(input.project), input.accountUserId, input.lines), managedWorktrees,
-    connectSitesRuntime(authority) {
-      if (!authority || typeof authority.resolve !== 'function' || typeof authority.beforeStart !== 'function' || typeof authority.afterStop !== 'function') throw error('invalid_sites_authority', 'A complete trusted Sites authority is required');
-      sites = authority;
-    },
-    async registerSiteEnvironment(input) {
-      account(input.accountUserId, true);
-      const registration = await authorize('site', input.siteId, input.accountUserId, true);
-      positive(registration.projectId, 'source project');
-      const effective = limits(registration.limits);
-      const existing = store.get('site', input.siteId);
-      if (existing && existing.state !== 'deleted') {
-        if (upgradesLegacySiteBinding(existing.spec.registration, registration)) {
-          return store.transaction(() => {
-            const current = store.get('site', input.siteId);
-            if (!current || current.state === 'deleted') throw error('environment_missing', 'Environment metadata changed');
-            if (!upgradesLegacySiteBinding(current.spec.registration, registration)) {
-              if (same(siteBinding(registration), siteBinding(current.spec.registration))) return view(current);
-              throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
-            }
-            current.spec.registration = registration;
-            current.spec.binding.sourcePath = registration.sourcePath;
-            store.save(current);
-            return view(current);
-          });
-        }
-        return view(await rowFor('site', input.siteId, input.accountUserId, true));
-      }
-      if (stores().projects.get(registration.projectId)?.lifecycle === 'deleting') throw error('project_deleting', 'A deleting Project cannot acquire a new published Site');
-      if (store.active('site', input.siteId)) throw error('site_busy', 'The previous Site lifecycle operation has not completed');
-      const record = siteRecord(registration, existing ? existing.generation + 1 : 1);
-      const intent = registration.initialIntent;
-      if (intent && (!['running', 'stopped'].includes(intent.desiredState) || ![null, 'start', 'stop', 'restart'].includes(intent.pendingAction)
-        || (intent.restartSequence !== undefined && (!Number.isSafeInteger(intent.restartSequence) || intent.restartSequence < 0)))) throw error('invalid_handover_intent', 'Invalid Site lifecycle checkpoint');
-      return store.transaction(() => {
-        const raced = store.get('site', input.siteId);
-        if (raced && raced.state !== 'deleted') return view(raced);
-        const row = raced ?? store.insert('site', input.siteId, registration.projectId, record, effective);
-        row.spec = record; row.generation = record.input.generation; row.limits = effective; row.error = null;
-        row.state = 'unprovisioned';
-        row.desired_state = intent?.desiredState ?? 'running';
-        const pending = intent?.pendingAction ?? (intent && row.desired_state === 'running' ? 'start' : null);
-        if (pending) {
-          store.enqueue(row, input.accountUserId, { kind: pending }, `handover:${row.generation}:${intent.restartSequence ?? 0}`);
-          if (pending !== 'stop') row.state = 'starting';
-        }
-        db.prepare('UPDATE p_sandbox_runtimes SET project_id=? WHERE kind=? AND resource_id=?').run(registration.projectId, 'site', input.siteId);
-        row.project_id = registration.projectId; store.save(row);
-        return view(row);
-      });
-    },
-    siteEnvironmentFor: async (input) => view(await rowFor('site', input.siteId, input.accountUserId, true)),
-    requestSiteEnvironment: (input) => request('site', input.siteId, input),
-    siteEnvironmentOperation: (input) => getOperation('site', input),
-    async siteEnvironmentExec(input) {
-      account(input.accountUserId, true);
-      await authorize('site', input.siteId, input.accountUserId, true);
-      const row = await ready('site', input.siteId, input.accountUserId);
-      // SiteExec runs the script to completion and returns its output. Nothing reads the guest's stdin
-      // after the script, so the byte-counting bootstrap that exists to protect a duplex protocol has
-      // nothing to protect here.
-      const program = command({ type: 'shell', command: input.command }, true);
-      return await runGuest(row, input.accountUserId, program.argv, { input: program.input, workdir: guestPath(input.workdir ?? '/workspace'), timeoutMs: input.timeoutMs ?? 120000, signal: input.signal, kind: 'sites' });
-    },
-    siteEnvironmentLogs: (input) => logs('site', input.siteId, input.accountUserId, input.lines),
-    siteEnvironmentSnapshots: (input) => snapshots('site', input.siteId, input.accountUserId),
+    environmentOperation: getOperation, projectFiles, revokeProjectAccess,
+    environmentSnapshots: (input) => snapshots(projectId(input.project), input.accountUserId),
+    environmentLogs: (input) => logs(projectId(input.project), input.accountUserId, input.lines), managedWorktrees,
   };
   return { ...control, control, environmentUsageBatch, prepareExecution, reconcile,
-    async revokeAccount(userId) { for (const row of store.all()) await cancelLeases(row, userId); },
+    async revokeAccount(userId) { for (const row of store.all().filter((entry) => entry.kind === 'project')) await cancelLeases(row, userId); },
     async dispose() { disposed = true; for (const release of [...previews]) await release(); } };
 }

@@ -51,11 +51,11 @@ The practical consequence when developing against a managed Project is that the 
 
 ### Building a root filesystem artifact
 
-The root filesystems those environments are built from are produced by `scripts/build-rootfs-artifact.mjs`, from the recipes in `plugins/sandbox/lib/rootfsCatalog.mjs`. Each artifact is a complete root filesystem rather than a layer, so a recipe declaring a `base` is built as the base's package set plus its own in a single tree. Building needs `mmdebstrap` and `uidmap` on the host; the script checks before it starts and prints the `apt-get` line that installs what is missing rather than failing partway through a build.
+The root filesystem those environments are built from is produced by `scripts/build-rootfs-artifact.mjs`, from the Project recipe in `plugins/sandbox/lib/rootfsCatalog.mjs`. Building needs `mmdebstrap` and `uidmap` on the host; the script checks before it starts and prints the `apt-get` line that installs what is missing rather than failing partway through a build.
 
 ```bash
 npm run rootfs:build -- --all --out /tmp/rootfs
-npm run rootfs:build -- --recipe site-base
+npm run rootfs:build -- --recipe project-base
 npm run rootfs:verify
 ```
 
@@ -63,7 +63,7 @@ A build writes the tarball and a publish manifest to the output directory, and r
 
 Two properties are worth understanding before changing anything here. The build is deterministic by construction, so the same recipe revision produces the same digest on a different host on a different day: the mirror is pinned to a `snapshot.debian.org` timestamp rather than to a floating suite, `SOURCE_DATE_EPOCH` clamps modification times, the shadow databases and host-derived caches are normalized, and gzip is asked to write neither a timestamp nor an original filename. Each of those has a comment saying which drift it removes, because dropping one leaves a build that still succeeds and quietly stops being reproducible. And nothing is pinned before the archive is inspected: the build reads back what it produced and refuses to record a digest unless the root member is present at mode 0755, the recipe's directories exist, its units are masked and enabled, `/etc/machine-id` is empty, no device nodes or escaping symlinks are present, and the unpacked size is within the catalogue's bound.
 
-`npm run rootfs:verify` rebuilds and compares against the recorded pin, exiting non-zero on any difference. It needs no secret, which is what makes it runnable in CI. A recipe that is declared but has never been published has no digest to differ from, so it is skipped rather than compared — but skipped is not passed: a run that compared nothing exits non-zero and says so, because a verification that cannot fail reports a check that never happened. Every pin this release ships is unpublished, so `rootfs:verify` fails until the first artifact is published and pinned; a recipe edited without a version bump is caught instead by the contract test in `tests/contract/rootfsArtifactPins.test.ts`, which holds the recipes and the pin file to naming each other exactly once.
+`npm run rootfs:verify` rebuilds and compares against the recorded pin, exiting non-zero on any difference. It needs no secret, which is what makes it runnable in CI. A recipe that is declared but has never been published has no digest to differ from, so it is skipped rather than compared — but skipped is not passed: a run that compared nothing exits non-zero and says so, because a verification that cannot fail reports a check that never happened. The Project root filesystem is published and pinned, so `rootfs:verify` rebuilds and compares it; a recipe edited without a version bump is also caught by the contract test in `tests/contract/rootfsArtifactPins.test.ts`, which holds the recipe and pin file to naming each other exactly once.
 
 ## Commands
 

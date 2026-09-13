@@ -20,9 +20,9 @@ export const SITE_GATEWAY_SUDOERS_PATH = '/etc/sudoers.d/elowen-site-gateway';
  *  derivation from the passwd home of the account sudo reports, so nothing has to tell it where the
  *  storage is and no caller can move it; this copy exists for the installer, which cannot import the
  *  helper. `tests/contract/nspawnHelper.test.ts` holds the two together. */
-export function siteGatewayStorageRoots(home: string): { sandboxDataDir: string; sitesDataDir: string } {
+export function siteGatewayStorageRoots(home: string): { sandboxDataDir: string } {
   const pluginData = `${home}/.config/elowen/plugins-data`;
-  return { sandboxDataDir: `${pluginData}/sandbox`, sitesDataDir: `${pluginData}/sites` };
+  return { sandboxDataDir: `${pluginData}/sandbox` };
 }
 export const SITE_RUNTIME_SOCKET_ROOT = '/var/lib/elowen/site-runtime-sockets';
 

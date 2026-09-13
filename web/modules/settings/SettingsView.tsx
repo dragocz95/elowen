@@ -599,7 +599,7 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
         )}
 
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
-          
+
             {(() => {
               // One card of instance records, with the diagnostics widget below it.
               const updateBadge = system.data?.updateAvailable
@@ -794,7 +794,7 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
                 </div>
               );
             })()}
-          
+
         </SettingsPanel>
 
         <SettingsPanel id="brain" active={category} visited={visitedCategories}>

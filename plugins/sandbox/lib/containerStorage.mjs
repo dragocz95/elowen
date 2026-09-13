@@ -107,7 +107,7 @@ export class ContainerStorage {
   async prepare(spec, options = {}) {
     assertContainerSpec(spec);
     checkedHostPath(spec.storageRoot, { create: true });
-    if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
+    for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
     if (!spec.disk) throw new Error('An environment without a persistent disk cannot be prepared');
     return await this.#prepareDisk(spec, options);
   }
@@ -318,15 +318,14 @@ export class ContainerStorage {
     }
   }
 
-  async snapshot(spec, snapshotId, { includeData = true } = {}) {
+  async snapshot(spec, snapshotId) {
     assertContainerSpec(spec);
     resourceToken(snapshotId);
-    if (typeof includeData !== 'boolean' || (spec.resource.kind === 'project' && !includeData)) throw new Error('Project snapshots require all storage components');
     if (!spec.disk) throw new Error('An environment without a persistent disk cannot be snapshotted');
-    return await this.#snapshotDisk(spec, snapshotId, includeData);
+    return await this.#snapshotDisk(spec, snapshotId);
   }
 
-  async #snapshotDisk(spec, snapshotId, includeData) {
+  async #snapshotDisk(spec, snapshotId) {
     const parent = checkedHostPath(join(spec.storageRoot, 'snapshots'), { create: true });
     const directory = join(parent, snapshotId);
     try {
@@ -349,7 +348,7 @@ export class ContainerStorage {
     writeDurable(join(directory, 'pending.json'), { snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash, resumeRunning: row.state === 'running' });
     syncPath(directory); syncPath(parent);
     const diskManifest = JSON.parse(readFileSync(checkedHostPath(join(dirname(spec.disk.rootfsPath), 'disk.json'), { file: true }), 'utf8'));
-    const sources = [{ component: 'rootfs', path: spec.disk.rootfsPath }, ...spec.disk.components.filter((entry) => includeData || entry.component !== 'data')];
+    const sources = [{ component: 'rootfs', path: spec.disk.rootfsPath }, ...spec.disk.components];
     await this.#driver(spec).preflightDiskCopy(sources.map((entry) => entry.path), parent);
     const manifest = { version: 2, snapshotId, resource: spec.resource, generation: spec.generation, diskId: spec.disk.id,
       specHash: spec.specHash, consistency: 'crash-consistent', completeProject: spec.resource.kind === 'project',
@@ -407,12 +406,7 @@ export class ContainerStorage {
     const targets = new Map([['rootfs', targetSpec.disk.rootfsPath], ...targetSpec.disk.components.map((entry) => [entry.component, entry.path])]);
     const trees = [...manifest.trees];
     const missing = [...targets.keys()].filter((component) => !trees.some((tree) => tree.component === component));
-    if (missing.length) {
-      if (sourceSpec.resource.kind !== 'site' || missing.length !== 1 || missing[0] !== 'data') throw new Error('Restore requires every disk tree');
-      const currentData = sourceSpec.disk.components.find((entry) => entry.component === 'data');
-      if (!currentData) throw new Error('Current Site data is missing from the source disk');
-      trees.push({ component: 'data', path: currentData.path, current: true, ...await this.#driver(targetSpec).fingerprintDiskTree(currentData.path) });
-    }
+    if (missing.length) throw new Error('Restore requires every disk tree');
     if (trees.length !== targets.size || trees.some((tree) => !targets.has(tree.component))) throw new Error('Snapshot tree does not belong to the restore target');
     await this.#driver(targetSpec).preflightDiskCopy(trees.map((tree) => tree.path), diskDirectory);
     for (const tree of trees) {

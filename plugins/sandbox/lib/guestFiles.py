@@ -14,6 +14,7 @@ import time
 
 MAX_BYTES = 524288
 MAX_ENTRIES = 10000
+MAX_EXPORT_ENTRIES = 60000
 SAFE_INT = 9007199254740991
 
 
@@ -321,7 +322,7 @@ def run(op):
                     else:
                         fail('unsupported_entry', 'Publication supports regular files, directories and safe relative symlinks')
                     entries.append(record)
-                    if len(entries) > MAX_ENTRIES or total > 17179869184:
+                    if len(entries) > MAX_EXPORT_ENTRIES or total > 17179869184:
                         fail('export_limit', 'Publication exceeds its bounded transport')
         entries.sort(key=lambda value: value['path'])
         return {'kind': kind, 'root': root, 'mode': stat.S_IMODE(os.stat(root).st_mode), 'entries': entries}

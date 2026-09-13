@@ -31,6 +31,10 @@ export interface GuestFileStat {
    *  contents; a caller that intends to write must obtain a version from a read or a plain stat. */
   version?: string;
 }
+export type GuestExportManifestEntry =
+  | { path: string; kind: 'file'; mode: number; size: number; version: string }
+  | { path: string; kind: 'directory'; mode: number }
+  | { path: string; kind: 'symlink'; mode: number; target: string };
 /** Decoded bytes per upload chunk; every chunk except the last has exactly this size. */
 export const GUEST_FILE_CHUNK_BYTES = 524288;
 export type GuestFileOperation =
@@ -55,6 +59,9 @@ export type GuestFileOperation =
    *  directories not to descend into. Nothing returned is written against, so no content is read and no
    *  version is computed. */
   | { kind: 'walk'; path: string; limit: number; skip?: string[]; maxDepth?: number }
+  /** A bounded immutable-publication inventory. It hashes regular files and records permission bits and
+   *  safe relative symlinks so a consumer can copy a Project tree without resolving a host path. */
+  | { kind: 'export-manifest'; path: string }
   | { kind: 'search'; path: string; pattern: string; glob?: string; caseSensitive?: boolean; limit: number };
 export type GuestFileResult =
   | { kind: 'stat'; entry: GuestFileStat | null }
@@ -78,6 +85,7 @@ export type GuestFileResult =
    *  operation instead. */
   | { kind: 'walk'; root: string; rootKind: 'file' | 'directory' | 'symlink' | 'other' | null;
       entries: { path: string; kind: 'file' | 'directory' | 'symlink'; size: number; mtime: number }[]; truncated: boolean }
+  | { kind: 'export-manifest'; root: string; mode: number; entries: GuestExportManifestEntry[] }
   | { kind: 'search'; matches: { path: string; line: number; text: string }[]; truncated: boolean };
 export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string }
 export type ManagedWorktreeAction = { kind: 'list' } | { kind: 'create'; label: string; baseRef: string } | { kind: 'remove'; workspaceId: string };
@@ -120,104 +128,4 @@ export interface ProjectEnvironmentControl {
   projectPublicationBinding(input: { project: ManagedProjectRef; accountUserId?: number; publicationId: string; port: number }): Promise<ProjectPublicationBinding>;
   projectPublicationRelease(input: { project: ManagedProjectRef; publicationId: string }): Promise<void>;
   releaseAdoptedWorkspace(input: { project: ManagedProjectRef; accountUserId: number }): Promise<void>;
-}
-
-/** Only the loader-identified Sites plugin may resolve these methods. These bindings come from Sites'
- * trusted records, not model input. The resolver is called again when durable daemon work is claimed. */
-export interface SiteEnvironmentRegistration {
-  siteId: string;
-  projectId: number;
-  image: string;
-  sourcePath: string;
-  /** Durable identity of a Project-owned source; sourcePath is its current host resolution. */
-  sourceRel?: string;
-  sitesDataDir: string;
-  brokerDir: string;
-  workspaceReadOnly: boolean;
-  /** New registrations use an exploded persistent rootfs; absent preserves legacy image-backed rows. */
-  persistentRootfs?: boolean;
-  network: 'shared' | 'isolated';
-  limits: EnvironmentLimits;
-  /** Copied from the Sites lifecycle checkpoint, not inferred from current container state. */
-  initialIntent?: { desiredState: 'running' | 'stopped'; pendingAction: 'start' | 'stop' | 'restart' | null; restartSequence?: number };
-  snapshotRetention?: number;
-  /** An unpublished conversion target; only this binding may accept cleanup-stage. */
-  staging?: boolean;
-}
-export type SiteRuntimeArtifact =
-  | { kind: 'data'; archivePath: string }
-  | { kind: 'snapshot'; snapshotId: string; imageReference: string; imageId: string; archivePath?: string; note?: string; createdAt: string }
-  | { kind: 'project-source'; project: ManagedProjectRef; guestPath: string; destinationPath: string };
-export interface SiteImageRecipe {
-  /** Fixed, content-addressed recipe supplied by Sites code, never by a model or a Site setting. */
-  tag: string;
-  files: Record<string, string>;
-  requiresBase?: boolean;
-}
-export type SiteImageKind = 'base' | 'static' | 'node';
-export type SiteEnvironmentAction = EnvironmentAction
-  | { kind: 'provision-image'; imageKind: SiteImageKind }
-  | { kind: 'prepare' | 'cleanup-stage' }
-  | { kind: 'import-data' | 'export-data' | 'import-snapshot' | 'remove-artifact' | 'export-project'; artifactId: string };
-export interface SiteImageOperation {
-  id: string;
-  requestId: string;
-  imageKind: SiteImageKind;
-  status: EnvironmentOperation['status'];
-  error: string | null;
-}
-export interface SiteImageStatus {
-  imageKind: SiteImageKind;
-  imageReference: string;
-  imageId: string | null;
-  present: boolean;
-  operation: SiteImageOperation | null;
-}
-export interface SiteRuntimeAuthority {
-  /** Approves only image references still named by this Site's retained release records. */
-  resolveSnapshotImage?(input: { siteId: string; accountUserId: number; imageReference: string }): Promise<{ imageReference: string; imageId?: string } | null>;
-  /** Host lifecycle only: verifies that the Site still belongs to the removed account. */
-  resolveCleanup?(input: { siteId: string; removedAccountUserId: number }): Promise<SiteEnvironmentRegistration | null>;
-  resolve(input: { siteId: string; accountUserId: number; access: 'read' | 'manage' }): Promise<SiteEnvironmentRegistration | null>;
-  /** Resolve only retained, Sites-owned artifact records; paths never originate in a model call. */
-  resolveArtifact?(input: { siteId: string; accountUserId: number; artifactId: string; action: SiteEnvironmentAction['kind'] }): Promise<SiteRuntimeArtifact | null>;
-  /** Existing Sites base/conversion recipe constants; runtime owns their build and verification. */
-  imageRecipe?(kind: SiteImageKind): SiteImageRecipe;
-  /** Includes every published runtime type, including stopped Sites and conversions. */
-  projectDependents?(projectId: number): Promise<{ siteId: string }[]>;
-  /** Prepare the existing Sites env-file/git-stub contract without starting a container or ingress. */
-  beforeCreate?(siteId: string): Promise<void>;
-  /** Return a fresh bootstrap-only archive for every new container rootfs; Sandbox imports it before create. */
-  containerSeed?(siteId: string): Promise<Extract<SiteRuntimeArtifact, { kind: 'data' }> | null>;
-  /** Sites owns privileged ingress preparation and application readiness, never the machine lifecycle. */
-  beforeStart(siteId: string): Promise<void>;
-  /** Confirm the application answers through its own ingress. Sandbox calls it where a container that
-   *  merely runs is not enough — the disk migration proves the candidate envelope before switching the
-   *  runtime row to it — and rejects the candidate when it throws. */
-  verifyReady?(siteId: string): Promise<void>;
-  afterStop(siteId: string): Promise<void>;
-}
-export interface SiteEnvironment extends Omit<ProjectEnvironment, 'projectId'> { siteId: string }
-export interface SiteEnvironmentOperation extends Omit<EnvironmentOperation, 'projectId' | 'action' | 'accountUserId'> { siteId: string; action: SiteEnvironmentAction; accountUserId: number | null }
-export const SITE_ENVIRONMENT_CONTROL_METHODS = [
-  'projectWorkspaceHostPath', 'discoverSiteSnapshotImage', 'siteImageStatus', 'provisionSiteImage', 'requestSiteCleanup',
-  'connectSitesRuntime', 'registerSiteEnvironment', 'siteEnvironmentFor', 'requestSiteEnvironment',
-  'siteEnvironmentOperation', 'siteEnvironmentExec', 'siteEnvironmentLogs', 'siteEnvironmentSnapshots',
-] as const;
-export interface SiteEnvironmentControl {
-  /** Sites-only host path resolution for a trusted Project-relative source reference. */
-  projectWorkspaceHostPath(input: { projectId: number }): Promise<string>;
-  discoverSiteSnapshotImage(input: { siteId: string; accountUserId: number; imageReference: string }): Promise<{ imageReference: string; imageId: string }>;
-  siteImageStatus(input: { imageKind: SiteImageKind }): Promise<SiteImageStatus>;
-  provisionSiteImage(input: { imageKind: SiteImageKind; accountUserId: number; requestId?: string }): Promise<SiteImageOperation>;
-  /** Idempotent host account-removal intent. Poll by repeating the same input; no synthetic actor. */
-  requestSiteCleanup(input: { siteId: string; removedAccountUserId: number }): Promise<SiteEnvironmentOperation>;
-  connectSitesRuntime(authority: SiteRuntimeAuthority): void;
-  registerSiteEnvironment(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
-  siteEnvironmentFor(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
-  requestSiteEnvironment(input: { siteId: string; accountUserId: number; action: SiteEnvironmentAction; expectedGeneration?: number; requestId?: string; handover?: boolean }): Promise<SiteEnvironmentOperation>;
-  siteEnvironmentOperation(input: { operationId: string; accountUserId: number }): Promise<SiteEnvironmentOperation | null>;
-  siteEnvironmentExec(input: { siteId: string; accountUserId: number; command: string; workdir?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<{ stdout: string; stderr: string; code: number; truncated: boolean }>;
-  siteEnvironmentLogs(input: { siteId: string; accountUserId: number; lines?: number }): Promise<{ lifecycle: string; journal: string }>;
-  siteEnvironmentSnapshots(input: { siteId: string; accountUserId: number }): Promise<EnvironmentSnapshot[]>;
 }

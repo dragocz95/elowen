@@ -300,7 +300,7 @@ describe('environment operation progress', () => {
     await expect(runtime.requestEnvironment({ ...input, requestId: `stale-${kind}`, action: { kind } }))
       .rejects.toMatchObject({ code: 'unsupported_runtime', status: 409 });
     await expect(runtime.requestEnvironment({ ...input, requestId: `stale-again-${kind}`, action: { kind } }))
-      .rejects.toThrow(/removed Podman runtime.*Delete the managed Project or Site/s);
+      .rejects.toThrow(/removed Podman runtime.*Delete the managed Project/s);
     // Refused before anything durable is enqueued, and nothing on the host was touched on the way.
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key LIKE 'stale-%'").get()).toEqual({ n: 0 });
     expect(nspawn.create).not.toHaveBeenCalled();
@@ -388,34 +388,5 @@ describe('environment operation progress', () => {
     const claimed = operationEvents(published)[0]!.data.operation;
     expect([claimed.stepIndex, claimed.percent]).toEqual([2, 76]);
     expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
-  });
-
-  // Waiting for the guest system bus and quiescing guest leases are a PROJECT's steps; the Site branches
-  // never run either, so declaring them told a Site's watcher about work that never happens.
-  it('declares only the steps a Site actually takes', async () => {
-    const { runtime, root } = setup();
-    const registration = { siteId: 'shop', projectId: 7, image: knownReferences().find((reference) => reference.startsWith('site-base@'))!, network: 'shared',
-      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
-    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-
-    const started = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
-    expect(started.steps).toEqual(['image', 'storage', 'container', 'boot', 'initialize']);
-    await runtime.reconcile();
-    const siteStart = await runtime.siteEnvironmentOperation({ operationId: started.id, accountUserId: 1 });
-    expect(siteStart?.status, siteStart?.error ?? '').toBe('succeeded');
-
-    const stopped = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-stop', action: { kind: 'stop' } });
-    expect(stopped.steps).toEqual(['stop']);
-    await runtime.reconcile();
-    const done = await runtime.siteEnvironmentOperation({ operationId: stopped.id, accountUserId: 1 });
-    expect([done?.status, done?.percent, done?.stepLabel]).toEqual(['succeeded', 100, 'stop']);
-  });
-
-  it('refuses recreate for a Site, which has no such repair', async () => {
-    const { runtime } = setup();
-    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, action: { kind: 'recreate' } }))
-      .rejects.toThrow(/Invalid environment action/);
   });
 });

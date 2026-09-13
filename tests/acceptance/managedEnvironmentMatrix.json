@@ -6,7 +6,7 @@
     "unverified": "No acceptance yet at any level, or only indirect coverage."
   },
   "realGuestSuites": [
-    "tests/plugins/containerRuntime.nspawn.test.ts",
+    "tests/plugins/environmentNspawnProof.test.ts",
     "tests/plugins/managedToolCallers.nspawn.test.ts"
   ],
   "registryRealGuestSuites": {
@@ -24,7 +24,7 @@
       "area": "lifecycle",
       "capability": "create/start/inspect a project environment",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit",
       "notes": "systemd guest booted by systemd-nspawn under a machine-scoped unit, on a disk materialized from the published root filesystem its record names, with a virtual ethernet the host guard keeps off the host itself."
     },
@@ -32,21 +32,21 @@
       "area": "lifecycle",
       "capability": "stop/start restart preserves rootfs, home, workspace, data",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit"
     },
     {
       "area": "lifecycle",
       "capability": "cgroup limits applied (cpu.max, memory.max, pids.max)",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit"
     },
     {
       "area": "lifecycle",
       "capability": "snapshot then restore into a fresh generation",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit",
       "notes": "Was the long-standing blocker; restore now rebuilds the volume and retains worktree metadata."
     },
@@ -54,14 +54,14 @@
       "area": "lifecycle",
       "capability": "delete environment and release its resources",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit"
     },
     {
       "area": "lifecycle",
       "capability": "generation mismatch refused",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "real-guest"
     },
     {
@@ -76,7 +76,7 @@
       "area": "execution",
       "capability": "shell command through the bootstrap frame (duplex stdin preserved)",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit",
       "notes": "Two-write delayed echo confirmed later stdin frames are delivered."
     },
@@ -91,14 +91,14 @@
       "area": "execution",
       "capability": "cancellation kills the guest unit and its descendants",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit"
     },
     {
       "area": "execution",
       "capability": "execution uses the environment's whole pid budget",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit",
       "notes": "TasksMax=infinity; guest systemd otherwise capped a unit at 15% of the declared limit."
     },
@@ -114,7 +114,7 @@
       "area": "guest-files",
       "capability": "write, read, and version-conflict refusal",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "real-guest",
       "notes": "expectedVersion null means must-not-exist; stale version refused."
     },
@@ -170,7 +170,7 @@
       "area": "preview",
       "capability": "project preview binding serves over a unix socket and releases",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "real-guest",
       "notes": "Real HTTP 200; socket gone after release."
     },
@@ -200,7 +200,7 @@
       "area": "browser",
       "capability": "headless Chromium renders in the guest",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "unit",
       "notes": "Engine level only: proves Chromium starts in the container. The browser plugin no longer runs a browser inside a project environment, so there is no tool surface here to cover."
     },
@@ -211,29 +211,6 @@
       "suite": "editorManagedGuest.podman",
       "negative": "real-guest",
       "notes": "Chunked upload, byte-identical raw download, range request, version-guarded save. Office converters are no longer outstanding: the 'office preview converters in a guest' row covers them in this same suite, against the guest's own LibreOffice."
-    },
-    {
-      "area": "sites",
-      "capability": "container lifecycle handed to the environment provider",
-      "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
-      "negative": "unit",
-      "notes": "register/request/export-project/cleanup-stage exercised."
-    },
-    {
-      "area": "sites",
-      "capability": "source publication preserves mode and relative symlinks",
-      "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
-      "negative": "unit"
-    },
-    {
-      "area": "sites",
-      "capability": "snapshot id mapping and retention pruning",
-      "evidence": "unit",
-      "suite": "sites-environment",
-      "negative": "unit",
-      "notes": "Covered by the Sites suites over the store, where the two defects fixed here live: a dispatched public snapshot id and a retention pass that could prune a still-retained release. Both are id bookkeeping, visible in the store and not in a guest."
     },
     {
       "area": "mcp",
@@ -295,7 +272,7 @@
       "area": "authority",
       "capability": "another project's identity cannot reach this environment",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "real-guest",
       "notes": "Denied at the project boundary, not by the file simply being absent."
     },
@@ -303,7 +280,7 @@
       "area": "authority",
       "capability": "a path the guest protocol cannot express safely is refused",
       "evidence": "real-guest",
-      "suite": "containerRuntime.nspawn",
+      "suite": "environmentNspawnProof",
       "negative": "real-guest",
       "notes": "The container is the boundary, so a guest path is not refused merely for sitting outside /workspace."
     },

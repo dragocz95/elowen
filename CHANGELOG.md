@@ -11,12 +11,32 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ## [0.28.45] - 2026-09-13
 
+### Added
+
+- Settings now opens as a searchable overlay above the current page, with keyboard navigation across core and
+  plugin sections while preserving the underlying route.
+- Managed Project rows now report sampled CPU, memory and disk usage from their systemd-nspawn environment, with
+  explicit loading, stopped and unavailable states.
+
+### Changed
+
+- Managed Project environment limits and networking now save directly from the settings drawer and show the
+  shared autosave state instead of requiring a separate submit action.
+
 ### Fixed
 
 - Sandbox host readiness now determines environment ownership from the persisted disk runtime, matching the
   runtime client that actually starts, restores and materializes the environment. Historical Podman image names
   retained by valid systemd-nspawn disks no longer produce a false deletion warning, while non-deleted rows with
   a missing or unsupported runtime remain reported as legacy.
+
+### Removed
+
+- The separate per-Site systemd-nspawn runtime and its lifecycle, snapshot, image, storage and privileged data
+  paths have been removed. On upgrade, Sandbox verifies and retires any machine still bound to a live historical
+  `kind='site'` row, then keeps the row, snapshots, storage, backups and UID allocation as audit data. Static,
+  command and PHP sites, published gateway routes, runtime socket brokerage and managed Project publication
+  forwarders remain supported.
 
 ### Compatibility
 
