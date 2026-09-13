@@ -387,10 +387,9 @@ export function PluginsSection({ historyMode = 'push' }: { historyMode?: 'push' 
   // used to be named "All" here, which is a value and not what the control chooses.
   const categoryAxisLabel = t.memory.categoryFilter;
   const categoryControl = (
-    /* No scroll axis here on purpose. Segmented wraps unless asked not to, so this track never needs to
-       scroll sideways — but declaring `overflow-x: auto` promoted the OTHER axis out of `visible` too, and
-       then any sub-pixel row height overflowed by a fraction of a pixel and drew a full vertical scrollbar
-       beside the filters. `flex` keeps the inline-flex track off a line box, so its height stays exact. */
+    /* No scroll axis here on purpose. The shared filter shell wraps segmented choices inside its bounded
+       panel; declaring `overflow-x: auto` would also promote the OTHER axis out of `visible`, and a
+       sub-pixel height difference would draw a vertical scrollbar beside the filters. */
     <div className="flex min-w-0">
       <Segmented variant="line" value={category} onChange={(v) => setCategory(v as Category | 'all')} options={categoryOptions} aria-label={categoryAxisLabel} />
     </div>
