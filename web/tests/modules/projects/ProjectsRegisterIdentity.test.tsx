@@ -86,6 +86,27 @@ describe('project register identity and team', () => {
     expect(mark.closest('[role="row"]')).toHaveAttribute('aria-selected', 'false');
   });
 
+  it('opens from the identity surface and keeps the team beside the project name', async () => {
+    server.use(summaryOf({ total: 2, samples: [
+      { id: 2, username: 'bob', name: 'Bob Novak', avatar: '' },
+      { id: 3, username: 'ada', name: 'Ada Křížová', avatar: '' },
+    ] }));
+    mount();
+    const location = await screen.findByRole('button', { name: 'Host directory of elowen' });
+    const row = location.closest('[role="row"]') as HTMLElement;
+    const projectName = within(row).getByText('elowen');
+    const identityCell = projectName.closest('[role="cell"]');
+    const team = within(row).getByRole('button', { name: '2 assigned users' });
+
+    expect(team.closest('[role="cell"]')).toBe(identityCell);
+    fireEvent.click(team);
+    expect(await screen.findByRole('tooltip')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'elowen' })).toBeNull();
+
+    fireEvent.click(projectName);
+    expect(await screen.findByRole('dialog', { name: 'elowen' })).toBeInTheDocument();
+  });
+
   it('stacks at most three faces, counts the rest and names everyone in the tip', async () => {
     server.use(summaryOf({
       total: 5,
