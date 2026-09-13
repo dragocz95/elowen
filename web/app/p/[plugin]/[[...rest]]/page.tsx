@@ -17,6 +17,7 @@ import { pluginLucideIcon } from '../../../../lib/pluginIcons';
 import { PluginErrorBoundary, PluginPlaceholder as Placeholder } from '../../../../components/plugin/PluginUiGuards';
 import { usePluginUi, useMe } from '../../../../lib/queries';
 import { useTranslation } from '../../../../lib/i18n';
+import { pluginDetailSectionHref } from '../../../../lib/pluginNav';
 import {
   PLUGIN_UI_API_VERSION, loadPluginUi, matchPluginPage, setPluginNavigate,
   type PluginUiRegistration,
@@ -48,6 +49,21 @@ export default function PluginHostPage() {
 
   const entry = listing.data?.find((p) => p.name === plugin);
   const compatible = entry !== undefined && entry.apiVersion <= PLUGIN_UI_API_VERSION;
+  const explicitlyRequestedSetting = rest[0] === 'settings' && rest.length === 2
+    ? entry?.settings.find((setting) => setting.id === rest[1])
+    : undefined;
+  const bareSoleSetting = rest.length === 0 && entry?.nav.length === 0 && entry.settings.length === 1
+    ? entry.settings[0]
+    : undefined;
+  const registeredPage = registration && registration !== null ? matchPluginPage(registration.pages, rest) : undefined;
+  const internalDetailSection = explicitlyRequestedSetting?.placement === 'pluginDetail'
+    ? explicitlyRequestedSetting
+    : registration && !registeredPage && bareSoleSetting?.placement === 'pluginDetail'
+      ? bareSoleSetting
+      : undefined;
+  useEffect(() => {
+    if (internalDetailSection) router.replace(pluginDetailSectionHref(plugin, internalDetailSection.id));
+  }, [internalDetailSection, plugin, router]);
 
   useEffect(() => {
     if (!entry || !compatible) return;
@@ -91,15 +107,15 @@ export default function PluginHostPage() {
   else if (!compatible) body = notice(strings.incompatible);
   else if (registration === undefined) body = null; // bundle loading
   else if (registration === null) body = notice(strings.loadFailed, true);
+  else if (internalDetailSection) body = null; // redirected into Settings → Plugins by the effect above
   else {
-    const page = matchPluginPage(registration.pages, rest);
+    const page = registeredPage;
     // `/p/<plugin>` also resolves to the only settings section of a plugin that has nothing else, so its
     // address does not have to repeat its own name (`/p/skills/settings/skills`). Pages still win the bare
     // route, and `settings/<id>` keeps working for every plugin and every existing link.
-    const sole = !page && rest.length === 0 && entry.nav.length === 0 && entry.settings.length === 1
-      ? entry.settings[0] : undefined;
-    const section = rest[0] === 'settings' && rest.length === 2
-      ? entry.settings.find((s) => s.id === rest[1])
+    const sole = !page && bareSoleSetting?.placement !== 'pluginDetail' ? bareSoleSetting : undefined;
+    const section = explicitlyRequestedSetting?.placement !== 'pluginDetail'
+      ? explicitlyRequestedSetting ?? sole
       : sole;
     const settingsComponent = section ? registration.settings?.[section.id] : undefined;
     const match = settingsComponent && section

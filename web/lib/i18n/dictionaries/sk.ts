@@ -535,6 +535,10 @@ export const sk = {
     plugins: 'Pluginy',
     brain: '{agentName} AI',
     data: 'Dáta',
+    navigationLabel: 'Kategórie nastavení',
+    navigationSearch: 'Hľadať v nastaveniach',
+    navigationNoMatches: 'Vyhľadávaniu nezodpovedá žiadne nastavenie.',
+    navigationBack: 'Všetky nastavenia',
     modelsSectionHint: 'Určte, ktorý model plní ktorú úlohu tejto inštancie, a ktoré modely sú vôbec dostupné.',
     brainSectionHint: 'Spravujte identitu asistenta, prepojené AI účty, poskytovateľov a runtime limity.',
     // Settings → Models → Model roles: every instance-level answer to "which model does what", in one
@@ -757,6 +761,7 @@ export const sk = {
     columnProject: 'Projekt',
     columnPath: 'Cesta',
     columnSummary: 'Súhrn',
+    columnResources: 'Prostriedky',
     columnStatus: 'Stav',
     membersCount: '{n} priradených používateľov',
     detailSections: 'Sekcie projektu',

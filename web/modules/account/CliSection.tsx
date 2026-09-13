@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useCallback, useMemo, useState, useEffect } from 'react';
 import { Bolt, Boxes, Brain, Eye, FolderGit2, Gauge, MoonStar, Server, Shrink, SlidersHorizontal, Zap } from 'lucide-react';
 import { BrainModelField } from '../../components/ui/BrainModelField';
@@ -395,10 +396,10 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           description={t.help.cliInstanceModels}
           status={<span className="truncate font-mono">{instanceDefault?.model ?? '—'}</span>}
           actions={(
-            <a href="/settings?cat=models" className={buttonClassName('ghost', 'sm')}>
+            <Link href="/settings?cat=models" className={buttonClassName('ghost', 'sm')}>
               <Server size={14} aria-hidden />
               {t.cli.openSettings}
-            </a>
+            </Link>
           )}
         />
       ) : null}

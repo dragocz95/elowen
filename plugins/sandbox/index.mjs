@@ -330,7 +330,7 @@ export async function register(ctx) {
   });
 
   registerSandboxApi({ ctx, db, dataDir, workspaces, execution, migrationState });
-  registerEnvironmentApi(ctx, environments.control);
+  registerEnvironmentApi(ctx, environments);
   registerEnvironmentTools(ctx, environments.control);
 
   ctx.registerReadinessCheck(() => {

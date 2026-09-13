@@ -124,6 +124,11 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     importSnapshotVolume: vi.fn(async () => { throw new Error('An nspawn environment has no named volumes'); }),
     removeSnapshotImage: vi.fn(async () => { throw new Error('A disk-backed environment snapshots its disk, not an image'); }),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
+    resourceUsageBatch: vi.fn(async (entries: any[]) => entries.map(({ spec, state }) => ({
+      cpu: state === 'running' ? { state: 'ready', usedCpus: 0.5, percent: 50 } : { state: 'stopped', usedCpus: null, percent: null },
+      memory: state === 'running' ? { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: spec.limits.memoryMb * 1024 * 1024 } : { state: 'stopped', usedBytes: null, limitBytes: spec.limits.memoryMb * 1024 * 1024 },
+      disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+    }))),
     // The rows the helper reports, in the helper's own shape. `unready` carries the details a real host
     // returns, because what the runtime does with them — quoting them back in its refusal — is the thing
     // worth proving, and an empty detail would prove nothing.
@@ -150,6 +155,34 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
 describe('durable managed environment lifecycle', () => {
+  it('batches resource usage only after fresh Project authorization', async () => {
+    const { runtime, nspawn, members } = setup();
+    const cold = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 });
+    expect(cold.projects).toEqual([expect.objectContaining({
+      projectId: 7,
+      environment: expect.objectContaining({ state: 'unprovisioned', limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } }),
+      resources: expect.objectContaining({ disk: { state: 'ready', usedBytes: 0, limitBytes: null } }),
+    })]);
+    expect(nspawn.resourceUsageBatch).not.toHaveBeenCalled();
+
+    await runtime.requestEnvironment({ ...input, requestId: 'usage-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const live = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 });
+    expect(live.projects[0]).toMatchObject({
+      environment: { state: 'running' },
+      resources: {
+        cpu: { state: 'ready', usedCpus: 0.5, percent: 50 },
+        memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
+        disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+      },
+    });
+    expect(nspawn.resourceUsageBatch).toHaveBeenCalledWith([expect.objectContaining({ state: 'running', spec: expect.objectContaining({ name: 'elowen-project-7-g1' }) })]);
+
+    members.delete(2);
+    await expect(runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 })).rejects.toMatchObject({ code: 'project_forbidden', status: 403 });
+    expect(nspawn.resourceUsageBatch).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps one rootfs disk across envelope recreation and limit changes, then deletes it after handles', async () => {
     const { runtime, nspawn, storage, containers, diskFiles } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'disk-start', action: { kind: 'start' } });
@@ -1342,6 +1375,45 @@ describe('a new environment on a machine host', () => {
     // hand a tree owned by the machine's uid range back to the container runtime, which cannot read it.
     expect(restored.disk.runtime).toBe('nspawn');
     expect(specOf(sql).input.disk.runtime).toBe('nspawn');
+  });
+
+  it('reports runtime ownership from disk.runtime regardless of historical source images', async () => {
+    const { runtime, sql } = await machineProject();
+    const base = sql.prepare("SELECT spec_json,limits_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const insert = (id: number, state: string, runtimeName: string | undefined, sourceImage: string) => {
+      const spec = JSON.parse(base.spec_json);
+      spec.input.resource.id = id;
+      spec.input.image = sourceImage;
+      spec.input.disk.sourceImage = sourceImage;
+      if (runtimeName === undefined) delete spec.input.disk.runtime;
+      else spec.input.disk.runtime = runtimeName;
+      sql.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json)
+        VALUES('project',?,?,1,?,'running',?,?)`).run(String(id), id, state, JSON.stringify(spec), base.limits_json);
+    };
+    const legacyImage = 'localhost/elowen-project-base:historical';
+    const artifactImage = PROJECT_ROOTFS;
+
+    const nspawn = specOf(sql);
+    nspawn.input.image = legacyImage;
+    nspawn.input.disk.sourceImage = legacyImage;
+    sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(nspawn));
+    insert(8, 'running', 'nspawn', artifactImage);
+    insert(9, 'running', undefined, artifactImage);
+    insert(10, 'running', 'podman', artifactImage);
+    insert(11, 'deleted', undefined, legacyImage);
+
+    const first = await runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    expect(first.items.find((item: any) => item.id === 'runtime:legacy-references')).toMatchObject({ ok: false,
+      detail: expect.stringContaining('2 environments still belong to the removed Podman runtime') });
+
+    const supported = JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='9'").get() as any).spec_json);
+    supported.input.disk.runtime = 'nspawn';
+    supported.input.disk.sourceImage = legacyImage;
+    sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='9'").run(JSON.stringify(supported));
+    sql.prepare("UPDATE p_sandbox_runtimes SET state='deleted' WHERE kind='project' AND resource_id='10'").run();
+
+    const mutated = await runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    expect(mutated.items.find((item: any) => item.id === 'runtime:legacy-references')).toMatchObject({ ok: true });
   });
 
   it('reports the missing rows through the project overview, and the runtime once it is decided', async () => {

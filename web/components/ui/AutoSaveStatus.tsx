@@ -7,6 +7,7 @@ import { Spinner } from '../ui/states';
 export interface AutoSaveStatusProps {
   status: SaveStatus;
   onRetry?: () => void | Promise<void>;
+  showSaved?: boolean;
   errorKind?: 'validation' | 'conflict' | 'transport';
   onReload?: () => void;
   onMerge?: () => void;
@@ -15,9 +16,10 @@ export interface AutoSaveStatusProps {
 /** Subtle auto-save indicator. Idle and success are silent; saving, delayed activation and errors stay
  * visible. Selection controls save as the user chooses, so a green "Saved" after every model, project or
  * setting change is noise — failure is the state that needs a durable action. */
-export function AutoSaveStatus({ status, onRetry, errorKind, onReload, onMerge }: AutoSaveStatusProps) {
+export function AutoSaveStatus({ status, onRetry, showSaved = false, errorKind, onReload, onMerge }: AutoSaveStatusProps) {
   const { t } = useTranslation();
-  if (status === 'idle' || status === 'saved') return <span className="text-xs text-muted-foreground" role="status" aria-live="polite" />;
+  if (status === 'idle' || (status === 'saved' && !showSaved)) return <span className="text-xs text-muted-foreground" role="status" aria-live="polite" />;
+  if (status === 'saved') return <span className="inline-flex min-h-5 min-w-[7rem] shrink-0 items-center justify-end text-xs text-muted-foreground" role="status" aria-live="polite">{t.common.saved}</span>;
   if (status === 'saving') return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-live="polite">
       <Spinner size="sm" tone="" />{t.common.saving}

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { CircleDashed, CircleSlash, Loader2, Network, Plus, Play, Square, Trash2, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CircleDashed, CircleSlash, Loader2, Plus, Play, Square, Trash2, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { acknowledgeEnvironmentRequest, dispatchEnvironmentAction } from './environmentRequest';
 import type { EnvironmentAction, EnvironmentOperation, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
 import { localizedError, runtime, type Project } from './runtime';
@@ -22,6 +22,8 @@ export interface ProjectEnvironmentDetail {
 type Limits = ProjectEnvironment['limits'];
 type NetworkPolicy = ProjectEnvironment['network'];
 type InboundPort = NetworkPolicy['inboundPorts'][number];
+type PortDraft = { protocol: InboundPort['protocol']; hostPort: string; guestPort: string };
+type NetworkDraft = { mode: NetworkPolicy['mode']; inboundPorts: PortDraft[] };
 type LimitKey = 'cpus' | 'memoryMb' | 'pidsLimit';
 
 /** One resource row per ceiling the container actually enforces. The bounds are the plugin's usable
@@ -38,7 +40,24 @@ const LIMIT_KEYS = ROWS.map((row) => row.key);
 const readout = (key: LimitKey, value: number) => key === 'cpus' ? String(Math.round(value * 10) / 10) : String(Math.round(value));
 const sameLimits = (a: Limits, b: Limits) => LIMIT_KEYS.every((key) => a[key] === b[key]);
 const sameNetwork = (a: NetworkPolicy, b: NetworkPolicy) => JSON.stringify(a) === JSON.stringify(b);
-const emptyPort = (): InboundPort => ({ protocol: 'tcp', hostPort: 8080, guestPort: 3000 });
+const toNetworkDraft = (network: NetworkPolicy): NetworkDraft => ({
+  mode: network.mode,
+  inboundPorts: network.inboundPorts.map((port) => ({ protocol: port.protocol, hostPort: String(port.hostPort), guestPort: String(port.guestPort) })),
+});
+const emptyPortDraft = (): PortDraft => ({ protocol: 'tcp', hostPort: '8080', guestPort: '3000' });
+const parsePort = (port: PortDraft): InboundPort | null => {
+  if (!/^\d+$/.test(port.hostPort) || !/^\d+$/.test(port.guestPort)) return null;
+  const hostPort = Number(port.hostPort);
+  const guestPort = Number(port.guestPort);
+  if (!Number.isSafeInteger(hostPort) || hostPort < 1024 || hostPort > 65535) return null;
+  if (!Number.isSafeInteger(guestPort) || guestPort < 1 || guestPort > 65535) return null;
+  return { protocol: port.protocol, hostPort, guestPort };
+};
+const toNetworkPolicy = (draft: NetworkDraft): NetworkPolicy | null => {
+  if (draft.mode === 'isolated') return draft.inboundPorts.length ? null : { mode: 'isolated', inboundPorts: [] };
+  const inboundPorts = draft.inboundPorts.map(parsePort);
+  return inboundPorts.every((port): port is InboundPort => port !== null) ? { mode: 'shared', inboundPorts } : null;
+};
 
 /** The same glyph and tone the project register draws for a state, so the drawer and the row agree. */
 const STATE_GLYPH: Record<ProjectEnvironment['state'], { icon: LucideIcon; className: string; spin?: boolean }> = {
@@ -73,11 +92,20 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const progress = hooks.useEnvironmentOperation(watched, project.id);
   const host = hooks.useTranslation();
   const [requestError, setRequestError] = useState('');
-  // Local edits only. `null` means "no unsaved change", so a pushed refresh keeps owning the displayed
-  // figures and a slider cannot be dragged back by an update landing mid-gesture.
   const [draft, setDraft] = useState<Limits | null>(null);
-  const [networkDraft, setNetworkDraft] = useState<NetworkPolicy | null>(null);
+  const [networkDraft, setNetworkDraft] = useState<NetworkDraft | null>(null);
   const accountId = me.data?.user?.id;
+  const isAdmin = me.data?.user?.is_admin === true;
+  const stored = query.data?.environment.limits;
+  const storedNetwork = query.data?.environment.network;
+  const draftRef = useRef<Limits | null>(null);
+  const networkDraftRef = useRef<NetworkDraft | null>(null);
+  const confirmedLimitsRef = useRef<Limits | null>(null);
+  const confirmedNetworkRef = useRef<NetworkPolicy | null>(null);
+  const generationRef = useRef<number | null>(null);
+  draftRef.current = draft;
+  networkDraftRef.current = networkDraft;
+
   useEffect(() => {
     if (!accountId || !query.data) return;
     try {
@@ -86,54 +114,77 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     } catch (error) { setRequestError(localizedError(error, s)); }
   }, [accountId, project.id, query.data, s]);
   const refresh = async () => { await Promise.all([qc.invalidateQueries({ queryKey }), qc.invalidateQueries({ queryKey: ['projects'] })]); };
-  const dispatch = async (action: EnvironmentAction | { kind: 'limits'; limits: Limits }): Promise<EnvironmentOperation> => {
-    if (!accountId || !query.data) throw new Error(s.error_project_forbidden);
-    const operation = await dispatchEnvironmentAction({ accountId, projectId: project.id, action, generation: query.data.environment.generation, strings: s });
+  const dispatch = async (action: EnvironmentAction): Promise<EnvironmentOperation> => {
+    const generation = generationRef.current ?? query.data?.environment.generation;
+    if (!accountId || !query.data || generation === undefined || generation === null) throw new Error(s.error_project_forbidden);
+    const operation = await dispatchEnvironmentAction({ accountId, projectId: project.id, action, generation, strings: s });
     setRequested(operation);
     return operation;
   };
+  const waitForOperation = async (operation: EnvironmentOperation): Promise<EnvironmentOperation> => {
+    if (operation.status === 'succeeded' || operation.status === 'failed') return operation;
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      const next = await api(`/plugins/sandbox/api/environments/operation?operationId=${encodeURIComponent(operation.id)}&projectId=${project.id}`) as EnvironmentOperation | null;
+      if (!next) throw new Error(s.errorFallback);
+      if (next.status === 'succeeded' || next.status === 'failed') return next;
+    }
+    throw new Error(s.errorFallback);
+  };
   const mutate = hooks.useMutation<EnvironmentOperation, unknown, EnvironmentAction>({
     mutationFn: dispatch,
-    // Only an explicitly chosen action raises the window. The debounced limits save travels the same
-    // dispatch and reports itself through the auto-save indicator it already has; a dialog on every
-    // slider release would be a modal interrupting a gesture.
     onSuccess: async (operation: EnvironmentOperation) => { setConfirm(null); setWatched(operation.id); setProgressOpen(true); await refresh(); },
   });
-  // A refusal is reported once, where the person is looking: the confirmation renders what its
-  // `onConfirm` rejects with, and an action started from a button with no dialog behind it toasts.
   const report = (work: Promise<unknown>) => {
     void work.catch((error: unknown) => toast(error instanceof Error ? error.message : String(error), 'error'));
   };
 
-  const stored = query.data?.environment.limits;
-  const storedNetwork = query.data?.environment.network;
   useEffect(() => {
-    if (!stored) return;
-    // A successful mutation only means the lifecycle request was accepted. Keep showing the submitted
-    // figures until the refreshed environment proves that those exact limits became authoritative.
-    setDraft((current) => (current && sameLimits(current, stored) ? null : current));
-  }, [stored]);
+    if (!query.data) return;
+    generationRef.current = query.data.environment.generation;
+    if (!confirmedLimitsRef.current) confirmedLimitsRef.current = query.data.environment.limits;
+    if (!confirmedNetworkRef.current) confirmedNetworkRef.current = query.data.environment.network;
+  }, [query.data]);
   useEffect(() => {
-    if (!storedNetwork) return;
-    setNetworkDraft((current) => (current && sameNetwork(current, storedNetwork) ? null : current));
-  }, [storedNetwork]);
-  const isAdmin = me.data?.user?.is_admin === true;
+    if (!stored || !storedNetwork) return;
+    if (!draft) confirmedLimitsRef.current = stored;
+    else if (sameLimits(draft, stored)) { confirmedLimitsRef.current = stored; setDraft(null); }
+    if (!networkDraft) confirmedNetworkRef.current = storedNetwork;
+    else {
+      const current = toNetworkPolicy(networkDraft);
+      if (current && sameNetwork(current, storedNetwork)) { confirmedNetworkRef.current = storedNetwork; setNetworkDraft(null); }
+    }
+  }, [stored, storedNetwork, draft, networkDraft]);
+
+  const limitsChanged = !!draft && !!(confirmedLimitsRef.current ?? stored) && !sameLimits(draft, confirmedLimitsRef.current ?? stored!);
+  const networkAction = networkDraft ? toNetworkPolicy(networkDraft) : null;
+  const networkChanged = !!networkAction && !!(confirmedNetworkRef.current ?? storedNetwork) && !sameNetwork(networkAction, confirmedNetworkRef.current ?? storedNetwork!);
+  const saveOrdinarySettings = async () => {
+    const limits = draftRef.current;
+    const confirmedLimits = confirmedLimitsRef.current ?? stored;
+    const currentNetwork = networkDraftRef.current ? toNetworkPolicy(networkDraftRef.current) : null;
+    const confirmedNetwork = confirmedNetworkRef.current ?? storedNetwork;
+    const action: EnvironmentAction | null = limits && confirmedLimits && !sameLimits(limits, confirmedLimits)
+      ? { kind: 'limits', limits: { cpus: limits.cpus, memoryMb: limits.memoryMb, pidsLimit: limits.pidsLimit } }
+      : currentNetwork && confirmedNetwork && !sameNetwork(currentNetwork, confirmedNetwork)
+        ? { kind: 'network', network: currentNetwork }
+        : null;
+    if (!action) return;
+    const operation = await dispatch(action);
+    const settled = await waitForOperation(operation);
+    if (settled.status === 'failed') throw new Error(settled.error || s.errorFallback);
+    if (action.kind === 'limits') confirmedLimitsRef.current = action.limits;
+    else confirmedNetworkRef.current = action.network;
+    await refresh();
+  };
+  const autosaveSignature = `${draft ? LIMIT_KEYS.map((key) => draft[key]).join('|') : stored ? LIMIT_KEYS.map((key) => stored[key]).join('|') : ''}|${JSON.stringify(networkDraft ?? storedNetwork ?? null)}`;
+  const autoSave = hooks.useAutoSaveStatus([autosaveSignature], saveOrdinarySettings, {
+    ready: !!stored && !!storedNetwork,
+    savable: isAdmin && (limitsChanged || networkChanged),
+    delay: 700,
+  });
   const operations = query.data?.operations ?? [];
   const running = operations.some((item) => item.status === 'pending' || item.status === 'running');
-  const changed = !!draft && !!stored && LIMIT_KEYS.some((key) => draft[key] !== stored[key]);
-  // The dependency is the CURRENT figures as a stable string, seeded from the server: the hook skips the
-  // first value it observes, so watching the draft alone would swallow the very first edit. A poll that
-  // moves the server figures also changes it, and `savable` is what keeps that from writing them back.
-  const editing = draft ?? stored;
-  const signature = editing ? LIMIT_KEYS.map((key) => editing[key]).join('|') : '';
-  // Debounced so a drag becomes ONE container update rather than one per step, and so the request the
-  // runtime finally sees is the figure the person stopped on.
-  const autoSave = hooks.useAutoSaveStatus([signature], async () => {
-    const sent = draft;
-    if (!sent) return;
-    await dispatch({ kind: 'limits', limits: { cpus: sent.cpus, memoryMb: sent.memoryMb, pidsLimit: sent.pidsLimit } });
-    await refresh();
-  }, { ready: !!stored, savable: isAdmin && changed, delay: 900 });
 
   if (query.isError || me.isError) return <C.ErrorState message={localizedError(query.error ?? me.error, s)} onRetry={() => { query.refetch(); me.refetch(); }} />;
   if (query.isLoading || me.isLoading || !query.data) return <C.LoadingState variant="list" />;
@@ -147,8 +198,7 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const busy = !accountId || me.isError || mutate.isPending || pending || ['deleting', 'deleted'].includes(environment.state) || project.lifecycle === 'deleting';
   const completeSnapshots = snapshots.filter((item) => item.completeProject);
   const values = draft ?? environment.limits;
-  const networkValues = networkDraft ?? environment.network;
-  const networkChanged = !!networkDraft && !sameNetwork(networkDraft, environment.network);
+  const networkValues = networkDraft ?? toNetworkDraft(environment.network);
   const labels: Record<LimitKey, string> = { cpus: s.cpuLimit, memoryMb: s.memoryLimit, pidsLimit: s.processLimit };
   const units: Record<LimitKey, string> = { cpus: s.unitCpu, memoryMb: 'MiB', pidsLimit: s.unitProcesses };
   // The daemon names the stale-container case in the error it stores, so the repair is offered from what
@@ -165,8 +215,7 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const glyph = STATE_GLYPH[environment.state] ?? STATE_GLYPH.unprovisioned;
   const StateIcon = glyph.icon;
   const stateLabel = s[`state_${environment.state}`] || environment.state;
-  // The state reads as the same glyph the project register uses, beside the group's autosave status,
-  // rather than as a banner above the table.
+  // The state reads as the same glyph the project register uses, rather than as a banner above the table.
   const state = <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-label={stateLabel}>
     <StateIcon aria-hidden className={`h-3.5 w-3.5 ${glyph.className}${glyph.spin ? ' animate-spin' : ''}`} />
     {stateLabel}
@@ -179,9 +228,10 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     ? runtimeDetail.readiness.items.filter((item) => !item.ok)
     : [];
   const setNetworkMode = (mode: NetworkPolicy['mode']) => setNetworkDraft({ mode, inboundPorts: mode === 'isolated' ? [] : networkValues.inboundPorts });
-  const updatePort = (index: number, patch: Partial<InboundPort>) => setNetworkDraft({ ...networkValues,
+  const updatePort = (index: number, patch: Partial<PortDraft>) => setNetworkDraft({ ...networkValues,
     inboundPorts: networkValues.inboundPorts.map((port, position) => position === index ? { ...port, ...patch } : port) });
   const removePort = (index: number) => setNetworkDraft({ ...networkValues, inboundPorts: networkValues.inboundPorts.filter((_port, position) => position !== index) });
+  const flushAutosave = () => { void autoSave.flush(); };
 
   return <section className="flex flex-col gap-4 border-b border-border py-4">
     {requestError ? <p role="alert" className="text-sm text-destructive">{requestError}</p> : null}
@@ -198,13 +248,11 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
 
     <C.SettingsGroup
       title={s.resources}
-      description={s.resourcesHint}
+      hint={s.resourcesHint}
       density="compact"
-      actions={<span className="inline-flex items-center gap-3">
+      actions={<span className="inline-flex min-w-0 shrink-0 items-center gap-3 whitespace-nowrap">
         {state}
-        {isAdmin
-          ? <C.AutoSaveStatus status={autoSave.status} onRetry={autoSave.retry} />
-          : <C.Badge tone="muted">{s.limitsAdminOnly}</C.Badge>}
+        {isAdmin ? null : <C.Badge tone="muted">{s.limitsAdminOnly}</C.Badge>}
       </span>}
     >
       {ROWS.map((row) => (
@@ -230,32 +278,32 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
 
     <C.SettingsGroup
       title={s.networking}
-      description={s.networkingHint}
+      hint={s.networkingHint}
       density="compact"
-      actions={isAdmin ? <C.Button variant="accent" icon={Network} disabled={busy || !networkChanged}
-        onClick={() => report(mutate.mutateAsync({ kind: 'network', network: networkValues }))}>{s.applyNetworking}</C.Button>
+      actions={isAdmin
+        ? <span className="inline-flex min-h-5 min-w-[7rem] shrink-0 items-center justify-end whitespace-nowrap"><C.AutoSaveStatus status={autoSave.status} onRetry={autoSave.retry} showSaved /></span>
         : <C.Badge tone="muted">{s.limitsAdminOnly}</C.Badge>}
     >
-      <C.SettingsRow label={s.networkMode} description={networkValues.mode === 'shared' ? s.networkSharedHint : s.networkIsolatedHint}
+      <C.SettingsRow label={s.networkMode} hint={networkValues.mode === 'shared' ? s.networkSharedHint : s.networkIsolatedHint}
         control={<C.SelectMenu label={s.networkMode} value={networkValues.mode} disabled={!isAdmin || busy}
           onChange={setNetworkMode} options={[{ value: 'shared', label: s.networkShared }, { value: 'isolated', label: s.networkIsolated }]} />} />
       {networkValues.mode === 'shared' ? <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
         <div className="flex items-center justify-between gap-3">
-          <div>
+          <div className="flex min-w-0 items-center gap-1.5">
             <p className="text-sm font-medium text-foreground">{s.inboundPorts}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{s.inboundPortsHint}</p>
+            <C.HelpTip align="left">{s.inboundPortsHint}</C.HelpTip>
           </div>
           {isAdmin ? <C.Button variant="ghost" icon={Plus} disabled={busy || networkValues.inboundPorts.length >= 32}
-            onClick={() => setNetworkDraft({ ...networkValues, inboundPorts: [...networkValues.inboundPorts, emptyPort()] })}>{s.addInboundPort}</C.Button> : null}
+            onClick={() => setNetworkDraft({ ...networkValues, inboundPorts: [...networkValues.inboundPorts, emptyPortDraft()] })}>{s.addInboundPort}</C.Button> : null}
         </div>
         {networkValues.inboundPorts.length ? <div className="flex flex-col gap-2">
           {networkValues.inboundPorts.map((port, index) => <div key={index} className="grid grid-cols-1 items-end gap-2 rounded-md border border-border bg-background p-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
             <C.SelectMenu label={s.protocol} value={port.protocol} disabled={!isAdmin || busy} onChange={(protocol: InboundPort['protocol']) => updatePort(index, { protocol })}
               options={[{ value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }]} />
             <C.Field label={s.hostPort}><C.Input type="number" min={1024} max={65535} value={port.hostPort} disabled={!isAdmin || busy}
-              onChange={(event: { target: { value: string } }) => updatePort(index, { hostPort: Number(event.target.value) })} /></C.Field>
+              onChange={(event: { target: { value: string } }) => updatePort(index, { hostPort: event.target.value })} onBlur={flushAutosave} /></C.Field>
             <C.Field label={s.guestPort}><C.Input type="number" min={1} max={65535} value={port.guestPort} disabled={!isAdmin || busy}
-              onChange={(event: { target: { value: string } }) => updatePort(index, { guestPort: Number(event.target.value) })} /></C.Field>
+              onChange={(event: { target: { value: string } }) => updatePort(index, { guestPort: event.target.value })} onBlur={flushAutosave} /></C.Field>
             {isAdmin ? <C.Button variant="ghost" icon={Trash2} aria-label={s.removeInboundPort} disabled={busy} onClick={() => removePort(index)} /> : null}
           </div>)}
         </div> : <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">{s.noInboundPorts}</p>}
@@ -267,14 +315,14 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
         listed rather than two screens deeper. What is left below is what only this drawer can do: the
         repair for a container the runtime can no longer verify, and restoring a complete snapshot.
         Deleting the project was never an environment control and lives in that same row menu. */}
-    <div className="flex flex-wrap gap-2">
+    <div className="flex min-w-0 flex-nowrap gap-2 overflow-x-auto">
       {stale ? <C.Button disabled={busy} onClick={() => report(mutate.mutateAsync({ kind: 'recreate' }))}>{s.recreateEnvironment}</C.Button> : null}
       {watched && !progressOpen ? (
         <C.Button variant="ghost" onClick={() => setProgressOpen(true)}>{host.t.operationProgress.actions[operationAction] ?? s.startEnvironment}</C.Button>
       ) : null}
     </div>
     <C.Field label={s.snapshots}>
-      {completeSnapshots.length ? <div className="flex flex-wrap gap-2"><C.SelectMenu label={s.snapshots} value={snapshotId} onChange={setSnapshotId} options={completeSnapshots.map((item) => ({ value: item.id, label: `${item.createdAt}${item.note ? `: ${item.note}` : ''}` }))} /><C.Button disabled={busy || !completeSnapshots.some((item) => item.id === snapshotId)} onClick={() => setConfirm({ kind: 'restore', snapshotId })}>{s.restoreEnvironment}</C.Button></div> : <p className="text-xs text-muted-foreground">{s.noSnapshots}</p>}
+      {completeSnapshots.length ? <div className="flex min-w-0 flex-nowrap gap-2 overflow-x-auto"><C.SelectMenu label={s.snapshots} value={snapshotId} onChange={setSnapshotId} options={completeSnapshots.map((item) => ({ value: item.id, label: `${item.createdAt}${item.note ? `: ${item.note}` : ''}` }))} /><C.Button disabled={busy || !completeSnapshots.some((item) => item.id === snapshotId)} onClick={() => setConfirm({ kind: 'restore', snapshotId })}>{s.restoreEnvironment}</C.Button></div> : <p className="text-xs text-muted-foreground">{s.noSnapshots}</p>}
     </C.Field>
     <C.ConfirmDialog open={confirm !== null} title={actionLabel} description={confirmation} confirmLabel={actionLabel} pending={mutate.isPending} onClose={() => setConfirm(null)} onConfirm={async () => { if (confirm) await mutate.mutateAsync(confirm); }} />
     <C.OperationProgressDialog

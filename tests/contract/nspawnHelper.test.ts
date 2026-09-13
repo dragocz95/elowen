@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   DISK_TREE_SCRIPTS,
   DISK_TREE_TIMEOUT_MS,
+  RESOURCE_USAGE_TIMEOUT_MS,
   commandOptionsFor,
   defaultCommandRunner,
   MACHINE_UNIT_PATH,
@@ -27,6 +28,7 @@ import {
   applyRequest,
   handleRequest,
   helperRequestNeedsDeployment,
+  helperRequestNeedsMutationLock,
   machineUnitFor,
   nspawnDiskPaths,
   nspawnExecArgs,
@@ -43,7 +45,7 @@ import {
 // @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
 import { createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 // @ts-expect-error the bundled machine runtime is plain ESM without declarations
-import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN } from '../../plugins/sandbox/lib/nspawn.mjs';
+import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
 // @ts-expect-error the bundled Sandbox storage owner is plain ESM without declarations
 import { SNAPSHOT_TREE_FORMAT } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import {
@@ -516,6 +518,24 @@ describe('privileged helper: host path derivation', () => {
 });
 
 describe('privileged helper: the four merge constraints', () => {
+  it('classifies execution, freeze, thaw and the read-only tree operations as lock-free', () => {
+    // The reads join the named set for the same reason: a fifteen-minute walk over a multi-gigabyte tree
+    // holding the global mutation lock would block a certificate renewal, and be blocked by one.
+    for (const op of ['exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-sizes', 'tree-verify', 'status']) {
+      expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(false);
+    }
+    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'retire-legacy-site',
+      'tree-copy', 'tree-sync', 'tree-remove', 'destroy', 'release-uid-range']) {
+      expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
+    }
+    // The Sites classification is unchanged for the operations that remain: a read never takes the lock.
+    for (const op of ['status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket']) {
+      expect(helperRequestNeedsMutationLock({ op })).toBe(false);
+    }
+    for (const op of ['sync-sites', 'ensure-site', 'remove-site', 'deny']) {
+      expect(helperRequestNeedsMutationLock({ op })).toBe(true);
+    }
+  });
 
   it('runs an execution while the global mutation lock is held, and still serializes a mutation', async () => {
     // Without this, every Bash tool call in every environment would block behind a certificate renewal:
@@ -1743,6 +1763,34 @@ describe('privileged helper: disk tree primitives', () => {
     })).rejects.toThrow(/fingerprint is invalid/);
   });
 
+  it('measures a bounded disk batch with one short read-only command', async () => {
+    const directory = nspawnDiskPaths(storage, diskRef).directory;
+    const paths = [join(directory, 'rootfs'), join(directory, 'home')];
+    for (const path of paths) mkdirSync(path, { recursive: true });
+    const calls: { file: string; args: string[]; timeoutMs?: number }[] = [];
+    const runner = (file: string, args: string[], options: { timeoutMs?: number } = {}) => {
+      calls.push({ file, args, timeoutMs: options.timeoutMs });
+      return { ok: true, stdout: `4096\t${paths[0]}\u00004096\t${paths[1]}\u0000`, stderr: '' };
+    };
+    expect(await applyRequest({ domain: 'nspawn', op: 'tree-sizes', paths }, undefined, { storage, runner })).toEqual({
+      ok: true,
+      usages: [{ path: paths[0], allocatedBytes: 4096 }, { path: paths[1], allocatedBytes: 4096 }],
+    });
+    expect(calls).toEqual([{
+      file: '/usr/bin/du',
+      args: ['--summarize', '--one-file-system', '--block-size=1', '--null', '--', ...paths],
+      timeoutMs: RESOURCE_USAGE_TIMEOUT_MS,
+    }]);
+    expect(RESOURCE_USAGE_TIMEOUT_MS).toBe(15_000);
+    const partial = await applyRequest({ domain: 'nspawn', op: 'tree-sizes', paths }, undefined, {
+      storage,
+      runner: () => ({ ok: false, stdout: `4096\t${paths[0]}\u0000`, stderr: 'second path disappeared' }),
+    });
+    expect(partial).toEqual({ ok: true, usages: [{ path: paths[0], allocatedBytes: 4096 }, { path: paths[1], error: 'unavailable' }] });
+    await expect(applyRequest({ domain: 'nspawn', op: 'tree-sizes', paths: Array.from({ length: 1001 }, () => paths[0]) }, undefined, { storage, runner }))
+      .rejects.toThrow(/disk usage batch is invalid/);
+  });
+
   it('runs a whole-tree pass on the disk budget rather than the default command timeout', async () => {
     // Measured on a 1.4 GB Project tree: the fsync pass over a freshly copied tree does not finish inside
     // the 30s default, while the same pass over a warm tree takes eight seconds. Under the default every
@@ -1820,4 +1868,20 @@ describe('privileged helper: the invocation the sudoers drop-in pins', () => {
     }
     expect((await run(['status'])).stderr).toMatch(/accepts no command-line arguments/);
   }, 30_000);
+
+  it('states the request contract the bundled machine runtime must satisfy', () => {
+    expect(SITE_GATEWAY_HELPER_PATH).toBe('/usr/local/libexec/elowen-site-gateway');
+    expect(HELPER_FRAME_HEADER_BYTES).toBe(9);
+    expect(encodeHelperRequest({ domain: 'nspawn', op: 'status' }).toString())
+      .toBe('00000033\n{"domain":"nspawn","op":"status"}');
+    // Every operation the bundled runtime can name is one this helper answers.
+    for (const op of ['materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
+      'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sizes', 'tree-sync',
+      'tree-verify', 'destroy', 'release-uid-range', 'retire-legacy-site']) {
+      expect(helperRequest(op, {})).toEqual({ domain: 'nspawn', op });
+      let refusal = '';
+      try { applyNspawnRequest({ domain: 'nspawn', op }, { storage }); } catch (error) { refusal = String(error); }
+      expect(refusal, `${op} must be answered by the machine domain`).not.toMatch(/operation is not supported/);
+    }
+  });
 });

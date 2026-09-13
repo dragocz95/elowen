@@ -5,6 +5,7 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
 import SettingsPage from '../../app/settings/page';
+import { SettingsView } from '../../modules/settings/SettingsView';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
@@ -420,5 +421,46 @@ describe('SettingsPage', () => {
     // Only the portal slot, and nothing in it — which is what the stylesheet collapses the row on.
     expect(Array.from(row!.children).map((node) => node.className)).toEqual(['page-toolbar__slot']);
     expect(row!.querySelector('.page-toolbar__slot')!.children).toHaveLength(0);
+  });
+
+  it('renders the shared searchable category navigation only in the overlay presentation', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+
+    expect(screen.getByRole('navigation', { name: en.settings.navigationLabel })).toBeInTheDocument();
+    expect(container.querySelector('[data-testid="settings-overlay-layout"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-module="settings"]')).toBeNull();
+
+    fireEvent.change(screen.getByRole('searchbox', { name: en.settings.navigationSearch }), { target: { value: 'retention' } });
+    fireEvent.click(screen.getByRole('button', { name: en.settings.retention.label }));
+    const row = container.querySelector<HTMLElement>('[data-row-id="settings.retention.label"]')!;
+    await waitFor(() => expect(row).toHaveClass('row-flash'));
+    expect(window.location.pathname).toBe('/settings');
+    expect(window.location.search).toBe('?cat=system');
+  });
+
+  it('switches between category navigation and content on the mobile overlay', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'System' });
+
+    const layout = container.querySelector('[data-testid="settings-overlay-layout"]')!;
+    const navigationPane = layout.querySelector('aside')!;
+    const contentPane = layout.querySelector('section')!;
+    expect(navigationPane).toHaveClass('hidden');
+    expect(contentPane).toHaveClass('flex');
+
+    fireEvent.click(screen.getByRole('button', { name: en.settings.navigationBack }));
+    expect(navigationPane).toHaveClass('flex');
+    expect(contentPane).toHaveClass('hidden');
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: en.settings.navigationSearch })).toHaveFocus());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Models/ }));
+    expect(contentPane).toHaveClass('flex');
+    expect(window.location.search).toBe('?cat=models');
+    await waitFor(() => expect(contentPane).toHaveFocus());
   });
 });

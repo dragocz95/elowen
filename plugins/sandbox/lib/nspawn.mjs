@@ -57,7 +57,7 @@ const PROBE_TIMEOUT_MS = 5_000;
  *  it — `write-envelope` re-checks the same rows and refuses. That split is the whole point: serving a
  *  project never changes the host, and an operator asking to prepare the host does. */
 const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw',
-  'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy', 'release-uid-range', 'retire-legacy-site']);
+  'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sizes', 'tree-sync', 'tree-verify', 'destroy', 'release-uid-range', 'retire-legacy-site']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
  *  shape to read and one place to change. `domain` is what separates the nspawn dispatch table from the
@@ -85,6 +85,20 @@ export function helperFrame(request, input) {
 }
 
 export const unitFor = (machine) => `elowen-machine@${machine}.service`;
+
+/** The parent machine unit owns the complete delegated cgroup tree. Reading its counters therefore includes
+ *  the nspawn supervisor and every guest descendant without entering the container or trusting guest data. */
+export function cgroupCpuUsageMicroseconds(value) {
+  for (const line of String(value).split('\n')) {
+    const match = /^usage_usec ([0-9]+)$/.exec(line.trim());
+    if (!match) continue;
+    const usage = Number(match[1]);
+    if (!Number.isSafeInteger(usage)) break;
+    return usage;
+  }
+  throw new Error('Invalid cgroup CPU usage');
+}
+
 /** Where the envelope's two files live. `configRoot` is the same kind of seam as the injected executor
  *  beside it: trusted module code and the test harness choose it, and nothing reachable from a plugin
  *  control does. The daemon only ever READS these paths; the helper is what writes them. */
@@ -195,6 +209,12 @@ export class NspawnClient {
   #timeoutMs;
   #outputLimit;
   #namespace;
+  #cgroupRoot;
+  #now;
+  #diskUsageTtlMs;
+  #cpuSamples = new Map();
+  #diskUsageCache = new Map();
+  #diskUsageFlight = null;
   /** Guest executions this client is currently running, by leased unit. `cancelExecution` marks the
    *  record it finds here, and `exec` reads its own record to decide what verdict it owes the caller.
    *  The launcher exits zero whether its command finished or its unit was stopped under it, and asking
@@ -214,6 +234,10 @@ export class NspawnClient {
     this.#timeoutMs = positive(options.timeoutMs ?? 120_000, 15 * 60_000, 'timeout');
     this.#outputLimit = positive(options.outputLimitBytes ?? OUTPUT_LIMIT, 16 * 1024 * 1024, 'output');
     this.#namespace = options.namespace === undefined ? null : resourceToken(options.namespace);
+    this.#cgroupRoot = hostPath(options.cgroupRoot ?? '/sys/fs/cgroup');
+    if (options.now !== undefined && typeof options.now !== 'function') throw new Error('Invalid resource clock');
+    this.#now = options.now ?? Date.now;
+    this.#diskUsageTtlMs = positive(options.diskUsageTtlMs ?? 300_000, 3_600_000, 'disk usage cache');
   }
 
   /** Every process this runtime spawns is a control tool or the privileged helper, so its stdout is
@@ -431,6 +455,86 @@ export class NspawnClient {
     if (spec.expectedId && spec.expectedId !== id) mismatches.push('expectedId');
     if (mismatches.length) throw new Error(`Machine ownership or runtime specification mismatch: ${mismatches.join(', ')}`);
     return { id, state };
+  }
+
+  #cgroupValue(machine, name) {
+    const value = readFileSync(join(this.#cgroupRoot, 'machine.slice', unitFor(machine), name), 'utf8').trim();
+    if (!/^[0-9]+$/.test(value)) throw new Error(`Invalid cgroup ${name}`);
+    const number = Number(value);
+    if (!Number.isSafeInteger(number)) throw new Error(`Invalid cgroup ${name}`);
+    return number;
+  }
+
+  async #diskUsageFor(specs, now) {
+    const paths = [...new Set(specs.map((spec) => spec.disk.rootfsPath))];
+    for (const [path, cached] of this.#diskUsageCache) {
+      if (now - cached.at > this.#diskUsageTtlMs * 2) this.#diskUsageCache.delete(path);
+    }
+    while (paths.some((path) => !this.#diskUsageCache.has(path) || now - this.#diskUsageCache.get(path).at >= this.#diskUsageTtlMs)) {
+      if (this.#diskUsageFlight) {
+        await this.#diskUsageFlight;
+        continue;
+      }
+      const stale = paths.filter((path) => !this.#diskUsageCache.has(path) || now - this.#diskUsageCache.get(path).at >= this.#diskUsageTtlMs);
+      const flight = (async () => {
+        const reply = await this.#helper('tree-sizes', { paths: stale.map((path) => checkedHostPath(path)) }, { timeoutMs: 20_000 });
+        if (!Array.isArray(reply?.usages) || reply.usages.length !== stale.length) throw new Error('Invalid disk usage report');
+        const expected = new Set(stale);
+        for (const item of reply.usages) {
+          if (typeof item?.path !== 'string' || !expected.delete(item.path)) throw new Error('Invalid disk usage report');
+          if (item.error === 'unavailable') this.#diskUsageCache.set(item.path, { at: now, bytes: null });
+          else if (Number.isSafeInteger(item.allocatedBytes) && item.allocatedBytes >= 0) this.#diskUsageCache.set(item.path, { at: now, bytes: item.allocatedBytes });
+          else throw new Error('Invalid disk usage report');
+        }
+        if (expected.size) throw new Error('Invalid disk usage report');
+      })();
+      this.#diskUsageFlight = flight;
+      try { await flight; }
+      finally { if (this.#diskUsageFlight === flight) this.#diskUsageFlight = null; }
+    }
+    return new Map(paths.map((path) => {
+      const bytes = this.#diskUsageCache.get(path)?.bytes ?? null;
+      return [path, bytes === null
+        ? { state: 'unavailable', usedBytes: null, limitBytes: null }
+        : { state: 'ready', usedBytes: bytes, limitBytes: null }];
+    }));
+  }
+
+  /** Read the fixed parent unit cgroups and one cached disk batch for visible managed environments. CPU is
+   *  a rate between two polls; the first observation is explicitly `sampling` instead of inventing a load. */
+  async resourceUsageBatch(entries) {
+    if (!Array.isArray(entries) || entries.length < 1 || entries.length > 1000) throw new Error('Invalid resource usage batch');
+    const now = this.#now();
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error('Invalid resource clock');
+    for (const [machine, sample] of this.#cpuSamples) {
+      if (now - sample.at > 600_000) this.#cpuSamples.delete(machine);
+    }
+    const normalized = entries.map((entry) => ({ spec: this.#assertScope(entry?.spec), state: entry?.state }));
+    let disk = new Map(normalized.map(({ spec }) => [spec.disk.rootfsPath, { state: 'unavailable', usedBytes: null, limitBytes: null }]));
+    try { disk = await this.#diskUsageFor(normalized.map((entry) => entry.spec), now); }
+    catch { /* Every disk result remains explicitly unavailable. */ }
+    return normalized.map(({ spec, state }) => {
+      const machine = this.#machine(spec);
+      let cpu = { state: 'stopped', usedCpus: null, percent: null };
+      let memory = { state: 'stopped', usedBytes: null, limitBytes: spec.limits.memoryMb * 1024 * 1024 };
+      if (state === 'running') {
+        try {
+          const usage = cgroupCpuUsageMicroseconds(readFileSync(join(this.#cgroupRoot, 'machine.slice', unitFor(machine), 'cpu.stat'), 'utf8'));
+          const previous = this.#cpuSamples.get(machine);
+          this.#cpuSamples.set(machine, { at: now, usage });
+          if (previous && now > previous.at && now - previous.at <= 120_000 && usage >= previous.usage) {
+            const usedCpus = (usage - previous.usage) / ((now - previous.at) * 1000);
+            cpu = { state: 'ready', usedCpus, percent: Math.max(0, usedCpus / spec.limits.cpus * 100) };
+          } else cpu = { state: 'sampling', usedCpus: null, percent: null };
+        } catch {
+          this.#cpuSamples.delete(machine);
+          cpu = { state: 'unavailable', usedCpus: null, percent: null };
+        }
+        try { memory = { state: 'ready', usedBytes: this.#cgroupValue(machine, 'memory.current'), limitBytes: spec.limits.memoryMb * 1024 * 1024 }; }
+        catch { memory = { state: 'unavailable', usedBytes: null, limitBytes: spec.limits.memoryMb * 1024 * 1024 }; }
+      } else this.#cpuSamples.delete(machine);
+      return { cpu, memory, disk: disk.get(spec.disk.rootfsPath) };
+    });
   }
 
   async inspectBinding(spec) { return await this.#owned(spec); }

@@ -9,7 +9,7 @@ import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createEnvironmentDiskSpec, withContainerLimits, normalizeEnvironmentNetwork, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { NspawnClient } from './nspawn.mjs';
-import { selectRuntimeClient, unsupportedRuntime, UNSUPPORTED_RUNTIME_MESSAGE } from './runtimeClient.mjs';
+import { selectRuntimeClient, unsupportedRuntime, UNSUPPORTED_RUNTIME_MESSAGE, usesNspawnRuntime } from './runtimeClient.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
 import { RootfsArtifactStore } from './rootfsArtifacts.mjs';
 import { ARTIFACT_MIRROR_SETTING, PROJECT_ARTIFACT, artifactReference, isLegacyImageReference, knownReferences } from './rootfsCatalog.mjs';
@@ -246,17 +246,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     readinessCache = { at: Date.now(), value };
     return value;
   }
-  /** How many environments still name a container image rather than a published root filesystem.
+  /** How many non-deleted environments belong to a runtime this release cannot drive.
    *
    *  One query over the stored specifications and nothing else: a disk is never opened to answer it,
-   *  because this is polled. The rows are read whole and the legacy rule is applied in one place, so the
-   *  count cannot drift from the guard that actually refuses such a reference. */
+   *  because this is polled. The same predicate selects the actual runtime client, so historical rootfs
+   *  provenance cannot make readiness disagree with the environment's persisted owner. */
   function legacyReferenceRow() {
-    const stored = db.prepare("SELECT json_extract(spec_json,'$.input.disk.sourceImage') AS reference FROM p_sandbox_runtimes WHERE kind='project' AND state<>'deleted'").all();
-    const pending = stored.filter((entry) => isLegacyImageReference(entry.reference)).length;
-    return { id: 'runtime:legacy-references', label: 'Environment root filesystem identity', ok: pending === 0,
+    const stored = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND state<>'deleted'").all();
+    const pending = stored.filter((entry) => !usesNspawnRuntime(JSON.parse(entry.spec_json).input)).length;
+    return { id: 'runtime:legacy-references', label: 'Environment runtime ownership', ok: pending === 0,
       detail: pending === 0
-        ? 'every environment names a published root filesystem'
+        ? 'every environment belongs to systemd-nspawn'
         : `${pending} environment${pending === 1 ? '' : 's'} still ${pending === 1 ? 'belongs' : 'belong'} to the removed Podman runtime. ${UNSUPPORTED_RUNTIME_MESSAGE}` };
   }
   const readinessArea = (id) => {
@@ -1638,6 +1638,41 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } catch (cause) { await release(); throw cause; }
   }
 
+  /** One authorized read for every managed row currently visible in the Project register. Runtime counters
+   *  are measured together; a broken cgroup or disk probe degrades only the resource fields and never hides
+   *  the environment state or lifecycle actions the same response carries. */
+  async function environmentUsageBatch(input) {
+    account(input?.accountUserId, false);
+    if (!Array.isArray(input?.projectIds) || input.projectIds.length < 1 || input.projectIds.length > 1000
+      || new Set(input.projectIds).size !== input.projectIds.length
+      || input.projectIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw error('invalid_project_ids', 'A bounded list of Project ids is required', 400);
+    const projects = [];
+    const measurable = [];
+    for (const id of input.projectIds) {
+      await authorize(id, input.accountUserId, false);
+      const row = store.get('project', id);
+      const environment = row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
+        limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) };
+      const empty = {
+        cpu: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedCpus: null, percent: null },
+        memory: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedBytes: null, limitBytes: environment.limits.memoryMb * 1024 * 1024 },
+        disk: { state: row ? 'unavailable' : 'ready', usedBytes: row ? null : 0, limitBytes: null },
+      };
+      const index = projects.push({ projectId: id, environment, resources: empty }) - 1;
+      if (!row || neverMaterialized(row) || row.state === 'deleted') continue;
+      try { measurable.push({ index, spec: specFor(row.spec), state: row.state }); }
+      catch { /* The environment state remains useful even when its legacy specification cannot be read. */ }
+    }
+    if (measurable.length && typeof nspawn?.resourceUsageBatch === 'function') {
+      try {
+        const measured = await nspawn.resourceUsageBatch(measurable.map(({ spec, state }) => ({ spec, state })));
+        if (!Array.isArray(measured) || measured.length !== measurable.length) throw new Error('Invalid resource usage batch');
+        measurable.forEach(({ index }, offset) => { projects[index].resources = measured[offset]; });
+      } catch { /* The per-row unavailable resource state above is the explicit failure result. */ }
+    }
+    return { sampledAt: new Date().toISOString(), projects };
+  }
+
   const control = {
     projectPreviewBinding, projectPublicationBinding, projectPublicationRelease, releaseAdoptedWorkspace,
     async environmentFor(input) {
@@ -1667,7 +1702,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     environmentSnapshots: (input) => snapshots(projectId(input.project), input.accountUserId),
     environmentLogs: (input) => logs(projectId(input.project), input.accountUserId, input.lines), managedWorktrees,
   };
-  return { ...control, control, prepareExecution, reconcile,
+  return { ...control, control, environmentUsageBatch, prepareExecution, reconcile,
     async revokeAccount(userId) { for (const row of store.all().filter((entry) => entry.kind === 'project')) await cancelLeases(row, userId); },
     async dispose() { disposed = true; for (const release of [...previews]) await release(); } };
 }

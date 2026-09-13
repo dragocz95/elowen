@@ -177,6 +177,50 @@ export function askCandidates(entries: SearchEntry[]): { id: string; title: stri
     }));
 }
 
+/** The Settings deck's searchable labels. This is also what the site-wide palette consumes, so the
+ *  overlay navigation cannot drift into a second index. Every entry comes from the shared category and row
+ *  registries; runtime field values and secrets never enter this list. */
+export function buildSettingsSearchEntries(t: LocaleDict): SearchEntry[] {
+  const loc = (path: string): string => dictAt(t, path);
+  const entries: SearchEntry[] = [];
+  const sectionById = new Map(SETTINGS_SECTIONS.map((section) => [section.id, section]));
+
+  for (const section of SETTINGS_SECTIONS) {
+    entries.push({
+      id: `settings:${section.id}`,
+      group: 'settings',
+      title: loc(`settings.${section.id}`),
+      subtitle: loc('page.settings'),
+      keywords: [dictAt(t, `settings.${section.id}SectionHint`)],
+      href: `/settings?cat=${section.id}`,
+      icon: section.icon,
+    });
+    for (const row of SETTINGS_ROWS[section.id]) {
+      entries.push({
+        id: `settings:${section.id}:${row.path}`,
+        group: 'settings',
+        title: loc(row.path),
+        subtitle: loc(`settings.${section.id}`),
+        keywords: [row.hint ? loc(row.hint) : '', ...(row.keywords ?? [])].filter((keyword) => keyword !== ''),
+        href: rowHref(`/settings?cat=${section.id}`, row.path),
+        icon: sectionById.get(section.id)?.icon,
+      });
+    }
+  }
+
+  for (const label of MODEL_GROUPS) {
+    entries.push({
+      id: `settings:models:provider:${label}`,
+      group: 'settings',
+      title: label,
+      subtitle: loc('settings.models'),
+      keywords: [],
+      href: '/settings?cat=models',
+    });
+  }
+  return entries;
+}
+
 /** The palette's rows, from data that already exists. Pure — unit-tested in `tests/lib/siteSearch.test.ts`. */
 export function buildSearchIndex(t: LocaleDict, pluginEntries: PluginUiListing[]): SearchEntry[] {
   // Read the string the component renders. Nothing here holds a second copy of any label.
@@ -198,46 +242,8 @@ export function buildSearchIndex(t: LocaleDict, pluginEntries: PluginUiListing[]
     });
   }
 
-  // SETTINGS — the deck's sections, then each section's static rows via the declarative tables above.
-  const sectionById = new Map(SETTINGS_SECTIONS.map((section) => [section.id, section]));
-  for (const section of SETTINGS_SECTIONS) {
-    entries.push({
-      id: `settings:${section.id}`,
-      group: 'settings',
-      title: loc(`settings.${section.id}`),
-      subtitle: loc('page.settings'),
-      keywords: [dictAt(t, `settings.${section.id}SectionHint`)],
-      href: `/settings?cat=${section.id}`,
-      icon: section.icon,
-    });
-    const rows = SETTINGS_ROWS[section.id];
-    if (!rows) continue;
-    for (const row of rows) {
-      entries.push({
-        id: `settings:${section.id}:${row.path}`,
-        group: 'settings',
-        title: loc(row.path),
-        subtitle: loc(`settings.${section.id}`),
-        keywords: [
-          row.hint ? loc(row.hint) : '',
-          ...(row.keywords ?? []),
-        ].filter((keyword) => keyword !== ''),
-        href: rowHref(`/settings?cat=${section.id}`, row.path),
-        icon: sectionById.get(section.id)?.icon,
-      });
-    }
-  }
-  // Models: static provider groups only (its model rows are runtime data).
-  for (const label of MODEL_GROUPS) {
-    entries.push({
-      id: `settings:models:provider:${label}`,
-      group: 'settings',
-      title: label,
-      subtitle: loc('settings.models'),
-      keywords: [],
-      href: '/settings?cat=models',
-    });
-  }
+  // SETTINGS — one shared index powers the global palette and the in-overlay navigation.
+  entries.push(...buildSettingsSearchEntries(t));
 
   // ACCOUNT — the account deck and its sections, using the account page's `?cat=` deep-link form.
   for (const section of ACCOUNT_SECTIONS) {

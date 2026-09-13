@@ -57,9 +57,28 @@ export function registerEnvironmentApi(ctx, runtime) {
       ...(input.expectedGeneration === undefined ? {} : { expectedGeneration: input.expectedGeneration }) });
   });
 
-  // The two per-environment reads a browser makes: one row's state, for a project register that lists
-  // many, and one operation's live state, for the shared progress window. Both take their input from the
-  // query string; everything a surface WRITES goes through the namespaced projects mount above.
+  // The Project register reads every visible managed row in one request. The API scope rejects the whole
+  // batch before the runtime touches a row, then the runtime re-resolves each membership against current
+  // state so a revoked assignment cannot keep reading host resource counters through a stale browser list.
+  ctx.registerApiRoute({ path: 'environments/usage', method: 'POST', access: 'user', handler: async (req) => {
+    try {
+      const accountUserId = req.auth?.userId;
+      if (!Number.isSafeInteger(accountUserId) || accountUserId <= 0) return { status: 401, body: { error: 'account_required' } };
+      let input;
+      try { input = await req.json(); }
+      catch { throw bad('JSON object body required', 'invalid_project_ids'); }
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some((key) => key !== 'projectIds')) throw bad('A Project id list is required', 'invalid_project_ids');
+      const projectIds = input.projectIds;
+      if (!Array.isArray(projectIds) || projectIds.length < 1 || projectIds.length > 1000 || new Set(projectIds).size !== projectIds.length
+        || projectIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw bad('A bounded list of unique Project ids is required', 'invalid_project_ids');
+      const accessible = req.auth?.accessibleProjects;
+      if (accessible !== null && accessible !== undefined && projectIds.some((id) => !accessible.includes(id))) return { status: 403, body: { error: 'project_forbidden' } };
+      return { status: 200, body: await runtime.environmentUsageBatch({ projectIds, accountUserId }) };
+    } catch (cause) { return failure(cause); }
+  } });
+
+  // The remaining per-environment reads serve the detail surfaces and one operation's live state. Both take
+  // their input from the query string; everything a surface WRITES goes through the namespaced mount above.
   const read = (path, handler) => ctx.registerApiRoute({ path: `environments/${path}`, method: 'GET', access: 'user', handler: async (req) => {
     try {
       const accountUserId = req.auth.userId;

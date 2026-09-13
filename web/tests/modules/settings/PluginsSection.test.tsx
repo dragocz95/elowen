@@ -44,7 +44,7 @@ const entry = (over: Partial<MarketplaceEntry>): MarketplaceEntry => ({
   name: 'weather', version: '1.0.0', description: 'Weather tools', status: 'available', ...over,
 });
 
-const renderSection = () => render(<EffectsProvider><LanguageProvider><SettingsDocument><PluginsSection /></SettingsDocument></LanguageProvider></EffectsProvider>);
+const renderSection = (historyMode: 'push' | 'replace' = 'push') => render(<EffectsProvider><LanguageProvider><SettingsDocument><PluginsSection historyMode={historyMode} /></SettingsDocument></LanguageProvider></EffectsProvider>);
 
 afterEach(() => {
   window.history.replaceState(null, '', '/settings?cat=plugins');
@@ -93,6 +93,22 @@ describe('PluginsSection URL state', () => {
     await waitFor(() => expect(screen.queryByTestId('plugin-detail')).toBeNull());
     expect(window.location.search).toBe('?cat=plugins');
     expect(window.location.hash).toBe('');
+  });
+
+  it('replaces plugin detail history inside the Settings overlay', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'browser' })], isLoading: false });
+    const push = vi.spyOn(window.history, 'pushState');
+    const replace = vi.spyOn(window.history, 'replaceState');
+    renderSection('replace');
+
+    fireEvent.click(screen.getByText('browser').closest('button')!);
+    expect(await screen.findByTestId('plugin-detail')).toHaveAttribute('data-plugin', 'browser');
+    expect(replace).toHaveBeenCalledWith(null, '', '/settings?cat=plugins&plugin=browser');
+    expect(push).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plugins' }));
+    expect(replace).toHaveBeenLastCalledWith(null, '', '/settings?cat=plugins');
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('restores a plugin and its section from a reload-style deep link', async () => {

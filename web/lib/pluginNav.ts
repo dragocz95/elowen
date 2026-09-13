@@ -14,6 +14,13 @@ export function pluginSectionHref(p: PluginUiListing, settingId: string): string
   return p.nav.length === 0 && p.settings.length === 1 ? base : `${base}/settings/${settingId}`;
 }
 
+/** Address a plugin-contributed section that lives inside Settings → Plugins → plugin detail. It remains
+ *  one internal tab of that plugin workspace; callers must not promote the section to a Settings category. */
+export function pluginDetailSectionHref(pluginName: string, settingId: string): string {
+  const query = new URLSearchParams({ cat: 'plugins', plugin: pluginName });
+  return `/settings?${query.toString()}#plugin-section:${encodeURIComponent(settingId)}`;
+}
+
 /** Map the /plugins/ui listing to sidebar worlds: one world per plugin, its first page as the world's
  *  face and the rest as sub-items.
  *
