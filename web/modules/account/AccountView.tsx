@@ -36,6 +36,7 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useSearchParams } from 'next/navigation';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
+import { AccountNavigation } from './AccountNavigation';
 import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
@@ -72,7 +73,7 @@ function AccountPanel({ id, active, visited, children }: {
   );
 }
 
-export function AccountView() {
+export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay' }) {
   const me = useMe();
   const cli = useMyCliSettings();
   const brainModels = useBrainModels();
@@ -132,6 +133,20 @@ export function AccountView() {
   // …and `?row=<anchor>` beside it: the record the palette named is scrolled into view and blinked once
   // as soon as its section is on screen.
   useRowAnchor();
+  /** Move to another section from the navigation this page carries in its overlay presentation.
+   *
+   *  The address is rewritten DIRECTLY rather than through the Next router, exactly as on `/settings`:
+   *  this route is statically optimized and `router.replace()` does not reliably update it. The popstate
+   *  that follows is what the effects above, the shell's own highlight and the row-anchor listener read,
+   *  so a section switch from here is indistinguishable from one arriving through the menu.
+   *
+   *  `replaceState`, not push: a section is not a step in the reader's history, and Back has to return to
+   *  the surface the overlay was opened from instead of walking back through every section visited. */
+  const navigateToAccount = (href: string, next: AccountSection) => {
+    setSection(next);
+    window.history.replaceState(window.history.state, '', href);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
     if (!isAccountSection(id)) return;
@@ -353,11 +368,7 @@ export function AccountView() {
     ),
   };
 
-  return (
-    /* Match the settings workspace width so account controls have the same calm, useful measure. */
-    <div className="flex w-full min-w-0 flex-col">
-      <ModuleHeader title={t.account.title} icon={UserCog} />
-
+  const accountWorkspace = (
       <WorkspaceShell variant="deck" hero={deckHero}>
       {deckPluginSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
@@ -614,6 +625,47 @@ export function AccountView() {
         ) : <p className="text-sm text-muted-foreground">{t.push.unsupported}</p>}
       </AccountPanel>
       </WorkspaceShell>
+  );
+
+  // Presented as an intercepted page over the surface that linked here. The shell's menu is inert while
+  // an overlay is up, so this presentation — and only this one — carries the way between the sections:
+  // a secondary column where there is width for it, one line of tabs above the content on a phone.
+  if (surface === 'overlay') {
+    return (
+      <div data-testid="account-overlay-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)]">
+        <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
+          <AccountNavigation
+            label={t.account.title}
+            sections={spatialSections}
+            active={section}
+            layout="sidebar"
+            onNavigate={navigateToAccount}
+          />
+        </aside>
+        <section
+          role="region"
+          aria-label={activeSection.label}
+          className="flex min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 md:p-5"
+        >
+          <AccountNavigation
+            label={t.account.title}
+            sections={spatialSections}
+            active={section}
+            layout="tabs"
+            onNavigate={navigateToAccount}
+            className="md:hidden"
+          />
+          {accountWorkspace}
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    /* Match the settings workspace width so account controls have the same calm, useful measure. */
+    <div className="flex w-full min-w-0 flex-col">
+      <ModuleHeader title={t.account.title} icon={UserCog} />
+      {accountWorkspace}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { Boxes, Brain, FlaskConical, Hash, LayoutDashboard, PenLine, Server, Sparkles, Tags, UserCog } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -323,7 +324,9 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
       />
 
       {/* The personal half of the same question, one click away. A real navigation rather than a deck
-          switch: the account roles live on another route. */}
+          switch: the account roles live on another route — and a CLIENT navigation, because that is what
+          `/account` is intercepted on. A plain <a> reloads the document and lands on the canonical page
+          instead of the overlay every other door into Account opens. */}
       <SettingsRow
         label={t.settings.modelRoles.personal}
         rowId={rowAnchor('settings.modelRoles.personal')}
@@ -331,10 +334,10 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
         icon={UserCog}
         status={<span className="truncate font-mono">{personalPrimary || '—'}</span>}
         actions={(
-          <a href="/account?cat=cli" className={buttonClassName('ghost', 'sm')}>
+          <Link href="/account?cat=cli" className={buttonClassName('ghost', 'sm')}>
             <UserCog size={14} aria-hidden />
             {t.settings.modelRoles.openAccount}
-          </a>
+          </Link>
         )}
       />
     </SettingsGroup>
