@@ -197,13 +197,6 @@ export function runWithIdentity<T>(identity: TurnIdentity, fn: () => T): T {
   return store.run({ identity, apiRequest: true }, fn);
 }
 
-/** Core-only bridge for account-owned infrastructure that must run just before a turn scope exists. It
- * preserves every ambient field and replaces only contribution ownership, so plugin controls can resolve
- * the account themselves instead of accepting an arbitrary user id from another plugin. */
-export function runWithContributionUser<T>(userId: number, fn: () => T): T {
-  return store.run({ ...store.getStore(), contributionUserId: userId }, fn);
-}
-
 /** Run ONE tool call marked as having been approved by a human at an `ask` prompt. Set only by the
  *  execute-time permission gate, around that single call — every other field of the turn is preserved.
  *  A tool reads it to answer "did a person just look at this exact call and say yes?", which nothing else
@@ -265,17 +258,19 @@ export function currentContributionUserId(): number | null {
 }
 
 /** The ACCOUNT the current turn acts as, for everything that is owned per account rather than per
- *  conversation: Sandbox workspaces and HOME, per-user plugin config and secrets, process ownership.
+ *  conversation: managed Project environments and account HOME, per-user plugin config and secrets,
+ *  process ownership.
  *
  *  The contribution owner wins because it is the only account a DELEGATED child carries: its identity is
  *  deliberately account-less (see `TurnIdentity.conversation: 'delegated'`), while the account whose
- *  workspaces and HOME it must keep using is inherited from the turn that spawned it. The verified
+ *  environment and HOME it must keep using is inherited from the turn that spawned it. The verified
  *  identity is the fallback for a turn that has an account but no contribution scope — an owner or direct
  *  turn composed without one, or an authenticated plugin API request, which is an identity and not a
  *  turn at all. Null when neither names an account (an unlinked room sender, instance automation).
  *
  *  This is THE one resolver. A plugin that inlines `contribution ?? identity` itself, or reads only one of
- *  the two, is how the same turn came to create a workspace through one tool and be refused it by the next. */
+ *  the two, is how the same turn came to reach an account's state through one tool and be refused it by
+ *  the next. */
 export function currentAccountUserId(): number | null {
   return currentContributionUserId() ?? currentIdentity()?.elowenUserId ?? null;
 }
