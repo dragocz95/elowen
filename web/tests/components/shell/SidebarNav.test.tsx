@@ -103,11 +103,25 @@ describe('SidebarNav destinations', () => {
     // NO separator anywhere in the column: every boundary is carried by a group label alone.
     expect(container.querySelectorAll('[data-sidebar="separator"]')).toHaveLength(0);
     // The account is a row of the instance group like Settings — no region of its own under a hole
-    // (owner, 7 Sep 2026) — and a disclosure, not a link: the account page is a deck, so its own
-    // sections hang under this row like any other world's pages.
-    const account = screen.getByRole('button', { name: 'Account' }).closest<HTMLElement>('[data-nav-entry-id]')!;
+    // (owner, 7 Sep 2026) — and a plain LINK: the deck opens and carries its own section navigation, so
+    // the column no longer spends its height listing what is inside it.
+    const account = screen.getByRole('link', { name: 'Account' }).closest<HTMLElement>('[data-nav-entry-id]')!;
     expect(groups[2]!.contains(account)).toBe(true);
-    expect(account.parentElement!.querySelectorAll('[data-nav-entry-id]').length).toBeGreaterThan(1);
+    expect(account.querySelectorAll('[data-nav-entry-id]')).toHaveLength(0);
+  });
+
+  /** The two decks were the only rows that ever disclosed their own sections, and between them they held
+   *  every settings category, every account section and whatever the installed plugins contributed — so
+   *  the column meant to reach anywhere was mostly a list of one deck's insides. */
+  it('opens Settings and Account directly instead of disclosing their sections', () => {
+    mount();
+    for (const [label, href] of [['Account', '/account'], ['Settings', '/settings']] as const) {
+      const row = screen.getByRole('link', { name: label });
+      expect(row).toHaveAttribute('href', href);
+      expect(screen.queryByRole('button', { name: label })).toBeNull();
+      // Nothing is disclosed, so nothing can be left expanded or collapsed either.
+      expect(row).not.toHaveAttribute('aria-expanded');
+    }
   });
 
   it('marks the current route with aria-current, through the world it belongs to', () => {
@@ -273,12 +287,13 @@ describe('SidebarNav keyboard operation', () => {
   it('reaches every destination through the tab order, sub-menu pages included', () => {
     const { container } = mount();
     fireEvent.click(screen.getByRole('button', { name: 'Work' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
     const stops = Array.from(container.querySelectorAll<HTMLElement>('a[href], button'))
       .filter((node) => node.getAttribute('tabindex') !== '-1');
     expect(stops).toContain(screen.getByRole('link', { name: 'Board' }));
-    // A deck's sections are keyboard-reachable rows of the menu, which is the only route to them now.
-    expect(stops).toContain(screen.getByRole('link', { name: 'Security' }));
+    // A deck is one stop, and reaching it is what the column owes the keyboard: its sections are then
+    // navigable inside the deck, which carries its own rail and its own tab order.
+    expect(stops).toContain(screen.getByRole('link', { name: 'Account' }));
+    expect(screen.queryByRole('link', { name: 'Security' })).toBeNull();
   });
 
   it('folds the column from Ctrl/Cmd + backslash, and leaves the palette shortcut alone', () => {
@@ -363,7 +378,7 @@ describe('SidebarNav customization', () => {
         bottom: index * 40 + 34, width: 220, height: 34, toJSON: () => ({}),
       });
     });
-    const account = screen.getByRole('button', { name: 'Account' }).closest<HTMLElement>('[data-nav-entry-id]')!;
+    const account = screen.getByRole('link', { name: 'Account' }).closest<HTMLElement>('[data-nav-entry-id]')!;
     const accountIndex = rows.indexOf(account);
     const neighbour = rows.find((row) => row !== account)!;
     const neighbourIndex = rows.indexOf(neighbour);

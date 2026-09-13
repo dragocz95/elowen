@@ -22,9 +22,9 @@ async function openFromChat(page: import('@playwright/test').Page) {
   const menu = page.getByRole('button', { name: 'Toggle menu' });
   if (await menu.isVisible()) await menu.click();
   const sidebar = page.locator('[data-shell="sidebar"][data-open="true"], [data-shell="sidebar"]:not([data-mode="drawer"])').first();
-  await sidebar.locator('button').filter({ hasText: 'Settings' }).click();
-  await sidebar.locator('a[href="/settings?cat=system"]').click();
-  await expect(page).toHaveURL(/\/settings\?cat=/);
+  // One row for the deck: the column opens Settings, and Settings navigates its own sections.
+  await sidebar.locator('a[href="/settings"]').click();
+  await expect(page).toHaveURL(/\/settings/);
   return page.getByRole('dialog', { name: 'Settings' });
 }
 
@@ -38,7 +38,7 @@ test('Settings intercepts navigation over chat and keeps canonical history', asy
   const geometry = await dialog.evaluate((node) => {
     const dialogBox = node.getBoundingClientRect();
     const nav = node.querySelector('nav[aria-label]')!.getBoundingClientRect();
-    const content = node.querySelector('[data-testid="settings-overlay-layout"] > section')!.getBoundingClientRect();
+    const content = node.querySelector('[data-testid="settings-deck-layout"] > section')!.getBoundingClientRect();
     return {
       dialog: { x: dialogBox.x, y: dialogBox.y, width: dialogBox.width, height: dialogBox.height },
       nav: { x: nav.x, width: nav.width },
@@ -53,7 +53,12 @@ test('Settings intercepts navigation over chat and keeps canonical history', asy
   expect(Math.abs(geometry.nav.width - NAV_COLUMN_PX)).toBeLessThanOrEqual(NAV_COLUMN_TOLERANCE_PX);
   expect(geometry.content.x).toBeGreaterThan(geometry.nav.x + geometry.nav.width - 2);
 
-  await page.getByRole('button', { name: /^Models/ }).click();
+  // Dispatched on the row itself: every record carries its own help anchor, whose expanded hit area
+  // covers the row and swallows a positional click. What this test is about is the history the row
+  // writes, not where a pointer lands on it.
+  await page.locator('[data-testid="settings-navigation-sidebar"]')
+    .getByRole('button', { name: 'Models', exact: true })
+    .evaluate((row) => (row as HTMLElement).click());
   await expect(page).toHaveURL('/settings?cat=models');
   await page.goBack();
   await expect(page).toHaveURL('/chat');
@@ -88,7 +93,7 @@ test('the phone overlay is one full-screen pane navigated by a persistent sectio
   await expect(dialog.getByRole('searchbox', { name: 'Search settings' })).toBeHidden();
 
   const scrolling = await dialog.evaluate((node) => {
-    const visiblePanes = [...node.querySelectorAll<HTMLElement>('[data-testid="settings-overlay-layout"] > aside, [data-testid="settings-overlay-layout"] > section')]
+    const visiblePanes = [...node.querySelectorAll<HTMLElement>('[data-testid="settings-deck-layout"] > aside, [data-testid="settings-deck-layout"] > section')]
       .filter((pane) => getComputedStyle(pane).display !== 'none');
     const track = node.querySelector<HTMLElement>('[data-testid="settings-navigation-tabs"]')!;
     return {

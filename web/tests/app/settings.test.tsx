@@ -433,7 +433,7 @@ describe('SettingsPage', () => {
     // so they share an accessible name the way `/account`'s two do. The searchable one is the column.
     expect(screen.getByTestId('settings-navigation-sidebar')).toHaveAccessibleName(en.settings.navigationLabel);
     expect(screen.getByTestId('settings-navigation-tabs')).toBeInTheDocument();
-    expect(container.querySelector('[data-testid="settings-overlay-layout"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-testid="settings-deck-layout"]')).toBeInTheDocument();
     expect(container.querySelector('[data-module="settings"]')).toBeNull();
 
     fireEvent.change(screen.getByRole('searchbox', { name: en.settings.navigationSearch }), { target: { value: 'retention' } });
@@ -454,7 +454,7 @@ describe('SettingsPage', () => {
     const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
-    const layout = container.querySelector('[data-testid="settings-overlay-layout"]')!;
+    const layout = container.querySelector('[data-testid="settings-deck-layout"]')!;
     const navigationPane = layout.querySelector('aside')!;
     const contentPane = layout.querySelector('section')!;
     // The column is the wide shape only; the content pane is never traded away for it.

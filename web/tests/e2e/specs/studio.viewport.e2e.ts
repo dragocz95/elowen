@@ -294,47 +294,37 @@ test('a Studio deck carries no menu of its own and is driven from the sidebar su
   await expect(shell).not.toHaveAttribute('data-section-layout');
   await expect(app.locator('.page-toolbar')).toBeVisible();
 
-  // The section the address names is the one row the menu marks, with its parent open around it.
+  // The deck is ONE row of the menu and it stays marked across its own sections: the column says which
+  // world the reader is in, and the deck says where inside it.
   const sidebar = app.locator('nav[data-shell="sidebar"]');
-  await expect(sidebar.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-expanded', 'true');
-  await expect(sidebar.locator('[aria-current="page"]')).toHaveAttribute('href', '/settings?cat=models');
+  await expect(sidebar.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
+  await expect(sidebar.locator('.sidebar-nav__sub-item')).toHaveCount(0);
 
-  // And a row navigates: the page follows it and the mark moves with the address.
-  await sidebar.getByRole('link', { name: 'Data', exact: true }).click();
+  // And the deck's own navigation moves the page without the column changing under it.
+  await app.getByRole('button', { name: 'Data', exact: true }).first().click();
   await expect(app.getByRole('heading', { level: 1, name: 'Data' })).toBeVisible();
   await expect(app).toHaveURL(/\/settings\?cat=data/);
-  await expect(sidebar.locator('[aria-current="page"]')).toHaveAttribute('href', '/settings?cat=data');
+  await expect(sidebar.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
 
-  // The page is one column again: hero, toolbar and content span the same measure, with no track held
-  // beside them for a menu that is no longer there.
+  // The track the deck holds for its OWN sections sits beside the content, not over it — and it is the
+  // deck's, not the shell's: `workspace-shell` still has no section navigation of its own, and the page
+  // does not overflow sideways to make room for the one the deck brought.
   const geometry = await app.evaluate(() => {
-    const shellEl = document.querySelector<HTMLElement>('.workspace-shell')!;
-    const hero = shellEl.querySelector<HTMLElement>(':scope > .workspace-hero')!.getBoundingClientRect();
-    const toolbarEl = shellEl.querySelector<HTMLElement>(':scope > .page-toolbar')!;
-    const toolbar = toolbarEl.getBoundingClientRect();
-    const contentEl = shellEl.querySelector<HTMLElement>(':scope > .workspace-shell__content')!;
-    const content = contentEl.getBoundingClientRect();
-    const shellRect = shellEl.getBoundingClientRect();
+    const deck = document.querySelector<HTMLElement>('[data-testid="settings-deck-layout"]')!;
+    const rail = deck.querySelector<HTMLElement>(':scope > aside')!.getBoundingClientRect();
+    const content = deck.querySelector<HTMLElement>(':scope > section')!.getBoundingClientRect();
     const main = document.querySelector<HTMLElement>('main')!;
     return {
-      heroLeft: hero.left, heroRight: hero.right,
-      shellLeft: shellRect.left, shellRight: shellRect.right,
-      toolbarLeft: toolbar.left, contentLeft: content.left,
-      toolbarRight: toolbar.right, contentRight: content.right,
-      shellDisplay: getComputedStyle(shellEl).display,
-      toolbarContainer: getComputedStyle(toolbarEl).containerName,
-      contentContainer: getComputedStyle(contentEl).containerName,
+      railWidth: rail.width,
+      contentLeft: content.left,
+      railRight: rail.right,
+      shellSectionNavigation: document.querySelectorAll('.workspace-shell > .workspace-shell__section-navigation').length,
       pageOverflow: main.scrollWidth - main.clientWidth,
     };
   });
-  expect(Math.abs(geometry.heroLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.heroRight - geometry.shellRight)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.toolbarLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.contentLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.toolbarRight - geometry.contentRight)).toBeLessThanOrEqual(1);
-  expect(geometry.shellDisplay).not.toBe('grid');
-  expect(geometry.toolbarContainer).toBe('workspace-shell');
-  expect(geometry.contentContainer).toBe('workspace-shell');
+  expect(geometry.railWidth).toBeGreaterThan(180);
+  expect(geometry.contentLeft).toBeGreaterThanOrEqual(geometry.railRight - 1);
+  expect(geometry.shellSectionNavigation).toBe(0);
   expect(geometry.pageOverflow).toBeLessThanOrEqual(1);
 });
 
@@ -356,21 +346,23 @@ test('a 390px Studio deck reaches its sections through the navigation sheet', as
     const sheet = page.locator('.overlay-nav-drawer');
     await expect.poll(async () => (await sheet.boundingBox())!.x).toBeGreaterThanOrEqual(0);
 
-    // The sheet carries the same sub-menus as the column, already open on the section in the address.
-    await expect(sheet.getByRole('button', { name: 'Account' })).toHaveAttribute('aria-expanded', 'true');
+    // The sheet carries the same rows as the column: the deck is one destination, not a disclosure, and
+    // the sheet discloses nothing either.
+    await expect(sheet.getByRole('link', { name: 'Account' })).toHaveAttribute('aria-current', 'page');
+    await expect(sheet.locator('.sidebar-nav__sub-item')).toHaveCount(0);
 
-    // Every row of an open sub-menu is a real touch target — the same floor the destinations above it
-    // meet, and it matters because this sheet is the phone's only way between sections now.
-    const targets = await sheet.locator('.sidebar-nav__sub-item').evaluateAll((items) => items.map((item) => ({
+    // Every row is a real touch target — the floor every destination in the sheet meets.
+    const targets = await sheet.locator('.sidebar-nav__item').evaluateAll((items) => items.map((item) => ({
       label: (item.textContent || '').trim(),
       height: Math.round(item.getBoundingClientRect().height),
     })));
-    expect(targets.length, 'the sheet discloses the account sections').toBeGreaterThan(1);
+    expect(targets.length, 'the sheet carries the menu').toBeGreaterThan(1);
     const short = targets.filter((target) => target.height < TOUCH_TARGET);
-    expect(short, `sub-menu rows under ${TOUCH_TARGET}px: ${JSON.stringify(short)}`).toEqual([]);
+    expect(short, `menu rows under ${TOUCH_TARGET}px: ${JSON.stringify(short)}`).toEqual([]);
 
-    // And tapping one navigates rather than dismissing: the sheet is above its own scrim.
-    await sheet.getByRole('link', { name: 'Security', exact: true }).click();
+    // And the phone's way between sections is the deck's own tab strip, above its own scrim.
+    await page.getByRole('button', { name: 'Close menu' }).click().catch(() => {});
+    await page.getByRole('button', { name: 'Security', exact: true }).first().click();
     await expect(page).toHaveURL(/\/account\?cat=security/);
     await expect(page.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
   } finally {

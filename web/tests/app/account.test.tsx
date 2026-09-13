@@ -52,10 +52,11 @@ describe('AccountPage (canonical)', () => {
     expect(container.querySelector('[data-module="account"]')).not.toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.querySelector('[data-elowen-modal]')).toBeNull();
-    expect(container.querySelector('[data-testid="account-overlay-layout"]')).toBeNull();
-    // The sections stay rows of the shell menu here; the in-page navigation belongs to the overlay.
-    expect(screen.queryByTestId('account-navigation-sidebar')).toBeNull();
-    expect(screen.queryByTestId('account-navigation-tabs')).toBeNull();
+    // The deck layout is the SAME here as in the overlay: the menu holds one row for Account, so the way
+    // between its sections has to be in the deck itself on every surface that draws it.
+    expect(container.querySelector('[data-testid="account-deck-layout"]')).not.toBeNull();
+    expect(screen.queryByTestId('account-navigation-sidebar')).not.toBeNull();
+    expect(screen.queryByTestId('account-navigation-tabs')).not.toBeNull();
   });
 
   it('keeps the section a deep link names and writes back the one it opened on', async () => {

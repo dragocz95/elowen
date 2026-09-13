@@ -867,7 +867,11 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
   // switch: the content pane carried a "back" button that swapped the whole screen for the list, so the
   // section the reader had just opened disappeared behind the way back to it and moving between two
   // sections cost four taps. The strip keeps both on screen and never hides the current section.
-  if (surface === 'overlay') {
+  //
+  // BOTH presentations carry it. The canonical page used to leave the sections to the sidebar's own
+  // sub-menu, which is gone: a deck that is one row of the menu has to be navigable once you are in it,
+  // and a hard-loaded `/settings?cat=security` with no way to anywhere else is a dead end.
+  {
     const navigation = (layout: 'sidebar' | 'tabs', className?: string) => (
       <SettingsNavigation
         t={t}
@@ -884,8 +888,8 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
           : router.replace(href)}
       />
     );
-    return (
-      <div data-testid="settings-overlay-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[15rem_minmax(0,1fr)]">
+    const deck = (
+      <div data-testid="settings-deck-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
           {navigation('sidebar')}
         </aside>
@@ -899,12 +903,12 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
         </section>
       </div>
     );
+    if (surface === 'overlay') return deck;
+    return (
+      <ModuleShell moduleId="settings">
+        <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
+        {deck}
+      </ModuleShell>
+    );
   }
-
-  return (
-    <ModuleShell moduleId="settings">
-      <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
-      {settingsWorkspace}
-    </ModuleShell>
-  );
 }
