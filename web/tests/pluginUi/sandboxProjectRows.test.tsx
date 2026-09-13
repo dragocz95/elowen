@@ -62,6 +62,12 @@ const server = setupServer(
     return HttpResponse.json({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds
       .map((projectId) => usageOf(projectId, projectId === 3 ? 'running' : 'stopped')) });
   }),
+  // The read the project drawer performs when it opens a managed project. It is the SAME route the
+  // lifecycle action posts to, which is why an invented `/api/projects/:id/environment-state` handler
+  // matched nothing and quietly left the drawer's own read unstubbed.
+  http.get('*/api/plugins/sandbox/api/projects/:id/environment', ({ params }) =>
+    HttpResponse.json({ environment: { state: Number(params.id) === 3 ? 'running' : 'stopped' } })),
+  http.get('*/api/projects/:id/git', () => HttpResponse.json({ isRepo: false, status: null, remotes: [], branches: [], commits: [] })),
   http.post('*/api/plugins/sandbox/api/projects/:id/environment', async ({ params, request }) => {
     const projectId = Number(params.id);
     const body = await request.json() as { action: { kind: string }; requestId: string };
@@ -83,8 +89,9 @@ afterEach(() => { server.resetHandlers(); localStorage.clear(); });
 afterAll(() => server.close());
 
 function mount() {
-  const { wrapper: Wrapper } = createWrapper();
+  const { wrapper: Wrapper, client } = createWrapper();
   render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+  return client;
 }
 
 describe('sandbox contribution to the Project register rows', () => {
@@ -165,14 +172,29 @@ describe('sandbox contribution to the Project register rows', () => {
     expect(screen.queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
   });
 
+  // A refusal fences the read this page is making. A cache entry left behind by an EARLIER project set —
+  // a register that still had one more project on it, or one keyed on whatever the filter box left — would
+  // otherwise sit there intact, ready to answer the moment anything selected it again.
+  it('removes every other resource cache of the plugin when the account is refused', async () => {
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', () => HttpResponse.json({ error: 'project_forbidden' }, { status: 403 })));
+    const { wrapper: Wrapper, client } = createWrapper();
+    const stalePageKey = ['plugin', 'sandbox', 'project-row-usage', 3];
+    client.setQueryData(stalePageKey, { sampledAt: '2026-01-01T00:00:00.000Z', projects: [usageOf(3, 'running')] });
+    const usageKeys = () => client.getQueryCache().getAll().map((query) => query.queryKey)
+      .filter((key) => Array.isArray(key) && key[0] === 'plugin' && key[1] === 'sandbox' && key[2] === 'project-row-usage');
+    expect(usageKeys()).toHaveLength(1);
+
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    expect((await screen.findAllByText(strings.error_project_forbidden)).length).toBeGreaterThan(0);
+
+    await waitFor(() => expect(usageKeys()).toEqual([['plugin', 'sandbox', 'project-row-usage', 3, 5]]));
+    expect(client.getQueryData(stalePageKey)).toBeUndefined();
+  });
+
   // The drawer opens over a row whose CPU, memory and disk are already on screen. It renders THAT frame,
   // so the figures are there in the same commit as the drawer — no second request, and no spinner
   // replacing numbers the reader can still see behind the rail.
   it('hydrates the project drawer from the row snapshot instead of reading again', async () => {
-    server.use(
-      http.get('*/api/projects/3/git', () => HttpResponse.json({ isRepo: false, status: null, remotes: [], branches: [], commits: [] })),
-      http.get('*/api/projects/3/environment-state', () => HttpResponse.json({ environment: { state: 'running' } })),
-    );
     mount();
     const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
     await waitFor(() => expect(within(row).getAllByRole('progressbar', { name: strings.usageCpu }).length).toBeGreaterThan(0));
@@ -194,7 +216,6 @@ describe('sandbox contribution to the Project register rows', () => {
   // last known ones: replacing a real measurement with "Unavailable" because one poll missed is how a
   // populated environment kept reporting nothing.
   it('keeps the measured figures through a refresh and marks a failed one stale', async () => {
-    server.use(http.get('*/api/projects/3/git', () => HttpResponse.json({ isRepo: false, status: null, remotes: [], branches: [], commits: [] })));
     mount();
     await screen.findAllByRole('progressbar', { name: strings.usageCpu });
     const open = screen.getByRole('button', { name: 'Open project analysis' });
@@ -215,6 +236,130 @@ describe('sandbox contribution to the Project register rows', () => {
     expect(within(panel).queryByText(strings.usageUnavailable!)).toBeNull();
     // The row behind it agrees: one snapshot, two surfaces.
     expect(row.querySelector('[data-project-row-metrics][data-stale="true"]')).not.toBeNull();
+  });
+
+  /** Replace one resource of the batch, keeping the `200` and every other figure intact. This is the
+   *  failure the host actually produces: an unreadable cgroup file or an unwalkable disk tree is reported
+   *  INSIDE a successful answer, per resource, not as a failed request. */
+  const usageWithout = (...kinds: ('cpu' | 'memory' | 'disk')[]) =>
+    http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      usageRequests.push(projectIds);
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:01.000Z', projects: projectIds.map((projectId) => {
+        const item = usageOf(projectId, projectId === 3 ? 'running' : 'stopped') as any;
+        for (const kind of kinds) item.resources[kind] = { state: 'unavailable', usedCpus: null, percent: null, usedBytes: null, limitBytes: null };
+        return item;
+      }) });
+    });
+
+  // The batch answers `200` with a per-resource `unavailable` far more often than it fails outright. A
+  // disk tree the helper could not walk must not wipe the figure measured a moment earlier: the reading
+  // stays, marked as the last known one.
+  it('keeps a measured disk when a successful batch reports that one resource is unavailable', async () => {
+    mount();
+    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
+    // Two copies of the same snapshot live on the row: the compact one in the identity cell and the one
+    // in the Resources column.
+    await waitFor(() => expect(within(row).getAllByText('512 MiB').length).toBe(2));
+
+    server.use(usageWithout('disk'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
+    const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
+    fireEvent.click(within(panel).getByRole('button', { name: strings.usageRefresh }));
+
+    await waitFor(() => expect(usageRequests).toHaveLength(2));
+    await waitFor(() => expect(panel.querySelector('[data-project-row-metrics][data-stale="true"]')).not.toBeNull());
+    const disk = panel.querySelector('[data-metric="disk"]') as HTMLElement;
+    expect(within(disk).getByText('512 MiB')).toBeInTheDocument();
+    expect(disk).toHaveAttribute('data-metric-state', 'absolute');
+    expect(within(disk).queryByText(strings.usageUnavailable!)).toBeNull();
+    // The request SUCCEEDED, so the rest of it is current: only the mark says a figure is older.
+    expect(within(panel).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
+    expect(within(panel).getByText(strings.usageStale!)).toBeInTheDocument();
+  });
+
+  it('keeps measured CPU and memory when the cgroup read fails inside a successful batch', async () => {
+    mount();
+    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
+    await waitFor(() => expect(within(row).getAllByRole('progressbar', { name: strings.usageCpu }).length).toBeGreaterThan(0));
+
+    server.use(usageWithout('cpu', 'memory'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
+    const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
+    fireEvent.click(within(panel).getByRole('button', { name: strings.usageRefresh }));
+
+    await waitFor(() => expect(usageRequests).toHaveLength(2));
+    await waitFor(() => expect(panel.querySelector('[data-project-row-metrics][data-stale="true"]')).not.toBeNull());
+    expect(within(panel).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
+    expect(within(panel).getByRole('progressbar', { name: strings.usageRam })).toHaveAttribute('aria-valuetext', expect.stringContaining('256 MiB / 1 GiB'));
+    expect(within(panel).queryByText(strings.usageUnavailable!)).toBeNull();
+  });
+
+  // Preserving a figure is only honest when there IS one. A resource that has never been measured says
+  // so, rather than showing a blank meter that could be read as zero.
+  it('states unavailable for a resource no good value was ever measured for', async () => {
+    server.use(usageWithout('disk'));
+    mount();
+    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
+    await waitFor(() => expect(row.querySelector('[data-metric="disk"]')).not.toBeNull());
+    const disk = row.querySelector('[data-metric="disk"]') as HTMLElement;
+
+    expect(disk).toHaveAttribute('data-metric-state', 'unavailable');
+    expect(within(disk).getByText(strings.usageUnavailable!)).toBeInTheDocument();
+    // Nothing was kept, so nothing is claimed to be older than it is.
+    expect(row.querySelector('[data-project-row-metrics][data-stale="true"]')).toBeNull();
+  });
+
+  // The resource read belongs to the PAGE, not to whatever the filter box currently leaves on screen.
+  // Keying it on the filtered rows gave every keystroke its own cache entry and its own host measurement,
+  // and emptied the open drawer the moment its project stopped matching.
+  it('keeps the open drawer snapshot and issues no further batch when the register is filtered', async () => {
+    mount();
+    await screen.findAllByRole('progressbar', { name: strings.usageCpu });
+    await waitFor(() => expect(usageRequests).toEqual([[3, 5]]));
+    fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
+    const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
+
+    // A search that matches the HOST project alone, so the open managed project is no longer a row.
+    fireEvent.change(screen.getByLabelText('Search projects'), { target: { value: 'elowen' } });
+
+    await waitFor(() => expect(within(panel).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50'));
+    expect(within(panel).getByText('512 MiB')).toBeInTheDocument();
+    expect(usageRequests).toEqual([[3, 5]]);
+  });
+
+  // The control exists to produce ONE fresh measurement. React Query's default cancels a read in flight
+  // and starts another, so an impatient reader used to bill the host one whole sweep per click.
+  it('produces a single backend read however often refresh is pressed', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    mount();
+    await screen.findAllByRole('progressbar', { name: strings.usageCpu });
+    await waitFor(() => expect(usageRequests).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
+    const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
+
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      usageRequests.push(projectIds);
+      await gate;
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:02.000Z', projects: projectIds
+        .map((projectId) => usageOf(projectId, projectId === 3 ? 'running' : 'stopped')) });
+    }));
+
+    const button = within(panel).getByRole('button', { name: strings.usageRefresh });
+    fireEvent.click(button);
+    await waitFor(() => expect(usageRequests).toHaveLength(2));
+    // While that read is in flight the control is not offering a second one, and a click that reaches it
+    // anyway is refused by `cancelRefetch: false` rather than starting a competing sweep.
+    await waitFor(() => expect(button).toBeDisabled());
+    fireEvent.click(button);
+    fireEvent.click(button);
+    release?.();
+
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(usageRequests).toHaveLength(2);
+    expect(within(panel).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
   });
 
   // A managed environment has no disk quota, so there is no denominator. The used figure is complete on

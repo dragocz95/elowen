@@ -26,7 +26,14 @@ interface MutationResult<TVars, TData = unknown> {
   mutateAsync(vars: TVars): Promise<TData>;
   isPending: boolean;
 }
-interface QueryClient { invalidateQueries: (input: { queryKey: unknown[] }) => Promise<void> }
+interface QueryClient {
+  /** The second argument is React Query's own refetch options. `cancelRefetch: false` is the one this
+   *  bundle needs: the default aborts a read already in flight and starts another. */
+  invalidateQueries: (input: { queryKey: unknown[] }, options?: { cancelRefetch?: boolean }) => Promise<void>;
+  /** Drops cache entries outright, matched by predicate. A refused account's figures are removed, not
+   *  merely left unread. */
+  removeQueries: (input: { predicate: (query: { queryKey: unknown }) => boolean }) => void;
+}
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'pending' | 'error';
 interface RuntimeHooks {
   usePluginStrings(plugin: string): Record<string, string>;

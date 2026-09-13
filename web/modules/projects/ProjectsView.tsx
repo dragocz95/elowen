@@ -139,17 +139,22 @@ function ProjectResourceMeters({ metrics, compact = false }: { metrics?: PluginP
 function ProjectResourcePanel({ metrics, title }: { metrics: PluginProjectRowMetrics; title: string }) {
   return (
     <section data-project-resource-panel className="border-b border-border/70 py-3">
+      {/* The title yields before the stale mark and the control do: on a 320px drawer the three of them
+          together are wider than the rail, and the two that state something the reader has to act on are
+          the ones worth keeping whole. */}
       <div className="mb-2 flex min-w-0 items-center gap-2">
-        <h3 className="text-xs font-semibold text-foreground">{title}</h3>
-        {metrics.stale && metrics.staleLabel ? <Badge tone="warning">{metrics.staleLabel}</Badge> : null}
-        <span className="flex-1" />
+        <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">{title}</h3>
+        {metrics.stale && metrics.staleLabel ? <span className="shrink-0"><Badge tone="warning">{metrics.staleLabel}</Badge></span> : null}
         {metrics.onRefresh && metrics.refreshLabel ? (
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-7 w-7 shrink-0"
             aria-label={metrics.refreshLabel}
             aria-busy={metrics.refreshing === true}
+            // The control exists to produce ONE fresh measurement, so it is closed while that read is in
+            // flight rather than inviting a second sweep of the host on top of the first.
+            disabled={metrics.refreshing === true}
             title={metrics.refreshLabel}
             onClick={metrics.onRefresh}
           >
@@ -490,15 +495,13 @@ export function ProjectsView() {
   // the row, the path and the menu; the environment behind a managed project is the sandbox plugin's,
   // states and lifecycle actions included, so none of its vocabulary lives here.
   //
-  // The OPEN project is asked about whether or not the search still matches it. Narrowing the query with
-  // a drawer open otherwise took the selected project out of the plugin's input, and the drawer's
-  // resource panel went blank for a project that is still on screen.
-  const observedProjects = useMemo(
-    () => selectedProject && !filteredProjects.some((project) => project.id === selectedProject.id)
-      ? [...filteredProjects, selectedProject]
-      : filteredProjects,
-    [filteredProjects, selectedProject],
-  );
+  // They are asked about the account's WHOLE authorized list, not the rows the search leaves. The set a
+  // plugin observes is what it keys its own reads on, so narrowing it per keystroke gave every filter
+  // state a cache entry and a batch request of its own — and it took the open drawer's project out of the
+  // input entirely, blanking the resource panel of a project that is still on screen. The daemon has
+  // already decided what this account may see; the search box is a view of that list, not a second
+  // authorization over it.
+  const observedProjects = useMemo(() => projects.data ?? [], [projects.data]);
   const pluginRows = usePluginProjectRows(observedProjects);
   const pluginRowActions = (project: Project) => pluginRows.actionsFor(project.id);
   const selectedResources = selectedProject ? pluginRows.metricsFor(selectedProject.id) : undefined;

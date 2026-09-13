@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { dispatchEnvironmentAction } from './environmentRequest';
 import type { EnvironmentAction, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
 import { jsonBody, runtime, type Project } from './runtime';
@@ -47,6 +47,11 @@ const ACTIONS: { kind: 'start' | 'stop' | 'restart' | 'snapshot'; label: string;
 ];
 
 const IN_FLIGHT: EnvironmentState[] = ['starting', 'deleting'];
+/** The prefix every resource cache of this plugin shares. The project ids follow it, so one account's
+ *  page has exactly ONE resource cache and a refusal can find every other one. */
+const USAGE_QUERY_PREFIX = ['plugin', 'sandbox', 'project-row-usage'];
+const isUsageQueryKey = (key: unknown): boolean =>
+  Array.isArray(key) && USAGE_QUERY_PREFIX.every((part, index) => key[index] === part);
 export const PROJECT_USAGE_QUERY_POLICY = Object.freeze({
   staleTime: 25_000,
   refetchInterval: 30_000,
@@ -103,12 +108,20 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   const host = hooks.useTranslation();
   const { toast } = hooks.useToast();
   const qc = hooks.useQueryClient();
+  // The host hands this hook the account's whole authorized project list rather than the rows a search
+  // happens to leave, so `managedIds` — and therefore the cache key below — is a page-level fact that does
+  // not move while someone types in the filter box. Keying on the filtered set gave every keystroke its own
+  // cache entry and its own batch request, and an open drawer lost the snapshot it was showing the moment
+  // the search stopped matching its project.
   const managed = projects.filter((project) => project.executionKind === 'managed' && project.lifecycle !== 'deleting');
   const managedIds = managed.map((project) => project.id).sort((a, b) => a - b);
-  const usageQueryKey = ['plugin', 'sandbox', 'project-row-usage', ...managedIds];
+  const usageQueryKey = [...USAGE_QUERY_PREFIX, ...managedIds];
   const usage = hooks.useQuery<UsageBatch>({
     queryKey: usageQueryKey,
-    queryFn: () => api('/plugins/sandbox/api/environments/usage', jsonBody({ projectIds: managedIds })) as Promise<UsageBatch>,
+    // React Query's own signal, so a read this client no longer needs is actually abandoned at the socket
+    // rather than left to complete into a cache nobody reads.
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      api('/plugins/sandbox/api/environments/usage', { ...jsonBody({ projectIds: managedIds }), signal }) as Promise<UsageBatch>,
     enabled: managedIds.length > 0,
     ...PROJECT_USAGE_QUERY_POLICY,
     retry: false,
@@ -127,17 +140,59 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   const refreshing = usage.isFetching && !usage.isLoading;
   const stale = usage.isError && !refused && usageByProject.size > 0;
   const refresh = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'project-row-usage'] });
+    // `cancelRefetch: false` is what makes a second click a no-op while a read is in flight. The default
+    // ABORTS the running request and starts another, so an impatient reader produced one host measurement
+    // per click on the one control whose whole job is to produce a single fresh one.
+    void qc.invalidateQueries({ queryKey: USAGE_QUERY_PREFIX }, { cancelRefetch: false });
   }, [qc]);
-  /** Stamps the shared read state onto one project's figures. */
-  const snapshot = (items: RowMetric[]): RowMetrics => ({
+
+  // The last figure actually MEASURED for one resource of one project, keyed `<projectId>:<kind>`.
+  //
+  // A failed request is the rare case. The batch far more often answers `200` with one resource reporting
+  // `unavailable` inside it — an unreadable cgroup file on a machine that is otherwise running, a disk tree
+  // the helper could not walk — and replacing a real reading with the word "Unavailable" on that answer is
+  // exactly the fault that replacing it on a failed request was. The measurement stays, the snapshot says
+  // these are the last known figures, and "Unavailable" is shown only when there is nothing to keep.
+  const measured = useRef(new Map<string, RowMetric>());
+  const liveIds = new Set(managedIds);
+  for (const key of [...measured.current.keys()]) {
+    if (!liveIds.has(Number(key.slice(0, key.indexOf(':'))))) measured.current.delete(key);
+  }
+  // A refusal is not a gap to paper over: this account may no longer see these figures at all.
+  if (refused) measured.current.clear();
+  const recall = (projectId: number, kind: 'cpu' | 'memory' | 'disk', metric: UsageMetric): { item: RowMetric; kept: boolean } => {
+    const key = `${projectId}:${kind}`;
+    const fresh = metricValue(metric, kind, s);
+    if (fresh.state === 'ready' || fresh.state === 'absolute') { measured.current.set(key, fresh); return { item: fresh, kept: false }; }
+    // `stopped` is the truth about a resource that is not running to be measured, and it ENDS the life of
+    // the figure before it — a reading from before the stop must not reappear when a later poll cannot read
+    // the machine that was restarted since.
+    if (fresh.state === 'stopped') { measured.current.delete(key); return { item: fresh, kept: false }; }
+    if (fresh.state !== 'unavailable') return { item: fresh, kept: false };
+    const kept = measured.current.get(key);
+    return kept ? { item: kept, kept: true } : { item: fresh, kept: false };
+  };
+
+  /** Stamps the shared read state onto one project's figures. `keeping` is this project's own reason to be
+   *  marked stale: the request succeeded, but part of what came back carried no figure. */
+  const snapshot = (items: RowMetric[], keeping = false): RowMetrics => ({
     label: s.resources,
     items,
     ...(refreshing ? { refreshing: true } : {}),
-    ...(stale ? { stale: true, staleLabel: s.usageStale } : {}),
+    ...(stale || keeping ? { stale: true, staleLabel: s.usageStale } : {}),
     onRefresh: refresh,
     refreshLabel: s.usageRefresh,
   });
+
+  // A refusal fences the ACTIVE read by dropping its data above. A cache entry left behind by an earlier
+  // project set would still be there to answer, so every other resource cache of this plugin is removed
+  // outright. The active key is deliberately left alone: removing a query its own observer is mounted on
+  // only makes React Query fetch it again.
+  const activeKey = JSON.stringify(usageQueryKey);
+  useEffect(() => {
+    if (!refused) return;
+    qc.removeQueries({ predicate: (query: { queryKey: unknown }) => isUsageQueryKey(query.queryKey) && JSON.stringify(query.queryKey) !== activeKey });
+  }, [refused, activeKey, qc]);
 
   const [confirm, setConfirm] = useState<{ projectId: number; action: EnvironmentAction } | null>(null);
   const [watched, setWatched] = useState<{ projectId: number; operationId: string; kind: string } | null>(null);
@@ -161,7 +216,7 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
       setProgressOpen(true);
       setConfirm(null);
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'project-row-usage'] }),
+        qc.invalidateQueries({ queryKey: USAGE_QUERY_PREFIX }),
         qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'environment-state', projectId] }),
         qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'project-environment', projectId] }),
       ]);
@@ -203,11 +258,16 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
       tone: presentation.tone,
       ...(busy ? { busy: true } : {}),
     };
-    metrics[project.id] = snapshot([
-      state === 'starting' ? { id: 'cpu', label: s.usageCpu, value: s.usageLoading, state: 'loading' } : metricValue(item.resources.cpu, 'cpu', s),
-      state === 'starting' ? { id: 'memory', label: s.usageRam, value: s.usageLoading, state: 'loading' } : metricValue(item.resources.memory, 'memory', s),
-      metricValue(item.resources.disk, 'disk', s),
-    ]);
+    const readings = [
+      state === 'starting'
+        ? { item: { id: 'cpu', label: s.usageCpu, value: s.usageLoading, state: 'loading' } as RowMetric, kept: false }
+        : recall(project.id, 'cpu', item.resources.cpu),
+      state === 'starting'
+        ? { item: { id: 'memory', label: s.usageRam, value: s.usageLoading, state: 'loading' } as RowMetric, kept: false }
+        : recall(project.id, 'memory', item.resources.memory),
+      recall(project.id, 'disk', item.resources.disk),
+    ];
+    metrics[project.id] = snapshot(readings.map((reading) => reading.item), readings.some((reading) => reading.kept));
     actions[project.id] = ACTIONS.map((action) => ({
       id: action.kind,
       label: s[action.label] || action.kind,
@@ -242,7 +302,7 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
         onRetry={() => { if (watched) dispatchAndReport(watched.projectId, { kind: watched.kind } as EnvironmentAction); }}
         onSettled={() => {
           setWatched(null);
-          void qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'project-row-usage'] });
+          void qc.invalidateQueries({ queryKey: USAGE_QUERY_PREFIX });
         }}
         onClose={({ running }: { running: boolean }) => { setProgressOpen(false); if (!running) setWatched(null); }}
       />

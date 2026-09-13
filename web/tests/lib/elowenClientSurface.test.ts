@@ -104,10 +104,24 @@ const KEY_HEADS: Record<string, string | undefined> = Object.fromEntries(
   Object.entries(QUERY_KEYS).map(([name, key]) => [name, key[0]]),
 );
 
+/** Substitute a key held in a module-level `const NAME = ['head', …]` of the SAME file for its literal.
+ *
+ *  Without this, a prefix shared by a query and by the invalidation of that query has to be spelled out at
+ *  both sites — and a scan that forces duplication to stay readable is buying its own coverage with the
+ *  one-source-of-truth rule. A name that resolves to no such declaration is left alone and still lands in
+ *  `unreadable` below, so nothing becomes invisible by being given a name. */
+function withLocalConstants(expression: string, source: string): string {
+  return expression.replace(/\b[A-Z][A-Z0-9_]*\b/g, (name) => {
+    const declared = new RegExp(`const\\s+${name}\\s*(?::[^=]+)?=\\s*(\\[[^\\]]*\\])`).exec(source);
+    return declared ? captured(declared, 1) : name;
+  });
+}
+
 /** Every head named by one key expression — `['head', …]` literals and `QUERY_KEYS.x` references, wherever
  *  they sit in it, so a ternary key contributes both of its branches. */
-function keyHeads(expression: string): string[] {
-  const literals = [...expression.matchAll(/\[\s*'([a-z-]+)'/g)].map((m) => captured(m, 1));
+function keyHeads(expression: string, source = ''): string[] {
+  const resolved = withLocalConstants(expression, source);
+  const literals = [...resolved.matchAll(/\[\s*'([a-z-]+)'/g)].map((m) => captured(m, 1));
   const named = [...expression.matchAll(/\bQUERY_KEYS\.(\w+)/g)].map((m) => {
     const name = captured(m, 1);
     const head = KEY_HEADS[name];
@@ -157,13 +171,13 @@ describe('react-query cache invalidation', () => {
         const preceding = source.slice(Math.max(0, match.index - 80), match.index);
         if (INVALIDATION.test(preceding)) {
           readSites += 1;
-          const heads = keyHeads(expression);
+          const heads = keyHeads(expression, source);
           // A key this scan cannot resolve to any head — `queryKey: someVariable` — names nothing, so it
           // would satisfy the check below without a single key of it ever being checked.
           if (heads.length === 0) unreadable.push(expression.trim());
           for (const head of heads) invalidated.add(head);
         } else if (!CACHE_OPERATION.test(preceding)) {
-          for (const head of keyHeads(expression)) registered.add(head);
+          for (const head of keyHeads(expression, source)) registered.add(head);
         }
       }
     }
