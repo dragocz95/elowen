@@ -37,6 +37,7 @@ function Harness() {
       {projects.map((project) => (
         <div key={project.id} data-testid={`row-${project.id}`}>
           <span data-testid={`status-${project.id}`}>{rows.statusFor(project.id)?.label ?? '—'}</span>
+          <span data-testid={`metrics-${project.id}`}>{rows.metricsFor(project.id)?.items.map((item) => `${item.label}:${item.value}`).join('|') ?? '—'}</span>
           {rows.actionsFor(project.id).map((action) => (
             <button key={`${action.plugin}:${action.id}`} type="button" disabled={action.disabled} onClick={action.onSelect}>
               {action.label}
@@ -61,6 +62,7 @@ describe('plugin Project-row contributions', () => {
         seen.push(rows.map((row) => row.id));
         return {
           status: { 3: { label: 'Running', icon: 'CircleDot', tone: 'success' } },
+          metrics: { 3: { label: 'Resources', items: [{ id: 'cpu', label: 'CPU', value: '50%', percent: 50, state: 'ready' }] } },
           actions: { 3: [
             { id: 'start', label: 'Start environment', icon: 'Play', disabled: true, onSelect: () => started.push(3) },
             { id: 'stop', label: 'Stop environment', icon: 'Square', onSelect: () => started.push(-3) },
@@ -76,7 +78,9 @@ describe('plugin Project-row contributions', () => {
     // The hook is called with the rows the register is showing, both of them, and answers per project:
     // the host project it said nothing about carries no status and no actions.
     expect(seen.at(-1)).toEqual([3, 4]);
+    expect(screen.getByTestId('metrics-3')).toHaveTextContent('CPU:50%');
     expect(screen.getByTestId('status-4')).toHaveTextContent('—');
+    expect(screen.getByTestId('metrics-4')).toHaveTextContent('—');
     expect(screen.getByTestId('row-4').querySelectorAll('button')).toHaveLength(0);
     // The plugin's own dialogs render with it, once, outside the rows.
     expect(screen.getByText('plugin overlay')).toBeInTheDocument();

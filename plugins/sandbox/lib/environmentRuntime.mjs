@@ -1815,6 +1815,41 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } catch (cause) { await release(); throw cause; }
   }
 
+  /** One authorized read for every managed row currently visible in the Project register. Runtime counters
+   *  are measured together; a broken cgroup or disk probe degrades only the resource fields and never hides
+   *  the environment state or lifecycle actions the same response carries. */
+  async function environmentUsageBatch(input) {
+    account(input?.accountUserId, false);
+    if (!Array.isArray(input?.projectIds) || input.projectIds.length < 1 || input.projectIds.length > 1000
+      || new Set(input.projectIds).size !== input.projectIds.length
+      || input.projectIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw error('invalid_project_ids', 'A bounded list of Project ids is required', 400);
+    const projects = [];
+    const measurable = [];
+    for (const id of input.projectIds) {
+      await authorize('project', id, input.accountUserId, true);
+      const row = store.get('project', id);
+      const environment = row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
+        limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) };
+      const empty = {
+        cpu: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedCpus: null, percent: null },
+        memory: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedBytes: null, limitBytes: environment.limits.memoryMb * 1024 * 1024 },
+        disk: { state: row ? 'unavailable' : 'ready', usedBytes: row ? null : 0, limitBytes: null },
+      };
+      const index = projects.push({ projectId: id, environment, resources: empty }) - 1;
+      if (!row || neverMaterialized(row) || row.state === 'deleted') continue;
+      try { measurable.push({ index, spec: specFor(row.spec), state: row.state }); }
+      catch { /* The environment state remains useful even when its legacy specification cannot be read. */ }
+    }
+    if (measurable.length && typeof nspawn?.resourceUsageBatch === 'function') {
+      try {
+        const measured = await nspawn.resourceUsageBatch(measurable.map(({ spec, state }) => ({ spec, state })));
+        if (!Array.isArray(measured) || measured.length !== measurable.length) throw new Error('Invalid resource usage batch');
+        measurable.forEach(({ index }, offset) => { projects[index].resources = measured[offset]; });
+      } catch { /* The per-row unavailable resource state above is the explicit failure result. */ }
+    }
+    return { sampledAt: new Date().toISOString(), projects };
+  }
+
   const control = {
     async projectWorkspaceHostPath(input) {
       assertLive();
@@ -1934,7 +1969,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     siteEnvironmentLogs: (input) => logs('site', input.siteId, input.accountUserId, input.lines),
     siteEnvironmentSnapshots: (input) => snapshots('site', input.siteId, input.accountUserId),
   };
-  return { ...control, control, prepareExecution, reconcile,
+  return { ...control, control, environmentUsageBatch, prepareExecution, reconcile,
     async revokeAccount(userId) { for (const row of store.all()) await cancelLeases(row, userId); },
     async dispose() { disposed = true; for (const release of [...previews]) await release(); } };
 }

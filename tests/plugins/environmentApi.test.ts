@@ -26,7 +26,8 @@ function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: 
     provisionMachineRuntime: vi.fn(async () => ({ id: 'env_host', runtime: 'nspawn', status: 'pending' })),
     projectFiles: vi.fn(), managedWorktrees: vi.fn(),
   };
-  registerEnvironmentApi(ctx as any, { control } as any);
+  const environmentUsageBatch = vi.fn(async ({ projectIds }: { projectIds: number[] }) => ({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds.map((projectId) => ({ projectId })) }));
+  registerEnvironmentApi(ctx as any, { control, environmentUsageBatch } as any);
   const handler = (method: 'GET' | 'POST') => {
     const route = routes.get('projects')?.find((entry) => entry.method === method);
     if (!route) throw new Error(`missing ${method} projects route`);
@@ -36,23 +37,44 @@ function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: 
     handler(method)({ method, path, query: {}, headers: {},
       auth: init.auth ?? { userId: 1, admin: false, accessibleProjects: init.json === undefined ? options.accessible ?? [7] : options.accessible ?? [7] },
       json: async () => { if (init.rejectJson) throw new SyntaxError('Unexpected token'); return init.json; } });
-  return { ctx, control, stores, project, routes, request };
+  return { ctx, control, environmentUsageBatch, stores, project, routes, request };
 }
 
 describe('UI projects/:id/environment API', () => {
-  // The two per-environment READS a browser makes, and nothing else: every write goes through the
-  // namespaced mount, and a route no surface calls is a surface nobody is defending.
-  it('registers the namespaced projects mount, the two environment reads and the host runtime control', () => {
+  // Browser reads stay inside the plugin namespace: one batch for register rows, plus the detail and
+  // operation reads. Every write goes through the namespaced Project mount.
+  it('registers the namespaced projects mount, environment reads and the host runtime control', () => {
     const { routes } = setup();
     expect(routes.get('projects')?.map((route) => route.method).sort()).toEqual(['GET', 'POST']);
-    expect([...routes.keys()].sort()).toEqual(['environments/operation', 'environments/status', 'projects', 'runtime/host']);
+    expect([...routes.keys()].sort()).toEqual(['environments/operation', 'environments/status', 'environments/usage', 'projects', 'runtime/host']);
     for (const path of ['environments/status', 'environments/operation']) {
       expect(routes.get(path)?.map((route) => route.method)).toEqual(['GET']);
     }
+    expect(routes.get('environments/usage')?.map((route) => route.method)).toEqual(['POST']);
     // The host runtime reads its readiness and provisions it: a look must stay a look, so the two are
     // separate methods rather than one call that repairs whatever it finds.
     expect(routes.get('runtime/host')?.map((route) => route.method).sort()).toEqual(['GET', 'POST']);
     expect(routes.get('runtime/host')?.map((route) => route.access)).toEqual(['admin', 'admin']);
+  });
+
+  it('reads visible managed rows through one strictly scoped batch', async () => {
+    const { routes, environmentUsageBatch } = setup({ accessible: [3, 7] });
+    const invoke = (input: unknown, auth: any = { userId: 1, admin: false, accessibleProjects: [3, 7] }) => routes.get('environments/usage')![0]!
+      .handler({ method: 'POST', path: '', query: {}, headers: {}, auth, json: async () => input });
+
+    const response = await invoke({ projectIds: [7, 3] });
+    expect(response).toEqual({ status: 200, body: { sampledAt: '2026-01-01T00:00:00.000Z', projects: [{ projectId: 7 }, { projectId: 3 }] } });
+    expect(environmentUsageBatch).toHaveBeenCalledWith({ projectIds: [7, 3], accountUserId: 1 });
+    expect((await invoke({ projectIds: [7] }, { userId: 3, admin: true, accessibleProjects: null })).status).toBe(200);
+    expect(environmentUsageBatch).toHaveBeenLastCalledWith({ projectIds: [7], accountUserId: 3 });
+
+    for (const invalid of [undefined, '', {}, { projectIds: [] }, { projectIds: [0] }, { projectIds: [7, 7] }, { projectIds: ['7'] },
+      { projectIds: Array.from({ length: 1001 }, (_, index) => index + 1) }, { projectIds: [7], extra: true }]) {
+      expect((await invoke(invalid)).status).toBe(400);
+    }
+    expect((await invoke({ projectIds: [7, 8] })).status).toBe(403);
+    expect((await invoke({ projectIds: [7] }, { userId: null, admin: false, accessibleProjects: [7] })).status).toBe(401);
+    expect(environmentUsageBatch).toHaveBeenCalledTimes(2);
   });
 
   it('parses only an optional leading slash, a positive id and the /environment suffix', async () => {

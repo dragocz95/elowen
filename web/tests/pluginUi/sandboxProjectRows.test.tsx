@@ -15,7 +15,7 @@ vi.mock('../../lib/pluginUi', async (loadOriginal) => ({
 
 import { ensurePluginUiRuntime } from '../../lib/pluginUi';
 import { ProjectsView } from '../../modules/projects/ProjectsView';
-import { useProjectRowContribution } from '../../../plugins/sandbox/web-src/projectRows';
+import { PROJECT_USAGE_QUERY_POLICY, useProjectRowContribution } from '../../../plugins/sandbox/web-src/projectRows';
 
 ensurePluginUiRuntime();
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
@@ -33,6 +33,20 @@ const environmentOf = (projectId: number, state: string) => ({
 });
 
 let posted: { projectId: number; body: unknown }[] = [];
+let usageRequests: number[][] = [];
+const usageOf = (projectId: number, state: string) => ({
+  projectId,
+  environment: environmentOf(projectId, state),
+  resources: state === 'running' ? {
+    cpu: { state: 'ready', usedCpus: 0.5, percent: 50 },
+    memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
+    disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+  } : {
+    cpu: { state: 'stopped', usedCpus: null, percent: null },
+    memory: { state: 'stopped', usedBytes: null, limitBytes: 1024 * 1024 * 1024 },
+    disk: { state: 'ready', usedBytes: 128 * 1024 * 1024, limitBytes: null },
+  },
+});
 
 const server = setupServer(
   http.get('*/api/projects', () => HttpResponse.json(projects)),
@@ -42,9 +56,11 @@ const server = setupServer(
     name: 'sandbox', url: '/plugins/sandbox/web/hash.js', apiVersion: 16,
     nav: [], account: [], project: [], settings: [], strings, projectRows: true,
   }])),
-  http.get('*/api/plugins/sandbox/api/environments/status', ({ request }) => {
-    const projectId = Number(new URL(request.url).searchParams.get('projectId'));
-    return HttpResponse.json(environmentOf(projectId, projectId === 3 ? 'running' : 'stopped'));
+  http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+    const { projectIds } = await request.json() as { projectIds: number[] };
+    usageRequests.push(projectIds);
+    return HttpResponse.json({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds
+      .map((projectId) => usageOf(projectId, projectId === 3 ? 'running' : 'stopped')) });
   }),
   http.post('*/api/plugins/sandbox/api/projects/:id/environment', async ({ params, request }) => {
     const projectId = Number(params.id);
@@ -74,25 +90,84 @@ function mount() {
 describe('sandbox contribution to the Project register rows', () => {
   beforeEach(() => {
     posted = [];
+    usageRequests = [];
     loadPluginUi.mockReset();
     // Exactly what the built bundle registers, running against the real host runtime.
     loadPluginUi.mockResolvedValue({ requiresApiVersion: 16, projectRows: useProjectRowContribution });
   });
 
-  it('reads each managed row state from the plugin and names it in the plugin words', async () => {
+  it('reads all managed states and resource bars in one batch', async () => {
     mount();
     const running = await screen.findAllByRole('img', { name: strings.state_running });
     const stopped = await screen.findAllByRole('img', { name: strings.state_stopped });
     expect(running.length).toBeGreaterThan(0);
     expect(stopped.length).toBeGreaterThan(0);
-    // The plugin owns the choice of glyph per state: the run glyph for a running environment, the stop
-    // square for a cold one — real state glyphs rather than anonymous dots.
     expect(running[0]).toHaveClass('lucide-play');
     expect(stopped[0]).toHaveClass('lucide-square');
-    // A host project has no environment, so the plugin says nothing about its row.
+    await waitFor(() => expect(usageRequests).toEqual([[3, 5]]));
+
+    const runningRow = screen.getByRole('button', { name: 'Open project analysis' }).closest('[role="row"]') as HTMLElement;
+    expect(within(runningRow).getAllByRole('progressbar', { name: strings.usageCpu }).at(0)).toHaveAttribute('aria-valuenow', '50');
+    expect(within(runningRow).getAllByRole('progressbar', { name: strings.usageRam }).at(0)).toHaveAttribute('aria-valuetext', expect.stringContaining('256 MiB / 1 GiB'));
+    expect([...runningRow.querySelectorAll('[title]')].some((element) => element.getAttribute('title')?.includes(strings.usageLimitUnknown))).toBe(true);
+    expect(runningRow.querySelector('[data-project-row-metrics][data-compact="true"]')).not.toBeNull();
+
+    const stoppedRow = screen.getByRole('button', { name: 'Open project reports' }).closest('[role="row"]') as HTMLElement;
+    expect(within(stoppedRow).getAllByText(strings.usageStopped).length).toBeGreaterThan(0);
+    expect(within(stoppedRow).queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
+
     const hostRow = screen.getByRole('button', { name: 'Open project elowen' }).closest('[role="row"]') as HTMLElement;
     expect(within(hostRow).queryByRole('img', { name: strings.state_running })).toBeNull();
+    expect(hostRow.querySelector('[data-project-row-metrics]')).toBeNull();
     expect(within(hostRow).queryByRole('menuitem')).toBeNull();
+  });
+
+  it('uses warning and danger tokens at the resource thresholds', async () => {
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds.map((projectId) => {
+        const item = usageOf(projectId, projectId === 3 ? 'running' : 'stopped');
+        if (projectId === 3) {
+          item.resources.cpu.percent = 95;
+          item.resources.memory.usedBytes = 768 * 1024 * 1024;
+        }
+        return item;
+      }) });
+    }));
+    mount();
+    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
+    const cpu = (await within(row).findAllByRole('progressbar', { name: strings.usageCpu }))[0]!;
+    const ram = within(row).getAllByRole('progressbar', { name: strings.usageRam })[0]!;
+    expect(cpu.querySelector('span')).toHaveClass('bg-destructive');
+    expect(ram.querySelector('span')).toHaveClass('bg-warning');
+  });
+
+  it('keeps stable unavailable bars when the batch loses access', async () => {
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', () => HttpResponse.json({ error: 'project_forbidden' }, { status: 403 })));
+    mount();
+    const values = await screen.findAllByText(strings.error_project_forbidden);
+    expect(values.length).toBeGreaterThan(0);
+    expect(screen.queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
+  });
+
+  it('does not let cached metrics overwrite a failed refetch', async () => {
+    mount();
+    await screen.findAllByRole('progressbar', { name: strings.usageCpu });
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', () => HttpResponse.json({ error: 'project_forbidden' }, { status: 403 })));
+    fireEvent.click(screen.getByRole('button', { name: 'reports: Actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: strings.startEnvironment }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect((await screen.findAllByText(strings.error_project_forbidden)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
+  });
+
+  it('uses a calm foreground-only polling policy', () => {
+    expect(PROJECT_USAGE_QUERY_POLICY).toEqual({
+      staleTime: 25_000,
+      refetchInterval: 30_000,
+      refetchIntervalInBackground: false,
+      refetchOnWindowFocus: true,
+    });
   });
 
   it('enables each lifecycle action by the state the environment is actually in', async () => {
