@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, type RefObject } from 'react';
-import { ChevronRight, Search, type LucideIcon } from 'lucide-react';
+import { Search, type LucideIcon } from 'lucide-react';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { PluginUiListing } from '../../lib/types';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -23,7 +23,15 @@ interface SettingsNavigationProps {
   onOpenPlugin: (href: string) => void;
 }
 
-/** ONE navigation record: the icon badge, the name, the shared help affordance and the chevron.
+/** ONE navigation record: the leading glyph, the name and the shared help affordance.
+ *
+ *  DENSITY. The record is a 2rem row above the phone breakpoint — the height this app's own primary
+ *  sidebar row uses, and the one the reference secondary navigation uses — and 2.75rem below it, where
+ *  the same record is a touch target rather than a pointer target. The icon is a plain 1rem glyph held
+ *  at half opacity, exactly as `.sidebar-nav__icon` holds one: the boxed 2rem badge that used to lead
+ *  each record made the column read as a list of buttons and cost the list a third of its height. The
+ *  trailing chevron went with it — it pointed at nothing a vertical navigation does not already say,
+ *  and the record's own fill is what marks which section is open.
  *
  *  The section's own sentence used to be printed UNDER the name, where an 18rem column truncated every
  *  one of them mid-word ("Spravujte identitu asistenta, pr…") and doubled the height of the list for text
@@ -49,7 +57,7 @@ function SettingsNavRow({ t, label, hint, icon: Icon, active = false, onActivate
 }) {
   const labelId = useId();
   return (
-    <div className={`relative flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-accent ${active ? 'bg-accent' : ''}`}>
+    <div className={`relative flex h-11 items-center gap-2.5 rounded-lg px-2 transition-colors hover:bg-accent md:h-8 ${active ? 'bg-accent' : ''}`}>
       <button
         type="button"
         aria-labelledby={labelId}
@@ -57,12 +65,11 @@ function SettingsNavRow({ t, label, hint, icon: Icon, active = false, onActivate
         onClick={onActivate}
         className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
       />
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted ${active ? 'text-primary' : 'text-muted-foreground'}`} aria-hidden>
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-foreground opacity-50" aria-hidden>
         <Icon size={16} strokeWidth={1.75} />
       </span>
       <span id={labelId} className="min-w-0 truncate text-sm font-medium text-foreground">{label}</span>
       {hint ? <HelpTip align="left" label={interpolate(t.common.helpFor, { label })}>{hint}</HelpTip> : null}
-      <ChevronRight size={15} className="ml-auto shrink-0 text-muted-foreground" aria-hidden />
     </div>
   );
 }
@@ -117,11 +124,18 @@ export function SettingsNavigation({ t, sections, pluginEntries, active, query, 
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder={t.settings.navigationSearch}
-          className="h-9 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+          className="h-11 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 md:h-8"
         />
       </label>
-      <nav aria-label={t.settings.navigationLabel} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-3">
-        <div className="flex flex-col gap-1">
+      {/* The column's own inset is 0.75rem and a record's is 0.5rem, so a label starts 1.25rem from the
+          column edge — the inset the reference navigation uses, and the one that keeps a record's fill
+          reading as a pill inside the column rather than as a full-bleed band. */}
+      <nav aria-label={t.settings.navigationLabel} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
+        <div className="flex flex-col gap-0.5">
+          {/* Named groups, not rules: the core sections and the plugin decks are two lists, and spacing
+              plus a quiet caption is what separates them. A horizontal rule made the second one read as
+              a footnote under the first. */}
+          {visibleSections.length > 0 ? <p className="px-2 pb-1 text-xs text-muted-foreground">{t.page.settings}</p> : null}
           {visibleSections.map((section) => {
             const Icon = section.icon;
             const matches = matchesByCategory.get(section.id) ?? [];
@@ -139,7 +153,7 @@ export function SettingsNavigation({ t, sections, pluginEntries, active, query, 
                   onActivate={() => onNavigate(settingsSectionHref(section.id), section.id)}
                 />
                 {labels.length > 0 ? (
-                  <div className="mb-2 ml-7 flex flex-col border-l border-border pl-3">
+                  <div className="mb-2 ml-4 flex flex-col border-l border-border pl-3">
                     {labels.map((entry) => (
                       <button
                         key={entry.id}
@@ -156,15 +170,15 @@ export function SettingsNavigation({ t, sections, pluginEntries, active, query, 
             );
           })}
           {visiblePlugins.length > 0 ? (
-            <div className="mt-2 border-t border-border pt-2">
-              <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t.settings.plugins}</p>
+            <div className="mt-3">
+              <p className="px-2 pb-1 text-xs text-muted-foreground">{t.settings.plugins}</p>
               {visiblePlugins.map(({ id, label, href, Icon, matchedSections }) => (
                 <div key={id}>
                   {/* A plugin deck has no sentence of its own in the listing, so this record carries no
                       help mark — the same row anatomy with one optional part left out. */}
                   <SettingsNavRow t={t} label={label} icon={Icon} onActivate={() => onOpenPlugin(href)} />
                   {matchedSections.length > 0 ? (
-                    <p className="mb-2 ml-7 border-l border-border px-5 py-1 text-xs leading-5 text-muted-foreground">
+                    <p className="mb-2 ml-4 border-l border-border px-3 py-1 text-xs leading-5 text-muted-foreground">
                       {matchedSections.slice(0, 3).map((setting) => setting.label).join(' · ')}
                     </p>
                   ) : null}

@@ -132,11 +132,20 @@ const dialogSurfaceVariants = cva('overlay-surface flex flex-col focus:outline-n
       sheet: 'min-h-0 w-full',
       fullscreen: 'animate-pop-in relative min-h-0 w-full border',
     },
-    size: { sm: '', md: '', lg: '', xl: '' },
+    size: { sm: '', md: '', lg: '', xl: '', page: '' },
     width: { default: '', wide: '' },
   },
   compoundVariants: [
     { presentation: 'center', size: 'lg', class: 'h-[88dvh] w-[92vw] max-w-[90rem]' },
+    // `page` is the INTERCEPTED-PAGE frame (`/settings`, `/account` — see components/ui/PageOverlay.tsx),
+    // and the reason it is not `lg`: `lg` is a data surface that wants every pixel a window can give it
+    // (a log table, a diagnostics run), so it grows to 90rem × 88dvh and on a wide monitor that is a
+    // 1440 × 1200 sheet of mostly empty column. A settings page is a READING surface with a fixed
+    // measure — a navigation column and a stack of records — and past roughly 72rem the records stop
+    // getting easier to read and start getting harder, because the eye has to travel the whole width
+    // between a label and its control. The height is capped for the same reason the width is: it is the
+    // frame that holds still while sections of different lengths are swapped through it.
+    { presentation: 'center', size: 'page', class: 'h-[min(88dvh,50rem)] w-[92vw] max-w-[72rem]' },
     { presentation: 'center', size: 'xl', class: 'max-h-[90dvh] w-full max-w-2xl' },
     { presentation: 'center', size: 'md', class: 'max-h-[88dvh] w-full max-w-lg' },
     { presentation: 'center', size: 'sm', class: 'max-h-[80dvh] w-full max-w-md' },

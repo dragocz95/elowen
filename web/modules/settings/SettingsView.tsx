@@ -862,9 +862,12 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     </>
   );
 
+  // THE OVERLAY'S TWO COLUMNS. 15rem, not 18rem: every navigation record is one line now and the
+  // longest localized section name fits inside it, so the three extra rem were empty column taken
+  // from the content beside them.
   if (surface === 'overlay') {
     return (
-      <div data-testid="settings-overlay-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)]">
+      <div data-testid="settings-overlay-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className={`${mobilePane === 'navigation' ? 'flex' : 'hidden'} min-h-0 flex-col border-border md:flex md:border-r`}>
           <SettingsNavigation
             t={t}
@@ -885,7 +888,7 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
           role="region"
           aria-label={activeSection.label}
           tabIndex={-1}
-          className={`${mobilePane === 'content' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 focus:outline-none md:flex md:p-5`}
+          className={`${mobilePane === 'content' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 focus:outline-none md:flex md:px-6 md:pb-4 md:pt-3`}
         >
           <button
             type="button"

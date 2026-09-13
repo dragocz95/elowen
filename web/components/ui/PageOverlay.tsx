@@ -35,7 +35,7 @@ export function PageOverlay({ title, icon, children, 'data-testid': testId }: {
     <Modal
       title={title}
       icon={icon}
-      size="lg"
+      size="page"
       intent="inspect"
       presentation={mobile ? 'fullscreen' : 'center'}
       standsInForPage

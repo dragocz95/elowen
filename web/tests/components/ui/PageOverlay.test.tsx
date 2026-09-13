@@ -58,6 +58,16 @@ describe('PageOverlay', () => {
     expect(settingsFrame.presentation).toBe('fullscreen');
   });
 
+  /** An intercepted PAGE is a reading surface with a fixed measure, not a data window that wants every
+   *  pixel the monitor has. `size="lg"` grows to 90rem × 88dvh, which on a wide screen left a settings
+   *  record's label and its control a whole screen apart; the page frame caps both axes instead. */
+  it('frames the intercepted page at the reading measure rather than at the data-window size', () => {
+    render(<SettingsOverlay />, { wrapper: Wrapper });
+    const dialog = screen.getByRole('dialog', { name: 'Settings' });
+    expect(dialog).toHaveClass('max-w-[72rem]', 'h-[min(88dvh,50rem)]');
+    expect(dialog).not.toHaveClass('max-w-[90rem]');
+  });
+
   it('closes both by walking back through history rather than by dropping the route', () => {
     for (const [overlay, name] of [[<SettingsOverlay key="s" />, en.page.settings], [<AccountOverlay key="a" />, en.account.title]] as const) {
       state.back.mockReset();

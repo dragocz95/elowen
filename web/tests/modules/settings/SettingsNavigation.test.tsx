@@ -175,6 +175,38 @@ describe('SettingsNavigation', () => {
     expect(onNavigate).toHaveBeenCalledWith('/settings?cat=models', 'models');
   });
 
+  /** THE RECORD'S DENSITY, pinned because it is the whole point of this column. Above the phone
+   *  breakpoint a record is a 2rem row — the height this app's primary sidebar row already uses — and
+   *  below it a 2.75rem touch target, because the same record is reached with a thumb there. The two
+   *  decorations that cost the old column a third of its height are gone with it: the boxed badge that
+   *  led every record, and the trailing chevron, which pointed at nothing a vertical navigation does not
+   *  already say. */
+  it('keeps a record to one compact line on a pointer and a touch-sized one on a phone', () => {
+    render(<Harness />, { wrapper: W });
+
+    const row = screen.getByRole('button', { name: /^System/ }).parentElement!;
+    expect(row).toHaveClass('h-11', 'md:h-8');
+    // Two glyphs and no third: the leading section mark and the help mark. The chevron was the third.
+    expect(row.querySelectorAll('svg')).toHaveLength(2);
+    // The leading mark is a plain glyph rather than a bordered 2rem badge.
+    const glyph = row.querySelector('span[aria-hidden]')!;
+    expect(glyph).toHaveClass('h-4', 'w-4');
+    expect(glyph.className).not.toMatch(/\bborder\b|\bbg-muted\b/);
+  });
+
+  /** Two lists, separated by a caption and spacing rather than by a rule: the core sections, and the
+   *  plugin decks that are pages of their own worlds. The horizontal rule that used to divide them made
+   *  the second list read as a footnote under the first. */
+  it('captions the core sections and the plugin decks as two named groups', () => {
+    render(<Harness plugins={[sandbox]} />, { wrapper: W });
+
+    // The two captions, in order. `Plugins` is also a core section NAME, so the assertion reads the
+    // captions themselves rather than the first element that happens to carry the word.
+    const captions = Array.from(document.querySelectorAll('nav p')).map((p) => p.textContent);
+    expect(captions).toEqual([en.page.settings, en.settings.plugins]);
+    expect(document.querySelector('.border-t')).toBeNull();
+  });
+
   /** The mark floats OVER a control stretched across the whole record, so 16px of glyph was the entire
    *  target a pointer had to hit and everything around it navigated. It carries its own 24x24 hit area
    *  now — and a name of its own, or the column reads as a dozen buttons called "Help" in a screen
