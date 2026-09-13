@@ -10,10 +10,23 @@ import { adoptProjectSchema, createDirectorySchema, createProjectSchema, deleteP
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginProjectIndicator } from '../../plugins/api.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
+import { gitBranch } from '../../brain/service/gitBranch.js';
+import { resolvePolicy } from '../../plugins/policy.js';
 import { PROJECT_ALREADY_MANAGED, PROJECT_LIMIT_REACHED, PROJECT_NOT_ADOPTED, type Project as StoredProject } from '../../store/projectStore.js';
 import type { ProjectMemberView, ProjectView } from '../../shared/wireContract.js';
 
-const MAX_MEMBER_SAMPLES = 3;
+/** How many member identities the register projection carries per project.
+ *
+ *  The card shows them as one overlapping, scrollable strip, so the sample is what a reader can actually
+ *  page through by hand; the authoritative headcount stays `members.total` and the control beside the
+ *  strip names the whole team rather than implying the sample is it.
+ *
+ *  Sixteen is measured rather than chosen: at 22px with a 6px overlap a strip of sixteen is 264px, which
+ *  overflows a card on a 320px phone and still fits a three-column desktop one. Eight — the row's old
+ *  bound, where only three were ever drawn — is 134px and fits everywhere, which would have left the
+ *  strip's scrolling unreachable in practice. Bounded because this is a batch over every project the
+ *  caller may see. */
+const MAX_MEMBER_SAMPLES = 16;
 const MAX_INDICATORS_PER_PLUGIN = 3;
 const MAX_INDICATORS_PER_PROJECT = 8;
 const PROJECT_PATH_PROJECTION_CONCURRENCY = 8;
@@ -139,16 +152,33 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
     }
     const users = admin && d.users ? new Map(d.users.list().filter((item) => !item.is_admin).map((item) => [item.id, item])) : null;
+    // The branch belongs in THIS projection rather than in a request per card. `gitBranch` reads
+    // `.git/HEAD` directly — no `git` fork — and memoizes each directory for a few seconds, which is what
+    // makes one extra read per project affordable here and a register-wide sweep of `/projects/:id/git`,
+    // three git processes per row, not. The caller's own policy is authorization rather than a hint: it
+    // bounds which directories may be walked at all, and it is re-resolved per request.
+    //
+    // A managed project has no host path to read, so it reports no branch. That is the rule
+    // `statusService` already applies to the conversation's own branch label, not a new asymmetry.
+    const policy = user && d.userProjects && d.projects
+      ? resolvePolicy({ userProjects: d.userProjects, projects: d.projects }, user.id)
+      : null;
+    const branchOf = (project: StoredProject): string | null =>
+      policy && project.executionKind !== 'managed' && project.path ? gitBranch(project.path, policy) : null;
     return c.json(allowed.map((project) => {
       const assigned = users && d.userProjects
         ? d.userProjects.forProject(project.id).flatMap((id) => users.get(id) ? [users.get(id)!] : [])
         : [];
+      const branch = branchOf(project);
       return {
         projectId: project.id,
         ...(admin ? { members: {
           total: assigned.length,
           samples: assigned.slice(0, MAX_MEMBER_SAMPLES).map(({ id, username, name, avatar }) => ({ id, username, name, avatar })),
         } } : {}),
+        // Absent rather than null when there is nothing to report, so a card draws the branch slot only
+        // for a project that actually is a repository this caller may read.
+        ...(branch ? { branch } : {}),
         indicators: indicatorMap.get(project.id) ?? [],
       };
     }));
