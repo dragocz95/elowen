@@ -799,10 +799,9 @@ export interface BrainUsage {
    *  null when none measured yet. Legacy figure — the statusline shows `effectiveTps` instead. */
   outputTps?: number | null;
   /** EFFECTIVE tokens/sec of the conversation's latest COMPLETED measured model call: provider-reported
-   *  output tokens (reasoning and tool-call tokens included) over the whole logical request measured
-   *  from its initiation — before the provider's response headers — to the complete response, PI-level
-   *  retries and backoff included, tool execution excluded. An effective end-to-end rate, not a pure
-   *  decode rate; null (or absent) while nothing has been measured. */
+   *  output tokens over the whole logical request from initiation to complete response, with PI retries and
+   *  backoff included and tool execution excluded. Absent when the generation contains any toolCall block,
+   *  because provider usage does not split tool-call tokens from model text, or when nothing was measured. */
   effectiveTps?: number | null;
   /** Wait, in ms, from that call's initiation to its FIRST streamed content (thinking, text, or a tool
    *  call). For a buffered delivery this spans the whole generation — it is what the client waited,

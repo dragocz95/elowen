@@ -27,10 +27,10 @@ export function statusline(
     parts.push(`context ${Math.round(usage.percent)}% (${formatK(usage.tokens ?? 0)}/${formatK(usage.contextWindow)})`);
   }
   if (cfg.showTokens && usage) parts.push(`Σ ${formatK(usage.totalTokens)} tok`);
-  // EFFECTIVE speed of the conversation's latest completed model call: provider-reported output tokens
-  // (reasoning and tool-call tokens included) over the whole logical request, measured from its
-  // initiation — header waits, prompt processing, retries and backoff included, tool execution
-  // excluded. Absent until something has been measured — and below 1 t/s the rounded figure would read
+  // EFFECTIVE speed of the conversation's latest completed model call: provider output over the whole
+  // logical request, with header waits, prompt processing, retries and backoff included and tool execution
+  // excluded. Tool-call generations are absent because their serialized arguments cannot be separated from
+  // model text. Absent until something has been measured — and below 1 t/s the rounded figure would read
   // as a stall rather than as too few samples.
   if (cfg.showSpeed && typeof usage?.effectiveTps === 'number' && usage.effectiveTps >= 1) {
     parts.push(`${Math.round(usage.effectiveTps)} tok/s`);

@@ -38,13 +38,11 @@ export interface TokenUsage {
    *  seconds (measuredOutput / outputTps); deriving them from `output` overstates every bucket whose
    *  untimed history dwarfs its measured slice. 0 when nothing was measured, absent where `outputTps` is. */
   measuredOutput?: number;
-  /** EFFECTIVE tokens/sec: provider-reported output tokens (reasoning and tool-call tokens included) over
-   *  the WHOLE logical model request, measured from its initiation — before the provider's response
-   *  headers were awaited — to the complete response, PI-level retries and backoff included and tool
-   *  execution excluded. An end-to-end rate the client experienced, not a pure decode rate. Computed only
-   *  over successful generations carrying the recorder's effective timing stamp. Failed retry prefixes,
-   *  unversioned compaction rollups and history written before the stamp remain unknown (null means
-   *  "nothing effective was measured", NOT zero speed). */
+  /** EFFECTIVE tokens/sec: provider-reported output tokens over the whole logical model request, measured
+   *  from initiation through the complete response, with PI retries and backoff included and tool execution
+   *  excluded. A generation containing any toolCall block is ineligible because provider usage does not split
+   *  tool-call tokens from model text. Computed only over successful, tool-call-free generations with timing.
+   *  Failed prefixes, ambiguous compacted history and pre-timing history remain unknown. */
   effectiveTps?: number | null;
   /** The output tokens `effectiveTps` was measured over — a SUBSET of `output`, same contract as
    *  `measuredOutput` but over the end-to-end window. Cross-bucket averages weight by this pair. */
