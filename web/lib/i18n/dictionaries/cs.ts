@@ -717,7 +717,6 @@ export const cs = {
     noMatches: 'Hledání neodpovídá žádný projekt',
     tableLabel: 'Registr projektů',
     columnProject: 'Projekt',
-    columnTeam: 'Tým',
     columnResources: 'Prostředky',
     columnStatus: 'Stav',
     membersCount: '{n} přiřazených uživatelů',

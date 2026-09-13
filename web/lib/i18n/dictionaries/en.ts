@@ -760,7 +760,6 @@ export const en = {
     noMatches: 'No projects match this search',
     tableLabel: 'Project registry',
     columnProject: 'Project',
-    columnTeam: 'Team',
     columnResources: 'Resources',
     columnStatus: 'Status',
     membersCount: '{n} assigned users',

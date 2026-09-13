@@ -711,7 +711,6 @@ export const sk = {
     noMatches: 'Hľadaniu nezodpovedá žiadny projekt',
     tableLabel: 'Register projektov',
     columnProject: 'Projekt',
-    columnTeam: 'Tím',
     columnResources: 'Prostriedky',
     columnStatus: 'Stav',
     membersCount: '{n} priradených používateľov',

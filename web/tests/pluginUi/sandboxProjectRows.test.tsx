@@ -406,10 +406,10 @@ describe('sandbox contribution to the Project register rows', () => {
       }
     }
 
-    // The register's own tracks: identity, team, resources, state, actions, chevron when wide; the
-    // identity column alone plus those three narrow tracks when not.
+    // The register's own tracks: identity, resources, state, actions, chevron when wide; the identity
+    // column alone plus those three narrow tracks when not.
     const table = screen.getByTestId('projects-register');
-    expect(table.style.getPropertyValue('--data-table-columns').trim().split(/\s+(?![^(]*\))/)).toHaveLength(6);
+    expect(table.style.getPropertyValue('--data-table-columns').trim().split(/\s+(?![^(]*\))/)).toHaveLength(5);
     expect(table.style.getPropertyValue('--data-table-compact-columns').trim().split(/\s+(?![^(]*\))/)).toHaveLength(4);
   });
 
