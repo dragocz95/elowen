@@ -24,7 +24,10 @@ interface ProjectUsage {
   resources: { cpu: UsageMetric; memory: UsageMetric; disk: UsageMetric };
 }
 interface UsageBatch { sampledAt: string; projects: ProjectUsage[] }
-interface RowMetric { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'loading' | 'stopped' | 'unavailable' | 'unknown' }
+interface RowMetric { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'loading' | 'stopped' | 'unavailable' }
+/** The snapshot shape the host draws in BOTH the register row and the project drawer. The figures are
+ *  always the last ones actually measured; `refreshing` and `stale` describe the read around them. */
+interface RowMetrics { label: string; items: RowMetric[]; refreshing?: boolean; stale?: boolean; staleLabel?: string; onRefresh?: () => void; refreshLabel?: string }
 
 const STATE_PRESENTATION: Record<EnvironmentState, { icon: string; tone: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }> = {
   running: { icon: 'Play', tone: 'success' },
@@ -59,14 +62,17 @@ const formatBytes = (bytes: number) => {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: value >= 10 || unit === 0 ? 0 : 1 }).format(value)} ${units[unit]}`;
 };
 
-function placeholderMetrics(s: Record<string, string>, state: 'loading' | 'unavailable', value: string) {
+/** Only for a project nothing has been measured for YET. A project that HAS a sample keeps it through a
+ *  failed or in-flight read, marked rather than replaced — a placeholder over real figures is how a
+ *  populated environment briefly reported nothing every time the batch was re-read. */
+function placeholderMetrics(s: Record<string, string>, state: 'loading' | 'unavailable', value: string): RowMetrics {
   return {
     label: s.resources,
     items: [
       { id: 'cpu', label: s.usageCpu, value, state },
       { id: 'memory', label: s.usageRam, value, state },
       { id: 'disk', label: s.usageDisk, value, state },
-    ] as RowMetric[],
+    ],
   };
 }
 
@@ -81,7 +87,10 @@ function metricValue(metric: UsageMetric, kind: 'cpu' | 'memory' | 'disk', s: Re
     return { id: kind, label, value, valueText: `${label}: ${value}`, percent, state: 'ready' };
   }
   const used = formatBytes(metric.usedBytes ?? 0);
-  if (metric.limitBytes === null) return { id: kind, label, value: `${used} / ?`, valueText: `${label}: ${used}. ${s.usageLimitUnknown}`, state: 'unknown' };
+  // A managed environment's disk has no configured quota, so there is no denominator to divide by. The
+  // used figure is a complete measurement on its own and is reported as itself: `1.2 GiB / ?` put a
+  // ceiling on screen that does not exist, and a percentage of nothing would have to be invented.
+  if (metric.limitBytes === null) return { id: kind, label, value: used, valueText: `${label}: ${used}. ${s.usageLimitUnknown}`, state: 'absolute' };
   const limit = formatBytes(metric.limitBytes);
   const percent = clampPercent(metric.limitBytes > 0 ? (metric.usedBytes ?? 0) / metric.limitBytes * 100 : 0);
   const value = `${used} / ${limit}`;
@@ -106,7 +115,29 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   });
   const me = hooks.useQuery<{ user: { id: number } | null }>({ queryKey: ['me'], queryFn: () => api('/auth/me') as Promise<{ user: { id: number } | null }> });
   const accountId = me.data?.user?.id;
-  const usageByProject = new Map((usage.isError ? [] : usage.data?.projects ?? []).map((item) => [item.projectId, item]));
+  // A refused read is not a failed one. `401`/`403` mean this account may no longer see these figures,
+  // and the daemon re-resolves that membership on every batch precisely so a revoked assignment stops
+  // reading host resource counters — so the cached sample is DROPPED rather than shown as stale.
+  const refusedStatus = (usage.error as { status?: number } | undefined)?.status;
+  const refused = usage.isError && (refusedStatus === 401 || refusedStatus === 403);
+  // Every other failure keeps the last sample that actually arrived. Discarding it on any `isError`
+  // replaced measured CPU, memory and disk with the word "Unavailable" the moment one poll missed, so a
+  // running environment reported nothing until the next poll happened to succeed.
+  const usageByProject = new Map((refused ? [] : usage.data?.projects ?? []).map((item) => [item.projectId, item]));
+  const refreshing = usage.isFetching && !usage.isLoading;
+  const stale = usage.isError && !refused && usageByProject.size > 0;
+  const refresh = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'project-row-usage'] });
+  }, [qc]);
+  /** Stamps the shared read state onto one project's figures. */
+  const snapshot = (items: RowMetric[]): RowMetrics => ({
+    label: s.resources,
+    items,
+    ...(refreshing ? { refreshing: true } : {}),
+    ...(stale ? { stale: true, staleLabel: s.usageStale } : {}),
+    onRefresh: refresh,
+    refreshLabel: s.usageRefresh,
+  });
 
   const [confirm, setConfirm] = useState<{ projectId: number; action: EnvironmentAction } | null>(null);
   const [watched, setWatched] = useState<{ projectId: number; operationId: string; kind: string } | null>(null);
@@ -143,13 +174,23 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   }, [dispatch, toast]);
 
   const status: Record<number, { label: string; icon: string; tone: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }> = {};
-  const metrics: Record<number, { label: string; items: RowMetric[] }> = {};
+  const metrics: Record<number, RowMetrics> = {};
   const actions: Record<number, { id: string; label: string; icon: string; disabled?: boolean; onSelect: () => void }[]> = {};
   for (const project of managed) {
-    if (usage.isLoading) metrics[project.id] = placeholderMetrics(s, 'loading', s.usageLoading);
-    else if (usage.isError) metrics[project.id] = placeholderMetrics(s, 'unavailable', (usage.error as { status?: number } | undefined)?.status === 403 ? s.error_project_forbidden : s.usageUnavailable);
     const item = usageByProject.get(project.id);
-    if (!item) continue;
+    if (!item) {
+      // Nothing has ever been measured for this project, so there is nothing to preserve. Which of the
+      // two placeholders applies is the difference between "the sample is coming" and "the read failed".
+      const failed = usage.isError && !usage.isLoading;
+      metrics[project.id] = {
+        ...placeholderMetrics(s, failed ? 'unavailable' : 'loading',
+          failed ? (refusedStatus === 403 ? s.error_project_forbidden : s.usageUnavailable) : s.usageLoading),
+        ...(refreshing ? { refreshing: true } : {}),
+        onRefresh: refresh,
+        refreshLabel: s.usageRefresh,
+      };
+      continue;
+    }
     const environment = item.environment;
     const state = environment.state;
     const presentation = STATE_PRESENTATION[state] ?? STATE_PRESENTATION.unprovisioned;
@@ -162,14 +203,11 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
       tone: presentation.tone,
       ...(busy ? { busy: true } : {}),
     };
-    metrics[project.id] = {
-      label: s.resources,
-      items: [
-        state === 'starting' ? { id: 'cpu', label: s.usageCpu, value: s.usageLoading, state: 'loading' } : metricValue(item.resources.cpu, 'cpu', s),
-        state === 'starting' ? { id: 'memory', label: s.usageRam, value: s.usageLoading, state: 'loading' } : metricValue(item.resources.memory, 'memory', s),
-        metricValue(item.resources.disk, 'disk', s),
-      ],
-    };
+    metrics[project.id] = snapshot([
+      state === 'starting' ? { id: 'cpu', label: s.usageCpu, value: s.usageLoading, state: 'loading' } : metricValue(item.resources.cpu, 'cpu', s),
+      state === 'starting' ? { id: 'memory', label: s.usageRam, value: s.usageLoading, state: 'loading' } : metricValue(item.resources.memory, 'memory', s),
+      metricValue(item.resources.disk, 'disk', s),
+    ]);
     actions[project.id] = ACTIONS.map((action) => ({
       id: action.kind,
       label: s[action.label] || action.kind,

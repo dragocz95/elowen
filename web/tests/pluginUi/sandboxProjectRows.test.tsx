@@ -138,8 +138,9 @@ describe('sandbox contribution to the Project register rows', () => {
     const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
     const cpu = (await within(row).findAllByRole('progressbar', { name: strings.usageCpu }))[0]!;
     const ram = within(row).getAllByRole('progressbar', { name: strings.usageRam })[0]!;
-    expect(cpu.querySelector('span')).toHaveClass('bg-destructive');
-    expect(ram.querySelector('span')).toHaveClass('bg-warning');
+    // The meter is the shared shadcn `Progress`, so the fill is its indicator slot rather than a bare span.
+    expect(cpu.querySelector('[data-slot="progress-indicator"]')).toHaveClass('bg-destructive');
+    expect(ram.querySelector('[data-slot="progress-indicator"]')).toHaveClass('bg-warning');
   });
 
   it('keeps stable unavailable bars when the batch loses access', async () => {
@@ -150,7 +151,10 @@ describe('sandbox contribution to the Project register rows', () => {
     expect(screen.queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
   });
 
-  it('does not let cached metrics overwrite a failed refetch', async () => {
+  // A refusal is not a failed read: the daemon re-resolves membership on every batch so that a revoked
+  // assignment stops reading host resource counters, and a browser holding the last sample must not
+  // undo that. Every OTHER failure keeps its figures (see the stale-refresh spec below).
+  it('does not let cached metrics overwrite a refused refetch', async () => {
     mount();
     await screen.findAllByRole('progressbar', { name: strings.usageCpu });
     server.use(http.post('*/api/plugins/sandbox/api/environments/usage', () => HttpResponse.json({ error: 'project_forbidden' }, { status: 403 })));
@@ -159,6 +163,76 @@ describe('sandbox contribution to the Project register rows', () => {
     await waitFor(() => expect(posted).toHaveLength(1));
     expect((await screen.findAllByText(strings.error_project_forbidden)).length).toBeGreaterThan(0);
     expect(screen.queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
+  });
+
+  // The drawer opens over a row whose CPU, memory and disk are already on screen. It renders THAT frame,
+  // so the figures are there in the same commit as the drawer — no second request, and no spinner
+  // replacing numbers the reader can still see behind the rail.
+  it('hydrates the project drawer from the row snapshot instead of reading again', async () => {
+    server.use(
+      http.get('*/api/projects/3/git', () => HttpResponse.json({ isRepo: false, status: null, remotes: [], branches: [], commits: [] })),
+      http.get('*/api/projects/3/environment-state', () => HttpResponse.json({ environment: { state: 'running' } })),
+    );
+    mount();
+    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
+    await waitFor(() => expect(within(row).getAllByRole('progressbar', { name: strings.usageCpu }).length).toBeGreaterThan(0));
+    await waitFor(() => expect(usageRequests).toEqual([[3, 5]]));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
+
+    const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
+    expect(panel, 'the drawer carries the resource panel').not.toBeNull();
+    expect(within(panel).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
+    expect(within(panel).getByRole('progressbar', { name: strings.usageRam })).toHaveAttribute('aria-valuetext', expect.stringContaining('256 MiB / 1 GiB'));
+    // The disk figure the whole-directory measurement produces reaches the drawer as measured bytes.
+    expect(within(panel).getByText('512 MiB')).toBeInTheDocument();
+    expect(within(panel).queryByRole('status')).toBeNull();
+    expect(usageRequests).toEqual([[3, 5]]);
+  });
+
+  // A revalidation keeps every figure it already has. A FAILED one keeps them too and says they are the
+  // last known ones: replacing a real measurement with "Unavailable" because one poll missed is how a
+  // populated environment kept reporting nothing.
+  it('keeps the measured figures through a refresh and marks a failed one stale', async () => {
+    server.use(http.get('*/api/projects/3/git', () => HttpResponse.json({ isRepo: false, status: null, remotes: [], branches: [], commits: [] })));
+    mount();
+    await screen.findAllByRole('progressbar', { name: strings.usageCpu });
+    const open = screen.getByRole('button', { name: 'Open project analysis' });
+    // Held before the rail opens: the register behind an open drawer is marked inert, so a role query
+    // would no longer reach the row.
+    const row = open.closest('[role="row"]') as HTMLElement;
+    fireEvent.click(open);
+    const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
+
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', () => HttpResponse.json({ error: 'sampling failed' }, { status: 503 })));
+    fireEvent.click(within(panel).getByRole('button', { name: strings.usageRefresh }));
+
+    await waitFor(() => expect(panel.querySelector('[data-project-row-metrics][data-stale="true"]')).not.toBeNull());
+    // Still the measured values, not zeros and not a placeholder.
+    expect(within(panel).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
+    expect(within(panel).getByText('512 MiB')).toBeInTheDocument();
+    expect(within(panel).getByText(strings.usageStale!)).toBeInTheDocument();
+    expect(within(panel).queryByText(strings.usageUnavailable!)).toBeNull();
+    // The row behind it agrees: one snapshot, two surfaces.
+    expect(row.querySelector('[data-project-row-metrics][data-stale="true"]')).not.toBeNull();
+  });
+
+  // A managed environment has no disk quota, so there is no denominator. The used figure is complete on
+  // its own and is reported as itself — never `1.2 GiB / ?`, never a percentage of nothing, and never
+  // hidden, because the measurement is real.
+  it('reports a disk with no configured ceiling as an absolute figure', async () => {
+    mount();
+    const row = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[role="row"]') as HTMLElement;
+    await waitFor(() => expect(row.querySelector('[data-metric="disk"]')).not.toBeNull());
+    const disk = row.querySelector('[data-metric="disk"]') as HTMLElement;
+
+    expect(disk).toHaveAttribute('data-metric-state', 'absolute');
+    expect(within(disk).getByText('512 MiB')).toBeInTheDocument();
+    expect(row.textContent).not.toContain('/ ?');
+    // No meter at all: a bar would claim a proportion of a ceiling that does not exist.
+    expect(within(disk).queryByRole('progressbar')).toBeNull();
+    expect(disk.querySelector('[data-metric-track="none"]')).not.toBeNull();
+    expect(disk.getAttribute('title')).toContain(strings.usageLimitUnknown);
   });
 
   it('uses a calm foreground-only polling policy', () => {

@@ -3,7 +3,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, RefreshCw, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, useProjectEnvironmentState, usePluginPresent, useMe } from '../../lib/queries';
 import { useAdoptProject, useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
@@ -35,7 +35,9 @@ import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { requestEnvironmentAction } from '../../lib/environmentActions';
-import { usePluginProjectRows, type PluginProjectRowMetrics, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
+import { usePluginProjectRows, type PluginProjectRowMetric, type PluginProjectRowMetrics, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
+import { Progress } from '../../components/ui/shadcn/progress';
+import { usageProgressClass } from '../settings/OAuthUsageRail';
 import type { ProjectSummary } from '../../lib/types';
 
 function MissingProjectPathBadge({ label }: { label: string }) {
@@ -69,46 +71,93 @@ function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
   );
 }
 
-function ProjectRowMetrics({ metrics, compact = false }: { metrics?: PluginProjectRowMetrics; compact?: boolean }) {
+/** ONE measured resource of the snapshot its owning plugin published.
+ *
+ *  A meter is drawn for `ready` and for nothing else, because `ready` is the only state that carries a
+ *  percentage against a ceiling that exists. `absolute` is an equally real figure with no ceiling to
+ *  divide by — a managed environment has no disk quota — and `loading`, `stopped` and `unavailable`
+ *  carry no figure at all. All four get a dashed channel in the meter's place: the row keeps one rhythm,
+ *  and a filled bar never claims a proportion of something that was never measured. */
+function ProjectResourceMeter({ item }: { item: PluginProjectRowMetric }) {
+  const percent = item.state === 'ready' && typeof item.percent === 'number' && Number.isFinite(item.percent)
+    ? Math.max(0, Math.min(100, item.percent))
+    : null;
+  const title = item.valueText ?? `${item.label}: ${item.value}`;
+  return (
+    <div className="min-w-0" title={title} data-metric={item.id} data-metric-state={item.state}>
+      <div className="mb-1 flex min-w-0 items-baseline justify-between gap-1.5 text-[10px] leading-none">
+        <span className="shrink-0 font-semibold uppercase tracking-[0.08em] text-muted-foreground">{item.label}</span>
+        <span className="min-w-0 truncate tabular-nums text-foreground">{item.value}</span>
+      </div>
+      {percent === null ? (
+        <span
+          aria-hidden
+          data-metric-track="none"
+          className={`block h-1 rounded-full border border-dashed border-border bg-transparent ${item.state === 'loading' ? 'animate-pulse' : ''}`}
+        />
+      ) : (
+        <Progress
+          className="h-1"
+          value={percent}
+          indicatorClassName={usageProgressClass(percent)}
+          aria-label={item.label}
+          aria-valuetext={title}
+        />
+      )}
+    </div>
+  );
+}
+
+/** The three meters of one snapshot, in the register row and in the drawer alike. The figures are the
+ *  ones the plugin last measured in EVERY state: a refresh in flight only dims them, and a failed read
+ *  only marks them, because replacing a measurement with a placeholder is how a populated environment
+ *  reported nothing each time a poll missed. */
+function ProjectResourceMeters({ metrics, compact = false }: { metrics?: PluginProjectRowMetrics; compact?: boolean }) {
   if (!metrics || !Array.isArray(metrics.items) || metrics.items.length === 0) return null;
   const items = metrics.items.slice(0, 3);
   const loading = items.every((item) => item.state === 'loading');
+  const label = metrics.stale && metrics.staleLabel ? `${metrics.label} — ${metrics.staleLabel}` : metrics.label;
   return (
     <div
       role={loading ? 'status' : 'group'}
-      aria-label={metrics.label}
+      aria-label={label}
       data-project-row-metrics
       data-compact={compact || undefined}
-      className={`grid min-w-0 grid-cols-3 gap-2 ${compact ? 'mt-2' : 'w-full'}`}
+      data-refreshing={metrics.refreshing ? 'true' : undefined}
+      data-stale={metrics.stale ? 'true' : undefined}
+      className={`grid min-w-0 grid-cols-3 gap-x-3 transition-opacity duration-300 ${compact ? 'mt-2' : 'w-full'} ${metrics.stale ? 'opacity-70' : metrics.refreshing ? 'opacity-80' : ''}`}
     >
-      {items.map((item) => {
-        const percent = typeof item.percent === 'number' && Number.isFinite(item.percent) ? Math.max(0, Math.min(100, item.percent)) : null;
-        const fill = percent !== null && percent >= 90 ? 'bg-destructive' : percent !== null && percent >= 70 ? 'bg-warning' : 'bg-primary';
-        const title = item.valueText ?? `${item.label}: ${item.value}`;
-        return (
-          <div key={item.id} className="min-w-0" title={title} data-metric-state={item.state ?? 'ready'}>
-            <div className="mb-1 flex min-w-0 items-baseline justify-between gap-1 text-[9px] leading-none">
-              <span className="truncate font-semibold uppercase tracking-[0.08em] text-muted-foreground">{item.label}</span>
-              <span className="truncate text-foreground">{item.value}</span>
-            </div>
-            <div
-              className={`h-1 overflow-hidden rounded-full bg-muted ${item.state === 'unknown' ? 'border border-dashed border-border bg-transparent' : ''}`}
-              {...(percent === null ? { 'aria-hidden': true } : {
-                role: 'progressbar',
-                'aria-label': item.label,
-                'aria-valuemin': 0,
-                'aria-valuemax': 100,
-                'aria-valuenow': percent,
-                'aria-valuetext': title,
-              })}
-            >
-              {percent !== null ? <span className={`block h-full rounded-full ${fill}`} style={{ width: `${percent}%` }} /> : null}
-              {item.state === 'loading' ? <span className="block h-full w-2/5 animate-pulse rounded-full bg-muted-foreground/30" /> : null}
-            </div>
-          </div>
-        );
-      })}
+      {items.map((item) => <ProjectResourceMeter key={item.id} item={item} />)}
     </div>
+  );
+}
+
+/** The drawer's copy of the SAME snapshot, so opening a project shows the figures already on its row
+ *  rather than a spinner over a fresh request. The revalidation is explicit here — the row has no room
+ *  for a control, and a reader who wants a current figure should not have to wait out a poll. */
+function ProjectResourcePanel({ metrics, title }: { metrics: PluginProjectRowMetrics; title: string }) {
+  return (
+    <section data-project-resource-panel className="border-b border-border/70 py-3">
+      <div className="mb-2 flex min-w-0 items-center gap-2">
+        <h3 className="text-xs font-semibold text-foreground">{title}</h3>
+        {metrics.stale && metrics.staleLabel ? <Badge tone="warning">{metrics.staleLabel}</Badge> : null}
+        <span className="flex-1" />
+        {metrics.onRefresh && metrics.refreshLabel ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={metrics.refreshLabel}
+            aria-busy={metrics.refreshing === true}
+            title={metrics.refreshLabel}
+            onClick={metrics.onRefresh}
+          >
+            <RefreshCw size={13} aria-hidden className={metrics.refreshing ? 'animate-spin' : ''} />
+          </Button>
+        ) : null}
+      </div>
+      <ProjectResourceMeters metrics={metrics} />
+    </section>
   );
 }
 
@@ -351,8 +400,19 @@ export function ProjectsView() {
   // The register asks the plugins that own something about these rows what they have to say. Core keeps
   // the row, the path and the menu; the environment behind a managed project is the sandbox plugin's,
   // states and lifecycle actions included, so none of its vocabulary lives here.
-  const pluginRows = usePluginProjectRows(filteredProjects);
+  //
+  // The OPEN project is asked about whether or not the search still matches it. Narrowing the query with
+  // a drawer open otherwise took the selected project out of the plugin's input, and the drawer's
+  // resource panel went blank for a project that is still on screen.
+  const observedProjects = useMemo(
+    () => selectedProject && !filteredProjects.some((project) => project.id === selectedProject.id)
+      ? [...filteredProjects, selectedProject]
+      : filteredProjects,
+    [filteredProjects, selectedProject],
+  );
+  const pluginRows = usePluginProjectRows(observedProjects);
   const pluginRowActions = (project: Project) => pluginRows.actionsFor(project.id);
+  const selectedResources = selectedProject ? pluginRows.metricsFor(selectedProject.id) : undefined;
 
   const summary = useMemo(() => {
     const items = projects.data ?? [];
@@ -468,7 +528,7 @@ export function ProjectsView() {
                                   <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.executionKind === 'managed' ? s.managed : project.path}</span>
                                   {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                                 </span>
-                                <div className="@min-[56rem]:hidden"><ProjectRowMetrics metrics={pluginRows.metricsFor(project.id)} compact /></div>
+                                <div className="@min-[56rem]:hidden"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} compact /></div>
                               </div>
                             </DataTableCell>
                             <DataTableCell priority="wide" lines="auto" title={project.path} className="font-mono text-xs text-muted-foreground">
@@ -479,7 +539,7 @@ export function ProjectsView() {
                               </span>
                             </DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
-                            <DataTableCell priority="wide" lines="auto"><ProjectRowMetrics metrics={pluginRows.metricsFor(project.id)} /></DataTableCell>
+                            <DataTableCell priority="wide" lines="auto"><ProjectResourceMeters metrics={pluginRows.metricsFor(project.id)} /></DataTableCell>
                             {/* The state glyph sits at the row's far end, one narrow track left of the row
                                 actions. A row whose plugin says nothing leaves the track empty, so the
                                 actions never move as states arrive and go. */}
@@ -520,6 +580,12 @@ export function ProjectsView() {
                         ? <Button variant="ghost" onClick={() => setAdoption({ project: selectedProject, undo: true })}>{s.undoAdoption}</Button>
                         : null}
                     </div>
+
+                    {/* The SAME snapshot the row is already showing. The drawer opens over a row whose
+                        CPU, memory and disk figures are on screen, so it renders them straight from that
+                        frame — no second request to wait out, and no spinner replacing numbers the
+                        reader can see behind the rail. Revalidation is the Refresh control inside it. */}
+                    {selectedResources ? <ProjectResourcePanel metrics={selectedResources} title={t.projects.columnResources} /> : null}
 
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
                       {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-muted-foreground">{selectedProject.notes}</p> : null}
