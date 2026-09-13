@@ -465,8 +465,13 @@ export class NspawnClient {
     return number;
   }
 
+  /** Measured over the environment's whole disk directory, not its rootfs alone. `workspace`, `home` and
+   *  `data` are separate components beside the rootfs, and they are where a project's own files actually
+   *  land — a figure taken from the rootfs reports the base image and calls a full workspace empty. The
+   *  directory is the live persistent disk exactly: snapshots are a sibling tree under the resource root,
+   *  so they stay out of it without being subtracted. */
   async #diskUsageFor(specs, now) {
-    const paths = [...new Set(specs.map((spec) => spec.disk.rootfsPath))];
+    const paths = [...new Set(specs.map((spec) => this.#diskDirectory(spec)))];
     for (const [path, cached] of this.#diskUsageCache) {
       if (now - cached.at > this.#diskUsageTtlMs * 2) this.#diskUsageCache.delete(path);
     }
@@ -510,7 +515,7 @@ export class NspawnClient {
       if (now - sample.at > 600_000) this.#cpuSamples.delete(machine);
     }
     const normalized = entries.map((entry) => ({ spec: this.#assertScope(entry?.spec), state: entry?.state }));
-    let disk = new Map(normalized.map(({ spec }) => [spec.disk.rootfsPath, { state: 'unavailable', usedBytes: null, limitBytes: null }]));
+    let disk = new Map(normalized.map(({ spec }) => [this.#diskDirectory(spec), { state: 'unavailable', usedBytes: null, limitBytes: null }]));
     try { disk = await this.#diskUsageFor(normalized.map((entry) => entry.spec), now); }
     catch { /* Every disk result remains explicitly unavailable. */ }
     return normalized.map(({ spec, state }) => {
@@ -533,7 +538,7 @@ export class NspawnClient {
         try { memory = { state: 'ready', usedBytes: this.#cgroupValue(machine, 'memory.current'), limitBytes: spec.limits.memoryMb * 1024 * 1024 }; }
         catch { memory = { state: 'unavailable', usedBytes: null, limitBytes: spec.limits.memoryMb * 1024 * 1024 }; }
       } else this.#cpuSamples.delete(machine);
-      return { cpu, memory, disk: disk.get(spec.disk.rootfsPath) };
+      return { cpu, memory, disk: disk.get(this.#diskDirectory(spec)) };
     });
   }
 

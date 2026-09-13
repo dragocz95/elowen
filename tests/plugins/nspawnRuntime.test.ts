@@ -282,6 +282,21 @@ describe('nspawn resource telemetry', () => {
     expect(state.requests.filter((request) => request.op === 'tree-sizes')).toHaveLength(2);
   });
 
+  /** The rootfs is one component of the disk beside `workspace`, `home` and `data`, and the project's own
+   *  files live in those. Measuring the rootfs alone reported the base image and called a full workspace
+   *  empty; the disk directory is the live persistent disk, with the snapshot tree a sibling outside it. */
+  it('measures the whole persistent disk directory rather than the rootfs alone', async () => {
+    const state = fixture();
+    await state.client.resourceUsageBatch([{ spec: state.spec, state: 'running' }]);
+    const measured = state.requests.filter((request) => request.op === 'tree-sizes');
+    expect(measured).toHaveLength(1);
+    expect(measured[0].paths).toEqual([state.diskDirectory]);
+    expect(measured[0].paths).not.toContain(state.spec.disk.rootfsPath);
+    for (const component of state.spec.disk.components) {
+      expect(component.path.startsWith(`${state.diskDirectory}/`)).toBe(true);
+    }
+  });
+
   it('shares one in-flight disk refresh between concurrent readers', async () => {
     const state = fixture();
     let release: (() => void) | undefined;
