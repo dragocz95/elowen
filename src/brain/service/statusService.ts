@@ -24,10 +24,8 @@ import type { PermissionApprovalService } from './permissionApproval.js';
 import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { gitBranch } from './gitBranch.js';
-import { clientDir, effectiveTurnWorkDir, liveManagedProject, turnWorkDir } from './workDir.js';
-import { realPathWithin } from '../../plugins/pathGuard.js';
+import { clientDir, liveManagedProject } from './workDir.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
-import type { KnownControls } from '../../plugins/api.js';
 import type { TurnAutomation } from '../../plugins/policyContext.js';
 import { managedGuestRoot, type ProjectExecutionRef } from '../../shared/projectExecution.js';
 import { conversationActivityAutomation } from '../session/conversationActivity.js';
@@ -134,17 +132,9 @@ export interface BrainStatusView {
 /** Where the conversation works: the live session's directory (else the stamped one) and its git branch.
  *  Both null for a conversation that never reported a directory — a web chat has no client cwd. Scoped by
  *  the same session resolution as the rest of {@link BrainStatusView}, so it can only ever describe a
- *  conversation the caller owns.
- *
- *  `workspace` is the Sandbox worktree the NEXT turn starts in, or null when the conversation is bound to
- *  none. It is the turn resolver's own answer (effectiveTurnWorkDir against the same Sandbox control), so
- *  the indicator and the turn cannot disagree. `cwd` stays the CLIENT's directory — what `/cd` moves and
- *  what the panel has always shown; the worktree's host path is `workspace.path`. `confined` says the
- *  turn starts inside the worktree, where a shell command runs in the workspace container (worktree at
- *  `/workspace`, no host paths, no Git); a command whose working directory is outside the worktree runs
- *  by the ordinary rules. */
-interface BrainProjectView { cwd: string | null; branch: string | null; workspace: BrainProjectWorkspace | null }
-export interface BrainProjectWorkspace { workspaceId: string; label: string; branch: string; path: string; confined: true }
+ *  conversation the caller owns. `cwd` is the CLIENT's directory — what `/cd` moves and what the panel has
+ *  always shown. */
+interface BrainProjectView { cwd: string | null; branch: string | null }
 
 /** One row of the admin session-management panel ({@link BrainStatusService.listManagedSessions}). */
 export interface ManagedSessionView {
@@ -241,11 +231,9 @@ interface StatusServiceDeps {
    *  assignments. Absent (tests) → all-access. */
   policy?: BrainDeps['policy'];
   fastMode?: BrainDeps['fastMode'];
-  /** The three inputs the turn resolver needs beyond the policy, so the project section can ask it where
-   *  the next turn runs instead of re-deriving a binding. Absent (tests, no Sandbox) → no workspace. */
+  /** The project catalog the project section reads for a managed conversation. Absent (tests) → host only. */
   projects?: BrainDeps['projects'];
   projectPath?: BrainDeps['projectPath'];
-  sandbox?(): KnownControls['sandbox'] | undefined;
   /** Injected for tests; defaults to PI's createAgentSession (smoke test only). */
   createSession?: typeof createAgentSession;
   /** Working dir for the throwaway smoke-test session. Default: process.cwd(). */
@@ -492,28 +480,6 @@ export class BrainStatusService {
     const reported = managed
       ? managedGuestRoot(managed.slug, managed.id)
       : clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
-    // Where the next turn actually runs — the resolver a turn uses, fed the same base directory it would
-    // compute, so a bound Sandbox workspace shows here exactly when the turn would start inside it. The
-    // account is the contribution owner of the live session, else the caller (the noteWorkDir rule).
-    // Resolve mutable selection fresh: a single post-turn refresh must observe a release immediately.
-    const effective = activeId && !managed ? effectiveTurnWorkDir({
-      policy,
-      baseWorkDir: turnWorkDir(policy, reported ?? undefined, this.d.projectPath),
-      accountUserId: b?.contributionUserId ?? userId,
-      sessionId: activeId,
-      projects: this.d.projects,
-      sandbox: this.d.sandbox?.(),
-    }) : undefined;
-    const bound = effective?.workspace ?? null;
-    // `confined` is the container rule stated for the turn's STARTING directory: a shell command runs in
-    // the workspace container when its working directory lies inside the worktree, and the turn starts in
-    // `effective.workDir`. Held by construction when the workspace wins (see effectiveTurnWorkDir), and
-    // checked here rather than assumed so the indicator can never say "container" for a directory the
-    // execution rule would run on the host. A `cd` elsewhere inside the turn is the shell's own business.
-    const workspace: BrainProjectWorkspace | null = bound && effective?.workDir
-      && realPathWithin(effective.workDir, [bound.path]) !== null
-      ? { workspaceId: bound.workspaceId, label: bound.label, branch: bound.branch, path: bound.path, confined: true }
-      : null;
     const cwd = reported;
     return {
       running: !!b, sessionId: b?.sessionId ?? null, title, model: b?.model ?? '',
@@ -549,7 +515,7 @@ export class BrainStatusService {
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),
       ...(projectRef ? { projectRef } : {}),
-      project: { cwd, branch: cwd && !managed ? gitBranch(cwd, policy) : null, workspace },
+      project: { cwd, branch: cwd && !managed ? gitBranch(cwd, policy) : null },
     };
   }
 

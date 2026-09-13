@@ -57,16 +57,13 @@ describe('the managed ambient check', () => {
     }, managedScope());
   });
 
-  it('refuses a turn without a linked account, without a managed project, and a workspace scope', async () => {
+  it('refuses a turn without a linked account and without a managed project', async () => {
     await runWithPolicy({ allowedProjectIds: 'all' } as Policy, () => {
       expect(managedArtifactTurn()).toContain('linked account');
     }, { sessionId: SESSION, identity: { platform: 'web', userId: 'x', admin: true, owner: false, conversation: 'shared' }, projectRef: PROJECT });
     await runWithPolicy({ allowedProjectIds: 'all' } as Policy, () => {
       expect(managedArtifactTurn()).toContain('managed project turn');
     }, { sessionId: SESSION, identity: OWNER });
-    await runWithPolicy({ allowedProjectIds: 'all' } as Policy, () => {
-      expect(managedArtifactTurn()).toContain('workspace');
-    }, { ...managedScope(), pathView: { root: '/wt', workspace: { workspaceId: 'w', projectId: 1 }, resolve: (p: string) => p, display: (p: string) => p, stateKey: (p: string) => p, sanitize: (p: string) => p } as never });
   });
 });
 
@@ -146,21 +143,6 @@ describe('planTurnContext fails closed', () => {
     expect(context.planState).not.toContain('does not exist yet');
     expect(guest.exists(GUEST_PLAN)).toBe(false);
     // No central write (the mirror never ran) and no absence claim.
-    expect(readFileSync(planFilePath(), 'utf8')).toBe('# Central plan');
-  });
-
-  it('reports UNKNOWN state under a legacy exact workspace scope instead of widening', async () => {
-    seedPlan(SESSION, '# Central plan');
-    const guest = managedGuestFs();
-    const context = await runWithPolicy(
-      { allowedProjectIds: 'all' } as unknown as Policy,
-      () => planTurnContext(async () => guest.sandbox, SESSION),
-      { ...managedScope({ mode: 'plan' }), pathView: { kind: 'workspace', workspace: { workspaceId: 'w', projectId: 1 }, root: '/wt', resolve: (p: string) => p, display: (p: string) => p, stateKey: (p: string) => p, sanitize: (p: string) => p } as never },
-    );
-    expect(context.planState).toContain('UNKNOWN');
-    expect(context.planState).toContain('workspace');
-    expect(context.planState).not.toContain('does not exist yet');
-    expect(guest.calls()).toBe(0);
     expect(readFileSync(planFilePath(), 'utf8')).toBe('# Central plan');
   });
 

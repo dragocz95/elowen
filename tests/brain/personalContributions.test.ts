@@ -1,10 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineTool, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import type { KnownControls, PluginLogger } from '../../src/plugins/api.js';
+import type { PluginLogger } from '../../src/plugins/api.js';
 import { setLogSink } from '../../src/shared/logger.js';
 import { openDb } from '../../src/store/db.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -13,7 +12,7 @@ import { PluginRegistry } from '../../src/plugins/registry.js';
 import { toolAuthorityForUser } from '../../src/brain/brainDeps.js';
 import type { BrainDeps } from '../../src/brain/brainDeps.js';
 import { composeSessionTools, visibleToolNames } from '../../src/brain/session/capabilities.js';
-import { currentContributionUserId, currentWorkDir, runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
+import { runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import { ChannelSessionService } from '../../src/brain/channels.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
@@ -309,7 +308,6 @@ function room(opts: {
   channelId?: string;
   policy?: Policy;
   projects?: { list(): { id: number; path: string }[] };
-  sandbox?: KnownControls['sandbox'];
 }) {
   const store = new BrainStore(openDb(':memory:'));
   const registry = new LiveSessionRegistry<never>();
@@ -323,7 +321,6 @@ function room(opts: {
   const all = plugins.toolsFor(null, null, { grantsEnforcedPerTurn: true, allOwners: true }).map((t) => t.name);
   const state = { active: [...all] };
   const prompts: string[] = [];
-  const workDirs: (string | undefined)[] = [];
   const session = {
     isStreaming: false,
     getContextUsage: () => ({ tokens: 50, contextWindow: 8000, percent: 1 }),
@@ -331,7 +328,6 @@ function room(opts: {
     promptTemplates: [] as { name: string }[],
     prompt: vi.fn(async (text: string) => {
       prompts.push(text);
-      workDirs.push(currentWorkDir());
       session.messages.push({ role: 'assistant', content: 'ok' });
     }),
     steer: vi.fn(async () => {}),
@@ -348,7 +344,6 @@ function room(opts: {
     users: { get: (id: number) => ({ username: `u${id}`, granted_plugins: [] }) },
     plugins: async () => plugins,
     ...(opts.projects ? { projects: opts.projects } : {}),
-    ...(opts.sandbox ? { sandbox: () => opts.sandbox } : {}),
     spawn: async (o: { sessionId: string; ownerUserId: number; contributionUserId?: number }) => {
       spawns.set(o.sessionId, { ...(o.contributionUserId != null ? { contributionUserId: o.contributionUserId } : {}) });
       if (!store.getSession(o.sessionId)) store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
@@ -375,7 +370,7 @@ function room(opts: {
     if (!seen) throw new Error(`no session was spawned as ${sessionId} (saw ${[...spawns.keys()].join(', ')})`);
     return seen;
   };
-  return { svc, store, registry, channelId, write, prompts, workDirs, spawnedWith, active: () => state.active };
+  return { svc, store, registry, channelId, write, prompts, spawnedWith, active: () => state.active };
 }
 
 describe('a room turn resolves personal contributions for whoever is writing', () => {
@@ -396,67 +391,6 @@ describe('a room turn resolves personal contributions for whoever is writing', (
     expect(r.prompts.at(-1)).toContain('shared-runbook');
     expect(r.prompts.at(-1)).not.toContain('amy-checklist');
     expect(r.prompts.at(-1)).not.toContain('bob-notes');
-  });
-
-  it('reorients alternating writers to their own active workspace in one durable room', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'elowen-room-workspaces-'));
-    const project = join(root, 'project');
-    const amyWorkspace = join(root, 'amy');
-    const bobWorkspace = join(root, 'bob');
-    mkdirSync(project); mkdirSync(amyWorkspace); mkdirSync(bobWorkspace);
-    try {
-      const policy: Policy = {
-        allowedProjectIds: new Set([7]),
-        allowedPaths: () => [project, amyWorkspace, bobWorkspace],
-      };
-      const sandbox: KnownControls['sandbox'] = {
-        workspaceRoots: () => {
-          const accountUserId = currentContributionUserId();
-          return [{
-            workspaceId: accountUserId === 2 ? 'ws-amy' : 'ws-bob',
-            projectId: 7,
-            path: accountUserId === 2 ? amyWorkspace : bobWorkspace,
-          }];
-        },
-        workspacesFor: ({ userId }) => [{
-          workspaceId: userId === 2 ? 'ws-amy' : 'ws-bob',
-          projectId: 7,
-          path: userId === 2 ? amyWorkspace : bobWorkspace,
-          label: userId === 2 ? 'Amy' : 'Bob',
-          branch: userId === 2 ? 'amy/topic' : 'bob/topic',
-          baseRef: 'main',
-        }],
-        activeWorkspace: () => {
-          const accountUserId = currentContributionUserId();
-          return {
-            workspaceId: accountUserId === 2 ? 'ws-amy' : 'ws-bob',
-            projectId: 7,
-            path: accountUserId === 2 ? amyWorkspace : bobWorkspace,
-            label: accountUserId === 2 ? 'Amy' : 'Bob',
-            branch: accountUserId === 2 ? 'amy/topic' : 'bob/topic',
-            baseRef: 'main',
-          };
-        },
-        prepareExecution: async () => ({}) as never,
-      };
-      const r = room({
-        skills: [], channelId: 'discord-workspaces', policy, sandbox,
-        projects: { list: () => [{ id: 7, path: project }] },
-      });
-
-      await r.write(2, 'amy turn');
-      await r.write(3, 'bob turn');
-      await r.write(2, 'amy again');
-
-      expect(r.workDirs).toEqual([amyWorkspace, bobWorkspace, amyWorkspace]);
-      expect(r.prompts[0]).toContain(`effective working directory for this turn is ${amyWorkspace}`);
-      expect(r.prompts[1]).toContain(`effective working directory for this turn is ${bobWorkspace}`);
-      expect(r.prompts[1]).not.toContain(amyWorkspace);
-      expect(r.prompts[2]).toContain(amyWorkspace);
-      expect(r.store.getSession(channelSessionId('discord-workspaces'))?.user_id).toBe(1);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
   });
 
   it('advertises the writer\'s own personal tools and hides everybody else\'s', async () => {

@@ -14,9 +14,6 @@ export interface Policy {
 export interface PolicyDeps {
   userProjects: { forUser(userId: number): number[]; isAdmin(userId: number): boolean };
   projects: { get(id: number): { path: string; executionKind?: 'host' | 'managed'; lifecycle?: 'active' | 'deleting' } | null | undefined };
-  /** Live supplemental roots owned by another domain (Sandbox workspaces). Each row names its Project so
-   * core can intersect it with the account's CURRENT assignment instead of trusting a path-only widening. */
-  supplementalPaths?: (userId: number, projectIds: readonly number[]) => { projectId: number; path: string }[];
 }
 
 /** Resolve the repo-access policy for a user from Elowen's existing project assignments. */
@@ -39,18 +36,9 @@ export function resolvePolicy(deps: PolicyDeps, userId: number): Policy {
       // silently widening a live session; a revocation never does.
       const assigned = new Set(deps.userProjects.forUser(userId));
       const currentIds = [...ids].filter((id) => assigned.has(id));
-      const roots = currentIds.map((id) => deps.projects.get(id))
+      return currentIds.map((id) => deps.projects.get(id))
         .filter((project) => project?.executionKind !== 'managed' && project?.lifecycle !== 'deleting')
         .map((project) => project?.path).filter((p): p is string => !!p);
-      if (!deps.supplementalPaths || currentIds.length === 0) return roots;
-      const allowed = new Set(currentIds);
-      let supplemental: { projectId: number; path: string }[] = [];
-      try { supplemental = deps.supplementalPaths(userId, currentIds); }
-      catch { return roots; }
-      for (const root of supplemental) {
-        if (allowed.has(root.projectId) && root.path && !roots.includes(root.path)) roots.push(root.path);
-      }
-      return roots;
     },
   };
 }

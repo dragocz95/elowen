@@ -42,7 +42,6 @@ import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
 import { moveSessionWorkDir, switchableProjects, effectiveTurnWorkDir, liveManagedProject, turnWorkDir, type SwitchableProject } from './service/workDir.js';
 import { sameProjectExecution, type ProjectExecutionRef } from '../shared/projectExecution.js';
-import { runWithContributionUser } from '../plugins/policyContext.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
@@ -406,7 +405,6 @@ export class BrainService {
       get fastMode() { return d.fastMode; },
       get projects() { return d.projects; },
       get projectPath() { return d.projectPath; },
-      sandbox: () => d.plugins?.peek()?.control('sandbox'),
     });
     this.channelService = new ChannelSessionService({
       registry: this.sessions, admitsNewWork: () => !this.draining && !this.reloadingPlugins,
@@ -960,13 +958,8 @@ export class BrainService {
       if (wf.attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) {
         reason = 'it kept getting interrupted by repeated daemon restarts';
       } else if (control) {
-        const trustedNodeWorkspaceRefs = Object.fromEntries(wf.state.nodes
-          .filter((node) => node.workspaceRef)
-          .map((node) => [node.id, node.workspaceRef!]));
         const outcome = await control.resumeInterrupted({
           workflowId: wf.workflowId, parentSessionId: wf.parentSessionId, toolCallId: wf.toolCallId,
-          ...(wf.state.workspaceRef ? { trustedWorkspaceRef: wf.state.workspaceRef } : {}),
-          ...(Object.keys(trustedNodeWorkspaceRefs).length ? { trustedNodeWorkspaceRefs } : {}),
           hooks: {
             emit: (update) => { this.publishWorkflowUpdate(wf.parentSessionId, update); },
             complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
@@ -1394,24 +1387,6 @@ export class BrainService {
     if (contributionUserId !== undefined && !this.d.users.get(contributionUserId)) {
       return { ok: false, reason: 'the journaled contribution account no longer exists' };
     }
-    if (scope.workspaceRef) {
-      const sandbox = this.d.plugins?.peek()?.control('sandbox');
-      if (!sandbox || contributionUserId === undefined) {
-        return { ok: false, reason: 'the journaled Sandbox workspace cannot be resolved' };
-      }
-      const contributionPolicy = this.d.policy?.(contributionUserId);
-      try {
-        sandbox.resolveWorkspace({
-          accountUserId: contributionUserId,
-          workspace: scope.workspaceRef,
-          accessibleProjectIds: contributionPolicy?.allowedProjectIds === 'all'
-            ? 'all'
-            : contributionPolicy ? [...contributionPolicy.allowedProjectIds] : [],
-        });
-      } catch (error) {
-        return { ok: false, reason: `the journaled Sandbox workspace is unavailable: ${error instanceof Error ? error.message : String(error)}` };
-      }
-    }
     if (scope.projectRef) {
       const actorId = contributionUserId ?? row.user_id;
       const actorPolicy = this.d.policy?.(actorId);
@@ -1432,7 +1407,6 @@ export class BrainService {
         ? noninteractivePermissionBoundary({ ruleset: buildPermissionRuleset(settings), yolo: false, unattendedAsks: settings.unattendedAsks })
         : null,
       ...(contributionUserId !== undefined ? { contributionUserId } : {}),
-      ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
       projectRef: this.d.store.getProjectExecution(originSessionId),
     };
     const exceeds = scopeExceedsCurrentAccess(scope, access);
@@ -1653,15 +1627,12 @@ export class BrainService {
    *  uses rather than through a client-reported path.
    *
    *  Nothing may be running. A turn, a child session or a tracked job in flight would keep executing
-   *  against the target it was launched with while the conversation claimed to be somewhere else, and a
-   *  restricted Sandbox workspace still bound to this session has to be released by its owner first,
-   *  because a project environment and a bound workspace are two answers to the same question. */
+   *  against the target it was launched with while the conversation claimed to be somewhere else. */
   async selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string): Promise<{ projectRef: ProjectExecutionRef; workDir: string; operationId?: string }> {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
     const live = this.sessions.get(sessionId);
     if (live && (live.session.isStreaming || this.sessions.hasActiveChildren(sessionId) || processRegistry.runningJobCountForSession(sessionId) > 0)) throw new Error('conversation still has active work');
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
-    if (runWithContributionUser(userId, () => sandbox?.activeSessionWorkspace?.({ sessionId, projectIds: this.d.projects?.list().map((p) => p.id) ?? [] }))) throw new Error('release the restricted workspace before selecting a project environment');
     // A conversation nobody has spoken in yet has no live record, and its target is still the person's to
     // choose: the selection is durable state on the row, and the spawn that follows reads it. Only the
     // live cwd and its marker need a running session.
@@ -1735,9 +1706,8 @@ export class BrainService {
    *  Policy-checked, not merely recorded: an unreachable directory is the caller's mistake and the agent
    *  must not be told the work moved somewhere it cannot go.
    *
-   *  It is also the LATEST EXPLICIT statement of where this conversation works, so it wins over an earlier
-   *  Sandbox switch. Everything that means — validation, releasing the bindings that do not belong to the
-   *  entered project, persisting the durable home (a cold respawn restores brain_sessions.work_dir), the
+   *  It is also the LATEST EXPLICIT statement of where this conversation works. Everything that means —
+   *  validation, persisting the durable home (a cold respawn restores brain_sessions.work_dir), the
    *  live update and the notice — is the one shared {@link moveSessionWorkDir}, which the channel project
    *  switch runs too.
    *
@@ -1750,16 +1720,12 @@ export class BrainService {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
     if (liveManagedProject(this.d.projects, this.d.store.getProjectExecution(b.sessionId))) throw new Error('managed project directories must be selected through the environment');
-    const sandbox = this.d.plugins?.peek()?.control('sandbox');
     return { workDir: moveSessionWorkDir({
       store: this.d.store,
       policy: b.policy,
-      accountUserId: b.contributionUserId ?? userId,
       sessionId: b.sessionId,
       live: b,
       workDir: dir,
-      ...(this.d.projects ? { projects: this.d.projects } : {}),
-      ...(sandbox ? { sandbox } : {}),
     }).workDir };
   }
 
@@ -1780,7 +1746,7 @@ export class BrainService {
   async switchChannelProject(userId: number, channelKey: string, projectId: number): Promise<{ workDir: string; slug: string }> {
     const policy = this.d.policy?.(userId);
     if (!policy) throw new Error('project is not readable or not allowed');
-    return this.channelService.switchProject(channelKey, { policy, accountUserId: userId, projectId });
+    return this.channelService.switchProject(channelKey, { policy, projectId });
   }
 
   /** Set the reasoning effort of the ACTIVE conversation live (the /think command) — PI applies it to
@@ -2327,9 +2293,8 @@ export class BrainService {
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
     promote?: boolean,
-    workspaceId?: string,
   ): Promise<DelegatedContinueResult> {
-    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote, workspaceId);
+    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote);
   }
 
   /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the

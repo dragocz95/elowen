@@ -428,7 +428,6 @@ export class TranscriptModel implements TranscriptRead {
       background: event.background,
       autoDeliver: event.autoDeliver,
       resultDelivery: event.resultDelivery,
-      workspaceId: event.workspaceId,
       // The stored row carries it too; dropping it here is what made a live steer paint as a finished run
       // until the next reload.
       ...(event.steered === true ? { steered: true as const } : {}),

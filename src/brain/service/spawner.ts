@@ -99,37 +99,6 @@ interface SpawnerDeps {
  *  testable decision rather than an inline condition: a shared channel serves several senders and must
  *  never surface one person's memories to another, and an ownerless session has no memory to search.
  *  Sub-agent sessions are channel-keyed (`brain-ch-subagent-*`), so the same test excludes them. */
-const WORKSPACE_UNSUPPORTED_TOOLS = new Set([
-  'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover',
-  'LspDocumentSymbol', 'LspWorkspaceSymbol',
-  'CodebaseSearch', 'CodebaseReindex', 'CodebaseStatus',
-  'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxReleaseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
-  'ListMcpResources', 'ReadMcpResource',
-]);
-const WORKSPACE_PATH_TOOLS = new Set(['Read', 'Write', 'Edit', 'ListDir', 'Search', 'FileInfo', 'GitStatus', 'Glob', 'Grep', 'WorkflowStart']);
-
-export function workspaceToolDefinition<T extends { name: string; description?: string; parameters?: unknown }>(tool: T): T | undefined {
-  if (WORKSPACE_UNSUPPORTED_TOOLS.has(tool.name)) return undefined;
-  if (!WORKSPACE_PATH_TOOLS.has(tool.name) && tool.name !== 'Bash') return tool;
-  const parameters = tool.parameters && typeof tool.parameters === 'object'
-    ? structuredClone(tool.parameters) as Record<string, unknown>
-    : tool.parameters;
-  const properties = parameters && typeof parameters === 'object'
-    ? ((parameters as Record<string, unknown>).properties as Record<string, Record<string, unknown>> | undefined)
-    : undefined;
-  if (properties?.path) properties.path.description = 'Workspace-relative logical path (for example "src/file.ts")';
-  if (properties?.file_path) properties.file_path.description = 'Workspace-relative logical path to the file (for example "src/file.ts")';
-  if (properties?.nodesFile) properties.nodesFile.description = 'Workspace-relative path to the JSON workflow definition';
-  if (properties?.cwd) properties.cwd.description = 'Workspace-relative working directory; omit to use the workspace root';
-  const description = tool.name === 'WorkflowStart'
-    ? 'Run a DAG of sub-agents from a JSON definition inside this assigned workspace. nodesFile must be workspace-relative. Nodes may inherit this exact workspace or explicitly name the same/narrower workspaceId; they cannot widen to a sibling worktree.'
-    : `${String(tool.description ?? '')
-        .replace('The path must be absolute.', 'The path must be relative to the assigned workspace.')
-        .replace('Prefer absolute paths.', 'Use short workspace-relative paths. An absolute cwd or host path is refused.')
-        .replace('Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly.', 'Use short workspace-relative paths. An absolute cwd or host path is refused.')}`;
-  return { ...tool, description, ...(parameters ? { parameters } : {}) };
-}
-
 export function liveRecallAllowed(sessionId: string, ownerUserId: number): boolean {
   return ownerUserId > 0 && !isSubagentSession(sessionId);
 }
@@ -338,13 +307,12 @@ export class LiveSessionSpawner {
     // validated project move — before the policy-root fallback, or the respawn would silently revert a
     // move the conversation had already made. Nothing is ever stamped here: writing the row stays the
     // lifecycle's job, so a fallback-resolved cwd cannot dress up as a client report.
-    const restoredWorkDir = opts.pathView?.root || opts.clientCwd
+    const restoredWorkDir = opts.clientCwd
       ? undefined
       : this.d.store.getSession(sessionId)?.work_dir || undefined;
     const cwd = managed
       ? managedGuestRoot(managed.slug, managed.id)
-      : opts.pathView?.root
-      ?? turnWorkDir(opts.policy, opts.clientCwd ?? restoredWorkDir, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
+      : turnWorkDir(opts.policy, opts.clientCwd ?? restoredWorkDir, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
     // SIZE GUARD, before anything is built. A fork inherits the whole parent conversation, and the child
     // may be running a different model: a 480k-token owner chat forked onto a 200k-window model produced a
     // request the transport refused, which surfaced as `Connection error.` and named nothing. Refuse it
@@ -445,18 +413,10 @@ export class LiveSessionSpawner {
     // and schema only belong in a session running there. Nothing else narrows it: such a tool can be
     // stored at instance scope, where it carries no owner and would otherwise be composed for everyone.
     const selectedProjectId = managed?.id ?? null;
-    const scopedPluginTools = plugins
+    const pluginTools = plugins
       ? projectScopedTools(rawPluginTools, plugins.projectBoundTools, selectedProjectId)
       : rawPluginTools;
-    const pluginTools = opts.pathView
-      ? scopedPluginTools
-          .filter((tool) => !plugins?.hostFilesystemTools.has(tool.name)
-            && plugins?.workspaceSafeTools.has(tool.name) === true
-            && !plugins.workspaceUnsafeTools.has(tool.name))
-          .map(workspaceToolDefinition)
-          .filter((tool): tool is NonNullable<typeof tool> => !!tool)
-      : scopedPluginTools;
-    // One exact set follows the filtered definitions into both per-turn visibility and ToolSearch. Rebuilding
+    // This exact set follows the definitions into both per-turn visibility and ToolSearch. Rebuilding
     // it at either consumer risks classifying a plugin definition as a built-in, which would bypass allow-lists.
     const pluginToolNames = new Set(pluginTools.map((tool) => tool.name));
     const personalToolOwners = perTurnContributions
@@ -601,7 +561,7 @@ export class LiveSessionSpawner {
     // ChannelSessionService. Shared rooms need the writer-specific catalog; a direct chat or child has one
     // contribution owner but may still carry a narrower allow/deny boundary than its composed tool superset.
     // Owner chat alone has one sender and a stable account policy, so it keeps the cheap cached block.
-    const skillsBlock = !opts.pathView && staticSkillLoadVisible && skills.length && !perTurnContributions
+    const skillsBlock = staticSkillLoadVisible && skills.length && !perTurnContributions
       ? formatSkillsForPrompt(skills)
       : '';
     // Deferred-tools awareness: names (+ short descriptions) of the withheld MCP tools so the model knows
@@ -719,7 +679,6 @@ export class LiveSessionSpawner {
       ...(opts.forkSeed ? { forkSeed: opts.forkSeed } : {}),
       ...(opts.forkCache ? { forkCache: opts.forkCache } : {}),
       runtime: this.d.runtime, model, providerId, compactionFallbackModel: route.compactionFallback, cwd,
-      ...(opts.pathView ? { displayCwd: '.', contextRoot: opts.pathView.root, sanitizePaths: opts.pathView.sanitize } : {}),
       systemPrompt: persona, appendSystemPrompt: append,
       // Skill bodies are expanded by the live input extension below. Feeding PI this session-start snapshot
       // would let `/skill:name` survive a later grant revocation even though SkillLoad and the prompt catalog
@@ -779,7 +738,7 @@ export class LiveSessionSpawner {
       // (2) admin owner — a non-admin account with no repo of its own resolves cwd to the daemon's
       // project path, and PI walks it plus every ancestor up to `/`, so a plain user's chat would
       // otherwise inhale the operator's private CLAUDE.md (internal hosts, prod credentials).
-      contextFiles: opts.pathView ? true : ownerChatShape && !!u?.is_admin,
+      contextFiles: ownerChatShape && !!u?.is_admin,
       // A conversation that gave up on compacting cannot recover on its own, so it goes out on the same
       // channel as any other terminal session failure rather than staying a log line nobody reads.
       onCompactionStopped: (message) => replay.publish({ type: 'error', message }),

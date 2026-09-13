@@ -138,7 +138,7 @@ export type BrainEvent =
    *  ALREADY RUNNING turn and returned at once. Its own row is terminal and honest, but nothing finished —
    *  the delegation it steered into is still working — so a renderer shows a steer instead of a settled run
    *  and no finish marker is recorded. Present only on such a call; every other update is unchanged. */
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; name?: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; workspaceId?: string; steered?: true }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; name?: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; steered?: true }
   /** Live snapshot of a declarative sub-agent WORKFLOW (a DAG the delegating agent authored via
    *  `WorkflowStart`). One event per state change carries the WHOLE workflow — its overall status and
    *  the full node list with each node's dependencies, live status, and the child session/tokens/tool
@@ -155,7 +155,7 @@ export type BrainEvent =
    *  `background` (started with background:true, or detached with Ctrl+B) is NOT display trivia: a parent
    *  abort must SPARE such a workflow's node sessions exactly as it spares a detached delegate's child,
    *  and Ctrl+B must not count one that is already detached. */
-  | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; background?: boolean; workspaceRef?: WorkflowWorkspaceRef; nodes: WorkflowNode[] }
+  | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; background?: boolean; nodes: WorkflowNode[] }
   /** A visible, display-only marker that the owner changed session state out of turn — switched the
    *  model, work mode (build/plan/workflow), renamed the conversation, or changed the reasoning level.
    *  `subagent` and `workflow` are the delegated-work finish markers (see recordSubagentFinishMarker /
@@ -219,11 +219,6 @@ export type BrainEvent =
  *  `subagent` BrainEvent except its `type` tag (the host adds that when fanning out). */
 export type SubagentUpdate = Omit<Extract<BrainEvent, { type: 'subagent' }>, 'type'>;
 
-export interface WorkflowWorkspaceRef {
-  workspaceId: string;
-  projectId: number;
-}
-
 /** One node of a `workflow` snapshot. `sessionId` is set once the node's child agent starts (drill-in
  *  target); `tokens`/`seconds`/`detail` accumulate the child's live progress; `deps` are the node ids
  *  that must finish before it runs. Bounded display data only — `result`/`error` carry a short preview
@@ -246,8 +241,6 @@ export interface WorkflowNode {
   startedAt?: number;
   result?: string;
   error?: string;
-  /** Trusted durable workspace anchor for restart recovery; contains no host path. */
-  workspaceRef?: WorkflowWorkspaceRef;
 }
 
 /** The payload the workflow engine pushes through `ctx.workflowEmitter()` — the whole `workflow`

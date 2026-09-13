@@ -220,7 +220,6 @@ function parseProcessInfo(raw: unknown): ProcessInfo | undefined {
     exitCode,
     ...(completionMode !== undefined ? { completionMode } : {}),
     ...(v.blockedRead === true ? { blockedRead: true } : {}),
-    ...(v.workspaceId === null || typeof v.workspaceId === 'string' ? { workspaceId: v.workspaceId } : {}),
     ...(v.homeGeneration === null || (typeof v.homeGeneration === 'number' && Number.isSafeInteger(v.homeGeneration))
       ? { homeGeneration: v.homeGeneration } : {}),
     ...(projectRef ? { projectRef } : {}),

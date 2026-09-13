@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
 import { createBootRecovery } from '../../src/brain/recovery/providers.js';
-import type { KnownControls, PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
+import type { PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
@@ -3775,68 +3775,6 @@ describe('BrainService', () => {
     expect(call[1]?.images).toEqual([{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
     const hist = svc.history(1).find((m) => m.role === 'user');
     expect(hist?.text).toContain('1× image');
-  });
-
-  it.each(['owner', 'channel'])('resolves %s workspace switches within the same turn without changing the spawned cwd', async (surface) => {
-    const d = fakeDeps();
-    const project = tmpDir('owner-project');
-    const workspace = tmpDir('owner-workspace');
-    d.db.prepare('INSERT INTO projects (id, slug, path) VALUES (7, ?, ?)').run('owner-project', project);
-    (d as unknown as { projects: ProjectStore }).projects = new ProjectStore(d.db);
-    (d as unknown as { policy: () => unknown }).policy = () => ({
-      allowedProjectIds: new Set([7]),
-      allowedPaths: () => [project, workspace],
-    });
-    const reg = new PluginRegistry();
-    let selected = true;
-    reg.contextFor('sandbox', {}, { info() {}, warn() {}, error() {} }).registerControl('sandbox', {
-      workspaceRoots: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace }],
-      workspacesFor: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }],
-      activeWorkspace: () => selected ? ({ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }) : null,
-      resolveWorkspace: async () => ({ ref: { workspaceId: 'ws-owner', projectId: 7 }, path: workspace, accountId: 1, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
-      acquireDelegationLease: async () => ({ heartbeat: () => {}, release: () => {} }),
-      prepareExecution: async () => ({}),
-      // This turn-level test never reaches a managed environment, so any real call is unexpected.
-      // An incomplete control would resolve as no provider and quietly test the fallback path instead.
-      environmentFor: async () => { throw new Error('environmentFor is not expected in this fixture'); },
-      requestEnvironment: async () => { throw new Error('requestEnvironment is not expected in this fixture'); },
-      environmentOperation: async () => { throw new Error('environmentOperation is not expected in this fixture'); },
-      projectFiles: async () => { throw new Error('projectFiles is not expected in this fixture'); },
-      revokeProjectAccess: async () => { throw new Error('revokeProjectAccess is not expected in this fixture'); },
-      environmentSnapshots: async () => { throw new Error('environmentSnapshots is not expected in this fixture'); },
-      environmentLogs: async () => { throw new Error('environmentLogs is not expected in this fixture'); },
-      managedWorktrees: async () => { throw new Error('managedWorktrees is not expected in this fixture'); },
-      projectPreviewBinding: async () => { throw new Error('projectPreviewBinding is not expected in this fixture'); },
-      // A publication is a durable transport of a published Site, which this turn-level fixture never
-      // has: an incomplete control would resolve as no provider at all and silently turn this into a
-      // test of the fallback path.
-      projectPublicationBinding: async () => { throw new Error('projectPublicationBinding is not expected in this fixture'); },
-      projectPublicationRelease: async () => { throw new Error('projectPublicationRelease is not expected in this fixture'); },
-      releaseAdoptedWorkspace: async () => { throw new Error('releaseAdoptedWorkspace is not expected in this fixture'); },
-    } satisfies KnownControls['sandbox'] as never);
-    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
-    let scopedCwd: string | undefined;
-    d.session.prompt.mockImplementationOnce(async (text: string, options?: { preflightResult?: (success: boolean) => void }) => {
-      scopedCwd = currentWorkDir();
-      selected = false;
-      expect(currentWorkDir()).toBe(project);
-      selected = true;
-      expect(currentWorkDir()).toBe(workspace);
-      options?.preflightResult?.(true);
-      d.session.messages.push({ role: 'user', content: text }, { role: 'assistant', content: 'ok' });
-    });
-    const svc = new BrainService(d as never);
-    const { sessionId } = await svc.start(1, { cwd: project });
-    if (surface === 'owner') await svc.send({ userId: 1, text: 'work here', clientCwd: project, session: sessionId });
-    else await svc.channelSend({ channelId: 'workspace-context', ownerUserId: 1, writerUserId: 1, clientCwd: project,
-      identity: { platform: 'discord', userId: 'linked', elowenUserId: 1, admin: false, owner: false, conversation: 'shared' },
-      policy: { allowedProjectIds: new Set([7]), allowedPaths: () => [project, workspace] },
-    }, 'work here');
-
-    expect(scopedCwd).toBe(workspace);
-    const prompt = d.session.prompt.mock.calls.at(-1)![0] as string;
-    expect(prompt).toContain(`effective working directory for this turn is ${workspace}`);
-    expect(d.store.getSession(sessionId)?.work_dir).toBe(project);
   });
 
   it('places volatile turn-context around the owner text, resolves each provider once, and keeps history clean', async () => {

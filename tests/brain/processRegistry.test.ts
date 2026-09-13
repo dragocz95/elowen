@@ -55,7 +55,6 @@ describe('ProcessRegistry', () => {
     const amy = fakeHandle('amy');
     amy.handle.sessionId = 'brain-ch-room';
     amy.handle.accountUserId = 2;
-    amy.handle.workspaceId = 'ws-amy';
     amy.handle.homeGeneration = 4;
     const bob = fakeHandle('bob');
     bob.handle.sessionId = 'brain-ch-room';
@@ -68,7 +67,7 @@ describe('ProcessRegistry', () => {
     expect(reg.outputForSessionAccount('brain-ch-room', 2, 'bob')).toBeNull();
     await expect(reg.killForSessionAccount('brain-ch-room', 2, 'bob')).resolves.toBe(false);
     expect(bob.state.killed).toBe(false);
-    expect(reg.listForSessionAccount('brain-ch-room', 2)[0]).toMatchObject({ workspaceId: 'ws-amy', homeGeneration: 4 });
+    expect(reg.listForSessionAccount('brain-ch-room', 2)[0]).toMatchObject({ homeGeneration: 4 });
   });
 
   it('carries the originating session in the snapshot (null when it has none) — the UI origin badge', () => {

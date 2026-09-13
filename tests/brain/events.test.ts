@@ -297,7 +297,9 @@ describe('tool_execution_end → image vs tool_output (Bash must not be hijacked
 
 describe('tool_execution_end → lifecycle-only event', () => {
   it('carries an explicit successful metadata change to the client', () => {
-    expect(ev({ type: 'tool_execution_end', toolName: 'SandboxUseWorkspace', toolCallId: 'switch',
+    // The flag is a pass-through of a tool's own `details.metadataChanged`, not a property of any one
+    // tool, so the name below is a stand-in: the reducer forwards the flag whatever set it.
+    expect(ev({ type: 'tool_execution_end', toolName: 'PluginTool', toolCallId: 'switch',
       result: { content: [], details: { metadataChanged: true } } }))
       .toMatchObject({ metadataChanged: true, id: 'switch' });
     expect(ev({ type: 'tool_execution_end', toolName: 'Read', toolCallId: 'failed', isError: true,

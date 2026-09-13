@@ -136,7 +136,6 @@ describe('new personal conversation execution defaults', () => {
 
   it.each([
     { channel: true }, { scheduled: true }, { parentSessionId: 'parent' },
-    { pathView: { root: '/workspace' } },
   ])('never assigns a personal default to a scoped or non-personal spawn %j', (extra) => {
     const h = setup(); const policy = h.policy(h.user.id);
     const prepared = preparePersonalProject(h, { sessionId: 'excluded', ownerUserId: h.user.id, selection: {}, policy, autoCompact: false, ...extra } as SpawnOpts);

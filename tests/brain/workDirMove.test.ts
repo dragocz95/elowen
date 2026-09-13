@@ -10,7 +10,6 @@ import { BrainStore } from '../../src/store/brainStore.js';
 import { openDb } from '../../src/store/db.js';
 import type { LiveBrain } from '../../src/brain/session/liveBrain.js';
 import type { Policy } from '../../src/plugins/policy.js';
-import type { KnownControls } from '../../src/plugins/api.js';
 
 const ALL: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const tempDirs: string[] = [];
@@ -33,9 +32,9 @@ describe('moveSessionWorkDir', () => {
     const dest = tmpDir('dest');
     const live = liveWith('brain-1', launched);
 
-    const moved = moveSessionWorkDir({ store, policy: ALL, accountUserId: 1, sessionId: 'brain-1', live, workDir: dest });
+    const moved = moveSessionWorkDir({ store, policy: ALL, sessionId: 'brain-1', live, workDir: dest });
 
-    expect(moved).toEqual({ workDir: dest, moved: true, released: 0 });
+    expect(moved).toEqual({ workDir: dest, moved: true });
     // The whole point of the shared move: a cold respawn (daemon restart, plugin reload) restores the
     // stored work_dir, so the durable home must follow the live one or the move silently reverts.
     expect(store.getSession('brain-1')?.work_dir).toBe(dest);
@@ -54,7 +53,7 @@ describe('moveSessionWorkDir', () => {
     const dest = tmpDir('dest');
     const live = liveWith('brain-1', tmpDir('launch'));
 
-    moveSessionWorkDir({ store, policy: ALL, accountUserId: 1, sessionId: 'brain-1', live, workDir: dest, noticeDetail: 'kolin' });
+    moveSessionWorkDir({ store, policy: ALL, sessionId: 'brain-1', live, workDir: dest, noticeDetail: 'kolin' });
 
     expect(live.pendingSessionNotices).toEqual(['changed the working directory to kolin']);
     expect(store.getSessionEvents('brain-1').map((e) => e.detail)).toEqual(['kolin']);
@@ -71,45 +70,12 @@ describe('moveSessionWorkDir', () => {
     const live = liveWith('brain-1', launched);
     const policy: Policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [launched] };
 
-    expect(() => moveSessionWorkDir({ store, policy, accountUserId: 1, sessionId: 'brain-1', live, workDir: outside }))
+    expect(() => moveSessionWorkDir({ store, policy, sessionId: 'brain-1', live, workDir: outside }))
       .toThrow(/not readable or not allowed/);
 
     expect(store.getSession('brain-1')?.work_dir).toBe('');
     expect(live.workDir).toBe(launched);
     expect(store.getSessionEvents('brain-1')).toEqual([]);
-  });
-
-  it('releases the sandbox bindings that do not belong to the destination project', () => {
-    const store = new BrainStore(openDb(':memory:'));
-    store.createSession({ id: 'brain-1', userId: 1, title: 'T', model: 'm' });
-    const dest = tmpDir('dest');
-    const live = liveWith('brain-1', undefined);
-    const release = vi.fn(() => ({ released: 2 }));
-    const sandbox = { releaseSessionWorkspaces: release, workspaceRoots: () => [] } as unknown as KnownControls['sandbox'];
-    const projects = { list: () => [{ id: 7, slug: 'dest', path: dest }] };
-
-    moveSessionWorkDir({ store, policy: ALL, accountUserId: 3, sessionId: 'brain-1', live, workDir: dest, projects, sandbox });
-
-    expect(release).toHaveBeenCalledWith({ sessionId: 'brain-1', projectIds: [7], keepProjectId: 7 });
-    expect(live.workDir).toBe(dest);
-  });
-
-  it('propagates a workspace_in_use refusal before anything moves', () => {
-    const store = new BrainStore(openDb(':memory:'));
-    store.createSession({ id: 'brain-1', userId: 1, title: 'T', model: 'm' });
-    store.appendMessage({ id: 'm1', sessionId: 'brain-1', parentId: null, role: 'user', content: 'hi' });
-    const launched = tmpDir('launch');
-    const dest = tmpDir('dest');
-    const live = liveWith('brain-1', launched);
-    const release = vi.fn(() => { throw new Error('workspace_in_use: a process is running in the bound worktree'); });
-    const sandbox = { releaseSessionWorkspaces: release, workspaceRoots: () => [] } as unknown as KnownControls['sandbox'];
-    const projects = { list: () => [{ id: 7, slug: 'dest', path: dest }] };
-
-    expect(() => moveSessionWorkDir({ store, policy: ALL, accountUserId: 3, sessionId: 'brain-1', live, workDir: dest, projects, sandbox }))
-      .toThrow(/workspace_in_use/);
-
-    expect(live.workDir).toBe(launched);
-    expect(store.getSession('brain-1')?.work_dir).toBe('');
   });
 
   it('persists the durable home even when the conversation is not live', () => {
@@ -118,7 +84,7 @@ describe('moveSessionWorkDir', () => {
     store.appendMessage({ id: 'm1', sessionId: 'brain-1', parentId: null, role: 'user', content: 'hi' });
     const dest = tmpDir('dest');
 
-    const moved = moveSessionWorkDir({ store, policy: ALL, accountUserId: 1, sessionId: 'brain-1', workDir: dest });
+    const moved = moveSessionWorkDir({ store, policy: ALL, sessionId: 'brain-1', workDir: dest });
 
     expect(moved.moved).toBe(true);
     expect(store.getSession('brain-1')?.work_dir).toBe(dest);
@@ -134,10 +100,10 @@ describe('moveSessionWorkDir', () => {
     const dest = tmpDir('dest');
     const live = liveWith('brain-1', undefined);
 
-    moveSessionWorkDir({ store, policy: ALL, accountUserId: 1, sessionId: 'brain-1', live, workDir: dest });
-    const again = moveSessionWorkDir({ store, policy: ALL, accountUserId: 1, sessionId: 'brain-1', live, workDir: dest });
+    moveSessionWorkDir({ store, policy: ALL, sessionId: 'brain-1', live, workDir: dest });
+    const again = moveSessionWorkDir({ store, policy: ALL, sessionId: 'brain-1', live, workDir: dest });
 
-    expect(again).toEqual({ workDir: dest, moved: false, released: 0 });
+    expect(again).toEqual({ workDir: dest, moved: false });
     expect(store.getSessionEvents('brain-1').filter((e) => e.kind === 'cwd')).toHaveLength(1);
     expect(live.pendingSessionNotices).toHaveLength(1);
   });
@@ -181,7 +147,7 @@ describe('project resolvers', () => {
   });
 
   it('projectMoveTarget refuses a project the caller is not assigned to, even one nested in an allowed root', () => {
-    // A project registered inside another project's root — or inside a supplemental Sandbox root —
+    // A project registered inside another project's root — or inside any other allowed root —
     // clears the path-containment gate by accident; the project ASSIGNMENT is what says the caller
     // may be moved there at all.
     const parent = tmpDir('parent');
@@ -250,7 +216,7 @@ describe('ChannelSessionService.switchProject', () => {
       projects: { list: () => [{ id: 7, slug: 'kolin', path: dest }] },
     });
 
-    const moved = await svc.switchProject('discord-c1', { policy: ALL, accountUserId: 3, projectId: 7 });
+    const moved = await svc.switchProject('discord-c1', { policy: ALL, projectId: 7 });
 
     expect(moved).toEqual({ workDir: dest, slug: 'kolin' });
     expect(store.getSession(channelSessionId('discord-c1'))?.work_dir).toBe(dest);
@@ -269,7 +235,7 @@ describe('ChannelSessionService.switchProject', () => {
     });
     const policy: Policy = { allowedProjectIds: new Set([7]), allowedPaths: () => [reachable] };
 
-    await expect(svc.switchProject('discord-c1', { policy, accountUserId: 3, projectId: 8 })).rejects.toThrow(/not readable or not allowed/);
+    await expect(svc.switchProject('discord-c1', { policy, projectId: 8 })).rejects.toThrow(/not readable or not allowed/);
     expect(store.getSession(channelSessionId('discord-c1'))?.work_dir).toBe('');
     expect(ch?.workDir).not.toBe(secret);
   });
@@ -280,7 +246,7 @@ describe('ChannelSessionService.switchProject', () => {
       projects: { list: () => [{ id: 7, slug: 'kolin', path: dest }] },
     });
 
-    const moved = await svc.switchProject('discord-c1', { policy: ALL, accountUserId: 3, projectId: 7 });
+    const moved = await svc.switchProject('discord-c1', { policy: ALL, projectId: 7 });
 
     expect(moved).toEqual({ workDir: dest, slug: 'kolin' });
     expect(store.getSession(channelSessionId('discord-c1'))?.work_dir).toBe(dest);
@@ -290,7 +256,7 @@ describe('ChannelSessionService.switchProject', () => {
     const { svc } = channelHarness({ sessionId: channelSessionId('discord-c1') }, {
       projects: { list: () => [] },
     });
-    await expect(svc.switchProject('discord-c1', { policy: ALL, accountUserId: 3, projectId: 99 })).rejects.toThrow();
+    await expect(svc.switchProject('discord-c1', { policy: ALL, projectId: 99 })).rejects.toThrow();
   });
 });
 
