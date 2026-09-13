@@ -139,6 +139,23 @@ describe('ChannelSessionService.resetChannels', () => {
     await held;
   });
 
+  it('prompt refresh spares a foreground grandchild beneath a running background child', async () => {
+    const t = setup();
+    const root = t.seedChannel('room', 1);
+    const child = t.seedDelegatedChannel('subagent-background', root.sessionId, true);
+    const grandchild = t.seedDelegatedChannel('subagent-foreground-grandchild', child.sessionId, false);
+
+    await t.svc.resetChannels('user instructions changed', { intent: 'prompt_refresh' });
+
+    expect(root.session.dispose).toHaveBeenCalledOnce();
+    expect(child.session.abort).not.toHaveBeenCalled();
+    expect(child.session.dispose).not.toHaveBeenCalled();
+    expect(grandchild.session.abort).not.toHaveBeenCalled();
+    expect(grandchild.session.dispose).not.toHaveBeenCalled();
+    expect(t.registry.channelGet('subagent-background')).toBe(child);
+    expect(t.registry.channelGet('subagent-foreground-grandchild')).toBe(grandchild);
+  });
+
   it('prompt refresh still aborts and disposes a foreground delegated child', async () => {
     const t = setup();
     const parent = t.seedChannel('room', 1);
@@ -152,17 +169,22 @@ describe('ChannelSessionService.resetChannels', () => {
     expect(t.registry.channelGet('subagent-foreground')).toBeUndefined();
   });
 
-  it('default/plugin reset still aborts a running background delegated child', async () => {
+  it.each(['plugins reloaded', 'ordinary reset'])('%s still aborts and disposes both delegated levels', async (reason) => {
     const t = setup();
     const parent = t.seedChannel('room', 1);
     const child = t.seedDelegatedChannel('subagent-background', parent.sessionId, true);
+    const grandchild = t.seedDelegatedChannel('subagent-foreground-grandchild', child.sessionId, false);
 
-    await t.svc.resetChannels('plugins reloaded');
+    await t.svc.resetChannels(reason);
 
     expect(child.session.abort).toHaveBeenCalled();
+    expect(grandchild.session.abort).toHaveBeenCalled();
     expect(child.session.dispose).toHaveBeenCalledOnce();
-    expect(t.registry.pendingAbort(child.sessionId)).toMatchObject({ origin: 'parent_teardown', reason: 'plugins reloaded' });
+    expect(grandchild.session.dispose).toHaveBeenCalledOnce();
+    expect(t.registry.pendingAbort(child.sessionId)).toMatchObject({ origin: 'parent_teardown', reason });
+    expect(t.registry.pendingAbort(grandchild.sessionId)).toMatchObject({ origin: 'parent_teardown', reason });
     expect(t.registry.channelGet('subagent-background')).toBeUndefined();
+    expect(t.registry.channelGet('subagent-foreground-grandchild')).toBeUndefined();
   });
 
   it('prompt refresh spares a recursive background grandchild while resetting its foreground parent', async () => {
@@ -180,6 +202,26 @@ describe('ChannelSessionService.resetChannels', () => {
     expect(grandchild.session.dispose).not.toHaveBeenCalled();
     expect(t.registry.channelGet('subagent-grandchild')).toBe(grandchild);
     expect(t.registry.childrenOf(child.sessionId)).toContain(grandchild.sessionId);
+  });
+
+  it.each(['missing parent row', 'parent cycle'])('prompt refresh fails closed and destroys both levels for a %s', async (corruption) => {
+    const t = setup();
+    const root = t.seedChannel('room', 1);
+    const child = t.seedDelegatedChannel('subagent-background', root.sessionId, true);
+    const grandchild = t.seedDelegatedChannel('subagent-foreground-grandchild', child.sessionId, false);
+    t.db.prepare('UPDATE brain_sessions SET parent_session_id = ? WHERE id = ?').run(
+      corruption === 'parent cycle' ? grandchild.sessionId : 'brain-ch-subagent-missing',
+      child.sessionId,
+    );
+
+    await t.svc.resetChannels('user instructions changed', { intent: 'prompt_refresh' });
+
+    expect(child.session.abort).toHaveBeenCalled();
+    expect(grandchild.session.abort).toHaveBeenCalled();
+    expect(child.session.dispose).toHaveBeenCalledOnce();
+    expect(grandchild.session.dispose).toHaveBeenCalledOnce();
+    expect(t.registry.channelGet('subagent-background')).toBeUndefined();
+    expect(t.registry.channelGet('subagent-foreground-grandchild')).toBeUndefined();
   });
 
   it('restart recovery claims and completes a child spared by prompt refresh exactly once', async () => {
@@ -220,16 +262,37 @@ describe('ChannelSessionService.resetChannels', () => {
     expect(t.store.pendingSubagentResults(parent.sessionId)).toHaveLength(1);
   });
 
-  it.each(['user_stop', 'tree_abort'] as const)('%s still terminates a running background descendant with its exact origin', async (origin) => {
+  it.each(['user_stop', 'tree_abort'] as const)('%s still terminates both delegated levels with its exact origin', async (origin) => {
     const t = setup();
     const parent = t.seedChannel('room', 1);
     const child = t.seedDelegatedChannel('subagent-background', parent.sessionId, true);
+    const grandchild = t.seedDelegatedChannel('subagent-foreground-grandchild', child.sessionId, false);
 
     await t.svc.abort('room', { origin, reason: `${origin} requested` });
 
     expect(child.session.abort).toHaveBeenCalled();
+    expect(grandchild.session.abort).toHaveBeenCalled();
     expect(t.registry.pendingAbort(child.sessionId)).toEqual({ origin, reason: `${origin} requested` });
+    expect(t.registry.pendingAbort(grandchild.sessionId)).toEqual({ origin, reason: `${origin} requested` });
     expect(t.registry.childrenOf(parent.sessionId)).toEqual([]);
+    expect(t.registry.childrenOf(child.sessionId)).toEqual([]);
+  });
+
+  it('DelegateStop-style targeted abort still terminates the selected child and its grandchild only', async () => {
+    const t = setup();
+    const root = t.seedChannel('room', 1);
+    const child = t.seedDelegatedChannel('subagent-background', root.sessionId, true);
+    const grandchild = t.seedDelegatedChannel('subagent-foreground-grandchild', child.sessionId, false);
+
+    await t.svc.abort('subagent-background');
+
+    expect(root.session.abort).not.toHaveBeenCalled();
+    expect(child.session.abort).toHaveBeenCalled();
+    expect(grandchild.session.abort).toHaveBeenCalled();
+    expect(t.registry.pendingAbort(child.sessionId)).toMatchObject({ origin: 'user_stop' });
+    expect(t.registry.pendingAbort(grandchild.sessionId)).toMatchObject({ origin: 'user_stop' });
+    expect(t.registry.childrenOf(root.sessionId)).toContain(child.sessionId);
+    expect(t.registry.childrenOf(child.sessionId)).toEqual([]);
   });
 
   it('resets only the channels the settings filter matches — another account\'s channel survives untouched (personality change)', async () => {
