@@ -59,68 +59,11 @@ describe('published sites gateway control', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('reports helper drift in readiness and reinstalls it through environment provisioning', async () => {
-    const invoke = vi.fn(async (request: { op: string }) => ({
-      ok: true,
-      ready: true,
-      items: [{ id: 'package:podman', label: 'Podman', ok: true, detail: 'installed' }],
-      detail: request.op,
-    }));
-    const helper = {
-      status: vi.fn()
-        .mockResolvedValueOnce({ id: 'helper:site-gateway', label: 'Published-sites gateway helper', ok: false, detail: 'Run: sudo -n /usr/bin/install exact command' })
-        .mockResolvedValue({ id: 'helper:site-gateway', label: 'Published-sites gateway helper', ok: true, detail: 'installed helper matches this Elowen release' }),
-      install: vi.fn(async () => true),
-    };
-    const audit = { info: vi.fn(), warn: vi.fn() };
-    const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke, audit, helper });
-
-    expect(await control.environmentsStatus()).toEqual({
-      ready: false,
-      items: [expect.objectContaining({ id: 'helper:site-gateway', ok: false, detail: expect.stringContaining('/usr/bin/install') })],
-      detail: 'the installed published-sites gateway helper differs from this Elowen release',
-    });
-    expect(invoke).not.toHaveBeenCalled();
-
-    expect(await control.provisionEnvironments()).toEqual(expect.objectContaining({
-      ready: true,
-      items: [
-        expect.objectContaining({ id: 'helper:site-gateway', ok: true }),
-        { id: 'package:podman', label: 'Podman', ok: true, detail: 'installed' },
-      ],
-    }));
-    expect(helper.install).toHaveBeenCalledOnce();
-    expect(invoke.mock.calls.map(([request]) => request)).toEqual([{ op: 'environments-provision' }]);
-    expect(audit.info).toHaveBeenCalledTimes(2);
-    expect(audit.warn).not.toHaveBeenCalled();
-  });
-
-  it('keeps readiness clean when installed and shipped helper digests match', async () => {
-    const helper = {
-      status: vi.fn(async () => ({ id: 'helper:site-gateway', label: 'Published-sites gateway helper', ok: true, detail: 'installed helper matches this Elowen release' })),
-      install: vi.fn(),
-    };
-    const control = createPublishedSitesGatewayControl({
-      publicWebUrl: 'https://agent.example.com',
-      helper,
-      invoke: async () => ({ ok: true, ready: true, items: [{ id: 'package:podman', label: 'Podman', ok: true }] }),
-    });
-
-    expect(await control.environmentsStatus()).toMatchObject({
-      ready: true,
-      items: [
-        { id: 'helper:site-gateway', label: 'Published-sites gateway helper', ok: true, detail: 'installed helper matches this Elowen release' },
-        { id: 'package:podman', label: 'Podman', ok: true },
-      ],
-    });
-    expect(helper.install).not.toHaveBeenCalled();
-  });
-
-  it('routes only certificate issuance and environment provisioning to extended bounded timeouts', () => {
+  it('routes only certificate issuance and runtime provisioning to extended bounded timeouts', () => {
     expect(siteGatewayHelperTimeoutMs({ op: 'status' })).toBe(30_000);
     expect(siteGatewayHelperTimeoutMs({ op: 'ensure-site', slug: 'alpha', email: 'ops@example.com', gatewayToken: TOKEN })).toBe(6 * 60_000);
-    expect(siteGatewayHelperTimeoutMs({ op: 'environments-provision' })).toBe(12 * 60_000);
-    expect(siteGatewayHelperTimeoutMs({ op: 'environments-status' })).toBe(30_000);
+    // Machine-runtime provisioning runs an apt transaction, which is the one call budgeted in minutes.
+    expect(siteGatewayHelperTimeoutMs({ domain: 'nspawn', op: 'provision', veth: true })).toBe(12 * 60_000);
   });
 
   it('asks the helper for one site at a time, by slug, over the bounded protocol', async () => {

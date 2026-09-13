@@ -1,5 +1,5 @@
 // Scripted OpenAI-compatible model for the MANAGED-project workflow test
-// (tests/plugins/workflowManagedGuest.podman.test.ts).
+// (tests/plugins/workflowManagedGuest.nspawn.test.ts).
 //
 // One parent turn walks the exact sequence WorkflowStart documents, with no shortcuts: the parent WRITES
 // its files with the real Write tool (which, in a managed project, routes through the Sandbox guest

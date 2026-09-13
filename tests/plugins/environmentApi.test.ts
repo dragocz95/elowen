@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { registerEnvironmentApi } from '../../plugins/sandbox/lib/environmentApi.mjs';
 
-type Route = { method?: string; handler: (req: any) => Promise<any> };
+type Route = { method?: string; access?: string; handler: (req: any) => Promise<any> };
 
 function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: number[] | null } = {}) {
   const project = { id: 7, lifecycle: options.lifecycle ?? 'active' };
@@ -14,7 +14,7 @@ function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: 
     host: { stores: () => stores },
     registerApiRoute: vi.fn((route: any) => {
       const list = routes.get(route.path) ?? [];
-      list.push({ method: route.method, handler: route.handler });
+      list.push({ method: route.method, access: route.access, handler: route.handler });
       routes.set(route.path, list);
     }),
   };
@@ -22,6 +22,8 @@ function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: 
     projectOverview: vi.fn(async () => ({ environment: { projectId: 7, state: 'running' }, snapshots: [], operations: [] })),
     requestEnvironment: vi.fn(async () => ({ id: 'op_1', status: 'pending' })),
     environmentFor: vi.fn(), environmentOperation: vi.fn(), environmentSnapshots: vi.fn(), environmentLogs: vi.fn(),
+    machineRuntimeReadiness: vi.fn(async () => ({ runtime: 'nspawn', ready: true, prepared: true, requirements: [], operation: null })),
+    provisionMachineRuntime: vi.fn(async () => ({ id: 'env_host', runtime: 'nspawn', status: 'pending' })),
     projectFiles: vi.fn(), managedWorktrees: vi.fn(),
   };
   registerEnvironmentApi(ctx as any, { control } as any);
@@ -40,13 +42,17 @@ function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: 
 describe('UI projects/:id/environment API', () => {
   // The two per-environment READS a browser makes, and nothing else: every write goes through the
   // namespaced mount, and a route no surface calls is a surface nobody is defending.
-  it('registers the namespaced projects mount and only the two environment reads', () => {
+  it('registers the namespaced projects mount, the two environment reads and the host runtime control', () => {
     const { routes } = setup();
     expect(routes.get('projects')?.map((route) => route.method).sort()).toEqual(['GET', 'POST']);
-    expect([...routes.keys()].sort()).toEqual(['environments/operation', 'environments/status', 'projects']);
+    expect([...routes.keys()].sort()).toEqual(['environments/operation', 'environments/status', 'projects', 'runtime/host']);
     for (const path of ['environments/status', 'environments/operation']) {
       expect(routes.get(path)?.map((route) => route.method)).toEqual(['GET']);
     }
+    // The host runtime reads its readiness and provisions it: a look must stay a look, so the two are
+    // separate methods rather than one call that repairs whatever it finds.
+    expect(routes.get('runtime/host')?.map((route) => route.method).sort()).toEqual(['GET', 'POST']);
+    expect(routes.get('runtime/host')?.map((route) => route.access)).toEqual(['admin', 'admin']);
   });
 
   it('parses only an optional leading slash, a positive id and the /environment suffix', async () => {
@@ -140,6 +146,25 @@ describe('UI projects/:id/environment API', () => {
     expect(malformed.status).toBe(400);
     expect(malformed.body.error).toBe('invalid_body');
     expect(control.requestEnvironment).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps host provisioning typed, admin-routed and idempotent', async () => {
+    const { routes, control } = setup();
+    const invoke = (method: 'GET' | 'POST', json?: any, auth: any = { userId: 3, admin: true }) =>
+      routes.get('runtime/host')!.find((route) => route.method === method)!
+        .handler({ auth, json: async () => json });
+
+    expect(await invoke('GET')).toMatchObject({ status: 200, body: { runtime: 'nspawn', prepared: true } });
+    const accepted = await invoke('POST', { action: { kind: 'provision' }, requestId: 'host-setup' });
+    expect(accepted).toMatchObject({ status: 202, body: { id: 'env_host', status: 'pending' } });
+    expect(control.provisionMachineRuntime).toHaveBeenCalledWith({ accountUserId: 3, action: { kind: 'provision' }, requestId: 'host-setup' });
+
+    for (const json of [undefined, {}, { action: { kind: 'provision', command: 'apt' } }, { action: { kind: 'shell' } },
+      { action: { kind: 'provision' }, path: '/etc' }, { action: { kind: 'provision' }, requestId: 'bad id!' }]) {
+      expect((await invoke('POST', json)).status).toBe(400);
+    }
+    expect((await invoke('GET', undefined, { userId: null, admin: true })).status).toBe(401);
+    expect(control.provisionMachineRuntime).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the actor from the verified token only and maps control errors to JSON errors', async () => {

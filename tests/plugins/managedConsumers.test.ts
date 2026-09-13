@@ -434,19 +434,19 @@ describe('managed builtin consumer routing', () => {
 
   /** A launcher that behaves the way the real one does when the guest program is missing.
    *
-   *  The real launch is a host `podman` invocation carrying its store flags, the container id and the
-   *  wrapped argv, and `systemd-run --pipe --wait` hands the unit's status back — so a program that is not
-   *  installed in the guest arrives as exit 127 from a host command line. Node then puts that ENTIRE
-   *  command line into the error message, which is how the container's identity used to reach the caller. */
+   *  The real launch is a host `sudo` invocation of the privileged helper, carrying the machine's name and
+   *  the wrapped argv, and `systemd-run --pipe --wait` hands the unit's status back — so a program that is
+   *  not installed in the guest arrives as exit 127 from a host command line. Node then puts that ENTIRE
+   *  command line into the error message, which is how the machine's identity used to reach the caller. */
   const fakeLauncher = (script: string) => {
     const dir = mkdtempSync(join(tmpdir(), 'managed-launcher-'));
     launcherDirs.push(dir);
-    const podman = join(dir, 'podman');
-    writeFileSync(podman, script, { mode: 0o755 });
+    const file = join(dir, 'sudo');
+    writeFileSync(file, script, { mode: 0o755 });
     return {
-      podman,
-      containerId: 'c'.repeat(64),
-      args: ['--root', '/var/lib/containers/storage', 'exec', 'c'.repeat(64), 'systemd-run', '--pipe', '--wait', 'pdfinfo'],
+      file,
+      machine: 'elowen-project-7-g1',
+      args: ['-n', '/usr/local/libexec/elowen-site-gateway', '', 'systemd-run', '--pipe', '--wait', 'pdfinfo'],
     };
   };
 
@@ -456,7 +456,7 @@ describe('managed builtin consumer routing', () => {
     const prepare = provider.prepareExecution.getMockImplementation()!;
     provider.prepareExecution.mockImplementation(async (input, options) => ({
       ...await prepare({ ...input, command: { type: 'argv', file: 'pdfinfo', args: [] } } as never, options),
-      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+      launch: { type: 'argv', file: launcher.file, args: launcher.args, env: {} },
     }));
     provider.responses.set('pdfinfo', '');
     const { run } = fixture(files, provider);
@@ -470,12 +470,12 @@ describe('managed builtin consumer routing', () => {
     expect(text).not.toMatch(/on this host/);
     expect(result.details).toMatchObject({ ok: false, pdf: true });
 
-    // None of the transport may appear: not the launcher path, not its store flags, not the container id.
-    expect(text).not.toContain(launcher.podman);
-    expect(text).not.toContain(launcher.containerId);
-    expect(text).not.toContain('podman');
+    // None of the transport may appear: not the launcher path, not the privileged helper it invokes,
+    // not the machine's name, not the guest unit runner.
+    expect(text).not.toContain(launcher.file);
+    expect(text).not.toContain(launcher.machine);
     expect(text).not.toContain('systemd-run');
-    expect(text).not.toContain('/var/lib/containers');
+    expect(text).not.toContain('elowen-site-gateway');
     expect(text).not.toMatch(/Command failed/);
   });
 
@@ -486,7 +486,7 @@ describe('managed builtin consumer routing', () => {
     const prepare = provider.prepareExecution.getMockImplementation()!;
     provider.prepareExecution.mockImplementation(async (input, options) => ({
       ...await prepare({ ...input, command: { type: 'argv', file: 'pdfinfo', args: [] } } as never, options),
-      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+      launch: { type: 'argv', file: launcher.file, args: launcher.args, env: {} },
     }));
     provider.responses.set('pdfinfo', '');
     const { run } = fixture(files, provider);
@@ -496,9 +496,8 @@ describe('managed builtin consumer routing', () => {
     expect(text).toContain("Syntax Error: Couldn't read xref table"); // the guest's own diagnosis survives
     expect(text).toMatch(/status 1/);
     expect(text).not.toMatch(/poppler-utils/);                        // not a missing-tool answer
-    expect(text).not.toContain(launcher.podman);
-    expect(text).not.toContain(launcher.containerId);
-    expect(text).not.toContain('podman');
+    expect(text).not.toContain(launcher.file);
+    expect(text).not.toContain(launcher.machine);
   });
 
   it('bounds guest stderr instead of pasting an unbounded error into the result', async () => {
@@ -507,7 +506,7 @@ describe('managed builtin consumer routing', () => {
     const prepare = provider.prepareExecution.getMockImplementation()!;
     provider.prepareExecution.mockImplementation(async (input, options) => ({
       ...await prepare({ ...input, command: { type: 'argv', file: 'pdfinfo', args: [] } } as never, options),
-      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+      launch: { type: 'argv', file: launcher.file, args: launcher.args, env: {} },
     }));
     provider.responses.set('pdfinfo', '');
     const { run } = fixture(files, provider);
@@ -522,7 +521,7 @@ describe('managed builtin consumer routing', () => {
     provider.prepareExecution.mockImplementation(async (input: any) => ({
       mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace',
       home: '/root', roots: ['/'], workspace: null,
-      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+      launch: { type: 'argv', file: launcher.file, args: launcher.args, env: {} },
       lease: { id: 'typed', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {}, ...lease },
       sanitizeOutput: (text: string) => text, cancel: vi.fn(async () => {}),
     }) as never);

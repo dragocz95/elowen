@@ -5,7 +5,10 @@ import { hostname, tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { it, expect, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
+import { NspawnClient } from '../../plugins/sandbox/lib/nspawn.mjs';
+import { SpawnExecutor } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
+import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
+import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { openDb } from '../../src/store/db.js';
@@ -21,22 +24,28 @@ import { clearColdToolResults } from '../../src/brain/session/coldToolResultClea
 import { CLEAR_MIN_BYTES, setManagedSandboxResolver } from '../../src/brain/session/toolResultClearing.js';
 import { setSpillNamespaceResolver, sessionToolResultSpillNamespace, toolResultSpillDir } from '../../src/shared/paths.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { announce, blockers, pinnedExecutor, PROOF_HELPER, storageRoots } from './nspawnRealGuest.mjs';
 
 /** The file and shell TOOLS against a real guest, not the runtime underneath them.
  *
  *  Everything else exercises these tools over an in-process provider that answers exactly what the test
  *  taught it. That proves the tool logic and nothing about the guest: the managed reader asking for more
  *  bytes than the guest would ever return was invisible to every one of those suites. This registers the
- *  real plugins and runs their real `execute` against a container.
- */
+ *  real plugins and runs their real `execute` against a machine.
+ *
+ *  The guest is a systemd-nspawn machine now, so there is no private engine to build and reset. The
+ *  proof-host gate stands in its place, the resource id is far outside the range a real project reaches,
+ *  and the executor is pinned: a program this runtime does not own, a helper invocation off its pinned
+ *  argv, or a daemon credential in a child's environment fails the test where it happens. */
 const files = await import(resolvePath('plugins/files/index.mjs')) as { register(ctx: PluginContext): void };
 const terminal = await import(resolvePath('plugins/terminal/index.mjs')) as { register(ctx: PluginContext): void };
 const mcp = await import(resolvePath('plugins/mcp/index.mjs')) as { register(ctx: PluginContext): Promise<void>; reconnectMcpServer(name: string): Promise<unknown> };
 
-type Tool = { name: string; execute(id: string, params: Record<string, unknown>): Promise<any> };
+announce('nspawn managed tool callers');
 
-const PROJECT_ID = 7;
-const OTHER_PROJECT_ID = 8;
+const SUFFIX = randomBytes(4).toString('hex');
+const PROJECT_ID = 993_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
+const OTHER_PROJECT_ID = PROJECT_ID + 1;
 const ACTOR = 1;
 /** A linked account that is NOT a member of the project. */
 const OUTSIDER = 2;
@@ -44,22 +53,22 @@ const OUTSIDER = 2;
 const MEMBER = 3;
 const GUEST_MCP_FIXTURE = resolvePath('tests/fixtures/guest-mcp-server.mjs');
 
-it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell tools against a managed guest', async () => {
+it.skipIf(blockers.length > 0)('runs the real file and shell tools against a managed guest', async () => {
+  const sandboxDataDir = storageRoots!.sandboxDataDir;
   const scratch = mkdtempSync(join(tmpdir(), 'tools-'));
-  const isolation = isolatedPodmanOptions(join(scratch, 'pm'), `tools-${randomBytes(6).toString('hex')}`, { useUserSessionBus: true });
-  const paths = isolation.isolation;
-  const client = new PodmanClient(isolation);
+  const client = new NspawnClient({ artifacts: new RootfsArtifactStore({ dataDir: sandboxDataDir }),
+    executor: pinnedExecutor(new SpawnExecutor()), helperPath: PROOF_HELPER, namespace: 'elowen',
+    outputLimitBytes: 16 * 1024 * 1024 });
   const sql = openDb(':memory:');
-  let engineVerified = false;
+  let storageRootOfProject: string | null = null;
   const began = Date.now();
   // Printed as each stage BEGINS: a runner timeout kills the test before any catch, so a stage recorded
   // only on failure tells you nothing about where the time went.
-  let stage = 'engine';
+  let stage = 'host readiness';
   const enter = (next: string) => { stage = next; console.log(`[${String(Math.round((Date.now() - began) / 1000)).padStart(4)}s] ${next}`); };
   try {
-    const info = await client.info();
-    assert.equal(info.graphRoot, paths.storage);
-    engineVerified = true;
+    const readiness = await client.hostReadiness();
+    assert.equal(readiness.ready, true, JSON.stringify(readiness.items.filter((item: any) => !item.ok)));
 
     const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
     const project: any = { id: PROJECT_ID, executionKind: 'managed', lifecycle: 'active' };
@@ -70,22 +79,26 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     // Membership the revocation stage actually removes from. A frozen predicate would make the refusal
     // below prove nothing: it has to start out permitting MEMBER and stop.
     const members = new Set<number>([ACTOR, MEMBER]);
-    const runtimeCtx: any = { db: () => db, currentAccountUserId: () => actingAccount, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
-      usersRead: { list: () => [{ id: ACTOR }, { id: OUTSIDER }, { id: MEMBER }], mayUsePlugin: () => true, isAdmin: (id: number) => id === ACTOR },
-      userProjects: {
-        canAccess: (u: number, id: number) => id === PROJECT_ID && members.has(u),
-        canManage: (u: number, id: number) => id === PROJECT_ID && u === ACTOR,
-      },
-      projects: { get: (id: number) => (id === PROJECT_ID ? project : undefined), beginDeletion: () => true, finishDeletion: () => true },
-    }) } };
+    const runtimeCtx: any = { db: () => db, currentAccountUserId: () => actingAccount, currentAccess: () => ({ readOnly: false }), config: {},
+      logger: { info() {}, warn() {}, error() {} },
+      host: { stores: () => ({
+        usersRead: { list: () => [{ id: ACTOR }, { id: OUTSIDER }, { id: MEMBER }], mayUsePlugin: () => true, isAdmin: (id: number) => id === ACTOR },
+        userProjects: {
+          canAccess: (u: number, id: number) => id === PROJECT_ID && members.has(u),
+          canManage: (u: number, id: number) => id === PROJECT_ID && u === ACTOR,
+        },
+        projects: { get: (id: number) => (id === PROJECT_ID ? project : undefined), beginDeletion: () => true, finishDeletion: () => true },
+      }) } };
     initSandboxDb(runtimeCtx);
-    const runtime = createEnvironmentRuntime({ ctx: runtimeCtx, db, dataDir: join(scratch, 'sandbox'), namespace: paths.namespace, podman: client, daemon: true });
+    const runtime = createEnvironmentRuntime({ ctx: runtimeCtx, db, dataDir: sandboxDataDir, namespace: 'elowen',
+      nspawn: client, storage: new ContainerStorage(client), daemon: true });
 
     enter('environment start');
     const started = await runtime.requestEnvironment({ project: projectRef, accountUserId: ACTOR, action: { kind: 'start' } });
     await runtime.reconcile();
     const startOp = await runtime.environmentOperation({ accountUserId: ACTOR, operationId: started.id });
     assert.equal(startOp?.status, 'succeeded', startOp?.error ?? 'environment did not start');
+    storageRootOfProject = join(sandboxDataDir, 'projects', String(PROJECT_ID));
 
     // The same surface the Sandbox plugin registers for a managed project.
     const sandbox = {
@@ -94,6 +107,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
         runtime.prepareExecution({ ...input, projectRef: input.projectRef ?? projectRef }, options?.accountUserId ?? ACTOR),
     };
 
+    type Tool = { name: string; execute(id: string, params: Record<string, unknown>): Promise<any> };
     const fixture = (provider: unknown) => {
       const tools: Tool[] = [];
       const session = `managed-${randomBytes(4).toString('hex')}`;
@@ -172,6 +186,8 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     process.env.ELOWEN_TEST_HOST_SECRET = 'host-only-sentinel';
     process.env.GH_TOKEN = 'daemon-token-sentinel';
     try {
+      // The pinned executor is the earlier half of this: a credential that reached the environment of any
+      // process the machine client spawns fails the run where it happens, before the guest is asked.
       const guestEnv = await run('Bash', { command: 'env', description: 'guest environment' });
       const printed = JSON.stringify(guestEnv);
       expect(printed).not.toContain('host-only-sentinel');
@@ -180,7 +196,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
       // something: a failed or empty exec would also "not contain" the sentinels.
       expect(printed).toContain('PATH=');
       // The guest environment is the unit's own, not the daemon's: the systemd exec unit carries PATH,
-      // LANG and its own bookkeeping, and does not forward HOME from the container spec.
+      // LANG and its own bookkeeping, and does not forward HOME from the specification.
       expect(printed).toContain('LANG=');
     } finally {
       delete process.env.ELOWEN_TEST_HOST_SECRET;
@@ -284,7 +300,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     expect(probed.details?.ok, JSON.stringify(probed.content)).toBe(true);
     const facts = JSON.parse(probed.content[0].text) as { hostname: string; cwd: string; exists: boolean };
     // The file exists only in the guest (written through the managed tools above); the host has no
-    // /workspace/alpha.ts. The guest's hostname is the container's, never this machine's.
+    // /workspace/alpha.ts. The guest's hostname is the machine's, never this box's.
     expect(facts.exists).toBe(true);
     expect(existsSync('/workspace/alpha.ts')).toBe(false);
     expect(facts.cwd).toBe('/workspace');
@@ -469,20 +485,18 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     const deleted = await runtime.requestEnvironment({ project: projectRef, accountUserId: ACTOR, action: { kind: 'delete' } });
     await runtime.reconcile();
     assert.equal((await runtime.environmentOperation({ accountUserId: ACTOR, operationId: deleted.id }))?.status, 'succeeded');
+    storageRootOfProject = null;
     await runtime.dispose();
   } catch (error) {
     console.error(`Managed tool caller stage failed: ${stage}`);
     throw error;
   } finally {
     sql.close();
-    if (engineVerified) {
-      const reset = await new SpawnExecutor().run('/usr/bin/podman',
-        ['--root', paths.storage, '--runroot', paths.runroot, '--tmpdir', paths.tmp, '--storage-driver', 'vfs', 'system', 'reset', '--force'],
-        { env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: paths.home, XDG_RUNTIME_DIR: paths.runtime, TMPDIR: paths.tmp,
-          ...(paths.userBus ? { DBUS_SESSION_BUS_ADDRESS: `unix:path=${paths.userBus.path}` } : {}) },
-        timeoutMs: 180_000, outputLimitBytes: 1024 * 1024 });
-      if (reset.code !== 0) throw new Error(`private Podman cleanup failed; retained ${scratch}: ${reset.stderr}`);
+    // Only what this run created. A machine left registered on the host is the one failure mode a
+    // shared runtime has that a private store did not, so it is taken away on every exit.
+    if (storageRootOfProject && existsSync(storageRootOfProject)) {
+      try { await client.removeDiskPath(storageRootOfProject); } catch { /* gone */ }
     }
     rmSync(scratch, { recursive: true, force: true });
   }
-}, 1_800_000);
+}, 3_600_000);

@@ -4,7 +4,6 @@ import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { createEnvironmentStore } from '../../plugins/sandbox/lib/environmentDb.mjs';
-import { createBoundSiteSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { createSiteImageService } from '../../plugins/sandbox/lib/environmentSiteImages.mjs';
 import { createSiteCleanupService } from '../../plugins/sandbox/lib/environmentSiteCleanup.mjs';
 
@@ -38,39 +37,38 @@ function setup() {
     if (!users.has(id)) throw error('account_forbidden', 'Account access is unavailable', 403);
     if (writable && readOnly.value) throw error('read_only', 'A read-only turn cannot modify an environment', 403);
   };
-  const siteImages = new Map<string, { id: string; site: string }>();
-  const podman = {
-    imageStatus: vi.fn(async (reference: string) => siteImages.has(reference) ? { present: true, imageId: siteImages.get(reference)!.id } : { present: false, imageId: null }),
-    ensureSiteImage: vi.fn(async (_dataDir: string, recipe: any) => {
-      const id = `sha256:${createHash('sha256').update(recipe.tag).digest('hex')}`;
-      siteImages.set(recipe.tag, { id, site: '' });
-      return recipe.tag;
+  /** What the host holds, keyed by artifact reference. The store is the only thing a fixed Sites root
+   *  filesystem needs now: the bytes are produced by the release pipeline, so there is nothing to build
+   *  and no dependency between kinds to order. */
+  const held = new Map<string, { digest: string; present: boolean }>();
+  const artifacts = {
+    status: vi.fn((reference: string) => {
+      const entry = held.get(reference);
+      return { reference, published: !!entry, present: entry?.present ?? false, digest: entry?.digest ?? null, sizeBytes: entry ? 1024 : null };
     }),
-    discoverRetainedSiteImage: vi.fn(async (spec: any, reference: string) => {
-      const owned = siteImages.get(reference);
-      if (!owned || owned.site !== spec.resource.id) throw error('retained_ownership', 'Retained Sites image ownership mismatch');
-      return owned.id;
+    ensure: vi.fn(async (reference: string) => {
+      const entry = held.get(reference);
+      if (!entry) throw error('artifact_unpublished', `no pinned copy of ${reference}`);
+      entry.present = true;
+      return { path: `/tmp/${reference}.tar.gz`, digest: entry.digest, sizeBytes: 1024, fetched: true };
     }),
+    collect: vi.fn(() => []),
   };
-  const recipes: Record<string, any> = {
-    base: { tag: 'localhost/elowen-sites-base:fixed', files: { Containerfile: 'FROM scratch\n' } },
-    static: { tag: 'localhost/elowen-sites-static:fixed', files: { Containerfile: 'FROM base\n' }, requiresBase: true },
-    node: { tag: 'localhost/elowen-sites-node:fixed', files: { Containerfile: 'FROM static\n' }, requiresBase: true },
+  const publish = (reference: string) => {
+    held.set(reference, { digest: `sha256:${createHash('sha256').update(reference).digest('hex')}`, present: false });
+    return held.get(reference)!.digest;
   };
   const authority = {
-    imageRecipe: (kind: string) => recipes[kind],
     resolveSnapshotImage: vi.fn(async (_input: any): Promise<any> => null),
     resolveCleanup: vi.fn(async (_input: any): Promise<any> => null),
   };
-  const registration = { siteId: 'demo', projectId: 7, image: 'localhost/elowen/site:fixed', sourcePath: '/tmp/env-site-services/sources/demo',
+  const registration = { siteId: 'demo', projectId: 7, image: 'site-base@1', sourcePath: '/tmp/env-site-services/sources/demo',
     sitesDataDir: '/tmp/env-site-services/sites', brokerDir: '/tmp/env-site-services/brokers/demo', workspaceReadOnly: false, network: 'shared',
     limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
   const images = createSiteImageService({
-    podman: podman as any, store, db, dataDir: '/tmp/env-site-services',
-    recipe: (kind: string) => authority.imageRecipe?.(kind),
+    artifacts: artifacts as any, store, db,
     account, userExists: (id: number) => users.has(id), isAdmin: (id: number) => admins.has(id),
     authorizeSite: async () => registration,
-    siteSpec: (value: any) => createBoundSiteSpec(siteRecord(value, 1).input, siteRecord(value, 1).binding),
     resolveSnapshotImage: (input: any) => authority.resolveSnapshotImage?.(input),
   });
   const cleanupService = createSiteCleanupService({
@@ -83,25 +81,32 @@ function setup() {
     },
   });
   cleanup.push(() => sql.close());
-  return { sql, db, store, podman, images, cleanupService, authority, registration, users, admins, readOnly, ambient, siteImages, beginDeletion };
+  return { sql, db, store, artifacts, publish, held, images, cleanupService, authority, registration, users, admins, readOnly, ambient, beginDeletion };
 }
 
 describe('extracted fixed Sites image services', () => {
   it('bounds the fixed recipe enum on every entry point', async () => {
-    const { images, podman } = setup();
+    const { images, artifacts } = setup();
     for (const bad of ['latest', 'web', 5, undefined, '']) {
       await expect(images.status({ imageKind: bad } as any)).rejects.toMatchObject({ code: 'invalid_image_kind', status: 400 });
       await expect(images.request({ imageKind: bad, accountUserId: 3 } as any)).rejects.toMatchObject({ code: 'invalid_image_kind', status: 400 });
     }
-    expect(podman.imageStatus).not.toHaveBeenCalled();
+    expect(artifacts.status).not.toHaveBeenCalled();
   });
 
-  it('reports status before any Site exists and never provisions', async () => {
-    const { images, podman, db } = setup();
-    const status = await images.status({ imageKind: 'node' });
-    expect(status).toEqual({ imageKind: 'node', imageReference: 'localhost/elowen-sites-node:fixed', present: false, imageId: null, operation: null });
-    expect(podman.imageStatus).toHaveBeenCalledWith('localhost/elowen-sites-node:fixed');
-    expect(podman.ensureSiteImage).not.toHaveBeenCalled();
+  it('reports status before any Site exists and never fetches', async () => {
+    const { images, artifacts, publish, db } = setup();
+    // Unpublished and absent are separate facts, and an operator acts on them differently: one is a
+    // release that never shipped the artifact, the other is a download away.
+    const unpublished = await images.status({ imageKind: 'node' });
+    expect(unpublished).toEqual({ imageKind: 'node', imageReference: 'site-node@1', published: false,
+      present: false, imageId: null, sizeBytes: null, operation: null });
+
+    const digest = publish('site-node@1');
+    expect(await images.status({ imageKind: 'node' })).toMatchObject({ published: true, present: false, imageId: digest, sizeBytes: 1024 });
+
+    expect(artifacts.status).toHaveBeenCalledWith('site-node@1');
+    expect(artifacts.ensure).not.toHaveBeenCalled();
     expect(db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations').get()).toMatchObject({ n: 0 });
     expect(db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_runtimes').get()).toMatchObject({ n: 0 });
   });
@@ -139,58 +144,67 @@ describe('extracted fixed Sites image services', () => {
   });
 
   it('rechecks the administrator before dispatch and refuses provisioning without one', async () => {
-    const { images, podman, store, admins, users } = setup();
+    const { images, artifacts, store, admins, users } = setup();
     const op = await images.request({ imageKind: 'node', accountUserId: 3, requestId: 'img-3' });
     const job = { ...store.getOperation(op.id) } as any;
     admins.delete(3);
     await expect(images.authorizeJob(job)).rejects.toMatchObject({ code: 'admin_required', status: 403 });
     users.delete(3);
     await expect(images.authorizeJob(job)).rejects.toMatchObject({ code: 'admin_required', status: 403 });
-    expect(podman.ensureSiteImage).not.toHaveBeenCalled();
+    expect(artifacts.ensure).not.toHaveBeenCalled();
     await expect(images.authorizeJob({ kind: 'image', resource_id: 'node', action: { kind: 'start' } } as any)).rejects.toMatchObject({ code: 'invalid_image_job' });
   });
 
-  it('builds the base dependency first when the fixed recipe requires it', async () => {
-    const { images, podman } = setup();
-    expect(await images.provision('static')).toBe('localhost/elowen-sites-static:fixed');
-    expect(podman.ensureSiteImage).toHaveBeenCalledTimes(2);
-    expect(podman.ensureSiteImage.mock.calls[0][1].tag).toBe('localhost/elowen-sites-base:fixed');
-    expect(podman.ensureSiteImage.mock.calls[1][1].tag).toBe('localhost/elowen-sites-static:fixed');
-    podman.ensureSiteImage.mockClear();
-    expect(await images.provision('base')).toBe('localhost/elowen-sites-base:fixed');
-    expect(podman.ensureSiteImage).toHaveBeenCalledTimes(1);
+  it('fetches one complete root filesystem per kind, with no dependency between them', async () => {
+    // The container recipes layered `static` and `node` on `base`, so provisioning one built two. An
+    // artifact is a whole root filesystem, so each kind is exactly one fetch and the order is nobody's
+    // business.
+    const { images, artifacts, publish } = setup();
+    const digest = publish('site-static@1');
+    expect(await images.provision('static')).toEqual({ imageReference: 'site-static@1', imageId: digest });
+    expect(artifacts.ensure).toHaveBeenCalledTimes(1);
+    expect(artifacts.ensure).toHaveBeenCalledWith('site-static@1', {});
+
+    // Convergent: a host that already holds the verified bytes is asked again and the store decides.
+    expect(await images.provision('static')).toEqual({ imageReference: 'site-static@1', imageId: digest });
+
+    // An artifact this release pins no copy of is refused by name, never built locally.
+    await expect(images.provision('node')).rejects.toMatchObject({ code: 'artifact_unpublished' });
     await expect(images.provision('latest' as any)).rejects.toMatchObject({ code: 'invalid_image_kind', status: 400 });
   });
 
-  it('rejects an unretained reference without ever calling the engine', async () => {
-    const { images, podman, authority } = setup();
+  it('rejects an unretained reference without ever consulting the store', async () => {
+    const { images, artifacts, authority } = setup();
     authority.resolveSnapshotImage.mockResolvedValue(null);
-    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'localhost/other:evil' }))
+    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'site-base@1' }))
       .rejects.toMatchObject({ code: 'snapshot_image_forbidden', status: 403 });
-    expect(podman.discoverRetainedSiteImage).not.toHaveBeenCalled();
-    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'localhost/approved:1', imageId: `sha256:${'a'.repeat(64)}` });
-    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'localhost/unapproved:1' }))
+    expect(artifacts.status).not.toHaveBeenCalled();
+    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'site-base@1', imageId: `sha256:${'a'.repeat(64)}` });
+    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'site-node@1' }))
       .rejects.toMatchObject({ code: 'snapshot_image_forbidden', status: 403 });
-    expect(podman.discoverRetainedSiteImage).not.toHaveBeenCalled();
+    expect(artifacts.status).not.toHaveBeenCalled();
   });
 
-  it('verifies engine ownership and a retained immutable pin for an approved reference', async () => {
-    const { images, podman, authority, siteImages } = setup();
-    const imageId = `sha256:${'b'.repeat(64)}`;
-    siteImages.set('localhost/elowen/site-release:demo', { id: imageId, site: 'demo' });
-    siteImages.set('localhost/foreign:1', { id: `sha256:${'c'.repeat(64)}`, site: 'other' });
-    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'localhost/elowen/site-release:demo' });
-    expect(await images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'localhost/elowen/site-release:demo' }))
-      .toEqual({ imageReference: 'localhost/elowen/site-release:demo', imageId });
-    const spec = podman.discoverRetainedSiteImage.mock.calls[0][0];
-    expect(spec.resource).toEqual({ kind: 'site', id: 'demo' });
-    expect(spec.labels['io.elowen.site']).toBe('demo');
-    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'localhost/foreign:1' });
-    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'localhost/foreign:1' }))
-      .rejects.toMatchObject({ code: 'retained_ownership', message: /ownership/i });
-    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'localhost/elowen/site-release:demo', imageId: `sha256:${'d'.repeat(64)}` });
-    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'localhost/elowen/site-release:demo' }))
+  it('holds a retained release to the digest it was published with', async () => {
+    // A release is pinned by recipe revision and content digest instead of a container image id. The
+    // digest is the stronger identity: it is derived from the bytes, where an image id was assigned by a
+    // local store and another host would number the same content differently.
+    const { images, authority, publish } = setup();
+    const digest = publish('site-base@1');
+    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'site-base@1' });
+    expect(await images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'site-base@1' }))
+      .toEqual({ imageReference: 'site-base@1', imageId: digest });
+
+    // An approval naming a digest this release does not pin is refused rather than resolved to whatever
+    // is present, which is what keeps a pin a pin.
+    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'site-base@1', imageId: `sha256:${'d'.repeat(64)}` });
+    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'site-base@1' }))
       .rejects.toMatchObject({ code: 'snapshot_image_changed' });
+
+    // And a reference this release pins no copy of is unavailable, not silently approved.
+    authority.resolveSnapshotImage.mockResolvedValue({ imageReference: 'site-node@1' });
+    await expect(images.discoverSnapshot({ siteId: 'demo', accountUserId: 3, imageReference: 'site-node@1' }))
+      .rejects.toMatchObject({ code: 'snapshot_image_unavailable' });
   });
 });
 

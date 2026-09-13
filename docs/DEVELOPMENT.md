@@ -45,9 +45,25 @@ To leave the container, release the binding rather than removing the workspace: 
 
 ### Managed project environments
 
-A Project declares its execution target rather than having one inferred from its path: either the host filesystem or a managed environment. A managed Project runs in its own persistent environment that survives across turns. A new one is a systemd-nspawn machine on a persistent disk; an environment created before that runtime keeps running under rootless Podman until an administrator migrates it. Either way the project volume is mounted under the project's own name (`/kolin` for a project with the slug `kolin`, and the environment's working directory), with a home volume and a data volume at `/data`, and each command running inside as a transient systemd unit. The container's network is either shared with host loopback denied, or none at all.
+A Project declares its execution target rather than having one inferred from its path: either the host filesystem or a managed environment. A managed Project runs in its own persistent environment that survives across turns: a systemd-nspawn machine on a persistent disk, filled from a published root filesystem artifact that the host downloads and verifies against a pinned digest rather than building anything locally. The project volume is mounted under the project's own name (`/kolin` for a project with the slug `kolin`, and the environment's working directory), with a home volume and a data volume at `/data`, and each command running inside as a transient systemd unit. The machine's network is either shared with host loopback denied, or none at all.
 
-The practical consequence when developing against a managed Project is that the file, shell, browser, editor, LSP, MCP and codebase surfaces reach the guest through the Sandbox control instead of the host filesystem, so a host path is not a meaningful address there. Guest file operations are a closed set that includes chunked writes for large uploads, and even a spilled tool result is written inside the guest and named by a guest path. Container specifications are host-derived and frozen; a caller-supplied mount list is deliberately not an execution capability, and `prepareExecution` offers no way to request unconfined execution.
+The practical consequence when developing against a managed Project is that the file, shell, browser, editor, LSP, MCP and codebase surfaces reach the guest through the Sandbox control instead of the host filesystem, so a host path is not a meaningful address there. Guest file operations are a closed set that includes chunked writes for large uploads, and even a spilled tool result is written inside the guest and named by a guest path. Machine specifications are host-derived and frozen; a caller-supplied mount list is deliberately not an execution capability, and `prepareExecution` offers no way to request unconfined execution.
+
+### Building a root filesystem artifact
+
+The root filesystems those environments are built from are produced by `scripts/build-rootfs-artifact.mjs`, from the recipes in `plugins/sandbox/lib/rootfsCatalog.mjs`. Each artifact is a complete root filesystem rather than a layer, so a recipe declaring a `base` is built as the base's package set plus its own in a single tree. Building needs `mmdebstrap` and `uidmap` on the host; the script checks before it starts and prints the `apt-get` line that installs what is missing rather than failing partway through a build.
+
+```bash
+npm run rootfs:build -- --all --out /tmp/rootfs
+npm run rootfs:build -- --recipe site-base
+npm run rootfs:verify
+```
+
+A build writes the tarball and a publish manifest to the output directory, and rewrites the pinned digests in `plugins/sandbox/lib/rootfsArtifacts.json`. It uploads nothing and holds no credential: publishing a built artifact to GitHub Releases is a separate step under the owner-only release authority, and the script ends by printing which release tag each file belongs to.
+
+Two properties are worth understanding before changing anything here. The build is deterministic by construction, so the same recipe revision produces the same digest on a different host on a different day: the mirror is pinned to a `snapshot.debian.org` timestamp rather than to a floating suite, `SOURCE_DATE_EPOCH` clamps modification times, the shadow databases and host-derived caches are normalized, and gzip is asked to write neither a timestamp nor an original filename. Each of those has a comment saying which drift it removes, because dropping one leaves a build that still succeeds and quietly stops being reproducible. And nothing is pinned before the archive is inspected: the build reads back what it produced and refuses to record a digest unless the root member is present at mode 0755, the recipe's directories exist, its units are masked and enabled, `/etc/machine-id` is empty, no device nodes or escaping symlinks are present, and the unpacked size is within the catalogue's bound.
+
+`npm run rootfs:verify` rebuilds and compares against the recorded pin, exiting non-zero on any difference. It needs no secret, which is what makes it runnable in CI. A recipe that is declared but has never been published has no digest to differ from, so it is skipped rather than compared — but skipped is not passed: a run that compared nothing exits non-zero and says so, because a verification that cannot fail reports a check that never happened. Every pin this release ships is unpublished, so `rootfs:verify` fails until the first artifact is published and pinned; a recipe edited without a version bump is caught instead by the contract test in `tests/contract/rootfsArtifactPins.test.ts`, which holds the recipes and the pin file to naming each other exactly once.
 
 ## Commands
 
@@ -74,6 +90,8 @@ Run commands from the repository root unless a command explicitly uses `--prefix
 | `npm --prefix web run e2e:smoke` | Run the fast Playwright `@smoke` subset. |
 | `npm --prefix web run e2e` | Run the full Playwright suite. |
 | `npm run test:install` | Pack and exercise the install artifact. |
+| `npm run rootfs:build` | Build a managed-environment root filesystem and pin its digest. Takes `--all` or `--recipe <name>`. |
+| `npm run rootfs:verify` | Rebuild every recipe and compare it against its recorded pin. |
 
 `npm run build` does not build `web/`; use `npm run build:web` for the standalone web artifact. `npm run build:web` assembles static and public assets that Next.js does not copy into standalone output automatically.
 
@@ -85,6 +103,8 @@ Build output is disposable and must not be hand-edited or committed:
 - `plugins/*/web/` contains generated browser bundles; it is derived from `plugins/*/web-src/`.
 - `web-dist/` contains the standalone Next.js package assembled by `npm run build:web`.
 - The build's `prebuild` step runs `languages-check` and removes stale `dist/`; `postbuild` verifies output parity and executable bits.
+
+`plugins/sandbox/lib/rootfsArtifacts.json` is generated too, but unlike the above it is committed: it carries the digests the daemon verifies downloads against, so a release has to ship them. It must still never be hand-edited. `scripts/build-rootfs-artifact.mjs` is its only writer, a digest in it is something a build measured after inspecting the archive it hashed, and a value typed in by a person is a pin nobody can reproduce.
 
 The `files` list in `package.json` defines the packed artifact: `dist/`, `web-dist/`, `prompts/`, `plugins/`, selected `docs/site` pages, `README.md`, and `LICENSE`. Recreate generated output with the build commands rather than committing it.
 

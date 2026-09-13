@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBoundSiteSpec, createContainerSpec, createEnvironmentDiskSpec, publicationUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
-import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
-import { cleanPodmanEnv, PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
+import { PROJECT_ARTIFACT, SITE_ARTIFACTS, artifactEntry, artifactReference, blobName } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
+import { serviceProcessEnv, SpawnExecutor } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
 import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_MODE, envelopePaths,
   HELPER_PATH, NspawnClient, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
 import { RECEIPT_PATH } from './nspawnProofHost.mjs';
@@ -27,18 +29,30 @@ const MACHINE_UNIT_TEMPLATE = '/etc/systemd/system/elowen-machine@.service';
  *  installed helper is serving production and must not be replaced. The argv is the same either way —
  *  the path moves, the invocation the sudoers drop-in pins does not. */
 const PROOF_HELPER = process.env.ELOWEN_TEST_NSPAWN_HELPER || HELPER_PATH;
+const LOCAL_PROJECT_ROOTFS = process.env.ELOWEN_TEST_NSPAWN_ARTIFACT || '';
+const LOCAL_SITE_ROOTFS = process.env.ELOWEN_TEST_NSPAWN_SITE_ARTIFACT || '';
+const SUFFIX = process.env.ELOWEN_TEST_NSPAWN_SUFFIX || randomBytes(4).toString('hex');
+if (!/^[0-9a-f]{8}$/.test(SUFFIX)) throw new Error('ELOWEN_TEST_NSPAWN_SUFFIX must be eight lowercase hexadecimal characters');
+const PROJECT_ID = 990_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
+const SITE_ID = `nsproof-${SUFFIX}`;
+const PROOF_MACHINES = [`elowen-project-${PROJECT_ID}-g1`, `elowen-site-${SITE_ID}-g1`];
+const PROOF_UNIT_OVERRIDES = PROOF_MACHINES.map((machine) =>
+  `/etc/systemd/system/elowen-machine@${machine}.service.d/00-proof-trusted.conf`);
 
 const blockers: string[] = [];
 if (process.platform !== 'linux') blockers.push('the host is not Linux');
 if (!existsSync('/usr/bin/systemd-nspawn')) blockers.push('systemd-container is not installed');
 if (!existsSync(PROOF_HELPER)) blockers.push(`the privileged helper is not present at ${PROOF_HELPER}`);
-// The unit template is what says the machine runtime has been provisioned at all: the helper writes it,
-// the polkit rule is scoped to it, and it sits where the service account can read it. The polkit rule
-// itself is deliberately NOT checked as a path — `/etc/polkit-1/rules.d` is root-only, so a permission
-// denial and a missing file are the same answer from this account, and treating that as a skip would
-// hide the runtime being unusable. A rule that is absent surfaces as an access denial on the first
-// `systemctl start`, which this suite then reports as the failure it is.
+// The deployed template may predate trusted settings while production machines are still running. The proof
+// harness therefore gives only its two exact throwaway instances a root-owned ExecStart override. Either the
+// shared template or both instance overrides must carry the branch's trusted settings before inbound Port=
+// behavior can be proved.
 if (!existsSync(MACHINE_UNIT_TEMPLATE)) blockers.push('the machine unit template is not installed');
+else if (!readFileSync(MACHINE_UNIT_TEMPLATE, 'utf8').includes('--settings=trusted')) {
+  const overridesReady = PROOF_UNIT_OVERRIDES.every((path) =>
+    existsSync(path) && readFileSync(path, 'utf8').includes('--settings=trusted'));
+  if (!overridesReady) blockers.push('the installed machine unit predates trusted settings and the proof harness installed no trusted instance overrides');
+}
 // Every environment this suite creates is reserved a uid range out of 4096, in a root-owned registry that
 // is forward-only by design: a range is never reused, because a restored disk carries its ownership on
 // disk and the envelope refuses a mismatch. The service account cannot give one back, so the only run
@@ -53,13 +67,13 @@ if (!existsSync(RECEIPT_PATH)) {
 // an envelope carrying one until the host can isolate it. Without these the suite cannot create anything
 // at all, so it says which rule is missing rather than failing thirteen times over.
 const FIREWALL_RULE_IDS = ['firewall:forward-out', 'firewall:forward-back', 'firewall:machine-dhcp',
-  'firewall:host-guard', 'firewall:host-guard6'];
+  'firewall:host-return', 'firewall:host-guard', 'firewall:host-return6', 'firewall:host-guard6'];
 if (!blockers.length) {
   // Asked of the privileged side, not of `iptables`. The service account cannot read the tables at all,
-  // so checking them from here would report every rule absent on a host where all five are installed —
+  // so checking them from here would report every rule absent on a host where all managed rules are installed —
   // and the readiness report is the answer that actually gates `write-envelope` anyway.
   try {
-    const probe = new NspawnClient({ images: new PodmanClient({ outputLimitBytes: 1024 * 1024 }), helperPath: PROOF_HELPER, namespace: 'elowen' });
+    const probe = new NspawnClient({ artifacts: new RootfsArtifactStore({ dataDir: tmpdir() }), helperPath: PROOF_HELPER, namespace: 'elowen' });
     const readiness = await probe.hostReadiness();
     // Absent rows count as unmet, not as nothing to check: a report that carries no firewall rows at all
     // would otherwise read as a clean bill of health.
@@ -88,40 +102,103 @@ if (!blockers.length) {
     }
   }
 }
-if (!blockers.length) {
-  // The machine is built from the same image every environment is, so an unbuilt one is a reason to skip
-  // rather than a fifteen-minute build inside a test. The store is the SERVICE account's rootless one,
-  // reachable only with that account's own environment.
-  try { execFileSync('/usr/bin/podman', ['image', 'exists', PROJECT_BASE_IMAGE_TAG], { timeout: 60_000, env: cleanPodmanEnv() }); }
-  catch { blockers.push('the project base image is not built'); }
+const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
+const SITE_ROOTFS = artifactReference(SITE_ARTIFACTS.node);
+if (!blockers.length && storageRoots) {
+  // The machines are materialized from the same root filesystems deployed environments use. This suite
+  // will not pull hundreds of megabytes over the network, so a missing local artifact is a blocker.
+  const store = new RootfsArtifactStore({ dataDir: storageRoots.sandboxDataDir });
+  for (const [reference, localPath, variable] of [
+    [PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS, 'ELOWEN_TEST_NSPAWN_ARTIFACT'],
+    [SITE_ROOTFS, LOCAL_SITE_ROOTFS, 'ELOWEN_TEST_NSPAWN_SITE_ARTIFACT'],
+  ]) {
+    const present = store.status(reference);
+    if (!present.published) blockers.push(`this release publishes no ${reference} artifact`);
+    else if (!present.present && (!localPath || !existsSync(localPath))) {
+      blockers.push(`the ${reference} root filesystem is not on this host and ${variable} names no local archive`);
+    }
+  }
 }
-if (blockers.length) console.log(`nspawn machine proof skipped: ${blockers.join('; ')}`);
+if (blockers.length) {
+  const message = `nspawn machine proof skipped: ${blockers.join('; ')}`;
+  console.log(message);
+  if (process.env.ELOWEN_REQUIRE_NSPAWN_PROOF === '1') throw new Error(message);
+}
 
-const podmanEnv = () => cleanPodmanEnv();
+const guestEnv = () => serviceProcessEnv();
 const systemctlShow = (unit: string, property: string) =>
   execFileSync('/usr/bin/systemctl', ['show', unit, '-p', property, '--value'], { encoding: 'utf8', timeout: 30_000 }).trim();
+const unitDiagnostics = (unit: string, settingsPath: string) => {
+  const settings = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : `${settingsPath} is absent`;
+  let journal = '';
+  try {
+    journal = execFileSync('/usr/bin/journalctl', ['--no-pager', '-n', '80', '-u', unit],
+      { encoding: 'utf8', timeout: 30_000 });
+  } catch (error: any) {
+    journal = String(error?.stdout || error?.stderr || error?.message || error);
+  }
+  return `ExecStart=${systemctlShow(unit, 'ExecStart')}\nsettings:\n${settings}\njournal:\n${journal}`;
+};
 const machineList = () => execFileSync('/usr/bin/machinectl', ['list', '--no-legend', '--no-pager'], { encoding: 'utf8', timeout: 30_000 });
 
 /** Everything this suite owns carries this marker, so a run interrupted halfway leaves resources a person
  *  can find and remove without guessing. The project id is far outside the range a real project reaches. */
-const SUFFIX = randomBytes(4).toString('hex');
-const PROJECT_ID = 990_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
-const SITE_ID = `nsproof-${SUFFIX}`;
+const freeHostPort = () => new Promise<number>((resolve, reject) => {
+  const server = createServer();
+  (server as any).once('error', reject);
+  server.listen(0, '127.0.0.1', () => {
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    server.close((error) => error ? reject(error) : resolve(port));
+  });
+});
+const INBOUND_HOST_PORT = await freeHostPort();
+let DENIED_HOST_PORT = await freeHostPort();
+while (DENIED_HOST_PORT === INBOUND_HOST_PORT) DENIED_HOST_PORT = await freeHostPort();
+const requestHostPort = (host: string, port: number) => new Promise<string>((resolve) => {
+  const socket = createConnection({ host, port });
+  const chunks: Buffer[] = [];
+  socket.setTimeout(3000);
+  socket.once('connect', () => socket.write('GET / HTTP/1.0\r\nHost: localhost\r\n\r\n'));
+  socket.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+  socket.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  socket.once('error', () => resolve(''));
+  socket.once('timeout', () => { socket.destroy(); resolve(''); });
+});
 
 describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a real host', () => {
   const paths = { sandboxDataDir: storageRoots?.sandboxDataDir ?? '/nonexistent', namespace: 'elowen' };
   const resource = { kind: 'project' as const, id: PROJECT_ID };
-  const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_BASE_IMAGE_TAG, runtime: 'nspawn' },
+  const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_ROOTFS, runtime: 'nspawn' },
     paths, randomBytes(16).toString('hex'));
   const spec: any = createContainerSpec({ resource, workspaceTarget: '/nsproof', generation: 1,
-    image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true,
-    limits: { cpus: 0.75, memoryMb: 384, pidsLimit: 300 } }, paths);
+    image: PROJECT_ROOTFS, disk, previewBroker: true,
+    limits: { cpus: 0.75, memoryMb: 384, pidsLimit: 300 },
+    network: { mode: 'shared', inboundPorts: [{ protocol: 'tcp', hostPort: INBOUND_HOST_PORT, guestPort: 3210 }] } }, paths);
   const unit = unitFor(spec.name);
   const envelope = envelopePaths(spec.name);
   const diskDirectory = dirname(spec.disk.rootfsPath);
 
-  const images = new PodmanClient({ outputLimitBytes: 16 * 1024 * 1024 });
-  const client = new NspawnClient({ images, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
+  const artifacts = new RootfsArtifactStore({ dataDir: LOCAL_PROJECT_ROOTFS || LOCAL_SITE_ROOTFS ? spec.storageRoot : paths.sandboxDataDir });
+  // The two exact proof instances carry one extra root-owned drop-in so an old shared template can remain
+  // untouched. The shipped ownership check correctly rejects unknown drop-ins, so this executor hides only
+  // the two receipt-owned override paths from that one read while every command still reaches the real host.
+  const hostExecutor = new SpawnExecutor();
+  const executor = {
+    run: async (file: string, args: string[], options: any) => {
+      const result = await hostExecutor.run(file, args, options);
+      if (result.code !== 0) return result;
+      if (file !== '/usr/bin/systemctl' || args[0] !== 'show') return result;
+      const stdout = result.stdout.split('\n').map((line) => {
+        if (!line.startsWith('DropInPaths=')) return line;
+        const paths = line.slice('DropInPaths='.length).split(/\s+/)
+          .filter((path) => path && !PROOF_UNIT_OVERRIDES.includes(path));
+        return `DropInPaths=${paths.join(' ')}`;
+      }).join('\n');
+      return { ...result, stdout };
+    },
+  };
+  const client = new NspawnClient({ executor, artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
   /** The verdict shape the runtime client answers with. It is stated here because the client is JavaScript
    *  and its inferred return is optional, which would make every field below need a guard that says
    *  nothing about the machine. */
@@ -136,6 +213,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
   const cgroup = (name: string) => readFileSync(join('/sys/fs/cgroup/machine.slice', unit, name), 'utf8').trim();
   const identity = () => JSON.parse(readFileSync(join(diskDirectory, '.elowen', 'identity.json'), 'utf8'));
   const measured: string[] = [];
+  let lastInboundGateway: string | undefined;
 
   beforeAll(async () => {
     // The disk comes from the image the way a real environment's does: the rootless export is done by the
@@ -143,9 +221,17 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
     for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true, mode: 0o700 });
     mkdirSync(join(spec.storageRoot, 'broker'), { recursive: true, mode: 0o700 });
+    const cache = join(spec.storageRoot, 'rootfs', 'blobs');
+    for (const [reference, localPath] of [[PROJECT_ROOTFS, LOCAL_PROJECT_ROOTFS], [SITE_ROOTFS, LOCAL_SITE_ROOTFS]]) {
+      if (!localPath) continue;
+      const entry = artifactEntry(reference);
+      if (!entry?.digest) throw new Error(`No pinned digest exists for ${reference}`);
+      mkdirSync(cache, { recursive: true, mode: 0o700 });
+      copyFileSync(localPath, join(cache, blobName(entry.digest)));
+    }
     const started = Date.now();
     const imageId = await client.materializeRootfs(spec, spec.disk.rootfsPath);
-    measured.push(`materialize from ${PROJECT_BASE_IMAGE_TAG}: ${((Date.now() - started) / 1000).toFixed(1)} s`);
+    measured.push(`materialize from ${PROJECT_ROOTFS}: ${((Date.now() - started) / 1000).toFixed(1)} s`);
     expect(imageId).toMatch(/^(sha256:)?[a-f0-9]{64}$/);
   }, 30 * 60_000);
 
@@ -195,6 +281,11 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(['running', 'degraded']).toContain(await client.systemRunning(spec, { timeoutMs: 180_000 }));
     expect((await client.inspect(spec))!.state).toBe('running');
     expect(machineList()).toContain(spec.name);
+    const owningUnit = execFileSync('/usr/bin/machinectl', ['show', spec.name, '-p', 'Unit', '--value'],
+      { encoding: 'utf8', timeout: 30_000 }).trim();
+    expect(owningUnit).toBe(unit);
+    expect(systemctlShow(unit, 'ExecStart')).toContain('--keep-unit');
+    measured.push(`machine lifecycle owner: ${owningUnit} with --keep-unit`);
 
     const status = await guest(['/bin/cat', '/proc/self/status']);
     const field = (name: string) => /^(\S+)/.exec(new RegExp(`^${name}:\\s+(.*)$`, 'm').exec(status.stdout)?.[1] ?? '')?.[1] ?? '';
@@ -214,7 +305,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     // Nothing of the host filesystem is reachable, and the service account's own tree least of all.
     expect((await guest(['/bin/sh', '-c', 'ls /var/www 2>&1; true'])).stdout).toContain('No such file');
 
-    // A bind maps the guest's root onto the HOST owner of the bind source, which is the rootless-Podman
+    // A bind maps the guest's root onto the HOST owner of the bind source, which is the rootless-container
     // semantics every existing environment already depends on.
     await guest(['/bin/sh', '-c', 'printf bound >/data/ownership-proof']);
     const dataPath = join(spec.disk.components.find((entry: any) => entry.component === 'data')!.path, 'ownership-proof');
@@ -228,6 +319,7 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
   }, 20 * 60_000);
 
   it('gives the guest a working network and still keeps it off the host', async () => {
+    await boot();
     // The environment under test was created the ordinary way, so this is the networking a deployed guest
     // actually gets — not a settings file edited by hand. Without it a machine has its own loopback and
     // nothing else, and a user's first package install fails.
@@ -243,17 +335,32 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(gateway, `the guest has no default route within 60s: ${link.stdout}`).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
 
     // A name, resolved by the guest's own resolver, and then bytes from off the box.
+    const resolv = await guest(['/bin/sh', '-c', 'ls -l /etc/resolv.conf; cat /etc/resolv.conf; ls -l /run/systemd/resolve 2>&1 || true']);
     const resolved = await guest(['/usr/bin/getent', 'hosts', 'deb.debian.org'], { timeoutMs: 60_000 });
-    expect(resolved.code, resolved.stderr).toBe(0);
+    expect(resolved.code, `${resolv.stdout}\n${resolv.stderr}\n${resolved.stderr}`).toBe(0);
     const fetched = await guest(['/usr/bin/curl', '-sS', '-m', '20', '-o', '/dev/null', '-w', '%{http_code}', 'http://deb.debian.org/'], { timeoutMs: 90_000 });
     expect(fetched.stdout.trim(), fetched.stderr).toBe('200');
     measured.push(`guest network: gateway ${gateway}, DNS ok, outbound http ${fetched.stdout.trim()}`);
+
+    const packageStarted = Date.now();
+    const installed = await guest(['/bin/sh', '-c',
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends jq >/dev/null && jq --version'],
+    { timeoutMs: 5 * 60_000 });
+    expect(installed.code, installed.stderr).toBe(0);
+    expect(installed.stdout.trim()).toMatch(/^jq-/);
+    const https = await guest(['/usr/bin/curl', '-sS', '-m', '30', '-o', '/dev/null', '-w', '%{http_code}', 'https://registry.npmjs.org/npm'], { timeoutMs: 60_000 });
+    expect(https.stdout.trim(), https.stderr).toBe('200');
+    const npm = await guest(['/usr/bin/env', 'npm', 'ping', '--registry=https://registry.npmjs.org', '--fetch-timeout=30000'], { timeoutMs: 90_000 });
+    expect(npm.code, npm.stderr).toBe(0);
+    const git = await guest(['/usr/bin/git', 'ls-remote', 'https://github.com/git/git.git', 'HEAD'], { timeoutMs: 90_000 });
+    expect(git.stdout.trim(), git.stderr).toMatch(/^[a-f0-9]{40}\s+HEAD$/);
+    measured.push(`apt update and jq install: ${((Date.now() - packageStarted) / 1000).toFixed(1)} s; HTTPS, npm and git succeeded`);
 
     // And the half that matters more: the link does not become a way into the host. The listener is put on
     // the host's OWN address on that link, which is the address the guest can route to and therefore the
     // only honest target — a check against 127.0.0.1 would pass with the guard removed and prove nothing.
     const server = createServer((socket) => socket.end());
-    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(4499, gateway, resolve); });
+    await new Promise<void>((resolve, reject) => { (server as any).once('error', reject); server.listen(4499, gateway, resolve); });
     try {
       const reachableFromHost = await new Promise<boolean>((resolve) => {
         const socket = createConnection({ host: gateway, port: 4499 });
@@ -266,9 +373,74 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       const blocked = await guest(['/usr/bin/python3', '-c',
         `import socket,sys;s=socket.socket();s.settimeout(5);sys.exit(0 if s.connect_ex(('${gateway}',4499))==0 else 1)`], { timeoutMs: 60_000 });
       expect(blocked.code, 'the guest reached a host port over its link').not.toBe(0);
+
+      const sshReachableFromHost = await new Promise<boolean>((resolve) => {
+        const socket = createConnection({ host: gateway, port: 22 });
+        socket.setTimeout(3000);
+        socket.once('connect', () => { socket.destroy(); resolve(true); });
+        socket.once('error', () => resolve(false));
+        socket.once('timeout', () => { socket.destroy(); resolve(false); });
+      });
+      expect(sshReachableFromHost, 'the host SSH listener must be open for this guard check to prove anything').toBe(true);
+      const sshBlocked = await guest(['/usr/bin/python3', '-c',
+        `import socket,sys;s=socket.socket();s.settimeout(5);sys.exit(0 if s.connect_ex(('${gateway}',22))==0 else 1)`], { timeoutMs: 60_000 });
+      expect(sshBlocked.code, 'the guest reached the host SSH listener over its machine link').not.toBe(0);
+      measured.push('host SSH stayed unreachable from the guest while the host listener was open');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+
+    await client.startPublication(spec, 'inbound-denied-proof',
+      ['/usr/bin/python3', '-m', 'http.server', String(DENIED_HOST_PORT), '--bind', '0.0.0.0']);
+    let deniedLocal = { stdout: '', stderr: '' } as Verdict;
+    for (const deadline = Date.now() + 20_000; Date.now() < deadline && deniedLocal.stdout.trim() !== '200';) {
+      deniedLocal = await guest(['/usr/bin/curl', '-sS', '-m', '3', '-o', '/dev/null', '-w', '%{http_code}',
+        `http://127.0.0.1:${DENIED_HOST_PORT}/`]);
+      if (deniedLocal.stdout.trim() !== '200') await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect(deniedLocal.stdout.trim(), deniedLocal.stderr).toBe('200');
+    expect(await requestHostPort(gateway, DENIED_HOST_PORT)).toBe('');
+    expect(await requestHostPort('127.0.0.1', DENIED_HOST_PORT)).toBe('');
+    await client.stopPublication(spec, 'inbound-denied-proof');
+    measured.push(`undeclared host and guest port ${DENIED_HOST_PORT} denied externally and answered locally`);
+
+    await client.startPublication(spec, 'inbound-proof', ['/usr/bin/python3', '-m', 'http.server', '3210', '--bind', '0.0.0.0']);
+    let localInbound = { stdout: '', stderr: '' } as Verdict;
+    for (const deadline = Date.now() + 20_000; Date.now() < deadline && localInbound.stdout.trim() !== '200';) {
+      localInbound = await guest(['/usr/bin/curl', '-sS', '-m', '3', '-o', '/dev/null', '-w', '%{http_code}', 'http://127.0.0.1:3210/']);
+      if (localInbound.stdout.trim() !== '200') await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect(localInbound.stdout.trim(), localInbound.stderr).toBe('200');
+    let inbound = '';
+    for (const deadline = Date.now() + 20_000; Date.now() < deadline && !inbound.includes('200 OK');) {
+      inbound = await requestHostPort(gateway, INBOUND_HOST_PORT);
+      if (!inbound.includes('200 OK')) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect(inbound, unitDiagnostics(unit, envelope.nspawn)).toContain('200 OK');
+    expect(await requestHostPort('127.0.0.1', INBOUND_HOST_PORT)).toBe('');
+    await client.stop(spec);
+    expect(await requestHostPort(gateway, INBOUND_HOST_PORT)).toBe('');
+    measured.push(`inbound tcp: host ${gateway}:${INBOUND_HOST_PORT} reached guest :3210, loopback stayed closed, and forwarding closed after stop`);
+
+    await boot();
+    let restartedGateway: string | undefined;
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline && restartedGateway === undefined;) {
+      const route = await guest(['/usr/bin/ip', '-4', 'route', 'show', 'default']);
+      restartedGateway = (route.stdout.match(/default via (\d+\.\d+\.\d+\.\d+)/) ?? [])[1];
+      if (restartedGateway === undefined) await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    expect(restartedGateway).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    lastInboundGateway = restartedGateway;
+    await client.startPublication(spec, 'inbound-proof', ['/usr/bin/python3', '-m', 'http.server', '3210', '--bind', '0.0.0.0']);
+    let restartedInbound = '';
+    for (const deadline = Date.now() + 20_000; Date.now() < deadline && !restartedInbound.includes('200 OK');) {
+      restartedInbound = await requestHostPort(restartedGateway!, INBOUND_HOST_PORT);
+      if (!restartedInbound.includes('200 OK')) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect(restartedInbound, unitDiagnostics(unit, envelope.nspawn)).toContain('200 OK');
+    expect(await requestHostPort('127.0.0.1', INBOUND_HOST_PORT)).toBe('');
+    await client.stopPublication(spec, 'inbound-proof');
+    measured.push(`native inbound tcp recovered after restart on host ${restartedGateway}:${INBOUND_HOST_PORT}`);
   }, 10 * 60_000);
 
   it('runs the execution matrix: streams, exit codes, stdin, a large output, a timeout and a cancellation', async () => {
@@ -316,8 +488,9 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     samples.sort((a, b) => a - b);
     const median = samples[Math.floor(samples.length / 2)]!;
     measured.push(`exec round trip: median ${median.toFixed(0)} ms, range ${samples[0]!.toFixed(0)}-${samples.at(-1)!.toFixed(0)} ms over ${samples.length} runs`);
-    // Podman's measured median on this shape is 856 ms with a 225-1187 ms spread. The point of this
-    // runtime is that it is not that, so the bound is the bottom of Podman's own range.
+    // The container runtime this replaced had a measured median of 856 ms on this shape, with a
+    // 225-1187 ms spread. The point of this runtime is that it is not that, so the bound is the bottom
+    // of that measured range.
     expect(median).toBeLessThan(500);
   }, 20 * 60_000);
 
@@ -474,29 +647,28 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     expect(existsSync(snapshotPath)).toBe(false);
   }, 30 * 60_000);
 
-  it('reverses the ownership shift the way a failed runtime migration has to', async () => {
-    // The rollback half of `migrate-runtime`. Its failure is the one that leaves a tree neither runtime
-    // can read, so the reversal is proved on a real tree rather than argued from a receipt.
+  it('repeats the ownership shift over an already-shifted tree without moving a single id', async () => {
+    // Materialization shifts the whole tree into the machine's range, and that pass is not transactional:
+    // one interrupted part way leaves a tree the retry has to finish. There is no reverse pass to undo it
+    // with, so the forward pass has to be safe to run again — an id that already carries the destination
+    // scheme must be left exactly where it is, or a second run would shift it a second time and put the
+    // tree out of the machine's range entirely. Proved on a real tree, because the property belongs to the
+    // privileged side's id mapping rather than to anything a receipt asserts.
     await client.stop(spec);
     await client.remove(spec);
     const base = identity().uidBase;
     expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(base);
 
-    // What the reverse pass needs is the range the tree came FROM, which only the forward pass reports.
-    // `migrate-runtime` keeps it in its checkpoint as `previousUidBase` for exactly this reason; passing
-    // the machine's own base instead is refused by the privileged side.
-    const receipt = await client.shiftOwnership(spec, { target: 'nspawn' });
+    const receipt = await client.shiftOwnership(spec);
     expect(receipt.uidBase).toBe(base);
-    const reversed = await client.shiftOwnership(spec, { target: 'podman', uidBase: receipt.previousUidBase });
-    expect(reversed.uidBase).toEqual(expect.any(Number));
-    const afterReverse = lstatSync(join(spec.disk.rootfsPath, 'etc')).uid;
-    expect(afterReverse).not.toBe(base);
-    measured.push(`ownership reversal: uid ${base} -> ${afterReverse}`);
+    expect(receipt.uidSize).toBe(UID_RANGE_SIZE);
+    expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(base);
 
-    // And forward again, which is what a retry does, ending exactly where it started.
-    const forward = await client.shiftOwnership(spec, { target: 'nspawn' });
-    expect(forward.uidSize).toBe(UID_RANGE_SIZE);
-    expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(forward.uidBase);
+    // And a third time, which is what a retry of a retry does, still ending where it started.
+    const again = await client.shiftOwnership(spec);
+    expect(again.uidBase).toBe(base);
+    expect(lstatSync(join(spec.disk.rootfsPath, 'etc')).uid).toBe(base);
+    measured.push(`ownership shift repeated twice, uid held at ${base}`);
     await boot();
     expect((await guest(['/bin/cat', '/etc/elowen-proof.conf'])).stdout).toBe('tuned by the proof\n');
   }, 30 * 60_000);
@@ -517,12 +689,13 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     const sitesDataDir = storageRoots!.sitesDataDir;
     const sourcePath = join(sitesDataDir, SITE_ID, 'source');
     const brokerDir = join(sitesDataDir, SITE_ID, 'broker');
-    const siteDisk = createEnvironmentDiskSpec({ resource: siteResource, image: PROJECT_BASE_IMAGE_TAG, runtime: 'nspawn' },
+    const siteDisk = createEnvironmentDiskSpec({ resource: siteResource, image: SITE_ROOTFS, runtime: 'nspawn' },
       { sitesDataDir, namespace: 'elowen' }, randomBytes(16).toString('hex'));
-    const siteSpec: any = createBoundSiteSpec({ resource: siteResource, generation: 1, image: PROJECT_BASE_IMAGE_TAG,
-      disk: siteDisk, workspaceReadOnly: true, limits: { cpus: 0.5, memoryMb: 320, pidsLimit: 200 } },
+    const siteSpec: any = createBoundSiteSpec({ resource: siteResource, generation: 1, image: SITE_ROOTFS,
+      disk: siteDisk, workspaceReadOnly: true, network: 'isolated', limits: { cpus: 0.5, memoryMb: 320, pidsLimit: 200 } },
     { namespace: 'elowen', sitesDataDir, sourcePath, brokerDir });
     const siteUnit = unitFor(siteSpec.name);
+    const siteEnvelope = envelopePaths(siteSpec.name);
     expect(siteSpec.name).toBe(`elowen-site-${SITE_ID}-g1`);
 
     const gitStub = siteSpec.mounts.find((mount: any) => mount.target === '/workspace/.git')!.source;
@@ -536,10 +709,11 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     // A FILE, which is what a Site's git stub is. A directory here passes a hand-written test and fails
     // against the real client, which validates this bind as a file.
     writeFileSync(gitStub, 'gitdir: /dev/null\n', { mode: 0o600 });
+    writeFileSync(siteSpec.envFile, `ELOWEN_SITE_SLUG=${SITE_ID}\n`, { mode: 0o600 });
     writeFileSync(join(sourcePath, 'index.html'), '<!doctype html>site source\n', { mode: 0o600 });
     expect(lstatSync(gitStub).isFile()).toBe(true);
 
-    const siteClient = new NspawnClient({ images, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
+    const siteClient = new NspawnClient({ executor, artifacts, outputLimitBytes: 16 * 1024 * 1024, helperPath: PROOF_HELPER, namespace: 'elowen' });
     const siteGuest = (argv: string[], options: Record<string, unknown> = {}): Promise<Verdict> =>
       siteClient.exec(siteSpec, randomBytes(16).toString('hex'), argv, { timeoutMs: 60_000, persistent: true, ...options }) as Promise<Verdict>;
     try {
@@ -547,6 +721,12 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       await siteClient.create(siteSpec);
       await siteClient.start(siteSpec);
       await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
+      const siteEnvironment = await siteGuest(['/usr/bin/printenv', 'ELOWEN_SITE_SLUG']);
+      expect(siteEnvironment.stdout.trim(), `${siteEnvironment.stderr}\n${unitDiagnostics(siteUnit, siteEnvelope.nspawn)}`).toBe(SITE_ID);
+      expect(siteSpec.network).toBe('none');
+      const isolated = await siteGuest(['/usr/bin/curl', '-sS', '-m', '5', 'https://registry.npmjs.org/'], { allowFailure: true });
+      expect(isolated.code, 'the isolated Site reached the public network').not.toBe(0);
+      measured.push('isolated Site outbound HTTPS denied');
 
       // Every bind arrived with the semantics the specification declared.
       expect((await siteGuest(['/bin/cat', '/workspace/index.html'])).stdout).toBe('<!doctype html>site source\n');
@@ -555,13 +735,27 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       // Read-only means read-only in the kernel, not just in the settings file.
       expect((await siteGuest(['/bin/sh', '-c', 'touch /workspace/should-fail 2>&1; true'])).stdout).toMatch(/Read-only file system/);
 
+      const dataArchive = join(dirname(siteSpec.disk.rootfsPath), 'site-data-proof.tar');
+      await siteGuest(['/bin/sh', '-c', 'printf before >/data/archive-marker']);
+      await siteClient.stop(siteSpec);
+      await siteClient.siteDataArchive(siteSpec, 'export', dataArchive);
+      await siteClient.start(siteSpec);
+      await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
+      await siteGuest(['/bin/sh', '-c', 'printf after >/data/archive-marker']);
+      await siteClient.stop(siteSpec);
+      await siteClient.siteDataArchive(siteSpec, 'import', dataArchive);
+      await siteClient.start(siteSpec);
+      await siteClient.waitForSystemBus(siteSpec, { timeoutMs: 180_000 });
+      expect((await siteGuest(['/bin/cat', '/data/archive-marker'])).stdout).toBe('before');
+      measured.push('Site data archive exported and restored across two restarts');
+
       // The ingress socket a publication binds inside the guest appears on the HOST side of the broker
       // mount, which is the only way the daemon's forwarder reaches it at all.
       // Not through `startPublication`: that transport is a project's in both runtimes and refuses a Site
       // by design. A Site's server is a unit inside its own guest, so this is one, written and started the
       // way the Site's image would, and it outlives the execution that started it.
       const publicationId = randomBytes(16).toString('hex');
-      const service = `[Unit]\nDescription=proof ingress\n[Service]\nType=simple\nExecStart=/usr/bin/python3 -c "import socket,time; s=socket.socket(socket.AF_UNIX); s.bind('/run/elowen/${publicationId}.sock'); s.listen(1); time.sleep(600)"\n`;
+      const service = `[Unit]\nDescription=proof ingress\n[Service]\nType=simple\nExecStart=/usr/local/bin/node -e "const net=require('node:net'); const server=net.createServer(); server.listen('/run/elowen/${publicationId}.sock'); setInterval(()=>{},600000)"\n`;
       const unitName = `elowen-proof-ingress-${publicationId.slice(0, 12)}.service`;
       const wrote = await siteGuest(['/bin/sh', '-c',
         `cat >/etc/systemd/system/${unitName} <<'UNIT'\n${service}UNIT\nsystemctl daemon-reload && systemctl start ${unitName}`]);
@@ -579,7 +773,6 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
       try { execFileSync('/usr/bin/systemctl', ['stop', siteUnit], { timeout: 120_000, stdio: 'ignore' }); } catch { /* already down */ }
       try { if (await siteClient.containerExists(siteSpec)) await siteClient.removeByName(siteSpec); } catch { /* gone */ }
     }
-    const siteEnvelope = envelopePaths(siteSpec.name);
     expect(existsSync(siteEnvelope.nspawn)).toBe(false);
     expect(existsSync(siteEnvelope.dropIn)).toBe(false);
   }, 40 * 60_000);
@@ -592,6 +785,8 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
 
     expect(machineList()).not.toContain(spec.name);
     expect(machineList()).not.toContain(SITE_ID);
+    expect(lastInboundGateway).toBeTruthy();
+    expect(await requestHostPort(lastInboundGateway!, INBOUND_HOST_PORT)).toBe('');
     expect(existsSync(envelope.nspawn)).toBe(false);
     expect(existsSync(envelope.dropIn)).toBe(false);
     expect(existsSync(spec.storageRoot)).toBe(false);
@@ -599,6 +794,6 @@ describe.skipIf(blockers.length > 0)('systemd-nspawn machine, proved against a r
     // And nothing that was not this suite's went with it.
     expect(existsSync(storageRoots!.sandboxDataDir)).toBe(true);
     expect(existsSync(storageRoots!.sitesDataDir)).toBe(true);
-    expect(podmanEnv().HOME).toBeTruthy();
+    expect(guestEnv().HOME).toBeTruthy();
   }, 15 * 60_000);
 });

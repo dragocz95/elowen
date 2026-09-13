@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,8 @@ import {
   MACHINE_FIREWALL_UNIT,
   MACHINE_FIREWALL_UNIT_NAME,
   MACHINE_FIREWALL_UNIT_PATH,
+  MACHINE_SYSCTL_CONTENT,
+  MACHINE_SYSCTL_PATH,
   MACHINE_UNIT_TEMPLATE,
   firewallRuleCommand,
   NSPAWN_FIREWALL_RULES,
@@ -31,9 +33,14 @@ import {
   nspawnExecArgs,
   renderMachineDropIn,
   renderMachineSettings,
+  readUidRangeRegistry,
   renderPolkitRule,
   safeGuestMountTarget,
+  SITE_DATA_ARCHIVE_BYTES,
+  SITE_DATA_ARCHIVE_MEMBERS,
+  SITE_DATA_INDEX_PY,
   storageRootsFor,
+  supportedEnvironmentOs,
   trustedPath,
   UID_RANGE_BASE,
 } from '../../scripts/elowen-site-gateway.mjs';
@@ -41,13 +48,14 @@ import {
 import { createBoundSiteSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 // @ts-expect-error the bundled machine runtime is plain ESM without declarations
 import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
+// @ts-expect-error the bundled Sandbox storage owner is plain ESM without declarations
+import { SNAPSHOT_TREE_FORMAT } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import {
   siteGatewayStorageRoots,
   encodeHelperRequest, HELPER_FRAME_HEADER_BYTES, SITE_GATEWAY_HELPER_ARGV, SITE_GATEWAY_HELPER_PATH,
 } from '../../src/shared/siteGateway.js';
 
 const HELPER_SOURCE = fileURLToPath(new URL('../../scripts/elowen-site-gateway.mjs', import.meta.url));
-const PODMAN_SOURCE = fileURLToPath(new URL('../../plugins/sandbox/lib/podman.mjs', import.meta.url));
 const PLUGIN_RUNTIME = fileURLToPath(new URL('../../plugins/sandbox/lib/nspawn.mjs', import.meta.url));
 
 const MACHINE = 'elowen-project-54-g3';
@@ -79,7 +87,7 @@ type Call = { file: string; args: string[] };
 function runnerFixture(options: {
   installed?: boolean; polkit?: string; polkitMode?: number; unit?: string; unitMode?: number;
   unitLoaded?: boolean; firewall?: boolean; forwarding?: boolean; networkd?: boolean; deployment?: string;
-  firewallUnit?: string; firewallEnabled?: boolean;
+  firewallUnit?: string; firewallEnabled?: boolean; sysctl?: string; networkdEnabled?: boolean;
 } = {}) {
   const calls: Call[] = [];
   const writes: { path: string; content: string; mode: number }[] = [];
@@ -95,7 +103,12 @@ function runnerFixture(options: {
     firewallUnitMode: 0o644,
     firewallEnabled: options.firewallEnabled ?? false,
     forwarding: options.forwarding ?? true,
+    // Forwarding has two halves: what the kernel is running now, and the file that restores it at the
+    // next boot. A host prepared by provisioning has both; a host somebody fixed with `sysctl -w` has
+    // only the first, and the fixture can hold those apart.
+    sysctl: options.sysctl ?? MACHINE_SYSCTL_CONTENT,
     networkd: options.networkd ?? true,
+    networkdEnabled: options.networkdEnabled ?? options.networkd ?? true,
     deployment: options.deployment ?? JSON.stringify({ storage: { sandboxDataDir: '/srv/sandbox', sitesDataDir: '/srv/sites' } }),
   };
   const readText = (path: string) => {
@@ -105,6 +118,8 @@ function runnerFixture(options: {
     if (path === MACHINE_UNIT_PATH) return state.unit;
     if (path === MACHINE_FIREWALL_UNIT_PATH) return state.firewallUnit;
     if (path === '/proc/sys/net/ipv4/ip_forward') return state.forwarding ? '1\n' : '0\n';
+    if (path === '/run/systemd/resolve/resolv.conf') return 'nameserver 192.0.2.53\n';
+    if (path === MACHINE_SYSCTL_PATH) return state.sysctl;
     return '';
   };
   const readMode = (path: string) => {
@@ -120,18 +135,50 @@ function runnerFixture(options: {
     // A file the manager has never read is exactly what a fresh write leaves behind.
     if (path === MACHINE_UNIT_PATH) { state.unit = value; state.unitMode = mode; state.unitLoaded = false; }
     if (path === MACHINE_FIREWALL_UNIT_PATH) { state.firewallUnit = value; state.firewallUnitMode = mode; }
+    // Writing the file does NOT enable forwarding: only applying it does, which is what `sysctl --system`
+    // below models. A provisioning run that wrote the file and never applied it must still read as unmet.
+    if (path === MACHINE_SYSCTL_PATH) state.sysctl = value;
+  };
+  const removeFile = (path: string) => {
+    if (path !== POLKIT_RULE_PATH) throw new Error(`unexpected removal: ${path}`);
+    state.polkit = '';
+    state.polkitMode = -1;
   };
   const runner = (file: string, args: string[]) => {
     calls.push({ file, args: [...args] });
     if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
     if (file === '/usr/bin/dpkg-query') return state.installed ? { ok: true, stdout: 'install ok installed\n' } : { ok: false, stderr: 'not installed' };
     if (file === '/usr/sbin/iptables' || file === '/usr/sbin/ip6tables') {
-      return state.firewall ? { ok: true, stdout: '' } : { ok: false, stderr: 'No chain/target/match by that name' };
+      if (!state.firewall) return { ok: false, stderr: 'No chain/target/match by that name' };
+      if (args[0] === '-S') {
+        const chain = args[1];
+        const stdout = NSPAWN_FIREWALL_RULES
+          .filter((rule) => rule.binary === file && rule.chain === chain)
+          .sort((left, right) => left.insertAt - right.insertAt)
+          .map((rule) => `-A ${rule.chain} ${rule.spec.join(' ')}`)
+          .join('\n');
+        return { ok: true, stdout: `${stdout}\n` };
+      }
+      return { ok: true, stdout: '' };
     }
     if (file === '/usr/bin/apt-get') { state.installed = true; return { ok: true, stdout: '' }; }
+    // Applies exactly the file it is pointed at. `--system` would reload the whole search path and revert
+    // unrelated live settings, so being given one `-p <path>` is part of what this models: a call without
+    // it, or with another path, applies nothing here and the forwarding row stays unmet.
+    if (file === '/usr/sbin/sysctl') {
+      if (args[0] === '-p' && args[1] === MACHINE_SYSCTL_PATH && state.sysctl.includes('net.ipv4.ip_forward=1')) {
+        state.forwarding = true;
+      }
+      return { ok: true, stdout: '' };
+    }
     if (file === '/usr/bin/systemctl') {
       if (args[0] === 'show') return { ok: true, stdout: `${state.unitLoaded ? 'loaded' : 'not-found'}\n` };
       if (args[0] === 'daemon-reload') { state.unitLoaded = state.unit !== ''; return { ok: true, stdout: '' }; }
+      if (args[0] === 'enable' && args.includes('systemd-networkd')) {
+        state.networkd = true;
+        state.networkdEnabled = true;
+        return { ok: true, stdout: '' };
+      }
       if (args[0] === 'enable') {
         // What the unit does when it runs: every rule checked, then applied when it is not there.
         state.firewallEnabled = true;
@@ -141,13 +188,17 @@ function runnerFixture(options: {
       if (args[0] === 'is-enabled' && args[1] === MACHINE_FIREWALL_UNIT_NAME) {
         return state.firewallEnabled ? { ok: true, stdout: 'enabled\n' } : { ok: false, stderr: 'disabled' };
       }
+      if (args[1] === 'systemd-networkd') {
+        const up = args[0] === 'is-active' ? state.networkd : state.networkdEnabled;
+        return up ? { ok: true, stdout: 'active\n' } : { ok: false, stderr: 'inactive' };
+      }
       if (args[0] === 'is-active' || args[0] === 'is-enabled') {
         return state.networkd ? { ok: true, stdout: 'active\n' } : { ok: false, stderr: 'inactive' };
       }
     }
     return { ok: false, stderr: `unexpected command: ${file} ${args.join(' ')}` };
   };
-  return { calls, writes, state, runner, readText, readMode, writeAtomic, options: { runner, readText, readMode, writeAtomic, env: environment } };
+  return { calls, writes, state, runner, readText, readMode, writeAtomic, removeFile, options: { runner, readText, readMode, writeAtomic, removeFile, env: environment } };
 }
 
 function reloads(calls: Call[]) {
@@ -169,7 +220,7 @@ describe('privileged helper: two typed domains, one executable', () => {
   });
 
   it('never asks for the Sites domain record on behalf of a machine operation', () => {
-    for (const op of ['status', 'provision', 'exec', 'freeze', 'thaw', 'materialize', 'tree-copy', 'destroy']) {
+    for (const op of ['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'materialize', 'tree-copy', 'destroy', 'release-uid-range']) {
       expect(helperRequestNeedsDeployment({ domain: 'nspawn', op })).toBe(false);
     }
   });
@@ -193,6 +244,22 @@ describe('privileged helper: machine identity', () => {
     }
     expect(PLUGIN_MACHINE_PATTERN.test(MACHINE)).toBe(true);
   });
+
+  it('builds machine lifecycle mutations from typed fields only', async () => {
+    const calls: Call[] = [];
+    const runner = (file: string, args: string[]) => { calls.push({ file, args }); return { ok: true, stdout: '' }; };
+    await applyNspawnRequest({ domain: 'nspawn', op: 'start', machine: MACHINE }, { runner });
+    await applyNspawnRequest({ domain: 'nspawn', op: 'stop', machine: MACHINE }, { runner });
+    await applyNspawnRequest({ domain: 'nspawn', op: 'set-limits', machine: MACHINE,
+      limits: { cpus: 0.75, memoryMb: 384, pidsLimit: 300 } }, { runner });
+    expect(calls).toEqual([
+      { file: '/usr/bin/systemctl', args: ['start', `elowen-machine@${MACHINE}.service`] },
+      { file: '/usr/bin/systemctl', args: ['stop', `elowen-machine@${MACHINE}.service`] },
+      { file: '/usr/bin/systemctl', args: ['set-property', `elowen-machine@${MACHINE}.service`, 'CPUQuota=75%', 'MemoryMax=384M', 'TasksMax=300'] },
+    ]);
+    expect(() => applyNspawnRequest({ domain: 'nspawn', op: 'set-limits', machine: MACHINE,
+      limits: { cpus: 0, memoryMb: 384, pidsLimit: 300 } }, { runner })).toThrow(/limits are invalid/);
+  });
 });
 
 describe('privileged helper: execution', () => {
@@ -204,6 +271,17 @@ describe('privileged helper: execution', () => {
       '--property=TimeoutStopSec=5s', '--property=TasksMax=infinity', '--property=RuntimeMaxSec=120s',
       '--working-directory=/workspace', '--', '/bin/sh', '-c', 'echo hi',
     ]);
+  });
+
+  it('passes the validated machine environment into every transient guest unit', () => {
+    const args = nspawnExecArgs({ machine: MACHINE, unit: UNIT, argv: ['/usr/bin/printenv'], cwd: '/workspace',
+      timeoutSeconds: 30, environment: { Z_LAST: 'two words', A_FIRST: 'literal$HOME' } });
+    const separator = args.indexOf('--');
+    expect(args.slice(0, separator).filter((value) => value.startsWith('--setenv='))).toEqual([
+      '--setenv=A_FIRST=literal$HOME', '--setenv=Z_LAST=two words',
+    ]);
+    expect(() => nspawnExecArgs({ machine: MACHINE, unit: UNIT, argv: ['/bin/true'], cwd: '/', timeoutSeconds: 30,
+      environment: { BROKEN: 'line one\nline two' } })).toThrow(/machine environment is invalid/);
   });
 
   it('delivers the guest argv byte for byte, without systemd rewriting a variable reference out of it', () => {
@@ -278,7 +356,7 @@ describe('privileged helper: execution', () => {
   it('passes the guest streams straight through in raw mode and never prints a verdict', () => {
     // The LAUNCHED path: the daemon spawns this helper itself and streams the result to a terminal, so a
     // JSON verdict is exactly what must not appear. The child's streams are inherited and its status
-    // becomes the helper's own exit code, which is how `podman exec` behaves today.
+    // becomes the helper's own exit code, which is how a guest exec has always behaved here.
     const captured: Record<string, unknown>[] = [];
     const response = applyNspawnRequest({
       domain: 'nspawn', op: 'exec', raw: true, machine: MACHINE, unit: UNIT,
@@ -456,14 +534,15 @@ describe('privileged helper: the four merge constraints', () => {
     for (const op of ['exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-verify', 'status']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(false);
     }
-    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'tree-copy', 'tree-sync', 'tree-remove', 'destroy']) {
+    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'site-data-archive',
+      'tree-copy', 'tree-sync', 'tree-remove', 'destroy', 'release-uid-range']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
     }
-    // The Sites classification is unchanged: the same five read-only operations as before.
-    for (const op of ['status', 'environments-status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket']) {
+    // The Sites classification is unchanged for the operations that remain: a read never takes the lock.
+    for (const op of ['status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket']) {
       expect(helperRequestNeedsMutationLock({ op })).toBe(false);
     }
-    for (const op of ['sync-sites', 'ensure-site', 'remove-site', 'deny', 'environments-provision']) {
+    for (const op of ['sync-sites', 'ensure-site', 'remove-site', 'deny']) {
       expect(helperRequestNeedsMutationLock({ op })).toBe(true);
     }
   });
@@ -562,18 +641,10 @@ process.stdout.write(JSON.stringify(readFramedRequest(0)));`;
 });
 
 describe('privileged helper: host artefacts and readiness', () => {
-  it('owns the polkit rule and the unit template as repository content', () => {
-    const rule = renderPolkitRule('azureuser');
-    expect(rule).toContain('subject.user !== "azureuser"');
-    expect(rule).toContain('action.id !== "org.freedesktop.systemd1.manage-units"');
-    expect(rule).toContain('unit.indexOf("elowen-machine@elowen-") !== 0');
-    // Exactly the three verbs the runtime issues. A restart is a stop and a start, and nothing asks for
-    // one, so granting it would widen the rule past its own privilege model.
-    for (const verb of ['start', 'stop', 'set-property']) expect(rule).toContain(`verb === "${verb}"`);
-    expect(rule).not.toContain('"restart"');
-    // Everything else falls through to the system default, so an unrelated unit stays refused.
-    expect(rule).toContain('return polkit.Result.NOT_HANDLED;');
-    expect(rule).not.toMatch(/daemon-reload|nginx|cron/);
+  it('recognizes the retired polkit grant and owns the machine unit template as repository content', () => {
+    const retired = renderPolkitRule('azureuser');
+    expect(retired).toContain('subject.user !== "azureuser"');
+    expect(retired).toContain('verb === "start"');
     expect(() => renderPolkitRule('root')).toThrow();
     expect(() => renderPolkitRule('bad name')).toThrow();
 
@@ -581,7 +652,10 @@ describe('privileged helper: host artefacts and readiness', () => {
     // not use, so the envelope is our own template with the directory taken from the per-machine drop-in.
     expect(MACHINE_UNIT_TEMPLATE).toContain('--directory=${ELOWEN_MACHINE_DIRECTORY}');
     expect(MACHINE_UNIT_TEMPLATE).toContain('--link-journal=no');
-    expect(MACHINE_UNIT_TEMPLATE).toContain('--settings=override');
+    expect(MACHINE_UNIT_TEMPLATE).toContain('--settings=trusted');
+    // systemd 255 keeps the nspawn parent and container in this service unit. Port= is handled by nspawn's
+    // own event loop and does not require a separate machine scope.
+    expect(MACHINE_UNIT_TEMPLATE).toContain('--keep-unit');
     expect(MACHINE_UNIT_TEMPLATE).toContain('Slice=machine.slice');
     expect(MACHINE_UNIT_TEMPLATE).toContain('DevicePolicy=closed');
     expect(MACHINE_UNIT_TEMPLATE).not.toContain('/var/lib/machines');
@@ -592,9 +666,14 @@ describe('privileged helper: host artefacts and readiness', () => {
       { source: '/srv/sandbox/projects/54/disks/x/workspace', target: '/demo', readOnly: false },
       { source: '/srv/sandbox/projects/54/disks/x/home', target: '/root', readOnly: true },
     ];
-    const settings = renderMachineSettings(binds, { uidBase: 1_073_741_824 });
+    const settings = renderMachineSettings(binds, { uidBase: 1_073_741_824, environment: { ELOWEN_SITE_SLUG: 'demo', ELOWEN_SITE_URL: 'https://demo.example/path?a=1&b=2' } });
     expect(settings).toContain('PrivateUsers=1073741824:65536');
+    expect(settings).toContain('Environment="ELOWEN_SITE_SLUG=demo"');
+    expect(settings).toContain('Environment="ELOWEN_SITE_URL=https://demo.example/path?a=1&b=2"');
     expect(settings).toContain('PrivateUsersOwnership=off');
+    expect(settings).not.toContain('ResolvConf=');
+    expect(renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false, resolverPath: '/run/systemd/resolve/resolv.conf' }))
+      .toContain('BindReadOnly=/run/systemd/resolve/resolv.conf:/etc/resolv.conf');
     expect(settings).toContain('NoNewPrivileges=yes');
     expect(settings).toContain('CAP_SYS_PTRACE');
     expect(settings).toContain('Bind=/srv/sandbox/projects/54/disks/x/workspace:/demo:rootidmap');
@@ -604,6 +683,15 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(settings).toContain('[Network]\nPrivate=yes\nVirtualEthernet=no');
     expect(renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false }))
       .toContain('[Network]\nPrivate=yes\nVirtualEthernet=yes');
+    const published = renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false, ports: [
+      { protocol: 'udp', hostPort: 5353, guestPort: 53 },
+      { protocol: 'tcp', hostPort: 8080, guestPort: 3000 },
+    ] });
+    expect(published).toContain('Port=tcp:8080:3000\nPort=udp:5353:53');
+    expect(() => renderMachineSettings([], { uidBase: 1_073_741_824, ports: [{ protocol: 'tcp', hostPort: 8080, guestPort: 3000 }] }))
+      .toThrow(/loopback-only machine cannot publish/);
+    expect(() => renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false, ports: [{ protocol: 'tcp', hostPort: 80, guestPort: 80 }] }))
+      .toThrow(/inbound port is invalid/);
     expect(() => renderMachineSettings([], { uidBase: 1000 })).toThrow(/uid range is invalid/);
 
     const dropIn = renderMachineDropIn('/srv/sandbox/projects/54/disks/x/rootfs', { cpus: 0.75, memoryMb: 384, pidsLimit: 300 }, 1_073_741_824);
@@ -619,14 +707,14 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(missing.ready).toBe(false);
     expect(missing.items.map((item) => item.id))
       .toEqual(['os:supported', 'package:systemd-container', 'apparmor:machine-profile',
-        'unit:elowen-machine', 'unit:elowen-machine-firewall', 'polkit:machines']);
+        'polkit:machines', 'unit:elowen-machine', 'unit:elowen-machine-firewall']);
     expect(rowFor(missing, 'unit:elowen-machine').detail).toBe('missing — run environment provisioning to restore it');
     // Status only ever reads.
     expect(fixture.writes).toEqual([]);
 
     const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
     expect(provisioned.ready).toBe(true);
-    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH, POLKIT_RULE_PATH]);
+    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH]);
     expect(fixture.writes.every((write) => write.mode === 0o644)).toBe(true);
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/apt-get', args: ['update'] });
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/apt-get', args: ['install', '--yes', '--no-install-recommends', 'systemd-container'] });
@@ -634,7 +722,7 @@ describe('privileged helper: host artefacts and readiness', () => {
     // before a file existed cannot have read it.
     expect(reloads(fixture.calls)).toBe(2);
     expect(rowFor(provisioned, 'unit:elowen-machine').detail).toBe('installed and loaded');
-    expect(rowFor(provisioned, 'polkit:machines').detail).toBe('scoped to elowen-machine units for azureuser');
+    expect(rowFor(provisioned, 'polkit:machines').detail).toContain('lifecycle mutations use the privileged helper');
 
     // Converging means the second run is not a cheaper version of the first, it is nothing at all: no
     // write, no package install, no reload.
@@ -644,6 +732,55 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(fixture.writes).toHaveLength(before.writes);
     expect(reloads(fixture.calls)).toBe(2);
     expect(fixture.calls.slice(before.calls).some((call) => call.file === '/usr/bin/apt-get')).toBe(false);
+  });
+
+  it('provisions only on a distribution its apt commands are written for', async () => {
+    expect(supportedEnvironmentOs('ID=debian\n')).toEqual({ ok: true, detail: 'Debian is supported' });
+    expect(supportedEnvironmentOs('NAME="Ubuntu"\nID="ubuntu"\n')).toEqual({ ok: true, detail: 'Ubuntu is supported' });
+    expect(supportedEnvironmentOs('ID=fedora\n')).toEqual({ ok: false, detail: 'only Debian and Ubuntu are supported' });
+    expect(supportedEnvironmentOs('NAME Ubuntu\n')).toEqual({ ok: false, detail: 'operating system information is malformed' });
+    expect(supportedEnvironmentOs('')).toEqual({ ok: false, detail: 'operating system information is unavailable' });
+
+    // Status REPORTS an unsupported host; provisioning refuses before it reaches apt or writes anything.
+    for (const osRelease of ['ID=fedora\n', 'NAME Ubuntu\n']) {
+      const fixture = runnerFixture({ installed: false });
+      const readText = (path: string) => (path === '/etc/os-release' ? osRelease : fixture.readText(path));
+      const options = { ...fixture.options, readText };
+      const status = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, options) as Readiness;
+      expect(rowFor(status, 'os:supported').ok).toBe(false);
+      await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, options))
+        .rejects.toThrow(/supported|malformed/);
+      expect(fixture.calls.some(({ file }) => file === '/usr/bin/apt-get')).toBe(false);
+      expect(fixture.writes).toEqual([]);
+    }
+  });
+
+  it('refuses a sudo identity or a passwd record that does not hold together', async () => {
+    // Provisioning and trusted storage roots are bound to this account, so a request whose sudo variables
+    // disagree with passwd is refused rather than resolved to whatever passwd happens to say.
+    const fixture = runnerFixture();
+    for (const [field, message] of [['SUDO_UID', /user id is invalid/], ['SUDO_GID', /group id is invalid/]] as const) {
+      for (const bad of ['1000oops', '-1', '01000', '4294967296', '']) {
+        await expect(applyRequest({ domain: 'nspawn', op: 'status' }, undefined,
+          { ...fixture.options, env: { ...environment, [field]: bad } })).rejects.toThrow(message);
+      }
+    }
+    await expect(applyRequest({ domain: 'nspawn', op: 'status' }, undefined,
+      { ...fixture.options, env: { ...environment, SUDO_UID: '1001' } })).rejects.toThrow(/does not match sudo/);
+
+    for (const passwd of [
+      'other:x:1000:1000:Other:/home/other:/bin/bash\n',
+      'azureuser:x:1000oops:1000:Azure:/home/azureuser:/bin/bash\n',
+      'azureuser:x:1000:1000:Azure:relative:/bin/bash\n',
+      'azureuser:x:1000:1000:Azure:/home/azureuser:/bin/bash\nextra:x:1001:1001::/home/extra:/bin/bash\n',
+    ]) {
+      const malformed = runnerFixture();
+      const runner = (file: string, args: string[]) => (file === '/usr/bin/getent'
+        ? { ok: true, stdout: passwd }
+        : malformed.runner(file, args));
+      await expect(applyRequest({ domain: 'nspawn', op: 'status' }, undefined, { ...malformed.options, runner }))
+        .rejects.toThrow(/record is invalid/);
+    }
   });
 
   it('provisions from an operator root shell for the account it is told, and from nowhere else', async () => {
@@ -656,14 +793,13 @@ describe('privileged helper: host artefacts and readiness', () => {
       { ...fixture.options, env: rootShell }) as Readiness;
 
     expect(provisioned.ready).toBe(true);
-    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH, POLKIT_RULE_PATH]);
-    expect(rowFor(provisioned, 'polkit:machines').detail).toBe('scoped to elowen-machine units for azureuser');
+    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH]);
+    expect(rowFor(provisioned, 'polkit:machines').detail).toContain('lifecycle mutations use the privileged helper');
 
     // Root still has to say which account it means; nothing is guessed from the host.
     await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, { ...fixture.options, env: rootShell }))
       .rejects.toThrow(/requires naming the service account/);
-    // The service account may not name one: sudo already says who it is, and the rule this writes is a
-    // grant over machine units that it must not be able to hand to another account.
+    // The service account may not name another account: sudo already states the provisioning owner.
     await expect(applyRequest({ domain: 'nspawn', op: 'status', user: 'somebody-else' }, undefined, fixture.options))
       .rejects.toThrow(/does not match the invoking account/);
     // And the storage roots keep coming from the account sudo reports, from nothing a request carries.
@@ -671,49 +807,47 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(storageRootsFor('/home/azureuser')).toEqual(siteGatewayStorageRoots('/home/azureuser'));
   });
 
-  it('restores the one artefact that drifted, and reloads only when the reload is what makes it take effect', async () => {
-    const fixture = runnerFixture();
-    await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
+  it('removes only the exact retired polkit grant and still repairs a drifted unit', async () => {
+    const fixture = runnerFixture({ polkit: renderPolkitRule('azureuser') });
+    const retired = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
+    expect(rowFor(retired, 'polkit:machines').detail).toContain('retired broad lifecycle rule');
+
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    expect(provisioned.ready).toBe(true);
+    expect(fixture.state.polkit).toBe('');
     const baseline = reloads(fixture.calls);
 
-    // Someone edits the polkit rule by hand. polkitd watches its own rules directory, so restoring the
-    // file is the whole repair; asking systemd to reload would be theatre.
-    fixture.state.polkit = `${fixture.state.polkit}// widened by hand\n`;
-    const edited = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
-    expect(rowFor(edited, 'polkit:machines')).toMatchObject({ ok: false, detail: 'differs from the managed content — run environment provisioning to restore it' });
-    expect(rowFor(edited, 'unit:elowen-machine').ok).toBe(true);
+    const unmanaged = runnerFixture({ polkit: `${renderPolkitRule('azureuser')}// widened by hand\n` });
+    const reported = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, unmanaged.options) as Readiness;
+    expect(rowFor(reported, 'polkit:machines').detail).toContain('unmanaged file');
+    await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, unmanaged.options))
+      .rejects.toThrow(/unmanaged content/);
+    expect(unmanaged.state.polkit).toContain('widened by hand');
 
-    let repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
-    expect(repaired.ready).toBe(true);
-    expect(fixture.state.polkit).toBe(renderPolkitRule('azureuser'));
-    expect(reloads(fixture.calls)).toBe(baseline);
-
-    // An upgrade over an older unit template is the same path, and this one does need the manager told.
     fixture.state.unit = '[Unit]\nDescription=Elowen machine %i\n[Service]\nExecStart=systemd-nspawn --boot\n';
-    repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    const repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
     expect(repaired.ready).toBe(true);
     expect(fixture.state.unit).toBe(MACHINE_UNIT_TEMPLATE);
     expect(reloads(fixture.calls)).toBe(baseline + 1);
   });
 
-  it('treats the permission bits as part of the artefact, not as decoration', async () => {
+  it('treats the permission bits as part of a managed artefact', async () => {
     const fixture = runnerFixture();
     await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
-    // A group-writable polkit rule is a rule that whole group can rewrite, and its content still matches.
-    fixture.state.polkitMode = 0o664;
+    fixture.state.unitMode = 0o664;
     const loose = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
-    expect(rowFor(loose, 'polkit:machines')).toMatchObject({ ok: false, detail: 'mode is 0664 where 0644 is required — run environment provisioning to restore it' });
+    expect(rowFor(loose, 'unit:elowen-machine')).toMatchObject({ ok: false, detail: 'mode is 0664 where 0644 is required — run environment provisioning to restore it' });
 
     const repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
     expect(repaired.ready).toBe(true);
-    expect(fixture.state.polkitMode).toBe(0o644);
+    expect(fixture.state.unitMode).toBe(0o644);
   });
 
   it('reloads a unit template the manager has never read, even when the file on disk is already right', async () => {
     // The state a provisioning run interrupted between the write and the reload leaves behind, and the
     // state a restored backup leaves behind. The file compares equal, and the machine still cannot start.
     const fixture = runnerFixture({
-      unit: MACHINE_UNIT_TEMPLATE, unitLoaded: false, polkit: renderPolkitRule('azureuser'),
+      unit: MACHINE_UNIT_TEMPLATE, unitLoaded: false,
       firewallUnit: MACHINE_FIREWALL_UNIT, firewallEnabled: true, firewall: true,
     });
     const stale = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
@@ -734,25 +868,21 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(reported.ready).toBe(false);
     expect(reported.items.map((item) => item.id)).toEqual([
       'os:supported', 'package:systemd-container', 'apparmor:machine-profile',
-      'unit:elowen-machine', 'unit:elowen-machine-firewall', 'polkit:machines',
-      'net:ip-forward', 'service:systemd-networkd', ...NSPAWN_FIREWALL_RULES.map((rule: { id: string }) => rule.id),
+      'polkit:machines', 'unit:elowen-machine', 'unit:elowen-machine-firewall',
+      'net:ip-forward', 'service:systemd-networkd', 'resolver:uplink', ...NSPAWN_FIREWALL_RULES.map((rule: { id: string }) => rule.id),
     ]);
 
     // Every detail has to carry the command, because nobody reading a false row has the rule memorized.
     expect(rowFor(reported, 'net:ip-forward').detail).toContain('sysctl -w net.ipv4.ip_forward=1');
     expect(rowFor(reported, 'service:systemd-networkd').detail).toContain('systemctl enable --now systemd-networkd');
-    expect(rowFor(reported, 'firewall:forward-out').detail).toContain('/usr/sbin/iptables -I DOCKER-USER 1 -i ve-+ -j ACCEPT');
-    expect(rowFor(reported, 'firewall:forward-back').detail)
-      .toContain('/usr/sbin/iptables -I DOCKER-USER 1 -o ve-+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT');
-    expect(rowFor(reported, 'firewall:machine-dhcp').detail).toContain('/usr/sbin/iptables -I INPUT 1 -i ve-+ -p udp --dport 67 -j ACCEPT');
-    expect(rowFor(reported, 'firewall:host-guard').detail).toContain('/usr/sbin/iptables -A INPUT -i ve-+ -j DROP');
-    expect(rowFor(reported, 'firewall:host-guard6').detail).toContain('/usr/sbin/ip6tables -A INPUT -i ve-+ -j DROP');
+    for (const rule of NSPAWN_FIREWALL_RULES) {
+      expect(rowFor(reported, rule.id).detail).toContain(firewallRuleCommand(rule));
+    }
 
-    // Serving a request never mutates the packet filter: every call into either table is an existence
-    // check, whatever the answer turns out to be.
+    // Serving a request never mutates the packet filter: it reads the ordered chain rules only.
     const served = fixture.calls.filter((call) => call.file.endsWith('tables'));
     expect(served.length).toBeGreaterThan(0);
-    expect(served.every((call) => call.args[0] === '-C')).toBe(true);
+    expect(served.every((call) => call.args[0] === '-S')).toBe(true);
 
     // Provisioning is the operator-invoked path, and it does act: the unit is installed, enabled so the
     // rules come back after a reboot, and started so they are in place now. It still touches the tables
@@ -760,7 +890,7 @@ describe('privileged helper: host artefacts and readiness', () => {
     const applied = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
     expect(fixture.state.firewallUnit).toBe(MACHINE_FIREWALL_UNIT);
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/systemctl', args: ['enable', '--now', MACHINE_FIREWALL_UNIT_NAME] });
-    expect(fixture.calls.filter((call) => call.file.endsWith('tables')).every((call) => call.args[0] === '-C')).toBe(true);
+    expect(fixture.calls.filter((call) => call.file.endsWith('tables')).every((call) => call.args[0] === '-S')).toBe(true);
     for (const rule of NSPAWN_FIREWALL_RULES) expect(rowFor(applied, rule.id).ok, rule.id).toBe(true);
     expect(rowFor(applied, 'unit:elowen-machine-firewall')).toMatchObject({ ok: true, detail: 'installed, enabled and applied' });
 
@@ -794,10 +924,8 @@ describe('privileged helper: host artefacts and readiness', () => {
     // dies on the FORWARD DROP policy Docker installs.
     const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'DOCKER-USER');
     expect(forwarding.map((rule: { id: string }) => rule.id)).toEqual(['firewall:forward-out', 'firewall:forward-back']);
-    expect(forwarding.map((rule) => firewallRuleCommand(rule))).toEqual([
-      '/usr/sbin/iptables -I DOCKER-USER 1 -i ve-+ -j ACCEPT',
-      '/usr/sbin/iptables -I DOCKER-USER 1 -o ve-+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT',
-    ]);
+    expect(forwarding.map((rule) => rule.insertAt)).toEqual([1, 2]);
+    expect(forwarding.map((rule) => firewallRuleCommand(rule)).every((command) => command.includes('--comment elowen-machine-'))).toBe(true);
     // The return path is conntrack-scoped, so it opens nothing a machine did not ask for first.
     expect(forwarding[1]!.spec).toContain('RELATED,ESTABLISHED');
   });
@@ -806,17 +934,125 @@ describe('privileged helper: host artefacts and readiness', () => {
     // The plan first placed this guard in FORWARD. A packet a machine sends to an address the host holds
     // is delivered locally, so the routing decision hands it to INPUT and a FORWARD rule never sees it.
     //
-    // IPv6 gets the guard and nothing else, and that is a fact about this host rather than about IPv6:
-    // measured, it carries no global IPv6 address and the ip6tables FORWARD policy is ACCEPT, so there is
-    // no v6 path off the box to hold open. It needs measuring again if the host ever gains v6 reach.
-    const guards = NSPAWN_FIREWALL_RULES.filter((rule: { spec: string[] }) => rule.spec.includes('DROP'));
+    // Native nspawn DNAT keeps its own nftables map, but replies to a host-originated connection return
+    // from the machine link through INPUT. Admit only conntrack replies before the blanket host guard, so
+    // the declared port works without opening SSH or any other NEW machine-to-host connection.
+    const returns = NSPAWN_FIREWALL_RULES.filter((rule) => rule.id.startsWith('firewall:host-return'));
+    expect(returns).toHaveLength(2);
+    expect(returns.every((rule) => rule.chain === 'INPUT' && rule.spec.includes('RELATED,ESTABLISHED'))).toBe(true);
+    expect(returns.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
+    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.spec.includes('DROP'));
     expect(guards).toHaveLength(2);
-    expect(guards.every((rule: { chain: string }) => rule.chain === 'INPUT')).toBe(true);
-    expect(guards.map((rule: { binary: string }) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
-    // The lease exception is inserted at the head, the guard is appended, so the guard cannot shadow it.
-    const lease = NSPAWN_FIREWALL_RULES.find((rule: { id: string }) => rule.id === 'firewall:machine-dhcp')!;
-    expect(firewallRuleCommand(lease)).toContain('-I INPUT 1');
-    expect(guards.every((rule) => firewallRuleCommand(rule).includes('-A INPUT'))).toBe(true);
+    expect(guards.every((rule) => rule.chain === 'INPUT')).toBe(true);
+    expect(guards.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
+    // IPv4 DHCP is first, then the native-port return path and guard. IPv6 starts with return then guard.
+    const lease = NSPAWN_FIREWALL_RULES.find((rule) => rule.id === 'firewall:machine-dhcp')!;
+    expect(lease.spec.join(' ')).toContain('-p udp -m udp --dport 67');
+    expect(lease.insertAt).toBe(1);
+    expect(returns.map((rule) => rule.insertAt)).toEqual([2, 1]);
+    expect(guards.map((rule) => rule.insertAt)).toEqual([3, 2]);
+    expect([...returns, ...guards].every((rule) => firewallRuleCommand(rule).includes('-I INPUT'))).toBe(true);
+  });
+
+  it('prepares a fresh host end to end, and the second run changes nothing', async () => {
+    // Everything a supported Ubuntu host can be short of at once: no package, no artefacts, no firewall,
+    // no forwarding, no link service. One provisioning request is the whole answer.
+    const fixture = runnerFixture({
+      installed: false, firewall: false, firewallEnabled: false,
+      forwarding: false, sysctl: '', networkd: false, networkdEnabled: false,
+    });
+    const before = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    expect(before.ready).toBe(false);
+
+    const after = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(after.ready, after.items.filter((item) => !item.ok).map((item) => `${item.id}: ${item.detail}`).join('; ')).toBe(true);
+    expect(rowFor(after, 'net:ip-forward')).toMatchObject({ ok: true, detail: 'enabled and recorded' });
+    expect(rowFor(after, 'service:systemd-networkd')).toMatchObject({ ok: true, detail: 'active and enabled' });
+    expect(fixture.writes.map((write) => write.path)).toContain(MACHINE_SYSCTL_PATH);
+
+    // Convergence is the claim, so it is measured rather than asserted: a second run against the host it
+    // just produced writes no file, installs no package and reloads nothing.
+    const writesBefore = fixture.writes.length;
+    const reloadsBefore = reloads(fixture.calls);
+    const again = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(again.ready).toBe(true);
+    expect(fixture.writes).toHaveLength(writesBefore);
+    expect(reloads(fixture.calls)).toBe(reloadsBefore);
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/apt-get')).toHaveLength(2);
+  });
+
+  it('records forwarding that was only ever set live, so a reboot does not take it away', async () => {
+    // `sysctl -w` by hand leaves the kernel right and the host one restart away from refusing every
+    // environment. It is not grounds to refuse the host today, but provisioning should fix it.
+    const fixture = runnerFixture({ forwarding: true, sysctl: '' });
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(rowFor(provisioned, 'net:ip-forward')).toMatchObject({ ok: true, detail: 'enabled and recorded' });
+    expect(fixture.writes.find((write) => write.path === MACHINE_SYSCTL_PATH))
+      .toMatchObject({ content: MACHINE_SYSCTL_CONTENT, mode: 0o644 });
+  });
+
+  it('asks the running kernel rather than the file it wrote', async () => {
+    // The file being present is not the fact that matters; a recorded setting nobody applied leaves a
+    // machine unable to route exactly as if the file were absent.
+    const fixture = runnerFixture({ forwarding: false, sysctl: MACHINE_SYSCTL_CONTENT });
+    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    const row = rowFor(status, 'net:ip-forward');
+    expect(row.ok).toBe(false);
+    expect(row.detail).toContain('cannot route without it');
+  });
+
+  it('does not newly refuse a host whose forwarding somebody else turned on', async () => {
+    // This row gates every veth envelope write, so making it demand this helper's own file would refuse
+    // creation, envelope re-creation and snapshot restore on hosts that have been running fine — Docker
+    // enables forwarding, and so does any other file under /etc/sysctl.d. The persistence question is
+    // real and is answered in the detail, where it blocks nothing.
+    const fixture = runnerFixture({ forwarding: true, sysctl: '' });
+    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    const row = rowFor(status, 'net:ip-forward');
+    expect(row.ok).toBe(true);
+    expect(row.detail).toContain('no record of it');
+  });
+
+  it('applies only its own file, never the whole sysctl search path', async () => {
+    // `--system` reloads kernel hardening, ptrace scope, magic-sysrq and apparmor along with it, and
+    // would silently revert anything an operator had changed live. Preparing a machine runtime is not
+    // licence to restate the rest of the host's settings.
+    const fixture = runnerFixture({ forwarding: false, sysctl: '' });
+    await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options);
+    const applied = fixture.calls.filter((call) => call.file === '/usr/sbin/sysctl');
+    expect(applied).toHaveLength(1);
+    expect(applied[0]!.args).toEqual(['-p', MACHINE_SYSCTL_PATH]);
+  });
+
+  it('enables a link service that is running but would not come back', async () => {
+    const fixture = runnerFixture({ networkd: true, networkdEnabled: false });
+    const status = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    expect(rowFor(status, 'service:systemd-networkd').ok).toBe(false);
+    expect(rowFor(status, 'service:systemd-networkd').detail).toContain('running, but it would not come back');
+
+    await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl'
+      && call.args[0] === 'enable' && call.args.includes('systemd-networkd'))).toBe(true);
+  });
+
+  it('leaves the host network alone when the request does not ask for veth', async () => {
+    // The network rows belong to veth. A caller that does not want one must not have its packet filter,
+    // its sysctls or its services changed as a side effect of preparing the runtime.
+    const fixture = runnerFixture({ forwarding: false, sysctl: '', networkd: false, networkdEnabled: false });
+    await applyRequest({ domain: 'nspawn', op: 'provision', veth: false }, undefined, fixture.options);
+    expect(fixture.writes.map((write) => write.path)).not.toContain(MACHINE_SYSCTL_PATH);
+    expect(fixture.calls.some((call) => call.file === '/usr/sbin/sysctl')).toBe(false);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl'
+      && call.args[0] === 'enable' && call.args.includes('systemd-networkd'))).toBe(false);
+  });
+
+  it('refuses to modify a host whose operating system it does not support', async () => {
+    // Not a warning and not a partial run: an unsupported host is left exactly as it was found.
+    const fixture = runnerFixture({ installed: false, sysctl: '', forwarding: false });
+    const options = { ...fixture.options, readText: (path: string) => (path === '/etc/os-release' ? 'ID=arch\n' : fixture.readText(path)) };
+    await expect(applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, options)).rejects.toThrow();
+    expect(fixture.writes).toHaveLength(0);
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/apt-get')).toHaveLength(0);
   });
 });
 
@@ -854,6 +1090,13 @@ describe('privileged helper: the disk identity record', () => {
           calls.push({ file, args });
           if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
           if (file === '/usr/bin/python3') return { ok: true, stdout: JSON.stringify({ entries: 4242 }) };
+          if ((file === '/usr/sbin/iptables' || file === '/usr/sbin/ip6tables') && args[0] === '-S') {
+            const rules = NSPAWN_FIREWALL_RULES
+              .filter((rule) => rule.binary === file && rule.chain === args[1])
+              .sort((left, right) => left.insertAt - right.insertAt)
+              .map((rule) => `-A ${rule.chain} ${rule.spec.join(' ')}`);
+            return { ok: true, stdout: `${rules.join('\n')}\n` };
+          }
           return { ok: true, stdout: '' };
         },
       },
@@ -912,9 +1155,9 @@ describe('privileged helper: the disk identity record', () => {
     fixture.options.runner = (file: string, args: string[]) => {
       if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
       if (file === '/usr/bin/python3') {
-        // Exactly what the shipped ownership script does to an id in `offset` mode: g becomes base+g.
+        // Exactly what the shipped ownership script does to an id: guest id g becomes base+g.
         const shift = JSON.parse(args[2]!);
-        if (shift.mode === 'offset' && rootOwner < shift.size) rootOwner = shift.base + rootOwner;
+        if (rootOwner < shift.size) rootOwner = shift.base + rootOwner;
         return { ok: true, stdout: JSON.stringify({ entries: 4242 }) };
       }
       return { ok: true, stdout: '' };
@@ -943,6 +1186,46 @@ describe('privileged helper: the disk identity record', () => {
     rmSync(archive, { force: true });
   });
 
+  it('materializes a fresh disk without a subordinate id range on the host', async () => {
+    // The pass maps guest id g to base+g and reads no other mapping, so a disk needs nothing from
+    // /etc/subuid. Asking for it anyway made creating ANY environment depend on provisioning that existed
+    // only to serve the container runtime, and failed outright on a host that had never run it.
+    const fixture = diskFixture();
+    fixture.options.readText = (path: string) => (path === '/etc/subuid' ? '' : '');
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+
+    const response = await applyRequest({
+      domain: 'nspawn', op: 'materialize', ...diskRef,
+      archivePath: archive, targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options) as { ok: boolean; uidBase: number };
+
+    expect(response.ok).toBe(true);
+    expect(response.uidBase).toBeGreaterThanOrEqual(UID_RANGE_BASE);
+    // And the pass it ran carried no subordinate-range arguments at all, rather than carrying unused ones.
+    const pass = fixture.calls.find((call) => call.file === '/usr/bin/python3'
+      && String(call.args[1] ?? '').includes('to_machine'));
+    const spec = JSON.parse(pass!.args[2]!);
+    expect(spec).toMatchObject({ base: response.uidBase });
+    expect(spec).not.toHaveProperty('serviceId');
+    expect(spec).not.toHaveProperty('previousBase');
+    rmSync(archive, { force: true });
+  });
+
+  it('shifts an existing disk on a host that has no subordinate range either', async () => {
+    // The standalone pass reads the same registry-held range the disk already carries, so it asks the
+    // host for nothing a container runtime would have had to provision.
+    const fixture = diskFixture();
+    fixture.options.readText = () => '';
+    const receipt = await applyRequest({
+      domain: 'nspawn', op: 'shift-ownership', ...diskRef,
+    }, undefined, fixture.options) as { ok: boolean; uidBase: number; entries: number };
+    expect(receipt).toMatchObject({ ok: true, entries: 4242 });
+    expect(receipt.uidBase).toBeGreaterThanOrEqual(UID_RANGE_BASE);
+    const spec = JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2]!);
+    expect(spec).toEqual({ base: receipt.uidBase, size: 65_536 });
+  });
+
   it('refuses to write a veth envelope until the host can isolate the link', async () => {
     // The envelope is what turns veth on, so the gate lives here rather than in a status row a client is
     // free not to read. Nothing is written and no uid range is allocated on the way to the refusal.
@@ -957,12 +1240,17 @@ describe('privileged helper: the disk identity record', () => {
     };
     const unready = diskFixture();
     await expect(applyRequest(request, undefined, unready.options))
-      .rejects.toThrow(/not ready for machine networking.*sysctl -w net\.ipv4\.ip_forward=1/s);
+      .rejects.toThrow(/not ready for machine networking.*ip_forward=1/s);
     expect(unready.writes).toEqual([]);
 
     const ready = diskFixture();
+    // Forwarding is two facts now — running and recorded — and this test is about the veth gate, not
+    // about either of them, so the host model satisfies both and the refusal that remains is the one
+    // being measured.
     ready.options.readText = (path: string) => {
       if (path === '/proc/sys/net/ipv4/ip_forward') return '1\n';
+      if (path === MACHINE_SYSCTL_PATH) return MACHINE_SYSCTL_CONTENT;
+      if (path === '/run/systemd/resolve/resolv.conf') return 'nameserver 192.0.2.53\n';
       return path === '/etc/subuid' ? 'azureuser:100000:65536\n' : '';
     };
     await applyRequest(request, undefined, ready.options);
@@ -1028,14 +1316,14 @@ describe('privileged helper: the disk identity record', () => {
       }, undefined, {
         storage,
         env: environment,
-        readOwner: () => registry[`project:54:${diskRef.diskId}`],
-        readText: (path: string) => {
-          if (path === '/etc/subuid') return 'azureuser:100000:65536\n';
-          return path === RANGES ? JSON.stringify(registry) : '';
-        },
+        readOwner: () => registry['project:54'] ?? registry[`project:54:${diskRef.diskId}`],
+        readText: (path: string) => path === '/etc/subuid' ? 'azureuser:100000:65536\n' : '',
+        readUidRanges: () => ({ ...registry }),
         writeAtomic: (path: string, content: Buffer, mode: number) => {
-          if (path === RANGES) Object.assign(registry, JSON.parse(content.toString('utf8')));
-          else if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
+          if (path === RANGES) {
+            for (const key of Object.keys(registry)) delete registry[key];
+            Object.assign(registry, JSON.parse(content.toString('utf8')));
+          } else if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
         },
         runner: (file: string) => (file === '/usr/bin/getent'
           ? { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' }
@@ -1050,6 +1338,72 @@ describe('privileged helper: the disk identity record', () => {
     expect(next.uidBase).toBe(original.uidBase);
     // Adopted under the environment key, so the disk id it was allocated against stops deciding anything.
     expect(registry['project:54']).toBe(original.uidBase);
+    expect(registry[`project:54:${diskRef.diskId}`]).toBeUndefined();
+  });
+
+  it('treats only a missing uid registry as empty and never overwrites a damaged one', async () => {
+    const registryPath = join(scratch, `uid-registry-${randomUUID()}.json`);
+    expect(readUidRangeRegistry(registryPath)).toEqual({});
+    writeFileSync(registryPath, `${JSON.stringify({ 'project:54': UID_RANGE_BASE })}\n`, { mode: 0o600 });
+    expect(readUidRangeRegistry(registryPath)).toEqual({ 'project:54': UID_RANGE_BASE });
+
+    const broken = [
+      '{"project:54":',
+      '[]',
+      JSON.stringify({ 'project:54': UID_RANGE_BASE, 'project:55': UID_RANGE_BASE }),
+      JSON.stringify({ 'project:54': UID_RANGE_BASE, [`project:54:${'a'.repeat(32)}`]: UID_RANGE_BASE + 65_536 }),
+      JSON.stringify({ 'project:54': UID_RANGE_BASE + 1 }),
+    ];
+    for (const content of broken) {
+      writeFileSync(registryPath, content, { mode: 0o600 });
+      const fixture = diskFixture();
+      const before = fixture.writes.length;
+      await expect(applyRequest({
+        domain: 'nspawn', op: 'write-envelope', ...diskRef,
+        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, binds: [], dropCapabilities: [], privateNetwork: true,
+      }, undefined, { ...fixture.options, readUidRanges: () => readUidRangeRegistry(registryPath) })).rejects.toThrow(/uid range registry/);
+      expect(fixture.writes).toHaveLength(before);
+      expect(readFileSync(registryPath, 'utf8')).toBe(content);
+    }
+
+    const target = `${registryPath}.target`;
+    writeFileSync(target, '{}', { mode: 0o600 });
+    rmSync(registryPath, { force: true });
+    symlinkSync(target, registryPath);
+    expect(() => readUidRangeRegistry(registryPath)).toThrow(/cannot be opened/);
+  });
+
+  it('releases only a fully deleted environment range and all of its old disk aliases', async () => {
+    const rangesPath = '/var/lib/elowen/nspawn-uid-ranges.json';
+    const registry: Record<string, number> = {
+      'project:61': UID_RANGE_BASE,
+      [`project:61:${'a'.repeat(32)}`]: UID_RANGE_BASE,
+      'project:62': UID_RANGE_BASE + 65_536,
+    };
+    const writeAtomic = (path: string, content: Buffer) => {
+      expect(path).toBe(rangesPath);
+      for (const key of Object.keys(registry)) delete registry[key];
+      Object.assign(registry, JSON.parse(content.toString('utf8')));
+    };
+    const request = { domain: 'nspawn', op: 'release-uid-range', namespace: 'elowen', kind: 'project', resource: '61' };
+    const options = { storage, readUidRanges: () => ({ ...registry }), writeAtomic, exists: () => false };
+
+    await expect(applyRequest(request, undefined, { ...options,
+      readDir: (path: string) => path === '/etc/systemd/nspawn' ? ['elowen-project-61-g4.nspawn'] : [],
+    })).rejects.toThrow(/machine envelope still exists/);
+    await expect(applyRequest(request, undefined, { ...options,
+      readDir: (path: string) => path === '/etc/systemd/system' ? ['elowen-machine@elowen-project-61-g4.service.d'] : [],
+    })).rejects.toThrow(/machine drop-in still exists/);
+    expect(registry).toHaveProperty('project:61');
+
+    await applyRequest(request, undefined, { ...options, readDir: () => [] });
+    expect(registry).toEqual({ 'project:62': UID_RANGE_BASE + 65_536 });
+    await expect(applyRequest(request, undefined, { ...options, readDir: () => [] })).resolves.toMatchObject({ ok: true });
+
+    await expect(applyRequest({ ...request, resource: '62' }, undefined, {
+      ...options, exists: (path: string) => path.endsWith('/projects/62'), readDir: () => [],
+    })).rejects.toThrow(/storage still exists/);
+    expect(registry).toEqual({ 'project:62': UID_RANGE_BASE + 65_536 });
   });
 
   it('refuses an envelope over a root filesystem some other range owns', async () => {
@@ -1185,6 +1539,7 @@ describe('privileged helper: the disk identity record', () => {
       storage,
       env: environment,
       readOwner: () => UID_RANGE_BASE,
+      readUidRanges: () => ({}),
       writeAtomic: (path: string, content: Buffer, mode: number) => {
         writes.push({ path, content: content.toString('utf8'), mode });
         if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
@@ -1223,7 +1578,7 @@ describe('privileged helper: the disk identity record', () => {
       binds,
       dropCapabilities: [],
       privateNetwork: true,
-    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
+    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, readUidRanges: () => ({ [`site:${siteId}`]: UID_RANGE_BASE }), writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
 
     // A real repository already at that path is data, not a mount point to overwrite, and a file bound
     // over a directory fails the mount with a message that explains nothing.
@@ -1256,6 +1611,16 @@ describe('privileged helper: the disk identity record', () => {
     }
   });
 
+  it('refuses to rewrite the envelope while its machine is active', async () => {
+    const fixture = diskFixture();
+    const runner = (file: string, args: string[]) => file === '/usr/bin/systemctl' && args[0] === 'show' && args.includes('ActiveState')
+      ? { ok: true, stdout: 'active\n' }
+      : fixture.options.runner(file, args);
+    await expect(applyRequest({ domain: 'nspawn', op: 'write-envelope', ...diskRef,
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, binds: [], ports: [], dropCapabilities: [], privateNetwork: true,
+    }, undefined, { ...fixture.options, runner })).rejects.toThrow(/must be stopped before its envelope is rewritten/);
+  });
+
   it('refuses to write the identity through a planted symlink', async () => {
     const fixture = diskFixture();
     const outside = join(scratch, 'outside-the-roots');
@@ -1277,72 +1642,103 @@ describe('privileged helper: the disk identity record', () => {
     rmSync(join(fixture.paths.directory, '.elowen'), { force: true });
   });
 
-  it('shifts ownership in both directions and reports the receipt a rollback reverses with', async () => {
+  it('shifts an existing disk onto the range the registry already holds for it', async () => {
     const fixture = diskFixture();
-    const forward = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'nspawn', uidBase: null },
-      undefined, fixture.options) as { uidBase: number; uidSize: number; previousUidBase: number; entries: number };
-    // A candidate that will not boot has to go back up on Podman, and rootless Podman cannot read a tree
-    // chowned into the machine's range — so the forward pass has to say what to reverse to.
-    expect(forward).toMatchObject({ uidSize: 65_536, previousUidBase: 100_000, entries: 4242 });
-    expect(forward.uidBase).toBeGreaterThanOrEqual(1_073_741_824);
+    const receipt = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef },
+      undefined, fixture.options) as { uidBase: number; uidSize: number; entries: number };
+    expect(receipt).toMatchObject({ uidSize: 65_536, entries: 4242 });
+    expect(receipt.uidBase).toBeGreaterThanOrEqual(1_073_741_824);
 
-    const forwardSpec = JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2]);
-    expect(forwardSpec).toMatchObject({ target: 'nspawn', base: forward.uidBase, serviceId: 1000, previousBase: 100_000 });
+    const spec = JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2]);
+    expect(spec).toEqual({ base: receipt.uidBase, size: 65_536 });
 
+    // The range is the environment's, so asking twice is the same answer and not a second allocation.
     fixture.calls.length = 0;
-    const back = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'podman', uidBase: forward.previousUidBase },
-      undefined, fixture.options);
-    expect(back).toMatchObject({ ok: true, previousUidBase: 100_000 });
-    expect(JSON.parse(fixture.calls.find((call) => call.file === '/usr/bin/python3')!.args[2])).toMatchObject({ target: 'podman' });
-
-    await expect(applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'elsewhere', uidBase: null }, undefined, fixture.options))
-      .rejects.toThrow(/shift target is invalid/);
-    await expect(applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'podman', uidBase: null }, undefined, fixture.options))
-      .rejects.toThrow(/requires the recorded range/);
+    const again = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef },
+      undefined, fixture.options) as { uidBase: number };
+    expect(again.uidBase).toBe(receipt.uidBase);
   });
 
-  it('leaves an id that already carries the destination scheme alone, so an interrupted pass is re-run', () => {
-    // An interrupted shift produced no receipt and therefore cannot be reversed; it has to be safe to
-    // repeat. The mapping accepts both schemes on the way in and only writes what actually changes.
+  it('leaves an id that already carries the machine range alone, so an interrupted pass is re-run', () => {
+    // An interrupted shift left part of a tree converted and part of it not, so the pass has to be safe
+    // to repeat. The mapping accepts both schemes on the way in and only writes what actually changes.
     const script = readFileSync(HELPER_SOURCE, 'utf8');
     const body = script.slice(script.indexOf('const OWNERSHIP_SHIFT_PY'), script.indexOf('function shiftOwnership'));
     expect(body).toContain('if machine(uid): return uid');
-    expect(body).toContain('if podman(uid): return uid');
+    expect(body).toContain('if 0<=uid<size: return base+uid');
     expect(body).toContain('if uid!=st.st_uid or gid!=st.st_gid: os.lchown');
+    // No second direction and nothing it would need: a tree is only ever moved ONTO the machine range.
+    expect(body).not.toMatch(/to_podman|previousBase|serviceId/);
   });
 });
 
 describe('privileged helper: disk tree primitives', () => {
-  it('runs the container runtime\'s own Python implementations rather than new semantics', () => {
+  it('keeps one definition of what a tree IS, shared by the copy that checks itself', () => {
     const helper = readFileSync(HELPER_SOURCE, 'utf8');
-    const podman = readFileSync(PODMAN_SOURCE, 'utf8');
-    const slice = (source: string, anchor: string): string => {
-      const start = source.indexOf(anchor);
-      expect(start).toBeGreaterThan(-1);
-      return source.slice(start, source.indexOf('`', start));
-    };
-    const anchors = {
-      inventory: 'def inventory(root):',
-      fingerprint: 'import hashlib,json,os,stat,sys\nroot=sys.argv[1]',
-      preflight: 'import json,os,sys\nsources=json.loads',
-      sync: 'import os,stat,sys\nroot=sys.argv[1]\nfor directory,names,files in os.walk(root,topdown=False',
-    };
-    for (const [name, anchor] of Object.entries(anchors)) {
-      expect(slice(helper, anchor), `${name} drifted from the container runtime`).toBe(slice(podman, anchor));
-    }
-    // The copy primitive differs only in how the interpreter path is spelled, so compare the behaviour.
+    // A copy is only trustworthy if it is compared with the same metadata the fingerprint hashes, so the
+    // inventory is defined once and embedded into the copy script rather than restated beside it.
     expect(DISK_TREE_SCRIPTS.inventory).toContain('os.getxattr');
+    expect(DISK_TREE_SCRIPTS.inventory).toContain('st.st_uid,st.st_gid');
     expect(helper).toContain('cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/');
-    expect(podman).toContain('cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/');
+    expect(helper.indexOf(DISK_TREE_SCRIPTS.inventory), 'the copy script must embed the one inventory')
+      .toBeGreaterThan(-1);
+    expect(helper.split(DISK_TREE_SCRIPTS.inventory).length - 1,
+      'the inventory is defined once and referenced, never copied').toBe(1);
 
-    // The archive verification carries ONE deliberate difference: the tree has been shifted onto the
+    // The archive verification carries ONE deliberate omission: the tree has been shifted onto the
     // machine's uid range since it was extracted, so comparing ownership against the archive would fail
     // on every file. Everything else — types, modes, sizes, symlinks, hardlinks, xattrs and unexpected
-    // entries — is the container runtime's own check, byte for byte.
-    const verifyAnchor = 'import json,os,stat,sys,tarfile';
-    const ownerCheck = '   if st.st_uid!=member.uid or st.st_gid!=member.gid: failures.append(\'owner \'+rel)\n';
-    expect(slice(podman, verifyAnchor)).toContain(ownerCheck);
-    expect(slice(helper, verifyAnchor)).toBe(slice(podman, verifyAnchor).replace(ownerCheck, ''));
+    // entries — is still checked.
+    expect(DISK_TREE_SCRIPTS.verify).not.toContain('st.st_uid!=member.uid');
+    for (const check of ['missing', 'type', 'mode', 'size', 'symlink target', 'hardlink', 'xattr',
+      'unsupported member type', 'unexpected entries']) {
+      expect(DISK_TREE_SCRIPTS.verify, `the archive verification must still report ${check}`)
+        .toContain(`failures.append('${check} `);
+    }
+  });
+
+  /** The helper produces the inventory; `containerStorage.mjs` writes what that inventory WAS into every
+   *  snapshot manifest as `treeFormat`, and refuses a manifest whose format it does not recognise. That
+   *  string is therefore the manifest's own claim about which metadata its digests were taken over, and
+   *  the two live in different processes with root in between — the helper cannot import plugin code.
+   *  Holding them in step here is what stops a field being added, reordered or dropped on one side only,
+   *  which would silently change what an already-stored fingerprint means without invalidating it. */
+  it('emits exactly the fields, in the order, that a snapshot manifest says it was fingerprinted over', () => {
+    const [version, fields] = String(SNAPSHOT_TREE_FORMAT).split(':');
+    expect(version).toBe('inventory-v1');
+    const declared = fields.split(',');
+    expect(declared).toEqual(['path', 'type', 'size', 'uid', 'gid', 'mode', 'mtimeNs', 'hardlink', 'xattrs', 'linkTarget']);
+
+    // The Python expression that builds one row, taken from the helper's single inventory definition.
+    const row = DISK_TREE_SCRIPTS.inventory.slice(DISK_TREE_SCRIPTS.inventory.indexOf('rows.append(['));
+    /** Which fragment of that expression produces each declared field. */
+    const producedBy: Record<string, string> = {
+      path: 'rel', type: 'stat.S_IFMT(st.st_mode)', size: 'st.st_size', uid: 'st.st_uid', gid: 'st.st_gid',
+      mode: 'stat.S_IMODE(st.st_mode)', mtimeNs: 'st.st_mtime_ns', hardlink: 'hardlink', xattrs: 'attrs',
+      linkTarget: 'os.readlink(path)',
+    };
+    expect(Object.keys(producedBy)).toEqual(declared);
+    let previous = -1;
+    for (const field of declared) {
+      const at = row.indexOf(producedBy[field]);
+      expect(at, `the inventory does not produce the declared field ${field}`).toBeGreaterThan(-1);
+      expect(at, `the inventory produces ${field} out of the order the manifest declares`).toBeGreaterThan(previous);
+      previous = at;
+    }
+    // Arity, so a field appended to the row without being declared is caught too. The split is depth
+    // aware: an element is free to contain a call with its own commas.
+    const elements: string[] = [];
+    let depth = 0;
+    let current = '';
+    for (const character of row.slice(row.indexOf('[') + 1)) {
+      if (character === ']' && depth === 0) break;
+      if ('([{'.includes(character)) depth += 1;
+      if (')]}'.includes(character)) depth -= 1;
+      if (character === ',' && depth === 0) { elements.push(current); current = ''; continue; }
+      current += character;
+    }
+    elements.push(current);
+    expect(elements).toHaveLength(declared.length);
   });
 
   it('copies between two paths it re-validates, without a second full size walk', async () => {
@@ -1437,6 +1833,15 @@ describe('privileged helper: disk tree primitives', () => {
     expect(commandOptionsFor('/usr/bin/python3', ['-c', ''], DISK_TREE_TIMEOUT_MS).timeout).toBe(DISK_TREE_TIMEOUT_MS);
     // Everything that is not tree work keeps the short bound that catches a command which has hung.
     expect(commandOptionsFor('/usr/bin/systemctl', ['daemon-reload']).timeout).toBe(30_000);
+
+    // apt is the one command that may take minutes and the one that may try to restart services. It gets
+    // its own budget and an environment that keeps it non-interactive and stops needrestart acting.
+    const install = commandOptionsFor('/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', 'systemd-container']);
+    expect(commandOptionsFor('/usr/bin/apt-get', ['update']).timeout).toBe(5 * 60_000);
+    expect(install.env).toEqual({
+      PATH: '/usr/sbin:/usr/bin:/sbin:/bin', DEBIAN_FRONTEND: 'noninteractive', NEEDRESTART_MODE: 'l',
+    });
+    expect(commandOptionsFor('/usr/bin/systemctl', ['daemon-reload']).env).toEqual({ PATH: '/usr/sbin:/usr/bin:/sbin:/bin' });
   });
 
   it('carries the cause of a command that printed nothing, instead of a message ending in a colon', () => {
@@ -1449,6 +1854,467 @@ describe('privileged helper: disk tree primitives', () => {
     // A command that did say something still speaks for itself.
     expect(defaultCommandRunner('/bin/sh', ['-c', 'echo refused >&2; exit 1']))
       .toEqual({ ok: false, stderr: 'refused' });
+  });
+});
+
+/** A Site's `data` directory is a plain tree the machine's uid range owns, so seeding and capturing it
+ *  both run here: nothing else on the host can read or write it. These exercise the REAL tar and the real
+ *  tree scripts against real files; only the ownership pass is stubbed, because an unprivileged test
+ *  cannot give a file away — the same limitation `diskFixture` above records. */
+describe('privileged helper: the Site data archive', () => {
+  const siteRef = { kind: 'site', resource: 'shop', diskId: 'e'.repeat(32) };
+
+  /** Metadata a filename listing would never notice: a hard link pair, a symlink, an extended attribute,
+   *  a narrow mode and a modification time with nanoseconds in it. Every one of them is a field the tree
+   *  fingerprint hashes, which is what makes the round trip below a real comparison. */
+  function seedDataTree(root: string) {
+    writeFileSync(join(root, 'app.conf'), 'key=value\n', { mode: 0o640 });
+    linkSync(join(root, 'app.conf'), join(root, 'app.conf.bak'));
+    mkdirSync(join(root, 'uploads'), { mode: 0o750 });
+    writeFileSync(join(root, 'uploads', 'photo.bin'), Buffer.from([0, 1, 2, 3, 4, 5]), { mode: 0o600 });
+    symlinkSync('../app.conf', join(root, 'uploads', 'config'));
+    // Node cannot set an extended attribute and cannot set a modification time to the nanosecond, and
+    // both are fields the fingerprint compares — so the fixture sets them the way the helper reads them.
+    execFileSync('/usr/bin/python3', ['-c', `import os,sys
+root=sys.argv[1]
+os.setxattr(os.path.join(root,'app.conf'),'user.elowen.demo',b'retained')
+os.utime(os.path.join(root,'app.conf'),ns=(1709528767123456789,1709528767123456789))
+os.utime(os.path.join(root,'uploads','photo.bin'),ns=(1698765432987654321,1698765432987654321))
+os.utime(os.path.join(root,'uploads'),ns=(1687654321246813579,1687654321246813579))`, root]);
+  }
+
+  function dataFixture(ref: typeof siteRef = siteRef) {
+    const paths = nspawnDiskPaths(storage, ref);
+    const data = join(paths.directory, 'data');
+    const artifacts = join(paths.storageRoot, 'artifacts');
+    rmSync(paths.storageRoot, { recursive: true, force: true });
+    mkdirSync(data, { recursive: true, mode: 0o700 });
+    mkdirSync(artifacts, { recursive: true, mode: 0o700 });
+    const shifts: { spec: { base: number; size: number }; root: string }[] = [];
+    const owners: { uid: number; gid: number }[] = [];
+    const calls: Call[] = [];
+    /** Which command the fixture intercepts instead of running, by the script or flag that identifies it. */
+    const intercept: Record<string, (args: string[]) => { ok: boolean; stdout?: string; stderr?: string }> = {};
+    const options: any = {
+      storage,
+      env: environment,
+      setOwner: (_fd: number, uid: number, gid: number) => { owners.push({ uid, gid }); },
+      readText: () => '',
+      writeAtomic: (path: string, content: Buffer, mode: number) => {
+        if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
+      },
+      runner: (file: string, args: string[], runOptions: { timeoutMs?: number } = {}) => {
+        calls.push({ file, args });
+        if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
+        // The ownership pass is the one command that is faked rather than run: it chowns, and no
+        // unprivileged process can. What it was asked to do is recorded instead.
+        if (file === '/usr/bin/python3' && String(args[1] ?? '').includes('to_machine')) {
+          shifts.push({ spec: JSON.parse(args[2]!), root: args[3]! });
+          return { ok: true, stdout: JSON.stringify({ entries: 9 }) };
+        }
+        for (const [marker, answer] of Object.entries(intercept)) {
+          if (args.some((argument) => String(argument).includes(marker))) return answer(args);
+        }
+        // systemd is faked for the same reason the ownership pass is: the alternative is the REAL manager
+        // on whatever host this runs, which would answer about its own machines, differ between a
+        // developer's box and CI, and is not there at all in a container. "Nothing is up" is the state
+        // these tests are about; the ones that are about the check install their own answer above.
+        if (file === '/usr/bin/systemctl') return { ok: true, stdout: '' };
+        return defaultCommandRunner(file, args, runOptions);
+      },
+    };
+    const fingerprint = async (path: string) => await applyRequest(
+      { domain: 'nspawn', op: 'tree-fingerprint', path }, undefined, options,
+    ) as { digest: string; logicalBytes: number };
+    const archiveOf = (name: string) => join(artifacts, name);
+    return { paths, data, artifacts, shifts, owners, calls, intercept, options, fingerprint, archiveOf };
+  }
+
+  const exportRequest = (fixture: ReturnType<typeof dataFixture>, archivePath: string, ref: typeof siteRef = siteRef) =>
+    ({ domain: 'nspawn', op: 'site-data-archive', ...ref, operation: 'export', dataPath: fixture.data, archivePath });
+  const importRequest = (fixture: ReturnType<typeof dataFixture>, archivePath: string, ref: typeof siteRef = siteRef) =>
+    ({ domain: 'nspawn', op: 'site-data-archive', ...ref, operation: 'import', dataPath: fixture.data, archivePath });
+
+  it('round trips a data tree byte for byte, metadata included', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const before = await fixture.fingerprint(fixture.data);
+    const mode = statSync(fixture.data).mode & 0o7777;
+    const archive = fixture.archiveOf('data.tar');
+
+    await expect(applyRequest(exportRequest(fixture, archive), undefined, fixture.options))
+      .resolves.toMatchObject({ ok: true, operation: 'export', archivePath: archive });
+    expect(existsSync(archive)).toBe(true);
+
+    // Imported into an EMPTY tree, so nothing that survives could have survived by being left alone.
+    for (const name of readdirSync(fixture.data)) rmSync(join(fixture.data, name), { recursive: true, force: true });
+    expect(readdirSync(fixture.data)).toEqual([]);
+
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .resolves.toMatchObject({ ok: true, operation: 'import' });
+
+    const after = await fixture.fingerprint(fixture.data);
+    expect(after.digest).toBe(before.digest);
+    expect(after.logicalBytes).toBe(before.logicalBytes);
+    expect(statSync(fixture.data).mode & 0o7777).toBe(mode);
+    // And the entries themselves, so a fingerprint that silently agreed on two empty trees cannot pass.
+    expect(readdirSync(fixture.data).sort()).toEqual(['app.conf', 'app.conf.bak', 'uploads']);
+  }, 60_000);
+
+  it('leaves no staging tree or retired tree behind once an import has swapped', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    await applyRequest(importRequest(fixture, archive), undefined, fixture.options);
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 60_000);
+
+  it('refuses an import whose archive is not there, and an export onto a destination that is', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    await expect(applyRequest(importRequest(fixture, fixture.archiveOf('absent.tar')), undefined, fixture.options))
+      .rejects.toThrow(/does not exist/);
+
+    const occupied = fixture.archiveOf('taken.tar');
+    writeFileSync(occupied, 'someone else wrote this');
+    await expect(applyRequest(exportRequest(fixture, occupied), undefined, fixture.options))
+      .rejects.toThrow(/destination already exists/);
+    // Refused, not overwritten: the bytes that were there are the bytes that are there.
+    expect(readFileSync(occupied, 'utf8')).toBe('someone else wrote this');
+  }, 60_000);
+
+  it('leaves the data directory untouched when an import fails part way through', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+
+    // The tree MOVES ON after the capture, which is what makes this measurable: the archive and the live
+    // directory now differ, so an extraction that touched the live tree would show up as a tree that had
+    // been rolled back rather than left alone.
+    writeFileSync(join(fixture.data, 'app.conf'), 'key=changed-since-the-capture\n', { mode: 0o640 });
+    writeFileSync(join(fixture.data, 'written-later.log'), 'the Site has been serving\n', { mode: 0o644 });
+    rmSync(join(fixture.data, 'uploads', 'photo.bin'));
+    const before = await fixture.fingerprint(fixture.data);
+
+    // After the extraction and before the swap: the staging tree is full and the target is still the old
+    // one, which is precisely the moment a half-replaced directory would become observable.
+    fixture.intercept['Migrated rootfs differs'] = () => ({ ok: false, stderr: 'injected verification failure' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/injected verification failure/);
+    delete fixture.intercept['Migrated rootfs differs'];
+
+    const after = await fixture.fingerprint(fixture.data);
+    expect(after.digest).toBe(before.digest);
+    expect(readFileSync(join(fixture.data, 'app.conf'), 'utf8')).toBe('key=changed-since-the-capture\n');
+    expect(existsSync(join(fixture.data, 'uploads', 'photo.bin'))).toBe(false);
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 60_000);
+
+  it('refuses an oversized archive in both directions before it writes anything', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    expect(SITE_DATA_ARCHIVE_BYTES).toBe(16 * 1024 ** 3);
+
+    // An export is refused on what the data tree weighs, so no partial archive is ever created.
+    fixture.intercept['Insufficient free space'] = () => ({ ok: true,
+      stdout: JSON.stringify({ requiredBytes: SITE_DATA_ARCHIVE_BYTES + 1, marginBytes: 0, freeBytes: 2 ** 50 }) });
+    const refused = fixture.archiveOf('too-big.tar');
+    await expect(applyRequest(exportRequest(fixture, refused), undefined, fixture.options))
+      .rejects.toThrow(/bound/);
+    expect(existsSync(refused)).toBe(false);
+    expect(existsSync(`${refused}.exporting`)).toBe(false);
+    delete fixture.intercept['Insufficient free space'];
+
+    // An import is refused on the archive's own weight, without reading it. A real archive padded out to
+    // the bound, rather than a file of zeros: an implementation that skipped this check would then go on
+    // to import it quickly and be caught by the assertion instead of running until the suite gave up.
+    const huge = fixture.archiveOf('huge.tar');
+    execFileSync('/usr/bin/tar', ['--create', '--file', huge, '-C', fixture.data, '--', '.']);
+    execFileSync('/usr/bin/truncate', ['-s', String(SITE_DATA_ARCHIVE_BYTES + 1), huge]);
+    await expect(applyRequest(importRequest(fixture, huge), undefined, fixture.options))
+      .rejects.toThrow(/bound/);
+    rmSync(huge, { force: true });
+
+    // And on what it would UNPACK to, which a sparse member states in its header without carrying it:
+    // this archive is a few kilobytes and declares more than the bound.
+    const sparseRoot = join(fixture.paths.storageRoot, 'sparse');
+    mkdirSync(sparseRoot, { recursive: true });
+    execFileSync('/usr/bin/truncate', ['-s', String(SITE_DATA_ARCHIVE_BYTES + 1), join(sparseRoot, 'blob.bin')]);
+    const sparse = fixture.archiveOf('sparse.tar');
+    execFileSync('/usr/bin/tar', ['--create', '--file', sparse, '--sparse', '-C', sparseRoot, '--', '.']);
+    expect(statSync(sparse).size).toBeLessThan(SITE_DATA_ARCHIVE_BYTES);
+    await expect(applyRequest(importRequest(fixture, sparse), undefined, fixture.options))
+      .rejects.toThrow(/unpack/);
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 120_000);
+
+  it('puts the imported tree on the machine uid range, through the one ownership pass', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    fixture.shifts.length = 0;
+    fixture.owners.length = 0;
+
+    await applyRequest(importRequest(fixture, archive), undefined, fixture.options);
+
+    // Exactly one pass, over the STAGING tree, with the range the registry holds for this environment —
+    // the same call `materialize` makes, and made before the tree is swapped into place.
+    expect(fixture.shifts).toHaveLength(1);
+    expect(fixture.shifts[0].spec).toEqual({ base: UID_RANGE_BASE, size: 65_536 });
+    expect(fixture.shifts[0].root).toBe(`${fixture.data}.importing`);
+    // tar chowns what it unpacks, never the directory it unpacks into, so the staging root enters that
+    // pass as the guest's own root rather than as the service account it was created by.
+    expect(fixture.owners).toContainEqual({ uid: 0, gid: 0 });
+  }, 60_000);
+
+  it('leaves no partial archive behind when an export fails', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    // A failing archiver that has already written bytes, which is the state a retry must not mistake for
+    // a finished export.
+    fixture.intercept['--create'] = (args: string[]) => {
+      writeFileSync(args[args.indexOf('--file') + 1]!, 'half an archive');
+      return { ok: false, stderr: 'injected archiver failure' };
+    };
+    await expect(applyRequest(exportRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/injected archiver failure/);
+    expect(readdirSync(fixture.artifacts)).toEqual([]);
+  }, 60_000);
+
+  it('refuses a data path that does not belong to the environment the request names', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    const other = nspawnDiskPaths(storage, { ...siteRef, resource: 'other' });
+    mkdirSync(join(other.directory, 'data'), { recursive: true });
+    await expect(applyRequest({ ...exportRequest(fixture, archive), dataPath: join(other.directory, 'data') }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    // And the root filesystem is not a data tree, however validly it sits under the same storage root.
+    mkdirSync(fixture.paths.rootfs, { recursive: true });
+    await expect(applyRequest({ ...exportRequest(fixture, archive), dataPath: fixture.paths.rootfs }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    expect(existsSync(archive)).toBe(false);
+  }, 60_000);
+
+  it('refuses a SNAPSHOT data tree, which is the one thing the recovery depends on', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+
+    // A snapshot's data tree sits under the same storage root and is called `data`, so a check that
+    // accepted the name accepted this. Overwriting it destroys the restore the runtime documents as the
+    // recovery for a data tree that went missing — and an import is exactly how that recovery is asked for.
+    const snapshot = join(fixture.paths.storageRoot, 'snapshots', 'f'.repeat(32), 'data');
+    mkdirSync(snapshot, { recursive: true, mode: 0o700 });
+    writeFileSync(join(snapshot, 'kept.conf'), 'the snapshot the operator restores from\n', { mode: 0o600 });
+
+    await expect(applyRequest({ ...importRequest(fixture, archive), dataPath: snapshot }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('snap.tar')), dataPath: snapshot }, undefined, fixture.options))
+      .rejects.toThrow(/does not belong to the environment/);
+    // Untouched: not renamed aside, not staged over, not emptied.
+    expect(readdirSync(snapshot)).toEqual(['kept.conf']);
+    expect(readFileSync(join(snapshot, 'kept.conf'), 'utf8')).toBe('the snapshot the operator restores from\n');
+  }, 60_000);
+
+  it('accepts the migrated component tree only at the generation the request states', async () => {
+    // An environment migrated onto trees an earlier generation created keeps its data under
+    // `storage/<generation>`, which the helper derives from the number on the request rather than
+    // recognising by shape.
+    const fixture = dataFixture();
+    const migrated = join(fixture.paths.storageRoot, 'storage', '4', 'data');
+    mkdirSync(migrated, { recursive: true, mode: 0o700 });
+    seedDataTree(migrated);
+    const archive = fixture.archiveOf('migrated.tar');
+
+    await expect(applyRequest({ ...exportRequest(fixture, archive), dataPath: migrated, componentGeneration: 4 },
+      undefined, fixture.options)).resolves.toMatchObject({ ok: true, dataPath: migrated });
+    // The same tree named under a different generation is not this component.
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('wrong.tar')), dataPath: migrated, componentGeneration: 5 },
+      undefined, fixture.options)).rejects.toThrow(/does not belong to the environment/);
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('bad.tar')), dataPath: migrated, componentGeneration: 0 },
+      undefined, fixture.options)).rejects.toThrow(/component generation is invalid/);
+  }, 60_000);
+
+  it('captures the tree it verified when the data directory is swapped for a symlink underneath it', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+
+    // The host directory root would reach through a symlink, standing in for /root. The service account
+    // owns the directory the data tree sits in, so it can replace that entry at any moment — and the gap
+    // between the path check and the archiver was a gap it could spin an export against until it hit.
+    const elsewhere = join(scratch, 'not-under-the-storage-roots');
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(elsewhere, 'id_rsa'), 'a private key the caller must never receive\n', { mode: 0o600 });
+
+    // Swapped after every path check has passed and before a byte is archived, which is the whole window.
+    // A rename and a symlink, which is what the owner of the surrounding directory can actually do — the
+    // real tree is still there under another name, so what the archive holds says which one was read.
+    fixture.intercept['Insufficient free space'] = () => {
+      renameSync(fixture.data, `${fixture.data}.moved-aside`);
+      symlinkSync(elsewhere, fixture.data);
+      return { ok: true, stdout: JSON.stringify({ requiredBytes: 4096, marginBytes: 0, freeBytes: 2 ** 50 }) };
+    };
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    delete fixture.intercept['Insufficient free space'];
+
+    const members = execFileSync('/usr/bin/tar', ['--list', '--file', archive], { encoding: 'utf8' })
+      .split('\n').map((line) => line.replace(/^\.\//, '').replace(/\/$/, '')).filter(Boolean).sort();
+    expect(members, 'the export must not have followed the symlink').not.toContain('id_rsa');
+    expect(members).toEqual(['app.conf', 'app.conf.bak', 'uploads', 'uploads/config', 'uploads/photo.bin']);
+    expect(readFileSync(join(elsewhere, 'id_rsa'), 'utf8')).toBe('a private key the caller must never receive\n');
+  }, 60_000);
+
+  it('refuses to open a data directory that is already a symlink when it is asked for', async () => {
+    const fixture = dataFixture();
+    rmSync(fixture.data, { recursive: true, force: true });
+    symlinkSync(scratch, fixture.data);
+    await expect(applyRequest(exportRequest(fixture, fixture.archiveOf('linked.tar')), undefined, fixture.options))
+      .rejects.toThrow(/symlink|not a directory/i);
+  }, 60_000);
+
+  it('refuses an import while any generation of the environment machine is still up', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    const before = await fixture.fingerprint(fixture.data);
+
+    // The runtime asks the same question before it sends the request. This is the helper being asked to
+    // rename the tree a live guest has bind-mounted and then delete what it replaced, by a caller that
+    // did not ask or did not wait for the answer.
+    fixture.intercept['list-units'] = () => ({ ok: true,
+      stdout: 'elowen-machine@elowen-site-shop-g7.service loaded active running Elowen machine elowen-site-shop-g7\n' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/stop the environment before importing its data/i);
+    // Refused before anything moved: no staging tree, no retired tree, the same bytes.
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+    expect((await fixture.fingerprint(fixture.data)).digest).toBe(before.digest);
+
+    // A machine of ANOTHER environment whose unit happens to come back in the listing is not this one.
+    fixture.intercept['list-units'] = () => ({ ok: true,
+      stdout: 'elowen-machine@elowen-site-other-g1.service loaded active running Elowen machine elowen-site-other-g1\n' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options)).resolves.toMatchObject({ ok: true });
+
+    // And a manager that will not answer refuses the import rather than passing it: an unreadable state
+    // is not an absent machine, and the alternative to asking is destroying live data.
+    fixture.intercept['list-units'] = () => ({ ok: false, stderr: 'Failed to connect to bus' });
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/machine state could not be established/);
+    delete fixture.intercept['list-units'];
+
+    // An export is not gated on it: capturing a running Site's data reads the tree and changes nothing.
+    fixture.intercept['list-units'] = () => ({ ok: true,
+      stdout: 'elowen-machine@elowen-site-shop-g7.service loaded active running Elowen machine elowen-site-shop-g7\n' });
+    await expect(applyRequest(exportRequest(fixture, fixture.archiveOf('while-up.tar')), undefined, fixture.options))
+      .resolves.toMatchObject({ ok: true, operation: 'export' });
+    delete fixture.intercept['list-units'];
+  }, 120_000);
+
+  it('asks systemd about every generation of this environment and nothing else', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    fixture.calls.length = 0;
+    await applyRequest(importRequest(fixture, archive), undefined, fixture.options);
+
+    const asked = fixture.calls.find((call) => call.args[0] === 'list-units');
+    expect(asked?.file).toBe('/usr/bin/systemctl');
+    expect(asked?.args).toContain('elowen-machine@elowen-site-shop-g*.service');
+    expect(asked?.args).toContain('--state=activating,active,deactivating,reloading');
+  }, 60_000);
+
+  it('refuses an archive that names more members than it may, however little it weighs', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    expect(SITE_DATA_ARCHIVE_MEMBERS).toBe(2_000_000);
+
+    // Empty members cost a header each and nothing else, so a byte bound does not bound them at all: this
+    // archive is a few kilobytes and every entry it names becomes an inode that is created, verified,
+    // chowned and fsynced. The count is intercepted rather than actually written out, because producing
+    // two million real entries in a test costs more than the defect it demonstrates.
+    fixture.intercept['members>entries'] = (args: string[]) => {
+      const limit = Number(args[args.length - 1]);
+      expect(limit).toBe(SITE_DATA_ARCHIVE_MEMBERS);
+      return { ok: false, stderr: `the archive names more than ${limit} members` };
+    };
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/names more than 2000000 members/);
+    delete fixture.intercept['members>entries'];
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+  }, 60_000);
+
+  it('bounds the member count in the index script itself, on the member that crosses the line', async () => {
+    // The bound run for real against a real archive, at a size a test can produce: proof that the script
+    // refuses rather than that the constant exists.
+    const fixture = dataFixture();
+    const many = join(fixture.paths.storageRoot, 'many');
+    mkdirSync(many, { recursive: true });
+    for (let at = 0; at < 40; at += 1) writeFileSync(join(many, `entry-${at}`), '');
+    const archive = fixture.archiveOf('many.tar');
+    execFileSync('/usr/bin/tar', ['--create', '--file', archive, '-C', many, '--', '.']);
+    expect(statSync(archive).size).toBeLessThan(SITE_DATA_ARCHIVE_BYTES);
+
+    const indexed = defaultCommandRunner('/usr/bin/python3', ['-c', SITE_DATA_INDEX_PY, archive,
+      String(SITE_DATA_ARCHIVE_BYTES), '10']);
+    expect(indexed.ok).toBe(false);
+    expect(indexed.stderr).toMatch(/names more than 10 members/);
+    // And the same archive under a bound it fits inside is indexed rather than refused.
+    const allowed = defaultCommandRunner('/usr/bin/python3', ['-c', SITE_DATA_INDEX_PY, archive,
+      String(SITE_DATA_ARCHIVE_BYTES), String(SITE_DATA_ARCHIVE_MEMBERS)]);
+    expect(allowed.ok).toBe(true);
+    expect(JSON.parse(allowed.stdout).members).toBe(41);
+  }, 60_000);
+
+  it('refuses an import the filesystem has no room for, before it extracts anything', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    const archive = fixture.archiveOf('data.tar');
+    await applyRequest(exportRequest(fixture, archive), undefined, fixture.options);
+    const before = await fixture.fingerprint(fixture.data);
+
+    // The export side has asked this since it was written; the import side wrote into the filesystem every
+    // other environment on the host runs from and never asked at all. The archive's headers already state
+    // what it unpacks to, so the preflight is given that figure rather than a tree to walk.
+    let asked: string[] | null = null;
+    fixture.intercept['Insufficient free space'] = (args: string[]) => {
+      // An empty source list is what identifies the import's call: it has no tree to walk and hands over
+      // the figure the archive's own headers stated instead.
+      if (args[2] !== '[]') return { ok: true, stdout: JSON.stringify({ requiredBytes: 4096, marginBytes: 0, freeBytes: 2 ** 50 }) };
+      asked = args;
+      return { ok: false, stderr: 'Insufficient free space for disk copy: need 8796093022208 bytes including margin, have 12' };
+    };
+    await expect(applyRequest(importRequest(fixture, archive), undefined, fixture.options))
+      .rejects.toThrow(/Insufficient free space/);
+    delete fixture.intercept['Insufficient free space'];
+
+    expect(asked, 'the import must run the preflight against the directory it stages into').not.toBeNull();
+    // Nothing extracted, nothing swapped, nothing left behind.
+    expect(readdirSync(fixture.paths.directory).sort()).toEqual(['data']);
+    expect((await fixture.fingerprint(fixture.data)).digest).toBe(before.digest);
+  }, 60_000);
+
+  it('refuses the operation for anything that is not a Site', async () => {
+    const fixture = dataFixture();
+    seedDataTree(fixture.data);
+    await expect(applyRequest({
+      ...exportRequest(fixture, fixture.archiveOf('data.tar')), kind: 'project', resource: '54',
+    }, undefined, fixture.options)).rejects.toThrow(/site/i);
+    await expect(applyRequest({ ...exportRequest(fixture, fixture.archiveOf('data.tar')), operation: 'move' },
+      undefined, fixture.options)).rejects.toThrow(/operation is invalid/);
+  }, 60_000);
+
+  it('serializes a data archive behind the global mutation lock, like every other write', () => {
+    expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op: 'site-data-archive' })).toBe(true);
   });
 });
 
@@ -1494,7 +2360,8 @@ describe('privileged helper: the invocation the sudoers drop-in pins', () => {
       .toBe('00000033\n{"domain":"nspawn","op":"status"}');
     // Every operation the bundled runtime can name is one this helper answers.
     for (const op of ['materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
-      'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']) {
+      'site-data-archive', 'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync',
+      'tree-verify', 'destroy', 'release-uid-range']) {
       expect(helperRequest(op, {})).toEqual({ domain: 'nspawn', op });
       let refusal = '';
       try { applyNspawnRequest({ domain: 'nspawn', op }, { storage }); } catch (error) { refusal = String(error); }

@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { parseEnv } from 'node:util';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
-import { cleanPodmanEnv, GUEST_SYSTEM_BUS, OUTPUT_LIMIT, positive, SpawnExecutor, unitProperties, validateInput } from './podman.mjs';
+import { GUEST_SYSTEM_BUS, OUTPUT_LIMIT, positive, serviceProcessEnv, SpawnExecutor, unitProperties, validateInput } from './runtimeProcess.mjs';
 
 /** The one privileged executable, shared with the published-sites gateway: two typed domains behind one
  *  root-owned binary and one pinned sudoers line, because two executables reachable by the same service
@@ -27,8 +28,8 @@ export const MACHINE_PATTERN = /^elowen-(project|site)-[a-z0-9-]{1,64}-g[0-9]{1,
 /** Where the disk records which environment, generation and uid range it belongs to. Outside the rootfs
  *  on purpose: a marker inside the tree proves nothing, because the guest is root over that tree. */
 const IDENTITY_RELATIVE = join('.elowen', 'identity.json');
-/** Capabilities dropped from nspawn's default bound. Every one of them is also denied by rootless
- *  Podman's default set; what remains is what systemd needs to boot a container, and those are
+/** Capabilities dropped from nspawn's default bound. Every one of them is also denied by the default set
+ *  of an ordinary rootless container; what remains is what systemd needs to boot the guest, and those are
  *  namespaced. */
 export const DROPPED_CAPABILITIES = Object.freeze(['CAP_AUDIT_CONTROL', 'CAP_AUDIT_READ', 'CAP_SYS_PTRACE',
   'CAP_SYS_TTY_CONFIG', 'CAP_LEASE', 'CAP_LINUX_IMMUTABLE', 'CAP_IPC_LOCK', 'CAP_IPC_OWNER', 'CAP_BLOCK_SUSPEND',
@@ -51,11 +52,13 @@ const HELPER_RESPONSE_LIMIT = 16 * 1024 * 1024;
 const GUEST_COMMAND_TIMEOUT_MS = 30_000;
 /** How long one readiness probe may take. Short, because a probe that cannot answer is the answer. */
 const PROBE_TIMEOUT_MS = 5_000;
-/** `provision` is deliberately absent. The daemon reports what a host is missing and never installs it:
- *  an operation that writes root-owned files and runs a package manager belongs to an operator at a
- *  terminal, not to a request a browser can cause. */
-const HELPER_OPERATIONS = new Set(['status', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
-  'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']);
+/** `provision` writes root-owned files, runs a package manager and touches the host's packet filter, so it
+ *  is not something an ordinary request may cause. It is reachable only from the administrator-only
+ *  control above it, and every other operation here still REPORTS an unready host rather than repairing
+ *  it — `write-envelope` re-checks the same rows and refuses. That split is the whole point: serving a
+ *  project never changes the host, and an operator asking to prepare the host does. */
+const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw',
+  'site-data-archive', 'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy', 'release-uid-range']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
  *  shape to read and one place to change. `domain` is what separates the nspawn dispatch table from the
@@ -158,20 +161,19 @@ function readIdentity(diskDirectory) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-/** Concrete internal driver for systemd-nspawn machines, behind the same interface as `PodmanClient`.
+/** Concrete internal driver for systemd-nspawn machines, behind the runtime-neutral client interface.
  *
- *  Two transports and no third. The machine LIFECYCLE runs as the service account over a unit-scoped
- *  polkit rule with no sudo at all: start, stop, set-property, show, list. Everything that needs root —
- *  guest execution, freeze and thaw, and every operation on a tree owned by the machine's uid range —
- *  goes through the single privileged helper, which re-derives its own paths and command lines.
+ *  Two transports and no third. Read-only unit and machine inspection runs as the service account.
+ *  Every mutation that needs root, including start, stop and limit changes, goes through the single
+ *  privileged helper, which re-derives its own paths and command lines.
  *
  *  The guest side of that line is intended capability: what runs inside a managed environment is the
  *  environment's purpose, so `argv` is carried through untouched and only its transport hygiene is
- *  bounded, exactly as `podman.mjs` bounds it today. */
+ *  bounded. */
 export class NspawnClient {
   #executor;
   #env;
-  #images;
+  #artifacts;
   #helperPath;
   #configRoot;
   #timeoutMs;
@@ -187,10 +189,10 @@ export class NspawnClient {
   #running = new Map();
 
   constructor(options = {}) {
-    if (!options.images) throw new Error('An image builder client is required; nspawn has no image store');
+    if (!options.artifacts) throw new Error('A root filesystem artifact store is required');
     this.#executor = options.executor ?? new SpawnExecutor();
-    this.#images = options.images;
-    this.#env = cleanPodmanEnv(options);
+    this.#artifacts = options.artifacts;
+    this.#env = serviceProcessEnv(options);
     this.#helperPath = options.helperPath ?? HELPER_PATH;
     this.#configRoot = options.configRoot === undefined ? '' : hostPath(options.configRoot);
     this.#timeoutMs = positive(options.timeoutMs ?? 120_000, 15 * 60_000, 'timeout');
@@ -278,8 +280,8 @@ export class NspawnClient {
   }
 
   /** The machine name IS the specification name, which is already `<ns>-<kind>-<id>-g<gen>` and already a
-   *  valid machine name. The polkit rule and the helper are both scoped to this exact shape, so a
-   *  namespace outside it has no privilege path and is refused here rather than denied later. */
+   *  valid machine name. The helper is scoped to this exact shape, so a namespace outside it has no
+   *  privilege path and is refused here rather than denied later. */
   #machine(spec) {
     this.#assertScope(spec);
     if (!MACHINE_PATTERN.test(spec.name)) throw new Error('Machine name is outside the privileged runtime scope');
@@ -289,10 +291,6 @@ export class NspawnClient {
   #diskDirectory(spec) { return dirname(spec.disk.rootfsPath); }
 
   #envelopePaths(machine) { return envelopePaths(machine, this.#configRoot); }
-
-  #limitProperties(limits) {
-    return [`CPUQuota=${limits.cpus * 100}%`, `MemoryMax=${limits.memoryMb}M`, `TasksMax=${limits.pidsLimit}`];
-  }
 
   /** What the host still owes this runtime, in the item shape the other readiness surfaces already use:
    *  `{ ready, items: [{ id, label, ok, detail }] }`. Each unmet row's detail carries the exact command an
@@ -306,7 +304,27 @@ export class NspawnClient {
    *  ordinary environment now requests, and a readiness report that omits the rows it will be refused on
    *  would tell a person the runtime is ready right up until the first environment fails to be created. */
   async hostReadiness({ veth = true } = {}) {
-    const reply = await this.#helper('status', { veth });
+    return this.#readiness('status', { veth });
+  }
+
+  /** Bring the host up to what `hostReadiness` asks for, and answer with the readiness report as it
+   *  stands AFTERWARDS rather than with a claim of success. The two share a shape on purpose: a caller
+   *  renders the same rows either way, and a host that is still short of something says which row.
+   *
+   *  Idempotent, because every step on the privileged side asks before it acts: running it against a
+   *  prepared host writes nothing and reloads nothing. It is an ADMINISTRATOR's operation — it installs
+   *  packages and applies firewall rules — so the control above it is the gate, and the helper still
+   *  refuses a host whose operating system it does not support rather than modifying it anyway.
+   *
+   *  A host where the privileged helper is not installed or not permitted cannot be repaired from here at
+   *  all. That failure is reported with the helper's own message, and the unmet readiness rows already
+   *  carry the exact command an operator runs by hand. */
+  async provisionHost({ veth = true } = {}) {
+    return this.#readiness('provision', { veth }, { timeoutMs: 12 * 60_000 });
+  }
+
+  async #readiness(operation, fields, options = {}) {
+    const reply = await this.#helper(operation, fields, options);
     if (typeof reply.ready !== 'boolean' || !Array.isArray(reply.items)) throw new Error('Invalid machine runtime readiness report');
     return {
       ready: reply.ready,
@@ -314,6 +332,7 @@ export class NspawnClient {
         if (typeof item?.id !== 'string' || typeof item?.label !== 'string' || typeof item?.ok !== 'boolean') throw new Error('Invalid machine runtime readiness item');
         return { id: item.id, label: item.label, ok: item.ok, ...(typeof item.detail === 'string' ? { detail: item.detail } : {}) };
       }),
+      ...(typeof reply.detail === 'string' && reply.detail ? { detail: reply.detail.slice(0, 500) } : {}),
     };
   }
 
@@ -339,8 +358,8 @@ export class NspawnClient {
     return inventory;
   }
 
-  /** The three independent host-side facts that replace `podman inspect`'s twenty-one fields. All of them
-   *  have to match or every destructive operation refuses. */
+  /** The three independent host-side facts an environment is identified by. All of them have to match or
+   *  every destructive operation refuses. */
   async inspect(spec) {
     const machine = this.#machine(spec);
     if (!await this.containerExists(spec)) return null;
@@ -398,11 +417,22 @@ export class NspawnClient {
   }
 
   /** Bind mounts as the envelope declares them. `:rootidmap` maps the guest's root onto the host owner of
-   *  the source directory, which is the rootless-Podman semantics every existing environment already
-   *  depends on: a file the guest writes belongs to the service account on the host. */
+   *  the source directory, so a file the guest writes belongs to the service account on the host. */
   #binds(spec) {
     return spec.mounts.filter((mount) => mount.type === 'bind')
       .map((mount) => ({ source: checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' }), target: mount.target, readOnly: mount.readOnly === true }));
+  }
+
+  /** The Site contract is one dotenv file generated by Sites before creation. Podman consumed that file
+   *  directly; nspawn has no env-file option, so this client parses the same file once and sends only its
+   *  values to the typed helper, which writes them into the machine envelope. */
+  #environment(spec) {
+    if (!spec.envFile) return {};
+    const path = checkedHostPath(spec.envFile, { file: true });
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o022) !== 0 || stat.size > 64 * 1024) throw new Error('Untrusted machine environment file');
+    const parsed = parseEnv(readFileSync(path, 'utf8'));
+    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, String(value)]));
   }
 
   #envelopeFields(spec) {
@@ -410,7 +440,7 @@ export class NspawnClient {
     return { machine, namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id),
       generation: spec.generation, diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'],
       limits: { cpus: spec.limits.cpus, memoryMb: spec.limits.memoryMb, pidsLimit: spec.limits.pidsLimit },
-      binds: this.#binds(spec), dropCapabilities: [...DROPPED_CAPABILITIES],
+      binds: this.#binds(spec), environment: this.#environment(spec), ports: spec.inboundPorts ?? [], dropCapabilities: [...DROPPED_CAPABILITIES],
       // The specification's own network policy, carried across rather than decided here. Everything but an
       // explicitly isolated environment gets a virtual ethernet, because that is what the container
       // runtime gives the same specification today: without it a guest has its own loopback and nothing
@@ -436,7 +466,7 @@ export class NspawnClient {
   async start(spec) {
     const machine = this.#machine(spec);
     await this.#owned(spec);
-    await this.#systemctl(['start', unitFor(machine)]);
+    await this.#helper('start', { machine });
     await this.#awaitRegistration(machine);
   }
 
@@ -457,13 +487,13 @@ export class NspawnClient {
   }
 
   /** The unit's own `TimeoutStopSec` governs how long the guest gets; nspawn translates the unit's
-   *  SIGTERM into the guest's SIGRTMIN+3, which is the signal a disk-backed Podman envelope is stopped
-   *  with today. The argument is validated for parity with that interface and carries no second deadline. */
+   *  SIGTERM into the guest's SIGRTMIN+3, which is how a systemd guest is asked to shut down. The
+   *  argument is validated for parity with the client interface and carries no second deadline. */
   async stop(spec, timeoutSeconds = 8) {
     positive(timeoutSeconds, 120, 'stop timeout');
     const machine = this.#machine(spec);
     await this.#owned(spec);
-    await this.#systemctl(['stop', unitFor(machine)]);
+    await this.#helper('stop', { machine });
   }
 
   async remove(spec) {
@@ -507,7 +537,7 @@ export class NspawnClient {
       // Recover a completed live update whose durable acknowledgement was interrupted.
       try { await this.#owned(next); return next; } catch { throw cause; }
     }
-    await this.#systemctl(['set-property', unitFor(machine), ...this.#limitProperties(next.limits)]);
+    await this.#helper('set-limits', { machine, limits: next.limits });
     await this.#owned(next);
     return next;
   }
@@ -579,7 +609,7 @@ export class NspawnClient {
     if (row.state !== 'running') throw new Error('Container is not running');
     return { ...prepared, container: row,
       request: helperRequest('exec', { machine, unit, argv: [...argv], cwd: prepared.workdir,
-        timeoutSeconds: Math.ceil(prepared.timeoutMs / 1000), ...mode }) };
+        timeoutSeconds: Math.ceil(prepared.timeoutMs / 1000), environment: this.#environment(spec), ...mode }) };
   }
 
   async #prepareGuest(spec, executionId, argv, options = {}, mode = {}) {
@@ -611,8 +641,8 @@ export class NspawnClient {
     return await this.#tombstone(spec, executionId, row, persistent);
   }
 
-  /** The termination tombstone, against a row this call stack has already verified. The guest stays
-   *  systemd-based under nspawn, so this is the Podman protocol verbatim with the transport changed. */
+  /** The termination tombstone, against a row this call stack has already verified. The guest is
+   *  systemd-based, so termination is proven through the unit rather than through a host process. */
   async #tombstone(spec, executionId, row, persistent) {
     const unit = executionUnit(spec, executionId);
     if (row.state !== 'running') throw new Error('Guest termination cannot be verified in this container state');
@@ -697,7 +727,7 @@ export class NspawnClient {
    *  `raw` is what makes this a launch rather than a call. The daemon spawns the helper itself and streams
    *  its stdout and stderr to a terminal, so a base64 verdict on stdout is not the answer anyone here
    *  wants: in raw mode the helper inherits the child's streams and exits with the child's own status,
-   *  which is exactly how `podman exec` behaves for the same descriptor. */
+   *  which is what any ordinary remote-execution command does for the same descriptor. */
   async prepareExecution(spec, executionId, argv, options = {}) {
     if (options.completionCwd === true) throw new Error('Completion cwd capture is not carried by the nspawn transport');
     const prepared = await this.#prepareGuest(spec, executionId, argv, options, { raw: true });
@@ -762,46 +792,39 @@ export class NspawnClient {
     return publicationIds.filter((_id, index) => states[index] === 'active');
   }
 
-  /** The one-time ownership pass that turns a disk extracted inside `podman unshare` into a tree the
-   *  machine's own fixed uid range owns. Nothing is copied, and the range is recorded in the disk
-   *  identity so it happens once for the life of the disk. */
-  async shiftOwnership(spec, { target = 'nspawn', uidBase = null } = {}) {
-    if (target !== 'nspawn' && target !== 'podman') throw new Error('Invalid ownership shift target');
-    if (target === 'podman' && (!Number.isSafeInteger(uidBase) || uidBase < 0)) throw new Error('Reversing an ownership shift requires the recorded range');
+  /** The one-time ownership pass that puts an existing disk tree onto the machine's own fixed uid range.
+   *  Nothing is copied, and the range is recorded in the disk identity so it happens once for the life of
+   *  the disk. */
+  async shiftOwnership(spec) {
     const machine = this.#machine(spec);
     checkedHostPath(spec.disk.rootfsPath);
     const receipt = await this.#helper('shift-ownership', { machine, namespace: spec.namespace, kind: spec.resource.kind,
       resource: String(spec.resource.id), generation: spec.generation, diskId: spec.disk.id,
-      specHash: spec.labels['io.elowen.spec'], target, uidBase }, { timeoutMs: 15 * 60_000 });
-    if (target === 'nspawn' && (!Number.isSafeInteger(receipt?.uidBase) || receipt.uidBase < 1
-      || receipt.uidSize !== UID_RANGE_SIZE || !Number.isSafeInteger(receipt?.previousUidBase))) throw new Error('Invalid ownership shift receipt');
+      specHash: spec.labels['io.elowen.spec'] }, { timeoutMs: 15 * 60_000 });
+    if (!Number.isSafeInteger(receipt?.uidBase) || receipt.uidBase < 1
+      || receipt.uidSize !== UID_RANGE_SIZE) throw new Error('Invalid ownership shift receipt');
     return receipt;
   }
 
-  /** A fresh disk for a new environment. The image is still the template and this client has no image
-   *  store, so the merged filesystem is exported by the client that has one and the privileged helper
-   *  extracts it. Only the helper can preserve the archive's ownership and then shift the whole tree into
-   *  the machine's uid range, which is the step that makes the tree a machine's rather than a container's.
+  /** A fresh disk for a new environment, unpacked from the published root filesystem its specification
+   *  names. `disk.sourceImage` is that name — an artifact reference such as `project-base@1` — and the
+   *  store resolves it to bytes it has already verified against the pinned digest.
    *
-   *  The archive is written beside the pending tree, inside the disk directory `containerStorage` removes
-   *  wholesale when materialization fails, so a crash between the export and the removal cannot strand it
-   *  anywhere the disk's own cleanup does not already reach. Removing it is the image client's job for the
-   *  same reason writing it was: it is a FILE the service account owns, not a tree in the machine's uid
-   *  range, and the privileged tree operations deliberately take directories only. */
-  async materializeRootfs(spec, pendingPath) {
+   *  The privileged helper does the extraction because only root can preserve the archive's ownership and
+   *  then shift the whole tree into the machine's uid range, which is the step that makes the tree a
+   *  machine's. What comes back is the artifact's digest, which the disk record keeps as provenance: it
+   *  says which bytes this filesystem came from, and nothing ever needs those bytes again. */
+  async materializeRootfs(spec, pendingPath, options = {}) {
     this.#assertScope(spec);
     const pending = checkedHostPath(pendingPath);
-    const archive = join(checkedHostPath(dirname(pending)), 'rootfs.tar.pending');
-    const imageId = await this.#images.exportImageRootfs(spec, archive);
-    try {
-      await this.extractRootfsArchive(spec, archive, pending);
-    } catch (cause) {
-      try { await this.#images.removeDiskPath(archive); }
-      catch (cleanup) { throw new AggregateError([cause, cleanup], `${cause.message}; export archive cleanup failed: ${cleanup.message}`); }
-      throw cause;
-    }
-    await this.#images.removeDiskPath(archive);
-    return imageId;
+    // The artifact store hashes the blob against the pinned digest before it hands the path over — on a
+    // cache hit as much as on a download — so what arrives here is verified bytes rather than a verified
+    // history, and nothing here cleans it up: the blob is a shared cache entry owned by the store, not a
+    // per-environment temporary. Unpacking copies the bytes out, which is what lets the store reclaim it
+    // afterwards without touching this disk.
+    const artifact = await this.#artifacts.ensure(spec.disk.sourceImage, options);
+    await this.extractRootfsArchive(spec, artifact.path, pending);
+    return artifact.digest;
   }
 
   async extractRootfsArchive(spec, archivePath, targetPath) {
@@ -850,9 +873,14 @@ export class NspawnClient {
   async removeStorage(spec) {
     this.#assertScope(spec);
     if (await this.containerExists(spec)) throw new Error('Container still owns environment storage');
-    try { checkedHostPath(spec.storageRoot); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
-    await this.removeDiskPath(spec.storageRoot);
+    try {
+      checkedHostPath(spec.storageRoot);
+      await this.removeDiskPath(spec.storageRoot);
+    } catch (cause) {
+      if (cause.code !== 'ENOENT') throw cause;
+    }
     if (!absent(spec.storageRoot)) throw new Error('Environment storage removal was not verified');
+    await this.#helper('release-uid-range', { namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id) });
   }
 
   async removeGenerationStorage(spec) {
@@ -884,34 +912,53 @@ export class NspawnClient {
     await this.removeDiskPath(directory);
   }
 
-  /** The image is still the template a disk is materialized from, so every image operation is delegated
-   *  to a client that HAS an image store. nspawn has none and is not asked to pretend otherwise. */
-  ensureProjectImage(dataDir, onOutput) { return this.#images.ensureProjectImage(dataDir, onOutput); }
-  ensureSiteImage(dataDir, recipe) { return this.#images.ensureSiteImage(dataDir, recipe); }
-  imageStatus(reference) { return this.#images.imageStatus(reference); }
-  imageIdentity(reference) { return this.#images.imageIdentity(reference); }
-  discoverRetainedSiteImage(spec, reference) { return this.#images.discoverRetainedSiteImage(spec, reference); }
-  inspectRetainedSiteImage(spec, reference, imageId) { return this.#images.inspectRetainedSiteImage(spec, reference, imageId); }
-  removeRetainedSiteImage(spec, reference, imageId) { return this.#images.removeRetainedSiteImage(spec, reference, imageId); }
+  /** Whether this host already holds the bytes a reference names, and fetching them when it does not.
+   *  Both are the artifact store's, and both are answered without an image store existing anywhere. */
+  artifactStatus(reference) { return this.#artifacts.status(reference); }
+  ensureArtifact(reference, options) { return this.#artifacts.ensure(reference, options); }
+  collectArtifacts(referenced) { return this.#artifacts.collect(referenced); }
 
-  /** Snapshots of a disk-backed environment are disk copies, format 2, and never a committed image.
-   *  These three exist only for legacy image-backed rows, which are never this client's. */
-  async snapshotImage() { throw new Error('A disk-backed environment snapshots its disk, not an image'); }
-  async inspectSnapshotImage() { throw new Error('A disk-backed environment snapshots its disk, not an image'); }
-  async removeSnapshotImage() { throw new Error('A disk-backed environment snapshots its disk, not an image'); }
-
-  /** Migration SOURCES. Only a legacy image-backed environment is exported, and this client never holds
-   *  one; a Podman row migrates to nspawn through `migrate-runtime`, which copies nothing. */
-  async preflightRootfsMigration() { throw new Error('Only a legacy image-backed environment is migrated'); }
-  async exportContainerRootfs() { throw new Error('Only a legacy image-backed container is exported for migration'); }
-
-  /** Named volumes are a Podman handle over a host directory. A disk-backed environment mounts the disk's
-   *  own directories, so there is no handle to create, inspect or remove — and emulating one would add a
-   *  second owner of paths the disk record already owns. */
-  async ensureVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async inspectVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async removeVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async exportVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async importSnapshotVolume() { throw new Error('An nspawn environment has no named volumes'); }
-  async siteDataArchive() { throw new Error('An nspawn environment has no named volumes'); }
+  /** Seeding or capturing a Site's `data` directory as one archive, which is what the Sites `import-data`
+   *  and `export-data` actions and the bootstrap seed on Site creation all route through.
+   *
+   *  The container runtime streamed a named volume; a machine has no such handle, because the data
+   *  directory is a plain tree on the disk owned by the machine's uid range — so the work itself belongs
+   *  to the privileged helper, which re-derives the environment's storage root from the resource identity
+   *  and accepts only the `data` tree under it. What is decided here is the contract around that call.
+   *
+   *  An import is refused unless the machine is down. The container runtime allowed `created`,
+   *  `configured`, `stopped` and `exited`, which is every state in which nothing inside is writing; a
+   *  machine reports `running`, `paused`, `stopping` or `stopped`, so the same rule leaves exactly one
+   *  state. Replacing the tree under a live guest races whatever it is writing, and a frozen guest thaws
+   *  into a directory that changed underneath it. An environment with no envelope at all is a Site being
+   *  created, which is precisely when the seed arrives, and is allowed.
+   *
+   *  @param {object} spec A Site specification.
+   *  @param {'import'|'export'} operation
+   *  @param {string} archivePath The archive to read, or the one to create; an export never overwrites. */
+  async siteDataArchive(spec, operation, archivePath) {
+    this.#machine(spec);
+    if (spec.resource.kind !== 'site') throw new Error('Sites data authority is required');
+    if (operation !== 'import' && operation !== 'export') throw new Error('Invalid Site data archive operation');
+    const component = spec.disk.components.find((entry) => entry.component === 'data');
+    if (!component) throw new Error('This environment has no Site data directory');
+    const data = checkedHostPath(component.path);
+    const archive = hostPath(archivePath);
+    if (operation === 'import') {
+      const current = await this.inspect(spec);
+      if (current && current.state !== 'stopped') throw new Error(`Stop the machine before importing Site data; it is ${current.state}`);
+      checkedHostPath(archive, { file: true });
+    } else {
+      checkedHostPath(dirname(archive), { create: true });
+      if (!absent(archive)) throw new Error('Archive destination already exists');
+    }
+    // `componentGeneration` is the disk record's own field and is sent whenever it carries one: it is the
+    // only thing that tells the helper whether this environment's `data` component lives in the disk
+    // directory or under `storage/<generation>`, and the helper accepts exactly the one path it derives
+    // from it rather than any directory under the storage root that happens to be called `data`.
+    await this.#helper('site-data-archive', { kind: spec.resource.kind, resource: String(spec.resource.id),
+      diskId: spec.disk.id, operation, dataPath: data, archivePath: archive,
+      ...(spec.disk.componentGeneration === undefined ? {} : { componentGeneration: spec.disk.componentGeneration }) },
+    { timeoutMs: 15 * 60_000 });
+  }
 }

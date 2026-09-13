@@ -47,3 +47,7 @@ plugins/sandbox/web/
 plugins/mcp/web/
 plugins/msteams/web/
 plugins/changelog/web/
+
+# Built root filesystem artifacts. Hundreds of megabytes; the pins and the publish manifest are
+# what belongs in the repository, the tarballs belong on a release.
+.artifacts/

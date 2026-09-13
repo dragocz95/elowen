@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { closeSync, copyFileSync, constants, cpSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { assertContainerSpec, hostPath, resourceToken, snapshotReference } from './containerSpec.mjs';
+import { assertContainerSpec, hostPath, resourceToken } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
 import { selectRuntimeClient } from './runtimeClient.mjs';
 
@@ -53,6 +53,13 @@ function bytesIn(root) {
 const ROOTFS_MODE = 0o755;
 const COMPONENT_MODE = 0o700;
 
+/** What one entry of a snapshot's tree inventory carries, in order. It is recorded in every snapshot
+ *  manifest, so it is the manifest's own statement of what its digests were taken over — and it is the
+ *  shape the privileged helper's `inventory()` actually emits. The two are held together by
+ *  `tests/contract/nspawnHelper.test.ts`; changing either without the other silently changes what a
+ *  fingerprint means. */
+export const SNAPSHOT_TREE_FORMAT = 'inventory-v1:path,type,size,uid,gid,mode,mtimeNs,hardlink,xattrs,linkTarget';
+
 function syncPath(path) {
   const fd = openSync(path, 'r');
   try { fsyncSync(fd); } finally { closeSync(fd); }
@@ -75,67 +82,44 @@ function absent(path) {
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
   throw new Error('Storage destination already exists; resume through lifecycle recovery');
 }
-async function fingerprint(path, maxBytes) {
-  checkedHostPath(path, { file: true });
-  const stat = lstatSync(path);
-  if (stat.size < 1 || stat.size > maxBytes || stat.nlink !== 1) throw new Error('Invalid snapshot archive size or link count');
-  const hash = createHash('sha256');
-  let sizeBytes = 0;
-  for await (const chunk of createReadStream(path)) {
-    sizeBytes += chunk.length;
-    if (sizeBytes > maxBytes) throw new Error('Snapshot archive exceeds limit');
-    hash.update(chunk);
-  }
-  if (sizeBytes !== stat.size) throw new Error('Snapshot archive changed during verification');
-  return { sizeBytes, sha256: hash.digest('hex') };
-}
 
+/** Every field of a disk record that ties it to ONE environment, ONE generation and ONE set of trees.
+ *  The published root filesystem reference is checked beside this shared structural identity. */
+function diskOwnershipMismatch(manifest, spec) {
+  return manifest.diskId !== spec.disk.id || manifest.format !== 2 || manifest.resource?.kind !== spec.resource.kind
+    || manifest.resource?.id !== spec.resource.id || manifest.rootfsPath !== spec.disk.rootfsPath
+    || JSON.stringify(manifest.components) !== JSON.stringify(spec.disk.components) || !manifest.materialized;
+}
 /** Component primitives only. The daemon lifecycle owner must hold its resource queue and prevent new
  * execution leases throughout snapshot/restore. Incomplete directories are durable recovery evidence,
  * not garbage to delete on retry. No guest archive is ever extracted by a host shell or host tar. */
 export class ContainerStorage {
   #clients;
-  #maxArchiveBytes;
-  constructor(podman, { nspawn = null, maxArchiveBytes = 16 * 1024 ** 3 } = {}) {
-    if (!Number.isSafeInteger(maxArchiveBytes) || maxArchiveBytes < 1) throw new Error('Invalid snapshot archive bound');
-    this.#clients = { podman, nspawn };
-    this.#maxArchiveBytes = maxArchiveBytes;
+  constructor(nspawn) {
+    this.#clients = { nspawn };
   }
 
   /** Which runtime owns the trees of this specification. Every primitive below names the specification it
-   *  is acting for, so the disk record decides the driver rather than a field on this object. */
+   *  is acting for, so the disk record decides the driver rather than a field on this object — and a row
+   *  this release cannot drive is refused here by name instead of being acted on. */
   #driver(spec) { return selectRuntimeClient(spec, this.#clients); }
 
-  /** Whether that runtime keeps named volume HANDLES over the component directories at all. Podman does
-   *  for a legacy environment; nspawn has no volume store and refuses the methods outright. */
-  #hasNamedVolumes(spec) { return this.#driver(spec) === this.#clients.podman; }
-
-  async prepare(spec) {
+  async prepare(spec, options = {}) {
     assertContainerSpec(spec);
     checkedHostPath(spec.storageRoot, { create: true });
     if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
-    if (spec.disk) return await this.#prepareDisk(spec);
-    for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
-    // A named volume is a HANDLE over a host directory, and a disk-backed environment mounts those
-    // directories directly. Creating handles for them would add a second owner of the same paths whose
-    // removal a later generation has to chase; the disk record is the one source of truth instead.
-    for (const volume of spec.volumes) await this.#driver(spec).ensureVolume(spec, volume.component);
+    if (!spec.disk) throw new Error('An environment without a persistent disk cannot be prepared');
+    return await this.#prepareDisk(spec, options);
   }
 
-  /** `fill` is how the pending root filesystem gets its contents, and the only thing that differs between
-   *  a NEW disk and one migrated from a legacy container: the default materializes the fixed image, and
-   *  the migration path extracts its own verified export archive. Everything after it — the inventory
-   *  proof, the fsync, the atomic activation and the durable manifest — is one protocol for both, because
-   *  a second copy of it is how the two would come to disagree about when a disk is complete. */
-  async #prepareDisk(spec, fill = null) {
+  /** Fill the pending root filesystem from the published artifact its disk record names, then prove it,
+   *  fsync it, activate it atomically and write its durable manifest. */
+  async #prepareDisk(spec, options = {}) {
     const directory = checkedHostPath(dirname(spec.disk.rootfsPath), { create: true });
     const manifestPath = join(directory, 'disk.json');
     const pendingManifestPath = join(directory, 'disk.pending');
     const validateManifest = (manifest) => {
-      if (manifest.diskId !== spec.disk.id || manifest.format !== 2 || manifest.resource?.kind !== spec.resource.kind
-        || manifest.resource?.id !== spec.resource.id || manifest.rootfsPath !== spec.disk.rootfsPath
-        || manifest.sourceImage !== spec.disk.sourceImage || JSON.stringify(manifest.components) !== JSON.stringify(spec.disk.components)
-        || !manifest.materialized) throw new Error('Environment disk manifest ownership mismatch');
+      if (diskOwnershipMismatch(manifest, spec) || manifest.sourceImage !== spec.disk.sourceImage) throw new Error('Environment disk manifest ownership mismatch');
       return manifest;
     };
     const readManifest = (path) => {
@@ -190,7 +174,7 @@ export class ContainerStorage {
     for (const component of spec.disk.components) checkedHostPath(component.path, { create: true });
     let filled;
     try {
-      filled = fill ? await fill(pending) : { sourceImageId: await this.#driver(spec).materializeRootfs(spec, pending) };
+      filled = { sourceImageId: await this.#driver(spec).materializeRootfs(spec, pending, options) };
     } catch (cause) {
       // An incomplete tree is never activated — no manifest names it — so keeping it buys no recovery
       // evidence and holds a whole root filesystem of space that the retry, and every other environment
@@ -208,72 +192,6 @@ export class ContainerStorage {
     syncPath(directory);
     renameSync(pendingManifestPath, manifestPath);
     syncPath(directory);
-  }
-
-  /** Capture the merged root filesystem of a legacy envelope into a host-owned archive, fingerprinted and
-   *  fsynced, and record a durable receipt for it. The receipt is what makes the capture resumable: an
-   *  archive present WITHOUT one is the remains of an export that was interrupted, so it is discarded and
-   *  taken again rather than trusted for its size. A receipt that exists is verified against the file on
-   *  disk and returned, so a retry never exports a second time. */
-  async captureRootfsExport(spec, migrationId) {
-    assertContainerSpec(spec);
-    resourceToken(migrationId);
-    if (spec.disk) throw new Error('Only a legacy image-backed environment is migrated');
-    const directory = checkedHostPath(join(spec.storageRoot, 'migrations', migrationId), { create: true });
-    const archive = join(directory, 'rootfs.tar');
-    const receiptPath = join(directory, 'export.json');
-    const identity = { migrationId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash };
-    let receipt;
-    try { receipt = JSON.parse(readFileSync(checkedHostPath(receiptPath, { file: true }), 'utf8')); }
-    catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    if (receipt) {
-      if (JSON.stringify({ migrationId: receipt.migrationId, resource: receipt.resource, generation: receipt.generation, specHash: receipt.specHash }) !== JSON.stringify(identity)
-        || receipt.archivePath !== archive) throw new Error('Migration export receipt ownership mismatch');
-      const measured = await fingerprint(archive, this.#maxArchiveBytes);
-      if (measured.sizeBytes !== receipt.sizeBytes || measured.sha256 !== receipt.sha256) throw new Error('The migration export archive changed after it was captured');
-      return receipt;
-    }
-    try { checkedHostPath(archive, { file: true }); await this.#driver(spec).removeDiskPath(archive); }
-    catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    const containerId = await this.#driver(spec).exportContainerRootfs(spec, archive);
-    const digest = await fingerprint(archive, this.#maxArchiveBytes);
-    syncPath(archive);
-    const complete = { ...identity, archivePath: archive, containerId, ...digest };
-    writeDurable(receiptPath, complete);
-    syncPath(directory);
-    return complete;
-  }
-
-  /** Materialize a captured export into the candidate disk. The archive is re-fingerprinted against the
-   *  receipt first, so an activation can only ever publish the bytes the export proved. */
-  async materializeMigratedDisk(spec, capture) {
-    assertContainerSpec(spec);
-    if (!spec.disk) throw new Error('A rootfs-backed candidate specification is required');
-    const archive = checkedHostPath(capture.archivePath, { file: true });
-    const measured = await fingerprint(archive, this.#maxArchiveBytes);
-    if (measured.sizeBytes !== capture.sizeBytes || measured.sha256 !== capture.sha256) throw new Error('The migration export archive changed after it was captured');
-    await this.#prepareDisk(spec, async (pending) => {
-      await this.#driver(spec).extractRootfsArchive(spec, archive, pending);
-      await this.#driver(spec).verifyExtractedRootfs(archive, pending);
-      return { sourceImageId: await this.#driver(spec).imageIdentity(spec.disk.sourceImage),
-        migratedFrom: { containerId: capture.containerId, archivePath: archive, sizeBytes: measured.sizeBytes, sha256: measured.sha256 } };
-    });
-  }
-
-  /** Release the export archive once the migration is complete. Up to that point the archive is what a
-   *  rollback or a diagnosis reads, which is why a FAILED migration keeps it; a migration whose disk is
-   *  activated, whose candidate answered and whose legacy envelope is gone has no reader left for a
-   *  second copy of a root filesystem it would hold for the life of the environment. The receipt stays,
-   *  so the completed capture is still on record. */
-  async discardRootfsExport(spec, migrationId) {
-    assertContainerSpec(spec);
-    resourceToken(migrationId);
-    const archive = join(spec.storageRoot, 'migrations', migrationId, 'rootfs.tar');
-    try { checkedHostPath(archive, { file: true }); }
-    catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
-    await this.#driver(spec).removeDiskPath(archive);
-    syncPath(dirname(archive));
-    return true;
   }
 
   /** Bring a HOST project's directory into the project's own workspace volume, once. Core's
@@ -404,59 +322,8 @@ export class ContainerStorage {
     assertContainerSpec(spec);
     resourceToken(snapshotId);
     if (typeof includeData !== 'boolean' || (spec.resource.kind === 'project' && !includeData)) throw new Error('Project snapshots require all storage components');
-    if (spec.disk) return await this.#snapshotDisk(spec, snapshotId, includeData);
-    const parent = checkedHostPath(join(spec.storageRoot, 'snapshots'), { create: true });
-    const directory = join(parent, snapshotId);
-    try {
-      checkedHostPath(directory);
-      const pending = checkedHostPath(join(directory, 'pending.json'), { file: true });
-      const previous = JSON.parse(readFileSync(pending, 'utf8'));
-      if (previous.resumeRunning && (await this.#driver(spec).inspect(spec))?.state === 'paused') await this.#driver(spec).unpause(spec);
-      await this.#driver(spec).discardIncompleteSnapshot(spec, snapshotId);
-    } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    absent(directory);
-    const row = await this.#driver(spec).inspect(spec);
-    if (!row || !['running', 'stopped', 'exited', 'created'].includes(row.state)) throw new Error('Container cannot be quiesced for snapshot');
-    checkedHostPath(directory, { create: true });
-    writeDurable(join(directory, 'pending.json'), { snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash, resumeRunning: row.state === 'running' });
-    syncPath(directory);
-    syncPath(parent);
-    const manifest = {
-      version: 1, snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash,
-      consistency: 'crash-consistent', completeProject: spec.resource.kind === 'project',
-      image: { reference: snapshotReference(spec, snapshotId), id: null }, components: [],
-    };
-    let paused = false;
-    const failures = [];
-    try {
-      if (row.state === 'running') { await this.#driver(spec).pause(spec); paused = true; }
-      manifest.image.id = await this.#driver(spec).snapshotImage(spec, snapshotId);
-      for (const volume of spec.volumes) {
-        if (volume.component === 'data' && !includeData) continue;
-        const archive = join(directory, `${volume.component}.tar`);
-        await this.#driver(spec).exportVolume(spec, volume.component, snapshotId);
-        const digest = await fingerprint(archive, this.#maxArchiveBytes);
-        syncPath(archive);
-        manifest.components.push({ component: volume.component, ...digest });
-      }
-      syncPath(directory);
-    } catch (error) { failures.push(error); }
-    finally {
-      if (row.state === 'running') {
-        try {
-          // A client timeout can hide a successful pause. Reconcile that observed state rather than
-          // leaving the project frozen just because the launcher did not acknowledge the operation.
-          if (paused || (await this.#driver(spec).inspect(spec))?.state === 'paused') await this.#driver(spec).unpause(spec);
-        } catch (error) { failures.push(error); }
-      }
-    }
-    if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join('; '));
-    writeDurable(join(directory, 'manifest.pending'), manifest);
-    renameSync(join(directory, 'manifest.pending'), join(directory, 'manifest.json'));
-    syncPath(directory);
-    unlinkSync(join(directory, 'pending.json'));
-    syncPath(directory);
-    return manifest;
+    if (!spec.disk) throw new Error('An environment without a persistent disk cannot be snapshotted');
+    return await this.#snapshotDisk(spec, snapshotId, includeData);
   }
 
   async #snapshotDisk(spec, snapshotId, includeData) {
@@ -486,7 +353,7 @@ export class ContainerStorage {
     await this.#driver(spec).preflightDiskCopy(sources.map((entry) => entry.path), parent);
     const manifest = { version: 2, snapshotId, resource: spec.resource, generation: spec.generation, diskId: spec.disk.id,
       specHash: spec.specHash, consistency: 'crash-consistent', completeProject: spec.resource.kind === 'project',
-      treeFormat: 'inventory-v1:path,type,size,uid,gid,mode,mtimeNs,hardlink,xattrs,linkTarget',
+      treeFormat: SNAPSHOT_TREE_FORMAT,
       sourceImage: { reference: spec.disk.sourceImage, id: diskManifest.sourceImageId }, trees: [] };
     const failures = [];
     let paused = false;
@@ -517,43 +384,7 @@ export class ContainerStorage {
   async restoreVolumes(sourceSpec, snapshotId, targetSpec) {
     assertContainerSpec(targetSpec);
     const manifest = await this.readSnapshot(sourceSpec, snapshotId);
-    if (manifest.version === 2) return await this.#restoreDiskSnapshot(sourceSpec, snapshotId, targetSpec, manifest);
-    if (sourceSpec.disk || targetSpec.disk) throw new Error('Legacy snapshots are restorable only for legacy environments');
-    if (sourceSpec.resource.kind !== targetSpec.resource.kind
-      || (sourceSpec.resource.id === targetSpec.resource.id && sourceSpec.generation === targetSpec.generation)) throw new Error('Restore needs a new resource or generation');
-    if (targetSpec.image !== manifest.image.id && targetSpec.image !== manifest.image.reference) throw new Error('Restore target must use the snapshot root image');
-    if (manifest.components.length !== targetSpec.volumes.length) throw new Error('Restore requires a snapshot with all mounted storage components');
-    const directory = checkedHostPath(join(targetSpec.storageRoot, 'restores', String(targetSpec.generation)), { create: true });
-    const pending = join(directory, 'pending.json');
-    const expected = { snapshotId, source: sourceSpec.resource, sourceGeneration: sourceSpec.generation, target: targetSpec.resource, targetGeneration: targetSpec.generation, targetSpecHash: targetSpec.specHash };
-    const read = (path) => { try { checkedHostPath(path, { file: true }); return JSON.parse(readFileSync(path, 'utf8')); } catch (cause) { if (cause.code === 'ENOENT') return null; throw cause; } };
-    const complete = read(join(directory, 'complete.json'));
-    if (complete) {
-      if (JSON.stringify(complete) !== JSON.stringify({ ...expected, image: manifest.image })) throw new Error('Restore completion ownership mismatch');
-      for (const volume of targetSpec.volumes) await this.#driver(targetSpec).inspectVolume(targetSpec, volume.component);
-      return manifest;
-    }
-    const previous = read(pending);
-    if (previous && JSON.stringify(previous) !== JSON.stringify(expected)) throw new Error('Restore checkpoint ownership mismatch');
-    if (!previous) {
-      for (const volume of targetSpec.volumes) absent(volume.path);
-      writeDurable(pending, expected); syncPath(directory);
-    }
-    for (const entry of manifest.components) {
-      const receiptPath = join(directory, `${entry.component}.json`);
-      const receipt = read(receiptPath);
-      if (receipt) {
-        if (JSON.stringify(receipt) !== JSON.stringify(entry)) throw new Error('Restore component checkpoint mismatch');
-        await this.#driver(targetSpec).inspectVolume(targetSpec, entry.component);
-        continue;
-      }
-      // A failed import is replaced only in this checkpoint-owned, never activated generation.
-      await this.#driver(targetSpec).importSnapshotVolume(sourceSpec, snapshotId, targetSpec, entry.component, { resume: previous !== null });
-      writeDurable(receiptPath, entry); syncPath(directory);
-    }
-    writeDurable(join(directory, 'complete.json'), { ...expected, image: manifest.image });
-    syncPath(directory); unlinkSync(pending); syncPath(directory);
-    return manifest;
+    return await this.#restoreDiskSnapshot(sourceSpec, snapshotId, targetSpec, manifest);
   }
 
   async #restoreDiskSnapshot(sourceSpec, snapshotId, targetSpec, manifest) {
@@ -610,9 +441,19 @@ export class ContainerStorage {
       await this.#driver(targetSpec).syncDiskTree(pending); renameSync(pending, target); syncPath(diskDirectory);
       writeDurable(receiptPath, tree); syncPath(directory);
     }
+    // The reference is the TARGET specification's, never the snapshot's. A restore fills the disk from
+    // copied trees, and a retained snapshot naming the removed container runtime must not move a current
+    // row back onto it. `prepare` compares this field against the specification before it starts anything,
+    // so writing the snapshot's reference over the target would also leave it unable to start.
+    // Nothing here reads a clock: `createdAt` is the one field the completion comparison strips, so every
+    // other value has to be derivable again identically when a restore resumes.
+    const adopted = targetSpec.disk.sourceImage !== manifest.sourceImage.reference;
     const diskRecord = { resource: targetSpec.resource, diskId: targetSpec.disk.id, format: 2,
-      sourceImage: manifest.sourceImage.reference, sourceImageId: manifest.sourceImage.id, rootfsPath: targetSpec.disk.rootfsPath,
-      components: targetSpec.disk.components, createdAt: new Date().toISOString(), restoredFrom: snapshotId, materialized: true };
+      sourceImage: targetSpec.disk.sourceImage, sourceImageId: adopted ? null : manifest.sourceImage.id,
+      rootfsPath: targetSpec.disk.rootfsPath, components: targetSpec.disk.components,
+      createdAt: new Date().toISOString(), restoredFrom: snapshotId,
+      ...(adopted ? { adoptedFrom: { reference: manifest.sourceImage.reference, imageId: manifest.sourceImage.id ?? null, snapshotId } } : {}),
+      materialized: true };
     const existingDisk = read(join(diskDirectory, 'disk.json'));
     if (existingDisk) {
       const { createdAt: _existingCreatedAt, ...actual } = existingDisk;
@@ -625,30 +466,6 @@ export class ContainerStorage {
     return manifest;
   }
 
-  async importRetainedSiteSnapshot(spec, snapshotId, artifact) {
-    assertContainerSpec(spec); resourceToken(snapshotId);
-    if (spec.resource.kind !== 'site') throw new Error('Only Sites may import retained release snapshots');
-    const imageId = await this.#driver(spec).inspectRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
-    const directory = checkedHostPath(join(spec.storageRoot, 'snapshots', snapshotId), { create: true });
-    const manifest = { version: 1, snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash,
-      consistency: 'crash-consistent', completeProject: false, retained: true,
-      image: { reference: artifact.imageReference, id: imageId }, components: [] };
-    if (artifact.archivePath) {
-      const original = await fingerprint(artifact.archivePath, this.#maxArchiveBytes);
-      const archive = join(directory, 'data.tar');
-      try { copyFileSync(artifact.archivePath, archive, constants.COPYFILE_EXCL); }
-      catch (cause) { if (cause.code !== 'EEXIST') throw cause; }
-      const copied = await fingerprint(archive, this.#maxArchiveBytes);
-      if (JSON.stringify(original) !== JSON.stringify(copied)) throw new Error('Retained snapshot archive differs from the original');
-      syncPath(archive); manifest.components.push({ component: 'data', ...copied });
-    }
-    const path = join(directory, 'manifest.json');
-    try { writeDurable(path, manifest); }
-    catch (cause) { if (cause.code !== 'EEXIST') throw cause; checkedHostPath(path, { file: true }); if (readFileSync(path, 'utf8') !== JSON.stringify(manifest)) throw new Error('Retained snapshot binding changed'); }
-    syncPath(directory);
-    return await this.readSnapshot(spec, snapshotId);
-  }
-
   async readSnapshot(spec, snapshotId) {
     assertContainerSpec(spec);
     resourceToken(snapshotId);
@@ -656,37 +473,18 @@ export class ContainerStorage {
     const path = checkedHostPath(join(directory, 'manifest.json'), { file: true });
     if (lstatSync(path).size > 256 * 1024) throw new Error('Snapshot manifest exceeds limit');
     const manifest = JSON.parse(readFileSync(path, 'utf8'));
-    if (manifest.version === 2) {
-      if (!spec.disk || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind || manifest.resource?.id !== spec.resource.id
-        || manifest.generation !== spec.generation || manifest.diskId !== spec.disk.id || manifest.specHash !== spec.specHash
-        || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project') || !Array.isArray(manifest.trees)
-        || manifest.treeFormat !== 'inventory-v1:path,type,size,uid,gid,mode,mtimeNs,hardlink,xattrs,linkTarget') throw new Error('Snapshot manifest ownership mismatch');
-      const expected = ['rootfs', ...spec.disk.components.map((entry) => entry.component)];
-      const components = manifest.trees.map((entry) => entry?.component);
-      if (new Set(components).size !== components.length || components.some((component) => !expected.includes(component))
-        || (manifest.completeProject && JSON.stringify(components) !== JSON.stringify(expected))) throw new Error('Snapshot storage components mismatch');
-      for (const tree of manifest.trees) {
-        if (tree.path !== join(directory, tree.component) || !Number.isSafeInteger(tree.logicalBytes) || tree.logicalBytes < 0
-          || !Number.isSafeInteger(tree.allocatedBytes) || tree.allocatedBytes < 0 || !/^[a-f0-9]{64}$/.test(tree.digest)) throw new Error('Snapshot tree manifest is invalid');
-        checkedHostPath(tree.path);
-      }
-      return manifest;
-    }
-    if (spec.disk || manifest.version !== 1 || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind
-      || manifest.resource?.id !== spec.resource.id || manifest.generation !== spec.generation || manifest.specHash !== spec.specHash
-      || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project')
-      || (manifest.retained ? spec.resource.kind !== 'site' : manifest.image?.reference !== snapshotReference(spec, snapshotId)) || !Array.isArray(manifest.components)) throw new Error('Snapshot manifest ownership mismatch');
-    const components = manifest.components.map((entry) => entry?.component);
-    const expected = spec.volumes.map((volume) => volume.component);
+    if (manifest.version !== 2 || !spec.disk || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind || manifest.resource?.id !== spec.resource.id
+      || manifest.generation !== spec.generation || manifest.diskId !== spec.disk.id || manifest.specHash !== spec.specHash
+      || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project') || !Array.isArray(manifest.trees)
+      || manifest.treeFormat !== SNAPSHOT_TREE_FORMAT) throw new Error('Snapshot manifest ownership mismatch');
+    const expected = ['rootfs', ...spec.disk.components.map((entry) => entry.component)];
+    const components = manifest.trees.map((entry) => entry?.component);
     if (new Set(components).size !== components.length || components.some((component) => !expected.includes(component))
       || (manifest.completeProject && JSON.stringify(components) !== JSON.stringify(expected))) throw new Error('Snapshot storage components mismatch');
-    const imageId = manifest.retained
-      ? await this.#driver(spec).inspectRetainedSiteImage(spec, manifest.image.reference, manifest.image.id)
-      : await this.#driver(spec).inspectSnapshotImage(spec, snapshotId);
-    if (imageId !== manifest.image.id) throw new Error('Snapshot image changed');
-    for (const entry of manifest.components) {
-      const digest = await fingerprint(join(directory, `${entry.component}.tar`), this.#maxArchiveBytes);
-      if (digest.sizeBytes !== entry.sizeBytes || digest.sha256 !== entry.sha256) throw new Error('Snapshot archive integrity mismatch');
+    for (const tree of manifest.trees) {
+      if (tree.path !== join(directory, tree.component) || !Number.isSafeInteger(tree.logicalBytes) || tree.logicalBytes < 0
+        || !Number.isSafeInteger(tree.allocatedBytes) || tree.allocatedBytes < 0 || !/^[a-f0-9]{64}$/.test(tree.digest)) throw new Error('Snapshot tree manifest is invalid');
+      checkedHostPath(tree.path);
     }
     return manifest;
   }
@@ -698,14 +496,6 @@ export class ContainerStorage {
       assertContainerSpec(owner);
       if (owner.disk?.id !== spec.disk.id) continue;
       if (await this.#driver(owner).inspect(owner)) throw new Error('An envelope still owns environment disk');
-      // A named volume is a Podman HANDLE over a host directory, and only a runtime that keeps such
-      // handles can have left one behind. Asking a runtime with no volume store would be asking it to
-      // answer for a concept it refuses to model, so this runs only where a handle can exist at all.
-      if (!this.#hasNamedVolumes(owner)) continue;
-      for (const volume of owner.volumes) {
-        try { await this.#driver(owner).inspectVolume(owner, volume.component); throw new Error('A volume still owns environment disk'); }
-        catch (cause) { if (!/missing/i.test(cause.message)) throw cause; }
-      }
     }
     const directory = dirname(spec.disk.rootfsPath);
     // A disk directory that is already gone leaves nothing to remove and nothing to verify, and deletion

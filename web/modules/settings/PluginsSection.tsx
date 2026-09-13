@@ -23,7 +23,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useMarketplace } from '../../lib/queries';
 import { useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib/mutations';
-import { usePluginConsent } from './usePluginConsent';
+import { PluginDependencyError, pluginDependencyError, usePluginConsent } from './usePluginConsent';
 import { pluginDisplayName } from './pluginDisplayName';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
@@ -219,7 +219,10 @@ export function PluginsSection() {
     // A 202 means the change is on disk but the live swap waits for running work — say so instead of
     // claiming it already took effect.
     onSuccess: (res) => toast(res.pending ? t.plugins.pendingToast : res.enabled ? t.plugins.enabledToast : t.plugins.disabledToast),
-    onError: () => toast(t.plugins.toggleError, 'error'),
+    // A dependency refusal is the one failure that already explains itself, and the hook has turned it
+    // into a sentence naming which plugin to switch on, or off, first. Reporting it as "changing the
+    // plugin failed" threw that away and left the toggle looking broken.
+    onError: (e) => toast(e instanceof PluginDependencyError ? e.message : t.plugins.toggleError, 'error'),
     onInstalled: (res) => { toast(res.pending ? t.plugins.pendingToast : t.plugins.installedToast); setView('installed'); },
     onInstallError: () => toast(t.plugins.installError, 'error'),
     onSettled: () => setPending(null),
@@ -341,7 +344,12 @@ export function PluginsSection() {
     setPending(name);
     uninstall.mutate(name, {
       onSuccess: () => toast(bundled ? t.plugins.removedToast : t.plugins.uninstallToast),
-      onError: () => toast(bundled ? t.plugins.removedError : t.plugins.uninstallError, 'error'),
+      // Removal is refused for the same reason disabling is, and the daemon says which plugin still needs
+      // this one. "Removing the plugin failed" would throw that away and leave nothing to act on.
+      onError: (e) => {
+        const dependency = pluginDependencyError(t, e);
+        toast(dependency?.message ?? (bundled ? t.plugins.removedError : t.plugins.uninstallError), 'error');
+      },
       onSettled: () => setPending(null),
     });
   };

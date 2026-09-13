@@ -26,22 +26,7 @@ const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
 const SAFE_USER = /^[a-z_][a-z0-9_-]{0,31}$/i;
-export const ENVIRONMENT_PACKAGES = Object.freeze([
-  'podman', 'crun', 'uidmap', 'dbus-user-session', 'passt', 'slirp4netns',
-]);
-const OPTIONAL_OVERLAY_PACKAGE = 'fuse-overlayfs';
-export const ENVIRONMENT_DELEGATION_DROP_IN = '/etc/systemd/system/user@.service.d/elowen-sites-environments.conf';
-export const ENVIRONMENT_DELEGATION_CONTENT = '[Service]\nDelegate=cpu memory pids\n';
 const SYSTEM_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
-const PACKAGE_LABELS = Object.freeze({
-  podman: 'Podman',
-  crun: 'crun',
-  uidmap: 'UID mapping tools',
-  'dbus-user-session': 'D-Bus user session',
-  passt: 'passt network backend',
-  slirp4netns: 'slirp4netns network backend',
-  'fuse-overlayfs': 'FUSE overlay storage',
-});
 
 function fail(message) {
   throw new Error(message);
@@ -235,6 +220,8 @@ function atomicWrite(path, bytes, mode) {
   }
   chmodSync(temp, mode);
   renameSync(temp, path);
+  const directory = openSync(dirname(path), O_RDONLY | O_DIRECTORY);
+  try { fsyncSync(directory); } finally { closeSync(directory); }
 }
 
 function restore(path, previous, mode) {
@@ -415,18 +402,6 @@ export function defaultCommandRunner(file, args, { timeoutMs } = {}) {
   }
 }
 
-export function helperRequestFields(request) {
-  if (!request || typeof request !== 'object' || Array.isArray(request)) fail('request is invalid');
-  // `domain` is the transport discriminator, not an operation argument: the daemon sends it on every
-  // request, and it has already been validated before dispatch.
-  const fields = Object.keys(request).filter((field) => field !== 'domain');
-  if (request.op !== 'environments-status' && request.op !== 'environments-provision') {
-    fail('environment operation is invalid');
-  }
-  if (fields.length !== 1 || fields[0] !== 'op') fail('environment request has extra fields');
-  return fields;
-}
-
 function sudoId(raw, label) {
   if (typeof raw !== 'string' || !/^(?:0|[1-9]\d*)$/.test(raw)) fail(`the invoking service ${label} is invalid`);
   const value = Number(raw);
@@ -480,10 +455,9 @@ const invokedByRoot = (env) => env.SUDO_USER === 'root' && env.SUDO_UID === '0';
  *  An operator running `elowen install` or `elowen update` reaches the helper through their own root
  *  shell, so the inner sudo can only report `root` and the derivation above has nothing to work with — the
  *  documented operator path provisioned nothing at all and said the service user could not be determined.
- *  A root caller may therefore name the account, because the two artefacts this decides — a polkit rule
- *  scoped to that account and the readiness rows describing it — are files root already owns outright, and
- *  the name is still resolved through passwd rather than believed. Nothing else accepts a named account,
- *  and no operation that reads a storage root is reachable this way. */
+ *  A root caller may therefore name the account that owns this runtime. The name is still resolved through
+ *  passwd rather than believed, nothing else accepts a named account, and no operation that reads a storage
+ *  root is reachable this way. */
 function machineServiceUser(runner, env, request) {
   const named = request.user;
   if (named !== undefined && typeof named !== 'string') fail('the machine runtime service user is invalid');
@@ -494,19 +468,6 @@ function machineServiceUser(runner, env, request) {
   }
   if (named === undefined) fail('running this as root requires naming the service account the environments belong to');
   return passwdUser(runner, named);
-}
-
-function runAsServiceUser(runner, user, command, args) {
-  return runner('/usr/sbin/runuser', [
-    '-u', user.name, '--', '/usr/bin/env', '-i',
-    `HOME=${user.home}`,
-    `USER=${user.name}`,
-    `LOGNAME=${user.name}`,
-    `PATH=${SYSTEM_PATH}`,
-    `XDG_RUNTIME_DIR=/run/user/${user.uid}`,
-    `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${user.uid}/bus`,
-    command, ...args,
-  ]);
 }
 
 function packageInstalled(runner, name) {
@@ -531,8 +492,7 @@ function defaultSetOwner(fd, uid, gid) {
 }
 
 /** The permission bits of a managed artefact, or -1 when it is not there at all. Content alone does not
- *  settle whether a root-owned artefact is intact: a polkit rule left group-writable is a rule anyone in
- *  that group can rewrite, so provisioning treats the mode as part of the artefact. */
+ *  settle whether a root-owned unit is intact, so provisioning treats its mode as part of the artefact. */
 function defaultReadMode(path) {
   try { return statSync(path).mode & 0o7777; } catch { return -1; }
 }
@@ -560,199 +520,9 @@ export function supportedEnvironmentOs(raw) {
   return { ok: false, detail: 'only Debian and Ubuntu are supported' };
 }
 
-function subidEntries(readText, path) {
-  const entries = [];
-  for (const sourceLine of String(readText(path) || '').split('\n')) {
-    const line = sourceLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const parts = line.split(':');
-    if (parts.length !== 3 || !/^[^\s:\0]+$/.test(parts[0]) || !/^\d+$/.test(parts[1]) || !/^\d+$/.test(parts[2])) {
-      fail(`${path} contains an invalid subordinate id entry`);
-    }
-    const start = Number(parts[1]);
-    const count = Number(parts[2]);
-    const end = start + count - 1;
-    if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(count) || count <= 0
-      || !Number.isSafeInteger(end) || end > 0xffff_ffff) {
-      fail(`${path} contains an invalid subordinate id entry`);
-    }
-    entries.push({ name: parts[0], start, end });
-  }
-  return entries;
-}
-
-function subidPresent(readText, path, user) {
-  return subidEntries(readText, path).some((entry) => entry.name === user.name);
-}
-
-function nextSubidRange(readText) {
-  const used = [
-    ...subidEntries(readText, '/etc/subuid'),
-    ...subidEntries(readText, '/etc/subgid'),
-  ];
-  for (let start = 100000; start <= 2_000_000_000; start += 65536) {
-    const end = start + 65535;
-    if (used.every((entry) => end < entry.start || start > entry.end)) return `${start}-${end}`;
-  }
-  fail('no subordinate id range is available');
-}
-
-function lingerEnabled(runner, user) {
-  const result = runner('/usr/bin/loginctl', ['show-user', user.name, '--property=Linger', '--value']);
-  return result.ok && String(result.stdout || '').trim() === 'yes';
-}
-
-function userDelegation(runner, user) {
-  const result = runner('/usr/bin/systemctl', [
-    'show', `user@${user.uid}.service`, '--property=Delegate', '--property=DelegateControllers', '--value',
-  ]);
-  const lines = String(result.stdout || '').trim().split('\n');
-  return {
-    enabled: result.ok && lines[0] === 'yes',
-    controllers: new Set((lines[1] || '').trim().split(/\s+/).filter(Boolean)),
-  };
-}
-
-function ensureDelegationDropIn(runner, readText, writeAtomic) {
-  if (readText(ENVIRONMENT_DELEGATION_DROP_IN) !== ENVIRONMENT_DELEGATION_CONTENT) {
-    writeAtomic(ENVIRONMENT_DELEGATION_DROP_IN, Buffer.from(ENVIRONMENT_DELEGATION_CONTENT), 0o644);
-  }
-  // Repeat daemon-reload while the live user manager still lacks delegation. It is idempotent, and this
-  // also recovers when a previous call wrote the file but daemon-reload itself failed.
-  runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
-}
-
-function podmanInfo(runner, user) {
-  const result = runAsServiceUser(runner, user, '/usr/bin/podman', ['info', '--format', 'json']);
-  if (!result.ok) {
-    const stderr = String(result.stderr || '');
-    return {
-      ok: false,
-      detail: /overlay|fuse-overlayfs|mount_program/i.test(stderr)
-        ? 'rootless overlay storage is unavailable'
-        : 'rootless podman info failed',
-    };
-  }
-  try {
-    const info = JSON.parse(String(result.stdout || ''));
-    const rootless = info?.host?.security?.rootless === true;
-    const manager = typeof info?.host?.cgroupManager === 'string' ? info.host.cgroupManager : 'unknown';
-    const version = typeof info?.host?.cgroupVersion === 'string' ? info.host.cgroupVersion : String(info?.host?.cgroupVersion ?? 'unknown');
-    const storage = typeof info?.store?.graphDriverName === 'string' ? info.store.graphDriverName : 'unknown';
-    const compatible = rootless && manager === 'systemd' && (version === 'v2' || version === '2');
-    return {
-      ok: compatible,
-      detail: rootless
-        ? `rootless; storage ${storage}; cgroup manager ${manager}; cgroup ${version}`
-        : 'podman info did not report rootless mode',
-    };
-  } catch {
-    return { ok: false, detail: 'podman info returned invalid JSON' };
-  }
-}
-
-function environmentStatus(options = {}) {
-  const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
-  const env = options.env ?? process.env;
-  const os = supportedEnvironmentOs(readText('/etc/os-release'));
-  const user = serviceUser(runner, env);
-  const packageState = new Map(ENVIRONMENT_PACKAGES.map((name) => [name, packageInstalled(runner, name)]));
-  const podman = packageState.get('podman') ? podmanInfo(runner, user) : { ok: false, detail: 'podman is not installed' };
-  const fuseInstalled = packageInstalled(runner, OPTIONAL_OVERLAY_PACKAGE);
-  const overlayRequired = !podman.ok && /overlay|fuse-overlayfs|mount_program/i.test(podman.detail);
-  const delegation = userDelegation(runner, user);
-  const bus = runAsServiceUser(runner, user, '/usr/bin/systemctl', ['--user', 'show-environment']);
-  const items = [{ id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail }];
-  items.push(...ENVIRONMENT_PACKAGES.map((name) => ({
-    id: `package:${name}`,
-    label: PACKAGE_LABELS[name],
-    ok: packageState.get(name) === true,
-    detail: packageState.get(name) ? 'installed' : 'not installed',
-  })));
-  items.push({
-    id: `package:${OPTIONAL_OVERLAY_PACKAGE}`,
-    label: PACKAGE_LABELS[OPTIONAL_OVERLAY_PACKAGE],
-    ok: fuseInstalled || !overlayRequired,
-    detail: fuseInstalled ? 'installed' : overlayRequired ? 'required by rootless overlay storage' : 'not required',
-  });
-  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
-  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
-  items.push(
-    { id: 'subuid', label: 'Subordinate user IDs', ok: hasSubuid, detail: hasSubuid ? `configured for ${user.name}` : 'not configured' },
-    { id: 'subgid', label: 'Subordinate group IDs', ok: hasSubgid, detail: hasSubgid ? `configured for ${user.name}` : 'not configured' },
-    { id: 'linger', label: 'Persistent user manager', ok: lingerEnabled(runner, user), detail: 'systemd linger' },
-    { id: 'user-bus', label: 'User D-Bus', ok: bus.ok, detail: bus.ok ? 'reachable' : 'not reachable' },
-  );
-  for (const controller of ['cpu', 'memory', 'pids']) {
-    const ok = delegation.enabled && delegation.controllers.has(controller);
-    items.push({
-      id: `cgroup:${controller}`,
-      label: `${controller} cgroup delegation`,
-      ok,
-      detail: ok ? 'delegated through cgroup v2' : 'not delegated to the user manager',
-    });
-  }
-  items.push({ id: 'podman-rootless', label: 'Rootless Podman', ok: podman.ok, detail: podman.detail });
-  return { ok: true, ready: items.every((item) => item.ok), items };
-}
-
 function runRequired(runner, file, args, failure) {
   const result = runner(file, args);
   if (!result.ok) fail(failure);
-}
-
-function provisionEnvironments(options = {}) {
-  const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
-  const writeAtomic = options.writeAtomic ?? atomicWrite;
-  const env = options.env ?? process.env;
-  const os = supportedEnvironmentOs(readText('/etc/os-release'));
-  if (!os.ok) fail(os.detail);
-  const user = serviceUser(runner, env);
-  const missing = ENVIRONMENT_PACKAGES.filter((name) => !packageInstalled(runner, name));
-  let aptUpdated = false;
-  if (missing.length > 0) {
-    runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
-    aptUpdated = true;
-    runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', ...missing], 'environment package installation failed');
-  }
-  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
-  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
-  const range = hasSubuid && hasSubgid ? null : nextSubidRange(readText);
-  if (!hasSubuid) {
-    runRequired(runner, '/usr/sbin/usermod', ['--add-subuids', range, user.name], 'subordinate user id configuration failed');
-  }
-  if (!hasSubgid) {
-    runRequired(runner, '/usr/sbin/usermod', ['--add-subgids', range, user.name], 'subordinate group id configuration failed');
-  }
-  if (!lingerEnabled(runner, user)) {
-    runRequired(runner, '/usr/bin/loginctl', ['enable-linger', user.name], 'systemd linger enablement failed');
-  }
-  let status = environmentStatus({ runner, readText, env });
-  const delegationMissing = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok);
-  if (delegationMissing) ensureDelegationDropIn(runner, readText, writeAtomic);
-  const fuse = status.items.find((item) => item.id === `package:${OPTIONAL_OVERLAY_PACKAGE}`);
-  if (fuse && !fuse.ok && fuse.detail === 'required by rootless overlay storage') {
-    if (!aptUpdated) runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
-    runRequired(
-      runner,
-      '/usr/bin/apt-get',
-      ['install', '--yes', '--no-install-recommends', OPTIONAL_OVERLAY_PACKAGE],
-      'rootless overlay storage package installation failed',
-    );
-    status = environmentStatus({ runner, readText, env });
-  }
-  const delegationPending = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok)
-    && readText(ENVIRONMENT_DELEGATION_DROP_IN) === ENVIRONMENT_DELEGATION_CONTENT;
-  return {
-    ...status,
-    ...(status.ready ? {} : {
-      detail: delegationPending
-        ? 'systemd delegation is configured; a reboot or user-manager restart is required'
-        : 'environment support remains incomplete',
-    }),
-  };
 }
 
 const SAFE_SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -846,17 +616,17 @@ const EXEC_MAX_SECONDS = 15 * 60;
  *  execution; this backstop only covers a `systemd-run` that never returns at all. */
 const EXEC_GRACE_SECONDS = 10;
 
-/** Denied to the guest on top of nspawn's default bound. Every one of these is also denied by rootless
- *  Podman's default set, so this is the capability parity the Podman runtime already provides.
+/** Denied to the guest on top of nspawn's default bound. Every one of these is also denied by the default
+ *  capability set of an ordinary rootless container, which is the bar this set is measured against.
  *
  *  This set, `DevicePolicy=closed` in the unit template, `PrivateUsers` shifting and the read-only binds
- *  are what stands in for Podman's `containers-default` AppArmor profile, and no profile ships alongside
+ *  are what stands in for the `containers-default` AppArmor profile, and no profile ships alongside
  *  them. That is a deliberate, measured gap rather than an oversight:
  *
  *    - systemd-nspawn 255.4 has no AppArmor integration at all. It exposes `-Z` and `-L` for SELinux
  *      contexts and nothing equivalent for AppArmor, and `systemd.nspawn(5)` has no AppArmor setting, so
- *      there is no hook through which a profile could be applied to the guest payload the way Podman
- *      applies `containers-default` to a container process.
+ *      there is no hook through which a profile could be applied to the guest payload the way a container
+ *      runtime applies `containers-default` to a container process.
  *    - AppArmor 4.0.1 ships no nspawn profile to start from. The profiles present for comparable tools
  *      are either LXC's, which confine a different supervisor, or the Ubuntu 24.04 `flags=(unconfined)`
  *      shells around `crun` and `bwrap`, which grant `userns` and confine nothing.
@@ -878,8 +648,8 @@ const NSPAWN_DROP_CAPABILITIES = Object.freeze([
 
 /** The shipped `systemd-nspawn@.service` hardcodes `/var/lib/machines/%i`, which the disk layout does
  *  not use, so the envelope is our own template: the same unit with the directory taken from the
- *  per-machine drop-in, no journal link into the host, and `--settings=override` so the `.nspawn` file
- *  wins over the unit's own command line. */
+ *  per-machine drop-in, no journal link into the host, and `--settings=trusted` because the root-owned
+ *  helper validates and writes every field, including the inbound port rules nspawn ignores otherwise. */
 export const MACHINE_UNIT_TEMPLATE = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
 [Unit]
 Description=Elowen machine %i
@@ -890,7 +660,7 @@ Before=machines.target
 After=network.target modprobe@tun.service modprobe@loop.service modprobe@dm_mod.service
 
 [Service]
-ExecStart=systemd-nspawn --quiet --keep-unit --boot --link-journal=no --settings=override --directory=\${ELOWEN_MACHINE_DIRECTORY} --machine=%i
+ExecStart=systemd-nspawn --quiet --keep-unit --boot --link-journal=no --settings=trusted --directory=\${ELOWEN_MACHINE_DIRECTORY} --machine=%i
 KillMode=mixed
 Type=notify
 RestartForceExitStatus=133
@@ -905,10 +675,9 @@ DeviceAllow=char-pts rw
 DeviceAllow=/dev/net/tun rwm
 `;
 
-/** The lifecycle runs as the service user with no sudo, over this rule. It is scoped to units named
- *  `elowen-machine@elowen-*` and to the three verbs the runtime actually issues — start, stop and
- *  set-property; a restart is a stop and a start, and nothing asks for one. Every other unit and verb
- *  falls through to the system default, so restarting an unrelated service stays refused. */
+/** Exact content of the retired lifecycle rule. It remains code only so provisioning can distinguish the
+ *  rule this runtime used to own from an unrelated administrator file at the same path and remove only its
+ *  own broad authorization. New lifecycle mutations go through the typed privileged helper. */
 export function renderPolkitRule(user) {
   if (!SAFE_USER.test(user) || user === 'root') fail('the invoking service user cannot be determined');
   return `// Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
@@ -930,8 +699,8 @@ polkit.addRule(function(action, subject) {
  *  a per-machine rule is not expressible and every rule below is written against the whole family. */
 const MACHINE_INTERFACE = 've-+';
 
-/** veth is off by default: a veth machine can address the host directly, which the Podman runtime's
- *  `allow_host_loopback=false` does not expose. These rules are the condition for enabling it. They are
+/** veth is off by default: a veth machine can address the host directly, which a slirp-style user-mode
+ *  network with `allow_host_loopback=false` does not expose. These rules are the condition for enabling it. They are
  *  reported and never applied — the daemon does not mutate the firewall, it refuses until they exist.
  *
  *  The guard rules sit in INPUT rather than FORWARD, which is where the plan first placed them. A packet
@@ -946,22 +715,22 @@ const MACHINE_INTERFACE = 've-+';
  *  neither the outbound accept nor anything in Docker's own chains, and falls through to the FORWARD DROP
  *  policy Docker installs. A machine that can send and never receive looks like a name-resolution fault
  *  and is not one. The two DOCKER-USER rules do not overlap, so their order relative to each other is
- *  free; the DHCP exception still has to precede the INPUT guard.
+ *  free; the DHCP exception and stateful native-DNAT return path still have to precede the INPUT guard.
  *
- *  IPv6 needs only the guard, and that is a statement about this host rather than about IPv6. Measured:
- *  the host carries no global IPv6 address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets
- *  nothing but a link-local address on its side of the link. There is no v6 path off the box to keep
- *  open, and the one v6 reach that does exist is the guest to the host's link-local address, which the
- *  guard closes. If the host ever gains IPv6 connectivity this needs measuring again, because a global
- *  address would put v6 forwarding in play and the set above would no longer be complete. */
+ *  IPv6 needs the same stateful return rule before its guard. Measured, this host carries no global IPv6
+ *  address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets nothing but a link-local address on
+ *  its side of the link. There is no v6 path off the box to keep open, while a future native IPv6 port map
+ *  still needs its established replies admitted without opening a new guest-to-host connection. If the
+ *  host ever gains IPv6 connectivity this needs measuring again, because a global address would put v6
+ *  forwarding in play and the set above would no longer be complete. */
 export const NSPAWN_FIREWALL_RULES = Object.freeze([
   Object.freeze({
     id: 'firewall:forward-out',
     label: 'Machine forwarding',
     binary: '/usr/sbin/iptables',
     chain: 'DOCKER-USER',
-    insert: true,
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']),
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-forward-out', '-j', 'ACCEPT']),
     why: 'Docker sets the FORWARD policy to DROP, so without it a machine reaches nothing',
   }),
   Object.freeze({
@@ -969,8 +738,8 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine return path',
     binary: '/usr/sbin/iptables',
     chain: 'DOCKER-USER',
-    insert: true,
-    spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']),
+    insertAt: 2,
+    spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-forward-back', '-j', 'ACCEPT']),
     why: 'a reply comes back the other way round and matches neither the rule above nor any chain Docker owns, so a machine sends and never receives',
   }),
   Object.freeze({
@@ -978,34 +747,68 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine address lease',
     binary: '/usr/sbin/iptables',
     chain: 'INPUT',
-    insert: true,
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-j', 'ACCEPT']),
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '-m', 'udp', '--dport', '67', '-m', 'comment', '--comment', 'elowen-machine-dhcp', '-j', 'ACCEPT']),
     why: 'the host runs the address server for the link, so the guard below must not cover it',
+  }),
+  Object.freeze({
+    id: 'firewall:host-return',
+    label: 'Machine native port return path',
+    binary: '/usr/sbin/iptables',
+    insertAt: 2,
+    chain: 'INPUT',
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-host-return', '-j', 'ACCEPT']),
+    why: 'a host-originated native nspawn DNAT connection returns through INPUT and must pass before the machine-to-host guard',
   }),
   Object.freeze({
     id: 'firewall:host-guard',
     label: 'Machine-to-host guard',
     binary: '/usr/sbin/iptables',
-    insert: false,
+    insertAt: 3,
     chain: 'INPUT',
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']),
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-host-guard', '-j', 'DROP']),
     why: 'everything else a machine addresses to the host arrives here, not on FORWARD',
+  }),
+  Object.freeze({
+    id: 'firewall:host-return6',
+    label: 'Machine native port return path (IPv6)',
+    binary: '/usr/sbin/ip6tables',
+    insertAt: 1,
+    chain: 'INPUT',
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-host-return6', '-j', 'ACCEPT']),
+    why: 'an IPv6 native nspawn DNAT connection needs the same stateful return path without admitting a new host connection',
   }),
   Object.freeze({
     id: 'firewall:host-guard6',
     label: 'Machine-to-host guard (IPv6)',
     binary: '/usr/sbin/ip6tables',
     chain: 'INPUT',
-    insert: false,
-    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']),
+    insertAt: 2,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-host-guard6', '-j', 'DROP']),
     why: 'the link carries IPv6 link-local addressing, which the IPv4 table does not see',
   }),
 ]);
 
-/** The exact command an operator runs, in the order the rules are listed: the lease exception is inserted
- *  at the head of INPUT and the guard is appended, so the guard cannot shadow it. */
+const RETIRED_NSPAWN_FIREWALL_RULES = Object.freeze([
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-j', 'ACCEPT']) }),
+  Object.freeze({ binary: '/usr/sbin/iptables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']) }),
+  Object.freeze({ binary: '/usr/sbin/ip6tables', chain: 'INPUT', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']) }),
+]);
+
+/** The exact command an operator runs. Each managed rule has a fixed position so an earlier unrelated
+ *  accept cannot bypass the machine-to-host guard, while DHCP remains immediately above that guard. */
 export function firewallRuleCommand(rule) {
-  return `${rule.binary} ${rule.insert ? `-I ${rule.chain} 1` : `-A ${rule.chain}`} ${rule.spec.join(' ')}`;
+  return `${rule.binary} -I ${rule.chain} ${rule.insertAt} ${rule.spec.join(' ')}`;
+}
+
+function firewallRuleRemovalCommand(rule) {
+  return `while ${rule.binary} -D ${rule.chain} ${rule.spec.join(' ')} 2>/dev/null; do :; done`;
+}
+
+function firewallRuleResetCommand(rule) {
+  return `${firewallRuleRemovalCommand(rule)}; ${firewallRuleCommand(rule)}`;
 }
 
 export const MACHINE_FIREWALL_UNIT_NAME = 'elowen-machine-firewall.service';
@@ -1015,14 +818,14 @@ export const MACHINE_FIREWALL_UNIT_PATH = `/etc/systemd/system/${MACHINE_FIREWAL
  *
  *  A packet filter keeps nothing across a reboot on its own, and this host has no persistence package
  *  installed. Leaving that to the operator meant that after any restart no environment could be created
- *  until somebody remembered five commands, and reporting it loudly does not make the host less broken.
+ *  until somebody remembered every managed rule, and reporting it loudly does not make the host less broken.
  *
  *  Ordering is the whole design. Docker rebuilds its chains when it starts, so a unit that ran before it
  *  would leave the guard missing while machines are running; this one is ordered after `docker.service`
  *  and is also pulled in BY it, so a Docker restart re-applies the rules rather than silently dropping
- *  them. Each line checks before it acts, which is what makes a second boot, a re-run and a hand-applied
- *  rule all end in the same state. The condition keeps a host without a packet filter from failing the
- *  unit: the readiness rows then report the rules as missing, which is the truth. */
+ *  them. Every run removes the exact retired and current rules, then inserts the current rules at their
+ *  fixed positions. This repairs an older append-only guard and any later ordering drift. The condition
+ *  keeps a host without a packet filter from failing the unit: readiness then reports the rules as missing. */
 export const MACHINE_FIREWALL_UNIT = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
 [Unit]
 Description=Elowen machine firewall rules
@@ -1033,11 +836,25 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecCondition=/usr/bin/test -x /usr/sbin/iptables -a -x /usr/sbin/ip6tables
-${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${rule.binary} -C ${rule.chain} ${rule.spec.join(' ')} 2>/dev/null || ${firewallRuleCommand(rule)}'`).join('\n')}
+${RETIRED_NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleRemovalCommand(rule)}'`).join('\n')}
+${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleResetCommand(rule)}'`).join('\n')}
 
 [Install]
 WantedBy=multi-user.target docker.service
 `;
+
+/** Forwarding, recorded where it survives a reboot rather than only set live.
+ *
+ *  `sysctl -w` lasts until the next boot, and a host that came back without forwarding refuses every
+ *  environment creation with a row nobody connects to the restart. The file is the artefact; applying it
+ *  is the effect, and readiness asks the running kernel rather than the file, so a file that exists and
+ *  was never applied still reads as unmet. */
+export const MACHINE_SYSCTL_PATH = '/etc/sysctl.d/99-elowen-machine.conf';
+export const MACHINE_SYSCTL_CONTENT = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+# A machine given a virtual ethernet routes through the host, which needs forwarding on.
+net.ipv4.ip_forward=1
+`;
+export const MACHINE_UPLINK_RESOLVER = '/run/systemd/resolve/resolv.conf';
 
 export function machineUnitFor(machine) {
   if (typeof machine !== 'string' || !NSPAWN_MACHINE.test(machine)) fail('the machine name is invalid');
@@ -1123,7 +940,7 @@ export function trustedPath(storage, value, { file = false, allowMissing = false
  *  step. This is the ONE derivation left, and it is the one that matters: the machine's root filesystem
  *  and its identity record come from the trusted roots plus a validated resource and disk id, never from
  *  a path the request names. */
-export function nspawnDiskPaths(storage, request) {
+function nspawnResourceStorage(storage, request) {
   const kind = request?.kind;
   const resource = request?.resource;
   if (kind !== 'project' && kind !== 'site') fail('the resource kind is invalid');
@@ -1133,26 +950,23 @@ export function nspawnDiskPaths(storage, request) {
     || (kind === 'project' ? !/^[1-9][0-9]{0,15}$/.test(resource) : !SAFE_RESOURCE_TOKEN.test(resource))) {
     fail('the resource id is invalid');
   }
-  if (typeof request.diskId !== 'string' || !SAFE_RESOURCE_TOKEN.test(request.diskId)) fail('the disk id is invalid');
-  const storageRoot = kind === 'project'
+  return Object.freeze({ kind, resource, storageRoot: kind === 'project'
     ? join(storage.sandboxDataDir, 'projects', resource)
-    : join(storage.sitesDataDir, resource, 'environment');
+    : join(storage.sitesDataDir, resource, 'environment') });
+}
+
+export function nspawnDiskPaths(storage, request) {
+  const { kind, resource, storageRoot } = nspawnResourceStorage(storage, request);
+  if (typeof request.diskId !== 'string' || !SAFE_RESOURCE_TOKEN.test(request.diskId)) fail('the disk id is invalid');
   const directory = join(storageRoot, 'disks', request.diskId);
-  return Object.freeze({
-    kind,
-    resource,
-    diskId: request.diskId,
-    storageRoot,
-    directory,
-    rootfs: join(directory, 'rootfs'),
-    identity: join(directory, '.elowen', 'identity.json'),
-  });
+  return Object.freeze({ kind, resource, diskId: request.diskId, storageRoot, directory,
+    rootfs: join(directory, 'rootfs'), identity: join(directory, '.elowen', 'identity.json') });
 }
 
 /** The `systemd-run` command line, built here and never taken from the request. The guest argv is opaque
  *  payload: it is placed after `--`, where it can no longer be read as an option, and passed through
  *  untouched. The bounds below are transport hygiene — they protect the command line and the pipe, not
- *  the guest — and are the same ones the Podman runtime applies today.
+ *  the guest.
  *
  *  `--expand-environment=no` is what makes "untouched" true. A transient unit's command line is a systemd
  *  command line, and by default the manager substitutes `${VAR}` and `$VAR` in it at exec time. Measured
@@ -1185,11 +999,13 @@ export function nspawnExecArgs(request) {
   // A DETACHED unit outlives the call that started it — a preview server, a publication forwarder — so it
   // drops the three options that make `systemd-run` wait for an exit: there is no exit to wait for.
   const detached = request.detached === true;
+  const environment = nspawnEnvironmentEntries(request.environment ?? {});
   return [
     '-M', machine, '--quiet', ...(detached ? [] : ['--pipe', '--wait']), '--collect', `--unit=${unit}`,
     '--service-type=exec', '--expand-environment=no', '--property=KillMode=control-group',
     '--property=TimeoutStopSec=5s', '--property=TasksMax=infinity',
     ...(detached ? [] : [`--property=RuntimeMaxSec=${seconds}s`]),
+    ...environment.map(([key, value]) => `--setenv=${key}=${value}`),
     `--working-directory=${cwd}`, '--', ...argv,
   ];
 }
@@ -1202,7 +1018,7 @@ export function nspawnExecArgs(request) {
  *  `raw` is the LAUNCHED path, where the daemon spawns this helper itself and streams the result to a
  *  terminal. There the verdict is not what the caller wants, so nothing is encoded and nothing is
  *  printed: the child's streams are inherited straight through and the helper exits with the child's own
- *  status, which is exactly how `podman exec` behaves today.
+ *  status, which is what any ordinary remote-execution command does.
  *
  *  `detached` starts a unit and returns as soon as it is up, with the confirmation that it IS up — a
  *  caller that got a bare acknowledgement would have no way to tell a started server from one that
@@ -1250,13 +1066,64 @@ function nspawnExec(request, options) {
   };
 }
 
-function readUidRanges(readText) {
-  try {
-    const value = JSON.parse(readText(NSPAWN_UID_STATE_PATH));
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  } catch {
-    return {};
+const UID_REGISTRY_BYTES = 1024 * 1024;
+const UID_REGISTRY_KEY = /^(?:project:[1-9][0-9]*|site:[a-z0-9][a-z0-9-]{0,127})(?::[a-z0-9][a-z0-9-]{0,127})?$/;
+
+function validateUidRangeRegistry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('machine uid range registry has the wrong shape');
+  const ranges = {};
+  const occupied = new Map();
+  const environmentRanges = new Map();
+  for (const [key, base] of Object.entries(value)) {
+    if (!UID_REGISTRY_KEY.test(key)) fail(`machine uid range registry has an invalid key: ${key}`);
+    if (!Number.isSafeInteger(base) || base < UID_RANGE_BASE || (base - UID_RANGE_BASE) % UID_RANGE_SIZE !== 0
+      || base >= UID_RANGE_BASE + UID_RANGE_SLOTS * UID_RANGE_SIZE) fail(`machine uid range registry has an invalid range for ${key}`);
+    const environment = key.split(':').slice(0, 2).join(':');
+    if (environmentRanges.has(environment) && environmentRanges.get(environment) !== base) {
+      fail(`machine uid range registry assigns more than one range to ${environment}`);
+    }
+    if (occupied.has(base) && occupied.get(base) !== environment) fail(`machine uid range registry assigns range ${base} to more than one environment`);
+    environmentRanges.set(environment, base); occupied.set(base, environment); ranges[key] = base;
   }
+  return ranges;
+}
+
+/** Read the root-owned uid registry without ever turning a damaged file into an empty allocation set.
+ *  Missing is the one initial state. Every existing file has to be a single, non-writable regular file,
+ *  bounded, complete JSON with one valid and unique slot per key. A partial write, permission failure,
+ *  symlink or wrong shape therefore stops the mutation that asked for a range. */
+export function readUidRangeRegistry(path = NSPAWN_UID_STATE_PATH) {
+  let fd;
+  try {
+    fd = openSync(path, O_RDONLY | O_NOFOLLOW);
+  } catch (cause) {
+    if (cause?.code === 'ENOENT') return {};
+    throw new Error(`machine uid range registry cannot be opened: ${cause.message}`);
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o022) !== 0) fail('machine uid range registry is untrusted');
+    if (stat.size > UID_REGISTRY_BYTES) fail('machine uid range registry exceeds its bound');
+    let value;
+    try { value = JSON.parse(readFileSync(fd, 'utf8')); }
+    catch (cause) { throw new Error(`machine uid range registry is malformed: ${cause.message}`); }
+    return validateUidRangeRegistry(value);
+  } finally { closeSync(fd); }
+}
+
+function readUidRanges(options) {
+  if (typeof options.readUidRanges === 'function') return validateUidRangeRegistry(options.readUidRanges());
+  // Test and installer seams already virtualize host reads through this callback. Empty is their explicit
+  // missing-file sentinel; every non-empty existing value still has to parse and validate without fallback.
+  if (typeof options.readText === 'function') {
+    const text = options.readText(NSPAWN_UID_STATE_PATH);
+    if (text === '') return {};
+    let value;
+    try { value = JSON.parse(text); }
+    catch (cause) { throw new Error(`machine uid range registry is malformed: ${cause.message}`); }
+    return validateUidRangeRegistry(value);
+  }
+  return readUidRangeRegistry();
 }
 
 /** Allocate the ENVIRONMENT's fixed range once and record it. The registry is the single owner of the
@@ -1271,58 +1138,73 @@ function readUidRanges(readText) {
  *
  *  A disk allocated under the earlier per-disk key keeps the range its files are already chowned to; it
  *  is adopted under the environment key the first time the environment asks. */
-function uidRangeFor(paths, readText, writeAtomic) {
+function uidRangeFor(paths, options) {
   const key = `${paths.kind}:${paths.resource}`;
-  const ranges = readUidRanges(readText);
-  const recorded = Number.isSafeInteger(ranges[key]) ? ranges[key] : ranges[`${key}:${paths.diskId}`];
+  const legacyKey = `${key}:${paths.diskId}`;
+  const ranges = readUidRanges(options);
+  const recorded = Number.isSafeInteger(ranges[key]) ? ranges[key] : ranges[legacyKey];
   if (Number.isSafeInteger(recorded)) {
-    if (ranges[key] !== recorded) {
+    if (ranges[key] !== recorded || Object.hasOwn(ranges, legacyKey)) {
       ranges[key] = recorded;
-      writeAtomic(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+      delete ranges[legacyKey];
+      (options.writeAtomic ?? atomicWrite)(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
     }
     return recorded;
   }
-  const taken = new Set(Object.values(ranges).filter((value) => Number.isSafeInteger(value)));
+  const taken = new Set(Object.values(ranges));
   for (let slot = 0; slot < UID_RANGE_SLOTS; slot++) {
     const base = UID_RANGE_BASE + slot * UID_RANGE_SIZE;
     if (taken.has(base)) continue;
     ranges[key] = base;
-    writeAtomic(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+    (options.writeAtomic ?? atomicWrite)(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
     return base;
   }
   return fail('no machine uid range is available');
 }
 
-/** Move a tree between the two ownership schemes, in place and in either direction.
+/** Release a range only after every environment-owned tree and machine artefact is gone. The complete
+ *  storage root contains active disks, retained snapshots, rollback disks and backups, so its absence is
+ *  the point at which no preserved tree can still carry this mapping. Old disk-key aliases are removed
+ *  with the environment key, and a retry after a completed release is a no-op. */
+function releaseUidRange(request, storage, options) {
+  const { kind, resource, storageRoot } = nspawnResourceStorage(storage, request);
+  const namespace = typeof request.namespace === 'string' && SAFE_RESOURCE_TOKEN.test(request.namespace)
+    ? request.namespace : fail('the namespace is invalid');
+  const exists = options.exists ?? existsSync;
+  const readDir = options.readDir ?? ((path) => readdirSync(path));
+  if (exists(storageRoot)) fail('the environment storage still exists');
+  const stem = `${namespace}-${kind}-${resource}-g`;
+  const settings = (() => { try { return readDir(NSPAWN_SETTINGS_ROOT); } catch (cause) { if (cause?.code === 'ENOENT') return []; throw cause; } })();
+  if (settings.some((name) => name.startsWith(stem) && name.endsWith('.nspawn'))) fail('an environment machine envelope still exists');
+  const units = (() => { try { return readDir('/etc/systemd/system'); } catch (cause) { if (cause?.code === 'ENOENT') return []; throw cause; } })();
+  if (units.some((name) => name.startsWith(`elowen-machine@${stem}`) && name.endsWith('.service.d'))) fail('an environment machine drop-in still exists');
+
+  const ranges = readUidRanges(options);
+  const key = `${kind}:${resource}`;
+  let changed = false;
+  for (const candidate of Object.keys(ranges)) {
+    if (candidate !== key && !candidate.startsWith(`${key}:`)) continue;
+    delete ranges[candidate]; changed = true;
+  }
+  if (changed) (options.writeAtomic ?? atomicWrite)(NSPAWN_UID_STATE_PATH, Buffer.from(`${JSON.stringify(ranges, null, 2)}\n`), 0o600);
+  return { ok: true, kind, resource };
+}
+
+/** Move a tree onto the machine's own fixed uid range, in place: guest id g appears on the host as
+ *  base+g, and the mapping reads nothing else — no subordinate range, no service account.
  *
- *  `nspawn` is the machine's own fixed range: guest id g appears on the host as base+g. `podman` is what
- *  a tree extracted inside `podman unshare` carries: guest root is the service account itself and guest
- *  id g>0 is subStart+g-1. The reverse direction is not optional — a migration candidate that will not
- *  boot has to go back up on Podman, and rootless Podman cannot read a tree that has been chowned into
- *  the machine's range.
- *
- *  Every mode also ACCEPTS an id that already carries the destination scheme and leaves it alone, so an
- *  interrupted pass, which has no receipt and therefore cannot be reversed, is simply re-run. */
+ *  It ACCEPTS an id that already carries the machine range and leaves it alone, so a pass interrupted
+ *  part-way through a tree is simply re-run rather than repaired. */
 const OWNERSHIP_SHIFT_PY = `import json,os,sys
 spec=json.loads(sys.argv[1]); root=sys.argv[2]
-base=spec['base']; size=spec['size']; service=spec['serviceId']; previous=spec['previousBase']
+base=spec['base']; size=spec['size']
 def machine(uid):
  return base<=uid<base+size
-def podman(uid):
- return uid==service or previous<=uid<previous+size-1
 def to_machine(uid):
  if machine(uid): return uid
- if spec['mode']=='offset':
-  if 0<=uid<size: return base+uid
- elif podman(uid): return base+(0 if uid==service else uid-previous+1)
+ if 0<=uid<size: return base+uid
  raise SystemExit('id %d belongs to no known mapping' % uid)
-def to_podman(uid):
- if podman(uid): return uid
- if machine(uid):
-  guest=uid-base
-  return service if guest==0 else previous+guest-1
- raise SystemExit('id %d belongs to no known mapping' % uid)
-convert=to_podman if spec['target']=='podman' else to_machine
+convert=to_machine
 shifted=0
 for directory,names,files in os.walk(root,topdown=True,followlinks=False):
  for name in [os.curdir]+names+files:
@@ -1331,26 +1213,12 @@ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
   if uid!=st.st_uid or gid!=st.st_gid: os.lchown(path,uid,gid); shifted+=1
 print(json.dumps({'entries':shifted}))`;
 
+/** The pass maps guest id g to base+g and consults no other mapping, so the spec carries the range and
+ *  nothing about the host's accounts. */
 function shiftOwnership(runner, root, spec) {
   const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root], { timeoutMs: DISK_TREE_TIMEOUT_MS });
   if (!result.ok) fail(`the machine ownership pass failed: ${String(result.stderr || '').slice(-400)}`);
   return JSON.parse(String(result.stdout || '{}'));
-}
-
-/** The service user's own mapping, which a tree extracted inside `podman unshare` carries. */
-function subordinateRangeFor(readText, user) {
-  const entry = subidEntries(readText, '/etc/subuid').find((row) => row.name === user.name);
-  if (!entry) fail('the service user has no subordinate id range');
-  return { serviceId: user.uid, subStart: entry.start };
-}
-
-function nspawnIdentity(paths, storage) {
-  try {
-    const value = JSON.parse(readFileSync(trustedPath(storage, paths.identity, { file: true }), 'utf8'));
-    return value && typeof value === 'object' ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 /** The group the daemon runs as, so it can READ what only root may write. */
@@ -1470,8 +1338,6 @@ function nspawnMachineName(value) {
  *  own storage, and the target is the staging directory the daemon created and will rename into place. */
 function nspawnMaterialize(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
-  const env = options.env ?? process.env;
   const paths = nspawnDiskPaths(storage, request);
   const archive = trustedPath(storage, request.archivePath, { file: true });
   const target = trustedPath(storage, request.targetPath);
@@ -1516,54 +1382,29 @@ function nspawnMaterialize(request, storage, options) {
     const machineIdPath = join(trustedPath(storage, etc), 'machine-id');
     if (existsSync(machineIdPath)) writeFileSync(machineIdPath, '');
   }
-  const base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
-  const user = serviceUser(runner, env);
-  const podman = subordinateRangeFor(readText, user);
-  const shifted = shiftOwnership(runner, target, {
-    mode: 'offset', target: 'nspawn', base, size: UID_RANGE_SIZE, serviceId: podman.serviceId, previousBase: podman.subStart,
-  });
+  const base = uidRangeFor(paths, options);
+  // The pass translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
+  // needs nothing from /etc/subuid and nothing about the service account.
+  const shifted = shiftOwnership(runner, target, { base, size: UID_RANGE_SIZE });
   const identity = writeIdentity(paths, storage, identityFields(request, paths, base), options);
   return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity };
 }
 
-/** The ownership pass, in whichever direction the caller names, with the receipt a rollback needs. It is
- *  idempotent by construction: ids already carrying the destination scheme are left alone, so an
- *  interrupted pass — which produced no receipt and therefore cannot be reversed — is re-run instead. */
+/** The ownership pass over a disk that already exists, onto the range the registry holds for the
+ *  environment. It is idempotent by construction: ids already carrying the machine range are left alone,
+ *  so a pass interrupted part-way through a tree is re-run rather than repaired. */
 function nspawnShiftOwnership(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
-  const readText = options.readText ?? defaultReadText;
-  const env = options.env ?? process.env;
-  const target = request.target;
-  if (target !== 'nspawn' && target !== 'podman') fail('the ownership shift target is invalid');
   const paths = nspawnDiskPaths(storage, request);
   const rootfs = trustedPath(storage, paths.rootfs);
-  const user = serviceUser(runner, env);
-  const podman = subordinateRangeFor(readText, user);
-  const recorded = nspawnIdentity(paths, storage);
-  let base;
-  if (target === 'podman') {
-    // Reversing is only ever asked for with the range the forward pass reported, and it must be the range
-    // this disk actually holds: a reversal against the wrong base would rewrite every id in the tree.
-    if (!Number.isSafeInteger(request.uidBase) || request.uidBase < 1) fail('reversing an ownership shift requires the recorded range');
-    base = Number.isSafeInteger(recorded?.uidBase) ? recorded.uidBase : fail('the disk has no recorded uid range to reverse');
-    if (request.uidBase !== podman.subStart) fail('the ownership shift receipt does not name this host\'s subordinate range');
-  } else {
-    base = uidRangeFor(paths, readText, options.writeAtomic ?? atomicWrite);
-  }
-  const shifted = shiftOwnership(runner, rootfs, {
-    mode: 'subid', target, base, size: UID_RANGE_SIZE, serviceId: podman.serviceId, previousBase: podman.subStart,
-  });
-  writeIdentity(paths, storage, {
-    ...identityFields(request, paths, base),
-    ownershipTarget: target,
-    previousUidBase: podman.subStart,
-  }, options);
+  const base = uidRangeFor(paths, options);
+  const shifted = shiftOwnership(runner, rootfs, { base, size: UID_RANGE_SIZE });
+  writeIdentity(paths, storage, identityFields(request, paths, base), options);
   return {
     ok: true,
     rootfsPath: rootfs,
     uidBase: base,
     uidSize: UID_RANGE_SIZE,
-    previousUidBase: podman.subStart,
     entries: shifted.entries,
   };
 }
@@ -1667,10 +1508,49 @@ function nspawnDropCapabilities(raw) {
   return [...new Set([...NSPAWN_DROP_CAPABILITIES, ...requested])];
 }
 
-/** `:rootidmap` gives the guest's root the identity of the directory's host owner, which is the same
- *  semantics rootless Podman provides today: a file the guest writes appears on the host as the service
- *  user, and a service-user file appears inside the machine as root. */
-export function renderMachineSettings(binds, { privateNetwork = true, uidBase, dropCapabilities = NSPAWN_DROP_CAPABILITIES }) {
+function machineResolver(readText) {
+  for (const path of [MACHINE_UPLINK_RESOLVER, '/etc/resolv.conf']) {
+    let content;
+    try { content = readText(path); } catch (cause) { if (cause?.code === 'ENOENT') continue; throw cause; }
+    const servers = String(content).split(/\r?\n/).map((line) => /^\s*nameserver\s+(\S+)/.exec(line)?.[1]).filter(Boolean);
+    if (servers.some((server) => !server.startsWith('127.') && server !== '::1')) return path;
+  }
+  fail('the host has no non-loopback DNS resolver for machine networking');
+}
+
+function nspawnEnvironmentEntries(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 64) fail('the machine environment is invalid');
+  return Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, raw]) => {
+    const text = typeof raw === 'string' ? raw : fail('the machine environment value is invalid');
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || text.length > 4096 || /[\0\r\n]/.test(text)) fail('the machine environment is invalid');
+    return [key, text];
+  });
+}
+
+function nspawnEnvironment(value) {
+  return nspawnEnvironmentEntries(value).map(([key, text]) =>
+    `Environment="${`${key}=${text}`.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`);
+}
+
+function nspawnPorts(raw) {
+  if (!Array.isArray(raw) || raw.length > 32) fail('the machine inbound ports are invalid');
+  const seen = new Set();
+  return raw.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Object.keys(entry).some((key) => !['protocol', 'hostPort', 'guestPort'].includes(key))) fail('the machine inbound ports are invalid');
+    if (entry.protocol !== 'tcp' && entry.protocol !== 'udp') fail('the machine inbound port protocol is invalid');
+    if (!Number.isSafeInteger(entry.hostPort) || entry.hostPort < 1024 || entry.hostPort > 65535
+      || !Number.isSafeInteger(entry.guestPort) || entry.guestPort < 1 || entry.guestPort > 65535) fail('the machine inbound port is invalid');
+    const key = `${entry.protocol}:${entry.hostPort}`;
+    if (seen.has(key)) fail('the machine inbound host port is duplicated');
+    seen.add(key);
+    return { protocol: entry.protocol, hostPort: entry.hostPort, guestPort: entry.guestPort };
+  }).sort((a, b) => a.protocol.localeCompare(b.protocol) || a.hostPort - b.hostPort || a.guestPort - b.guestPort);
+}
+
+/** `:rootidmap` gives the guest's root the identity of the directory's host owner: a file the guest
+ *  writes appears on the host as the service user, and a service-user file appears inside the machine as
+ *  root. */
+export function renderMachineSettings(binds, { privateNetwork = true, uidBase, environment = {}, ports = [], resolverPath = null, dropCapabilities = NSPAWN_DROP_CAPABILITIES }) {
   if (!Number.isSafeInteger(uidBase) || uidBase < UID_RANGE_BASE) fail('the machine uid range is invalid');
   const lines = [
     '# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.',
@@ -1679,6 +1559,7 @@ export function renderMachineSettings(binds, { privateNetwork = true, uidBase, d
     'NoNewPrivileges=yes',
     `DropCapability=${[...dropCapabilities].join(' ')}`,
     'LinkJournal=no',
+    ...nspawnEnvironment(environment),
     '',
     '[Files]',
     // Ownership was applied once when the disk was materialized, so the boot must not repeat a chown over
@@ -1689,10 +1570,17 @@ export function renderMachineSettings(binds, { privateNetwork = true, uidBase, d
   for (const bind of binds) {
     lines.push(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);
   }
+  if (resolverPath !== null) {
+    if (resolverPath !== MACHINE_UPLINK_RESOLVER && resolverPath !== '/etc/resolv.conf') fail('the machine resolver path is invalid');
+    lines.push(`BindReadOnly=${resolverPath}:/etc/resolv.conf`);
+  }
   // Both keys are always written. `VirtualEthernet=` implies a private network namespace on its own, but
   // the failure mode of relying on that implication is a machine sharing the host's namespace outright,
   // so the namespace is stated rather than inferred.
+  const inbound = nspawnPorts(ports);
+  if (privateNetwork && inbound.length) fail('a loopback-only machine cannot publish inbound ports');
   lines.push('', '[Network]', 'Private=yes', `VirtualEthernet=${privateNetwork ? 'no' : 'yes'}`);
+  for (const port of inbound) lines.push(`Port=${port.protocol}:${port.hostPort}:${port.guestPort}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -1715,20 +1603,25 @@ function nspawnWriteEnvelope(request, storage, options) {
   const readText = options.readText ?? defaultReadText;
   const writeAtomic = options.writeAtomic ?? atomicWrite;
   const machine = nspawnMachineName(request.machine);
+  const activeState = runner('/usr/bin/systemctl', ['show', '-p', 'ActiveState', '--value', machineUnitFor(machine)]);
+  if (activeState.ok && ['active', 'activating', 'deactivating'].includes(String(activeState.stdout ?? '').trim())) fail('the machine must be stopped before its envelope is rewritten');
   const paths = nspawnDiskPaths(storage, request);
   const rootfs = realpathSync(trustedPath(storage, paths.rootfs));
   if (typeof request.privateNetwork !== 'boolean') fail('the machine network request is invalid');
+  const ports = nspawnPorts(request.ports ?? []);
+  if (request.privateNetwork && ports.length) fail('a loopback-only machine cannot publish inbound ports');
   // The envelope is what turns veth on, so this is where the gate belongs: a machine cannot be started
   // with a link the host is not ready to isolate, and no client can skip the check by not asking for it.
   if (request.privateNetwork === false) {
     const unmet = vethReadiness(runner, readText).filter((item) => !item.ok);
     if (unmet.length > 0) fail(`the host is not ready for machine networking — ${unmet.map((item) => item.detail).join('; ')}`);
   }
+  const resolverPath = request.privateNetwork ? null : machineResolver(readText);
   const limits = nspawnLimits(request.limits);
   const binds = nspawnBinds(storage, request.binds ?? []);
   ensureNestedMountPoints(binds, options.writeAtomic === undefined);
   const dropCapabilities = nspawnDropCapabilities(request.dropCapabilities);
-  const uidBase = uidRangeFor(paths, readText, writeAtomic);
+  const uidBase = uidRangeFor(paths, options);
   // The envelope DECLARES a range and never establishes one: `PrivateUsersOwnership=off` is deliberate,
   // so nothing at boot chowns the tree into the range written here. A tree that carries a different range
   // therefore boots into a machine whose own root owns none of it — `/etc` reads back as `nobody:nogroup`
@@ -1737,7 +1630,7 @@ function nspawnWriteEnvelope(request, storage, options) {
   // the two agree is one lstat, and it is exact.
   const owner = (options.readOwner ?? defaultReadOwner)(rootfs);
   if (owner !== uidBase) fail(`the root filesystem is owned by ${owner} and this envelope declares the range at ${uidBase}`);
-  const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, dropCapabilities });
+  const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, environment: request.environment ?? {}, ports, resolverPath, dropCapabilities });
   const dropIn = renderMachineDropIn(rootfs, limits, uidBase);
   const settingsPath = join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`);
   const dropInPath = join('/etc/systemd/system', `elowen-machine@${machine}.service.d`, '10-elowen.conf');
@@ -1748,10 +1641,10 @@ function nspawnWriteEnvelope(request, storage, options) {
   return { ok: true, machine, unit: machineUnitFor(machine), settingsPath, dropInPath, uidBase, uidSize: UID_RANGE_SIZE };
 }
 
-/* The tree primitives keep the Python implementations the Podman runtime already uses; only the process
- * that runs them moves from `podman unshare` to this helper, because the rootfs is owned by the
- * machine's uid range and the service user cannot read it. `tests/contract/nspawnHelper.test.ts`
- * compares the inventory source with the runtime's own copy so the two cannot drift apart. */
+/* The tree primitives run here rather than as the service account, because the rootfs is owned by the
+ * machine's uid range and the service user cannot read it. They are metadata-exact on purpose: a copy, a
+ * fingerprint and a verification all have to agree about what a tree IS, so `tests/contract/nspawnHelper.test.ts`
+ * holds the shared inventory to the one definition below and the runtime to the same shape. */
 const DISK_TREE_INVENTORY_PY = `def inventory(root):
  rows=[]; links={}
  for directory,names,files in os.walk(root,topdown=True,followlinks=False):
@@ -1796,8 +1689,11 @@ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
   h.update(json.dumps(row,separators=(',',':')).encode()); h.update(b'\\n')
 print(json.dumps({'logicalBytes':logical,'allocatedBytes':allocated,'digest':h.hexdigest()}))`;
 
+/** `sys.argv[3]` is a requirement that has no tree to walk — what an archive's headers say it would
+ *  unpack to — so a caller that already knows the figure gets the same margin rule and the same refusal
+ *  as one that hands over a directory. It defaults to nothing, so the tree-only callers are unchanged. */
 const DISK_TREE_PREFLIGHT_PY = `import json,os,sys
-sources=json.loads(sys.argv[1]); destination=sys.argv[2]; required=0
+sources=json.loads(sys.argv[1]); destination=sys.argv[2]; required=int(sys.argv[3]) if len(sys.argv)>3 else 0
 for root in sources:
  for directory,names,files in os.walk(root,topdown=True,followlinks=False):
   for name in names+files: required+=os.lstat(os.path.join(directory,name)).st_size
@@ -1948,6 +1844,330 @@ function nspawnTreeRemove(request, storage) {
   return { ok: true, path };
 }
 
+/** What one Site data archive may weigh, in either direction and whichever side it is measured on.
+ *
+ *  It is the aggregate figure `exportProjectTree` in the Sandbox plugin already applies to one tree
+ *  crossing the boundary between an environment and a host artifact, and this is that same crossing by a
+ *  different transport. What it protects is the host filesystem both sides land on: without it an import
+ *  is an unbounded write into the service account's storage driven by a file the daemon did not produce,
+ *  and an export turns a runaway data directory into an archive that fills the disk every other
+ *  environment on the host is running from. */
+export const SITE_DATA_ARCHIVE_BYTES = 16 * 1024 ** 3;
+
+/** What an archive would unpack to, HOW MANY entries it would create, and whether every member stays
+ *  inside the directory it is unpacked into, read from the member headers alone: an uncompressed archive
+ *  on a seekable file is walked by header without its content ever being read. Both running totals are
+ *  held against their bound as they go, so an archive claiming a petabyte, or a hundred million files, is
+ *  refused on the member that crosses the line rather than after the whole index is built. */
+export const SITE_DATA_INDEX_PY = `import json,os,sys,tarfile
+archive=sys.argv[1]; limit=int(sys.argv[2]); entries=int(sys.argv[3]); total=0; members=0
+with tarfile.open(archive,'r') as tar:
+ for member in tar:
+  rel=os.path.normpath(member.name)
+  if os.path.isabs(rel) or rel=='..' or rel.startswith('..'+os.sep):
+   print('the archive names a member outside the data directory: '+member.name[:200],file=sys.stderr); sys.exit(1)
+  members+=1
+  if members>entries:
+   print('the archive names more than %d members' % entries,file=sys.stderr); sys.exit(1)
+  if member.isreg(): total+=member.size
+  if total>limit:
+   print('the archive would unpack to more than %d bytes' % limit,file=sys.stderr); sys.exit(1)
+print(json.dumps({'members':members,'unpackedBytes':total}))`;
+
+/** How many entries one Site data archive may name.
+ *
+ *  The byte bound does not bound the work, because an entry that carries no content costs a header and
+ *  nothing else: an archive of about twenty megabytes can describe tens of millions of empty members and
+ *  pass every size check there is. Each one still becomes an inode that is created, walked by the
+ *  verification, chowned by the ownership pass and fsynced, so the archive that weighs nothing is the one
+ *  that occupies the helper — and the host's inode table — for as long as it likes.
+ *
+ *  Two million is far above what a Site's data directory holds and far below what makes that possible. */
+export const SITE_DATA_ARCHIVE_MEMBERS = 2_000_000;
+
+/** The archive flags both directions share. `--numeric-owner` is what makes the archive portable back
+ *  into a machine: ids travel as numbers, so the ownership pass on the way in maps guest id g onto this
+ *  machine's own range rather than resolving a name against the host's accounts. The pax format is not
+ *  decoration either — it is what carries modification times to the nanosecond and extended attributes,
+ *  both of which the tree fingerprint compares, so a round trip through any lesser format would come back
+ *  as a different tree. */
+const SITE_DATA_ARCHIVE_FLAGS = Object.freeze(['--numeric-owner', '--preserve-permissions', '--xattrs',
+  '--xattrs-include=*', '--sparse']);
+
+/** The staging names an import owns, and they are deliberately none of the ones already in use.
+ *  `prepare` reads `rootfs.pending` and `disk.pending` as an interrupted disk fill, `adoptDiskIdentity`
+ *  stages at `disk.adopting`, and a snapshot restore stages a component tree at `<component>.pending`.
+ *  A crashed data import must not present as any of them. */
+const DATA_STAGING_SUFFIX = '.importing';
+const DATA_RETIRED_SUFFIX = '.retiring';
+const DATA_EXPORT_SUFFIX = '.exporting';
+
+const missing = (path) => {
+  try { lstatSync(path); return false; }
+  catch (error) { if (error && error.code === 'ENOENT') return true; throw error; }
+};
+
+function syncDirectory(path) {
+  const fd = openDirectory(path);
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+
+/** Every machine unit this environment could be running under, as one systemd glob. The machine name is
+ *  `elowen-<kind>-<resource>-g<generation>` and `NSPAWN_MACHINE` pins that whole shape, so the kind and
+ *  the resource the request already had to prove are the entire name apart from the generation. */
+const machineUnitGlobFor = (paths) => `elowen-machine@elowen-${paths.kind}-${paths.resource}-g*.service`;
+
+/** Refuse while any generation of this environment's machine is up.
+ *
+ *  Every generation is asked about rather than the one a request happens to name, because the request
+ *  names a disk and a disk is not what holds the bind open — a live machine of any generation is. The
+ *  glob is answered by systemd and the names it returns are held against the exact pattern again, so a
+ *  resource whose token happens to contain a generation suffix cannot widen what this reads.
+ *
+ *  A systemd that will not answer is not an absent machine: an unreadable state refuses the import rather
+ *  than passing it, because the whole point of asking is that the alternative is destroying live data. */
+function assertMachineStopped(paths, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const exact = new RegExp(`^elowen-machine@elowen-${paths.kind}-${paths.resource}-g[0-9]{1,9}\\.service$`);
+  const listed = runner('/usr/bin/systemctl', ['list-units', '--plain', '--no-legend',
+    '--state=activating,active,deactivating,reloading', machineUnitGlobFor(paths)]);
+  if (!listed.ok) fail(`the machine state could not be established: ${String(listed.stderr || '').slice(-400)}`);
+  const up = String(listed.stdout || '').split('\n')
+    .map((line) => line.trim().split(/\s+/)[0] ?? '')
+    .filter((unit) => exact.test(unit));
+  if (up.length > 0) fail(`stop the environment before importing its data: ${up[0]} is still up`);
+}
+
+/** The data tree as an OBJECT rather than as a name.
+ *
+ *  `trustedPath` answers about a path at the moment it looks, and the account that owns the directory
+ *  around this one can replace the entry afterwards. A symlink to `/root` planted in that window would
+ *  have root capture the host's own files into an archive that is then chowned to the caller and handed
+ *  over — so the whole tree crosses the boundary on a read every check had already passed. The window can
+ *  be spun until it is hit, because an export can be asked for as often as the caller likes.
+ *
+ *  `O_DIRECTORY|O_NOFOLLOW` refuses a symlink outright and cannot open a regular file, which is the same
+ *  refusal the lstat made, done in the only way that leaves no gap for the entry to be swapped underneath
+ *  it. Everything after it runs on the descriptor. It is the treatment the archive FILE already gets a few
+ *  lines below, and the one `ensureIdentityDirectory` and the materialized root filesystem already get. */
+function openDataDirectory(path) {
+  let fd;
+  try {
+    fd = openDirectory(path);
+  } catch (error) {
+    if (error && (error.code === 'ELOOP' || error.code === 'ENOTDIR')) fail('the site data directory is not a directory');
+    throw error;
+  }
+  try {
+    if (!fstatSync(fd).isDirectory()) fail('the site data directory is not a directory');
+  } catch (cause) {
+    closeSync(fd);
+    throw cause;
+  }
+  return fd;
+}
+
+/** An open directory addressed as a path, for the commands that only take one. `/proc/<pid>/fd/<n>`
+ *  resolves to the object the descriptor holds rather than to the name it was opened by, so a child
+ *  pointed at it walks the tree this process verified however that name has been made to read since.
+ *
+ *  The pid is stated rather than `self`: the descriptor belongs to this process, and a child reading
+ *  `/proc/self` would find its own table, where Node has already closed this one on exec. */
+function descriptorPath(fd) {
+  return `/proc/${process.pid}/fd/${fd}`;
+}
+
+/** Seed or capture a Site's `data` directory as one archive. The container runtime did it by streaming a
+ *  named volume; a machine has no such handle, because the data directory is a plain tree on the disk
+ *  that the machine's uid range owns — so both directions run here, where the tree can be read at all.
+ *
+ *  The tree is never named by the request alone. `nspawnDiskPaths` re-derives the environment's storage
+ *  root from the validated kind and resource, and `siteDataComponent` derives the one path under that root
+ *  the `data` component of this disk can have. The request is held against that single path. */
+function nspawnSiteDataArchive(request, storage, options) {
+  const paths = nspawnDiskPaths(storage, request);
+  if (paths.kind !== 'site') fail('only a site environment has a data directory to archive');
+  const operation = request.operation;
+  if (operation !== 'import' && operation !== 'export') fail('the data archive operation is invalid');
+  const data = trustedPath(storage, request.dataPath);
+  if (data !== siteDataComponent(paths, request)) {
+    fail('the data directory does not belong to the environment the request names');
+  }
+  return operation === 'import'
+    ? importSiteData(request, storage, options, paths, data)
+    : exportSiteData(request, storage, options, data);
+}
+
+/** The ONE path this disk's `data` component can have, derived here rather than recognised by its name.
+ *
+ *  The layout puts it in the disk directory, or under `storage/<generation>` for an environment migrated
+ *  onto trees an earlier generation created; `createEnvironmentDiskSpec` in the Sandbox plugin owns both
+ *  shapes and `tests/contract/nspawnHelper.test.ts` holds the two in step. The generation cannot be
+ *  re-derived from the resource, so it arrives as a number and is validated as one — a number can name a
+ *  directory this environment owns and nothing else.
+ *
+ *  Accepting "anything called `data` under the storage root" instead is what made this dangerous rather
+ *  than merely loose: `snapshots/<id>/data` is such a directory, and an import onto it overwrites the
+ *  snapshot the runtime documents as the recovery for a data tree that went missing. The binding to the
+ *  live component existed only on the daemon side, where it protects nothing this helper does. */
+function siteDataComponent(paths, request) {
+  const generation = request.componentGeneration;
+  if (generation === undefined) return join(paths.directory, 'data');
+  if (!Number.isSafeInteger(generation) || generation < 1 || generation > 1_000_000_000) {
+    fail('the disk component generation is invalid');
+  }
+  return join(paths.storageRoot, 'storage', String(generation), 'data');
+}
+
+/** Capture the tree into an archive the service account can read.
+ *
+ *  Nothing is written at the destination until there is a whole archive to put there: the capture lands
+ *  on its own staging name and is renamed into place, so a failure leaves nothing a retry could mistake
+ *  for a finished export, and the destination is never truncated by a capture that then fails. */
+function exportSiteData(request, storage, options, data) {
+  const archive = trustedPath(storage, request.archivePath, { file: true, allowMissing: true });
+  if (!missing(archive)) fail('the archive destination already exists');
+  // The daemon creates the destination directory, as it creates every other staging directory here: a
+  // directory made by root at 0700 would be one the account that has to read the archive could not enter.
+  const directory = trustedPath(storage, dirname(archive));
+  const staging = trustedPath(storage, `${archive}${DATA_EXPORT_SUFFIX}`, { file: true, allowMissing: true });
+  const run = treeRunner(options);
+  // Opened before it is measured and held open until the archive is complete, so the tree that is sized
+  // and the tree that is captured are one object and neither is the name it arrived as.
+  const dataFd = openDataDirectory(data);
+  try {
+    return captureSiteData(options, { run, data, source: descriptorPath(dataFd), archive, directory, staging });
+  } finally {
+    closeSync(dataFd);
+  }
+}
+
+/** The capture itself, with the tree named by the descriptor it was opened on. `data` is carried only so
+ *  the receipt still reports the path the request asked about. */
+function captureSiteData(options, { run, data, source, archive, directory, staging }) {
+  // Asked before a byte is written, and it answers both questions at once: what the tree weighs, and
+  // whether the filesystem the archive lands on has room for it.
+  const sized = run(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, JSON.stringify([source]), directory]);
+  if (!sized.ok) fail(`the site data export was refused: ${String(sized.stderr || '').slice(-400)}`);
+  const required = JSON.parse(String(sized.stdout || '{}')).requiredBytes;
+  if (!Number.isSafeInteger(required)) fail('the site data size is invalid');
+  if (required > SITE_DATA_ARCHIVE_BYTES) {
+    fail(`the site data directory holds ${required} bytes and the archive bound is ${SITE_DATA_ARCHIVE_BYTES}`);
+  }
+  rmSync(staging, { force: true });
+  try {
+    const created = run('/usr/bin/tar', ['--create', '--file', staging, '--directory', source,
+      '--format=posix', ...SITE_DATA_ARCHIVE_FLAGS, '--', '.']);
+    if (!created.ok) fail(`the site data could not be archived: ${String(created.stderr || '').slice(-400)}`);
+    // Everything left is settled through the descriptor rather than through the name a second time. The
+    // archive sits in a directory the service account owns, so between naming the file and changing it
+    // that account could unlink what root just wrote and put a link to a system file in its place — and a
+    // chown by path would then hand that file away. `O_NOFOLLOW` refuses a symlink outright.
+    const fd = openSync(staging, O_RDONLY | O_NOFOLLOW);
+    let bytes;
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.nlink !== 1) fail('the staged site data archive is not a plain file');
+      bytes = stat.size;
+      if (bytes > SITE_DATA_ARCHIVE_BYTES) {
+        fail(`the site data archive weighs ${bytes} bytes and the bound is ${SITE_DATA_ARCHIVE_BYTES}`);
+      }
+      fchmodSync(fd, 0o600);
+      // Handed to the account that has to read it back, download it and eventually delete it. Root keeps
+      // nothing here: the archive is the caller's artifact from the moment it is complete.
+      const env = options.env ?? process.env;
+      (options.setOwner ?? defaultSetOwner)(fd, sudoId(env.SUDO_UID, 'user id'), serviceGroupId(env));
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    renameSync(staging, archive);
+    syncDirectory(directory);
+    return { ok: true, operation: 'export', dataPath: data, archivePath: archive, bytes };
+  } catch (cause) {
+    rmSync(staging, { force: true });
+    throw cause;
+  }
+}
+
+/** Replace the tree with the archive's contents, or leave it exactly as it was.
+ *
+ *  The archive is unpacked into a staging tree beside the target, held against its own member list,
+ *  put on the machine's uid range and flushed to disk before anything visible moves. Only then is the
+ *  swap performed, as two renames: the old tree steps aside and the new one takes its name. Every state
+ *  those two renames can be interrupted between is one the next attempt recognises and finishes, so what
+ *  a crash leaves is the old data or the new data and never a mixture of the two. */
+function importSiteData(request, storage, options, paths, data) {
+  // The machine has to be DOWN, and this is where that is settled. The import renames the tree the guest
+  // has bind-mounted and then deletes what it replaced, so a request arriving while the guest runs races
+  // whatever it is writing and leaves it holding a directory that was unlinked underneath it. The runtime
+  // asks the same question before it sends the request, which is where an operator gets a readable
+  // refusal; what happens here is what makes the answer binding, the way `destroy` settles its own
+  // precondition rather than trusting that the caller settled it.
+  assertMachineStopped(paths, options);
+  const archive = trustedPath(storage, request.archivePath, { file: true });
+  const staging = `${data}${DATA_STAGING_SUFFIX}`;
+  const retired = `${data}${DATA_RETIRED_SUFFIX}`;
+  const parent = trustedPath(storage, dirname(data));
+  // Finish a swap that was interrupted between its two renames before anything else reads the tree. A
+  // retired tree beside a target that is gone is the old data and belongs back under its own name; one
+  // beside a target that is there has already been superseded and is what the previous attempt was about
+  // to delete.
+  if (missing(data) && !missing(retired)) { renameSync(retired, data); syncDirectory(parent); }
+  rmSync(retired, { recursive: true, force: true });
+  rmSync(staging, { recursive: true, force: true });
+  const size = lstatSync(archive).size;
+  if (size > SITE_DATA_ARCHIVE_BYTES) {
+    fail(`the site data archive weighs ${size} bytes and the bound is ${SITE_DATA_ARCHIVE_BYTES}`);
+  }
+  const run = treeRunner(options);
+  const indexed = run(PYTHON, ['-c', SITE_DATA_INDEX_PY, archive, String(SITE_DATA_ARCHIVE_BYTES),
+    String(SITE_DATA_ARCHIVE_MEMBERS)]);
+  if (!indexed.ok) fail(`the site data archive was refused: ${String(indexed.stderr || '').slice(-400)}`);
+  const index = JSON.parse(String(indexed.stdout || '{}'));
+  if (!Number.isSafeInteger(index.members) || !Number.isSafeInteger(index.unpackedBytes)) {
+    fail('the site data archive index is invalid');
+  }
+  // The same free-space question the export side asks before it writes a byte, asked the same way and
+  // against the same margin. What the archive would unpack to is already known from its headers, so the
+  // preflight is given that figure instead of a tree to walk: the filesystem the staging tree lands on is
+  // the one the environments on this host are running from, and filling it is not an outcome an import may
+  // reach by trying.
+  const room = run(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, '[]', parent, String(index.unpackedBytes)]);
+  if (!room.ok) fail(`the site data import was refused: ${String(room.stderr || '').slice(-400)}`);
+  // The replacement presents as the directory it replaces. An archive carrying its own root member
+  // rewrites this during extraction, which is correct: the mode then comes from the tree that was
+  // captured rather than from the one being discarded.
+  mkdirSync(staging, { mode: statSync(data).mode & 0o7777 });
+  try {
+    const extracted = run('/usr/bin/tar', ['--extract', '--file', archive, '--directory', staging,
+      '--same-owner', ...SITE_DATA_ARCHIVE_FLAGS]);
+    if (!extracted.ok) fail(`the site data could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
+    // An archive carrying its own root member applies that member's ownership to the directory it is
+    // extracted into, so a tree captured somewhere else can name any id at all for what becomes the
+    // guest's `/data`. That mount point belongs to the guest's root, and the pass below maps guest 0 onto
+    // base+0 — so the directory enters it as guest root rather than as whatever the archive recorded,
+    // which would otherwise land it outside the range everything inside it carries.
+    const rootFd = openDirectory(staging);
+    try { (options.setOwner ?? defaultSetOwner)(rootFd, 0, 0); } finally { closeSync(rootFd); }
+    const verified = run(PYTHON, ['-c', DISK_TREE_VERIFY_PY, archive, staging]);
+    if (!verified.ok) fail(`the imported site data could not be verified: ${String(verified.stderr || '').slice(-400)}`);
+    const base = uidRangeFor(paths, options);
+    shiftOwnership(options.runner ?? defaultCommandRunner, staging, { base, size: UID_RANGE_SIZE });
+    const synced = run(PYTHON, ['-c', DISK_TREE_SYNC_PY, staging]);
+    if (!synced.ok) fail(`the imported site data could not be flushed: ${String(synced.stderr || '').slice(-400)}`);
+    renameSync(data, retired);
+    try { renameSync(staging, data); }
+    catch (cause) { renameSync(retired, data); throw cause; }
+    syncDirectory(parent);
+    rmSync(retired, { recursive: true, force: true });
+    syncDirectory(parent);
+    return { ok: true, operation: 'import', dataPath: data, archivePath: archive,
+      members: index.members, unpackedBytes: index.unpackedBytes, uidBase: base, uidSize: UID_RANGE_SIZE };
+  } catch (cause) {
+    rmSync(staging, { recursive: true, force: true });
+    throw cause;
+  }
+}
+
 /** The envelope, and only the envelope. The disk outlives it: a repair removes an envelope whose
  *  specification changed and writes a new one over the same root filesystem, and storage removal is a
  *  separate operation with its own ownership proof on the runtime side. */
@@ -1955,7 +2175,7 @@ function nspawnDestroy(request, options) {
   const runner = options.runner ?? defaultCommandRunner;
   const machine = nspawnMachineName(request.machine);
   // Stop before the envelope goes: a running machine holds the configuration this removes.
-  runner('/usr/bin/systemctl', ['stop', machineUnitFor(machine)]);
+  runRequired(runner, '/usr/bin/systemctl', ['stop', machineUnitFor(machine)], 'machine stop failed');
   rmSync(join(NSPAWN_SETTINGS_ROOT, `${machine}.nspawn`), { force: true });
   rmSync(join('/etc/systemd/system', `elowen-machine@${machine}.service.d`), { recursive: true, force: true });
   runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
@@ -1963,7 +2183,11 @@ function nspawnDestroy(request, options) {
 }
 
 function firewallRulePresent(runner, rule) {
-  return runner(rule.binary, ['-C', rule.chain, ...rule.spec]).ok;
+  const result = runner(rule.binary, ['-S', rule.chain]);
+  if (!result.ok) return false;
+  const rules = String(result.stdout || '').split('\n').map((line) => line.trim())
+    .filter((line) => line.startsWith(`-A ${rule.chain} `));
+  return rules[rule.insertAt - 1] === `-A ${rule.chain} ${rule.spec.join(' ')}`;
 }
 
 /** systemd cannot be asked about a template by its own name, only through an instance of it, so the
@@ -1989,10 +2213,8 @@ function unitTemplateLoaded(runner) {
  *  differs, so a run against a converged host writes nothing and reloads nothing, and a run against a
  *  hand-edited host restores exactly the artefact that drifted.
  *
- *  The polkit rule carries no reload because polkitd watches its rules directories and reloads a changed
- *  rule by itself; there is no reload command to run and so nothing to check afterwards. The unit
- *  template carries one, because systemd reads unit files only when it is told to. */
-function nspawnArtefacts(user) {
+ *  The unit template carries a reload because systemd reads unit files only when it is told to. */
+function nspawnArtefacts() {
   return [
     {
       id: 'unit:elowen-machine',
@@ -2025,16 +2247,24 @@ function nspawnArtefacts(user) {
         ],
       },
     },
-    {
-      id: 'polkit:machines',
-      label: 'Machine lifecycle authorization',
-      path: POLKIT_RULE_PATH,
-      mode: 0o644,
-      content: renderPolkitRule(user.name),
-      ready: `scoped to elowen-machine units for ${user.name}`,
-      effect: null,
-    },
   ];
+}
+
+function legacyPolkitRow(user, readText, readMode) {
+  const mode = readMode(POLKIT_RULE_PATH);
+  if (mode < 0) return { id: 'polkit:machines', label: 'Machine lifecycle authorization', ok: true, detail: 'no direct service-user authorization; lifecycle mutations use the privileged helper' };
+  const expected = renderPolkitRule(user.name);
+  const content = readText(POLKIT_RULE_PATH);
+  if (content === expected) return { id: 'polkit:machines', label: 'Machine lifecycle authorization', ok: false, detail: 'the retired broad lifecycle rule is still installed — run environment provisioning to remove it' };
+  return { id: 'polkit:machines', label: 'Machine lifecycle authorization', ok: false, detail: 'an unmanaged file occupies the retired lifecycle rule path; inspect it before removing it' };
+}
+
+function retireLegacyPolkit(user, readText, readMode, removeFile) {
+  if (readMode(POLKIT_RULE_PATH) < 0) return;
+  if (readText(POLKIT_RULE_PATH) !== renderPolkitRule(user.name)) {
+    fail('the retired machine lifecycle rule path contains unmanaged content');
+  }
+  removeFile(POLKIT_RULE_PATH);
 }
 
 function artefactRow(artefact, runner, readText, readMode) {
@@ -2066,12 +2296,25 @@ function artefactRow(artefact, runner, readText, readMode) {
  *  quietly running a machine with the guard gone. */
 function vethReadiness(runner, readText) {
   const items = [];
+  // `ok` is the RUNNING kernel and nothing else, because that is what decides whether a machine routes,
+  // and this row gates every veth envelope write. A host forwarding today because Docker enabled it, or
+  // because of a differently named file under /etc/sysctl.d, works — and must keep working. Demanding
+  // this helper's own file here would newly refuse creation, envelope re-creation and snapshot restore on
+  // hosts that have been running fine, which is a bigger fault than the one it would report.
+  //
+  // Whether it survives a restart is a real question and is answered in the detail, where an operator
+  // reads it without it blocking anything. Provisioning records the file, so a prepared host says so.
   const forwarding = readText('/proc/sys/net/ipv4/ip_forward').trim() === '1';
+  const persisted = readText(MACHINE_SYSCTL_PATH) === MACHINE_SYSCTL_CONTENT;
   items.push({
     id: 'net:ip-forward',
     label: 'IPv4 forwarding',
     ok: forwarding,
-    detail: forwarding ? 'enabled' : 'a machine cannot route without it — run: sysctl -w net.ipv4.ip_forward=1, and record it under /etc/sysctl.d to survive a reboot',
+    detail: !forwarding
+      ? 'a machine cannot route without it — run environment provisioning, or: sysctl -w net.ipv4.ip_forward=1'
+      : persisted
+        ? 'enabled and recorded'
+        : `enabled, but this host has no record of it and would come back without it — run environment provisioning to write ${MACHINE_SYSCTL_PATH}`,
   });
   const active = runner('/usr/bin/systemctl', ['is-active', 'systemd-networkd']).ok;
   const enabled = runner('/usr/bin/systemctl', ['is-enabled', 'systemd-networkd']).ok;
@@ -2082,6 +2325,14 @@ function vethReadiness(runner, readText) {
     detail: active && enabled
       ? 'active and enabled'
       : `it configures the host side of the link, leases the machine its address and masquerades the traffic — run: systemctl enable --now systemd-networkd${active ? ' (running, but it would not come back after a reboot)' : ''}`,
+  });
+  let resolverPath = null;
+  try { resolverPath = machineResolver(readText); } catch { /* Report the fixed requirement below. */ }
+  items.push({
+    id: 'resolver:uplink',
+    label: 'Machine DNS resolver',
+    ok: resolverPath !== null,
+    detail: resolverPath ? `using ${resolverPath}` : 'the host has no non-loopback nameserver a machine can use',
   });
   for (const rule of NSPAWN_FIREWALL_RULES) {
     const ok = firewallRulePresent(runner, rule);
@@ -2095,7 +2346,7 @@ function vethReadiness(runner, readText) {
   return items;
 }
 
-/** The one accepted regression against the Podman runtime's `containers-default`, said out loud where the
+/** The one accepted regression against the `containers-default` AppArmor profile, said out loud where the
  *  person deploying will see it rather than only in a plan document. It is reported as met because there
  *  is nothing to install and nothing an operator can do about it, and the detail says plainly that the
  *  profile is absent and what stands in its place. See the comment on the dropped capability set for the
@@ -2110,7 +2361,8 @@ function apparmorRow(readText) {
   };
 }
 
-/** The same readiness shape the Podman environment rows use, reported through the same item contract.
+/** Host readiness for the machine runtime, one row per requirement, through the item contract every
+ *  readiness surface reads.
  *  The veth rows appear only when veth is requested, and they are only ever REPORTED: the daemon never
  *  mutates the firewall, it names the rule and refuses. */
 function nspawnStatus(request, options = {}) {
@@ -2131,21 +2383,50 @@ function nspawnStatus(request, options = {}) {
       detail: installed ? 'installed' : 'not installed — run environment provisioning to install it',
     },
     apparmorRow(readText),
-    ...nspawnArtefacts(user).map((artefact) => artefactRow(artefact, runner, readText, readMode)),
+    legacyPolkitRow(user, readText, readMode),
+    ...nspawnArtefacts().map((artefact) => artefactRow(artefact, runner, readText, readMode)),
   ];
   if (request.veth === true) items.push(...vethReadiness(runner, readText));
   return { ok: true, ready: items.every((item) => item.ok), items };
 }
 
+/** The network prerequisites a veth machine needs, brought up to the state `vethReadiness` asks for.
+ *
+ *  The firewall rules are not here: they are the firewall UNIT's, which `nspawnArtefacts` installs and
+ *  enables, and enabling it is what applies them. What is left is forwarding and the link configuration
+ *  service, and both are provisioned the same way everything else here is — asked first, acted on only
+ *  when the answer is no, so a converged host is untouched. */
+function provisionMachineNetwork(runner, readText, writeAtomic) {
+  if (readText(MACHINE_SYSCTL_PATH) !== MACHINE_SYSCTL_CONTENT) {
+    writeAtomic(MACHINE_SYSCTL_PATH, Buffer.from(MACHINE_SYSCTL_CONTENT), 0o644);
+  }
+  // This file and no other. `--system` reloads every file on the sysctl search path — kernel hardening,
+  // ptrace scope, magic-sysrq, apparmor — and would silently revert anything an operator had changed live
+  // with `-w`. Preparing a machine runtime is not licence to restate the rest of the host's settings.
+  if (readText('/proc/sys/net/ipv4/ip_forward').trim() !== '1') {
+    runRequired(runner, '/usr/sbin/sysctl', ['-p', MACHINE_SYSCTL_PATH], 'IPv4 forwarding could not be enabled');
+  }
+  const active = runner('/usr/bin/systemctl', ['is-active', 'systemd-networkd']).ok;
+  const enabled = runner('/usr/bin/systemctl', ['is-enabled', 'systemd-networkd']).ok;
+  if (!active || !enabled) {
+    runRequired(runner, '/usr/bin/systemctl', ['enable', '--now', 'systemd-networkd'], 'the machine link configuration service could not be started');
+  }
+}
+
 /** Convergent by construction: every step asks the host what it already has and acts only on the answer,
  *  so provisioning a fresh host, re-provisioning a finished one and repairing a half-done or hand-edited
- *  one are the same code path. Nothing here is a veth prerequisite: those belong to the operator and
- *  provisioning reports them without touching them. */
+ *  one are the same code path.
+ *
+ *  Provisioning is the one path that may act on the host's network and packet filter. Serving an ordinary
+ *  request still only ever REPORTS them: `nspawnWriteEnvelope` checks the same rows and refuses rather
+ *  than repairing, so a browser can never cause a firewall change. An operator asking for provisioning
+ *  can, which is the whole difference between the two. */
 function nspawnProvision(request, options = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
   const readMode = options.readMode ?? defaultReadMode;
   const writeAtomic = options.writeAtomic ?? atomicWrite;
+  const removeFile = options.removeFile ?? ((path) => rmSync(path));
   const env = options.env ?? process.env;
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
   if (!os.ok) fail(os.detail);
@@ -2154,7 +2435,11 @@ function nspawnProvision(request, options = {}) {
     runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
     runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');
   }
-  for (const artefact of nspawnArtefacts(user)) {
+  retireLegacyPolkit(user, readText, readMode, removeFile);
+  // The uid ledger's own directory needs nothing here: `atomicWrite` creates the parent of whatever it
+  // writes, so the first allocation in `uidRangeFor` establishes it. Reaching for it here would also
+  // reach for `/var/lib/elowen`, which the Sites gateway already owns state in.
+  for (const artefact of nspawnArtefacts()) {
     if (readText(artefact.path) !== artefact.content || readMode(artefact.path) !== artefact.mode) {
       writeAtomic(artefact.path, Buffer.from(artefact.content), artefact.mode);
     }
@@ -2164,6 +2449,10 @@ function nspawnProvision(request, options = {}) {
       for (const command of artefact.effect.reload) runRequired(runner, ...command);
     }
   }
+  // Exactly when the rows are reported. `nspawnStatus` adds the veth rows only for `veth === true`, so
+  // acting on a wider condition than that would change a host's network and then answer with a report
+  // that never mentions it.
+  if (request.veth === true) provisionMachineNetwork(runner, readText, writeAtomic);
   const status = nspawnStatus(request, { runner, readText, readMode, env });
   return {
     ...status,
@@ -2178,8 +2467,12 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'write-envelope': nspawnWriteEnvelope,
   'shift-ownership': nspawnShiftOwnership,
   exec: (request, _storage, options) => nspawnExec(request, options),
+  start: (request, _storage, options) => nspawnLifecycle(request, 'start', options),
+  stop: (request, _storage, options) => nspawnLifecycle(request, 'stop', options),
+  'set-limits': (request, _storage, options) => nspawnLifecycle(request, 'set-limits', options),
   freeze: (request, _storage, options) => nspawnMachineState(request, 'freeze', options),
   thaw: (request, _storage, options) => nspawnMachineState(request, 'thaw', options),
+  'site-data-archive': nspawnSiteDataArchive,
   'tree-copy': nspawnTreeCopy,
   'tree-fingerprint': nspawnTreeFingerprint,
   'tree-preflight': nspawnTreePreflight,
@@ -2187,12 +2480,27 @@ const NSPAWN_OPERATIONS = Object.freeze({
   'tree-remove': (request, storage) => nspawnTreeRemove(request, storage),
   'tree-verify': nspawnTreeVerify,
   destroy: (request, _storage, options) => nspawnDestroy(request, options),
+  'release-uid-range': releaseUidRange,
 });
 
 /** The operations that need no trusted storage root at all, so they never read the deployment record.
  *  `destroy` is one of them: it removes the machine's own configuration files, whose paths come from the
  *  validated machine name, and never touches the disk. */
-const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'freeze', 'thaw', 'destroy']);
+const NSPAWN_RECORD_FREE_OPERATIONS = Object.freeze(['status', 'provision', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw', 'destroy']);
+
+function nspawnLifecycle(request, action, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const unit = machineUnitFor(request.machine);
+  if (action === 'set-limits') {
+    const limits = nspawnLimits(request.limits);
+    runRequired(runner, '/usr/bin/systemctl', ['set-property', unit,
+      `CPUQuota=${limits.cpus * 100}%`, `MemoryMax=${limits.memoryMb}M`, `TasksMax=${limits.pidsLimit}`],
+    'the machine limits could not be applied');
+    return { ok: true, machine: request.machine, unit, limits };
+  }
+  runRequired(runner, '/usr/bin/systemctl', [action, unit], `the machine could not be ${action === 'start' ? 'started' : 'stopped'}`);
+  return { ok: true, machine: request.machine, unit };
+}
 
 function nspawnMachineState(request, verb, options) {
   const runner = options.runner ?? defaultCommandRunner;
@@ -2218,10 +2526,6 @@ export async function applyRequest(request, deployment, options = {}) {
   // older daemon can ask for.
   if (request.domain !== undefined && request.domain !== 'sites' && request.domain !== 'nspawn') fail('request domain is invalid');
   if (request.domain === 'nspawn') return applyNspawnRequest(request, options);
-  if (request.op === 'environments-status' || request.op === 'environments-provision') {
-    helperRequestFields(request);
-    return request.op === 'environments-status' ? environmentStatus(options) : provisionEnvironments(options);
-  }
   if (request.op === 'prepare-runtime-socket' || request.op === 'seal-runtime-socket' || request.op === 'remove-runtime-socket') {
     return runtimeSocketRequest(request);
   }
@@ -2351,7 +2655,7 @@ export function helperRequestNeedsDeployment(request) {
  *  the status-shaped operations must NOT take it: they are on the hot path of every command run in every
  *  environment, and blocking them behind a certbot renewal would stall the whole instance. */
 const SITES_LOCK_FREE_OPERATIONS = Object.freeze([
-  'environments-status', 'status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket',
+  'status', 'prepare-runtime-socket', 'seal-runtime-socket', 'remove-runtime-socket',
 ]);
 const NSPAWN_LOCK_FREE_OPERATIONS = Object.freeze([
   'status', 'exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-verify',

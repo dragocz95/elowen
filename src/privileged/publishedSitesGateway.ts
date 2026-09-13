@@ -7,11 +7,9 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type {
   PublishedSitesEnvironmentItem,
-  PublishedSitesEnvironmentStatus,
   PublishedSitesGatewayControl,
   PublishedSitesGatewayStatus,
 } from '../plugins/api.js';
-import { logger, type Logger } from '../shared/logger.js';
 import {
   encodeHelperRequest,
   SITE_GATEWAY_HELPER_INSTALL_ARGS,
@@ -27,9 +25,9 @@ const MAX_OUTPUT_BYTES = 64 * 1024;
 const HELPER_TIMEOUT_MS = 30_000;
 /** Issuance talks to a certificate authority over the network, so it gets its own budget. */
 const ISSUE_TIMEOUT_MS = 6 * 60_000;
-/** A bounded apt transaction may need repository metadata and package downloads. */
-const ENVIRONMENT_PROVISION_TIMEOUT_MS = 12 * 60_000;
-const auditLog = logger('published-sites-gateway');
+/** Machine-runtime provisioning runs a bounded apt transaction, which may need repository metadata and
+ *  package downloads. */
+const RUNTIME_PROVISION_TIMEOUT_MS = 12 * 60_000;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
 const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
@@ -40,9 +38,7 @@ export type SiteGatewayHelperRequest =
   | { op: 'remove-site'; slug: string; gatewayToken: string }
   | { op: 'deny' }
   | { op: 'status' }
-  | { op: 'environments-status' }
-  | { op: 'environments-provision' }
-  | { domain: 'nspawn'; op: 'provision'; user?: string }
+  | { domain: 'nspawn'; op: 'provision'; veth?: boolean; user?: string }
   | { op: 'prepare-runtime-socket'; siteId: string }
   | { op: 'seal-runtime-socket'; siteId: string }
   | { op: 'remove-runtime-socket'; siteId: string };
@@ -59,11 +55,6 @@ interface HelperResponse {
 }
 
 export type SiteGatewayHelperInvoker = (request: SiteGatewayHelperRequest) => Promise<HelperResponse>;
-
-export interface SiteGatewayHelperMaintenance {
-  status(): Promise<PublishedSitesEnvironmentItem>;
-  install(): Promise<boolean>;
-}
 
 export interface SiteGatewayHelperInstallIO {
   readFile(path: string): Promise<Buffer>;
@@ -121,8 +112,13 @@ export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = 
   return true;
 }
 
-/** Install the machine runtime's host artefacts: the container tools package, the unit template and the
- *  polkit rule. The helper does the work and is idempotent, so this converges rather than repeating.
+/** Install the machine runtime's host artefacts: the container tools package, the unit template, the
+ *  polkit rule, the firewall unit and the network prerequisites a virtual ethernet needs. The helper does
+ *  the work and is idempotent, so this converges rather than repeating.
+ *
+ *  `veth` is asked for because an ordinary environment asks for one. Leaving it out reported a prepared
+ *  host while forwarding was off and the link service was disabled, so the install said ready and the
+ *  first environment still could not be created.
  *
  *  It is wired into the install and the update because there is no other way in. The runtime refuses to
  *  create an environment while any of the three is missing and there is deliberately no fallback, so a
@@ -135,25 +131,20 @@ export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = 
  *  named: the installer knows it from the plan, an update reads it from the root-owned install record, and
  *  the helper resolves it through passwd and accepts it only from a root caller. */
 export async function provisionMachineRuntime(serviceUser: string | null, invoke: SiteGatewayHelperInvoker = defaultInvoker): Promise<boolean> {
-  const response = await invoke({ domain: 'nspawn', op: 'provision', ...(serviceUser ? { user: serviceUser } : {}) });
+  const response = await invoke({ domain: 'nspawn', op: 'provision', veth: true, ...(serviceUser ? { user: serviceUser } : {}) });
   if (response.ready === false) {
     const blocking = (response.items ?? []).filter((item): item is { ok: boolean; label?: string; detail?: string } =>
       typeof item === 'object' && item !== null && (item as { ok?: unknown }).ok === false);
-    // Not every unmet row is this command's to fix: the firewall rules are the operator's and are only
-    // ever reported. Naming them is the point; failing on them would be wrong.
+    // A row that is still unmet after a convergent run is something this host will not let the helper
+    // fix — an unsupported kernel, a packet filter that is not iptables. Naming it is the point.
     throw new Error(`machine runtime support is incomplete — ${blocking.map((item) => `${item.label ?? 'requirement'}: ${item.detail ?? 'not met'}`).join('; ') || response.detail || 'no detail reported'}`);
   }
   return response.ready === true;
 }
 
-const defaultHelperMaintenance: SiteGatewayHelperMaintenance = {
-  status: () => siteGatewayHelperStatus(),
-  install: () => installSiteGatewayHelper(),
-};
-
 export function siteGatewayHelperTimeoutMs(request: SiteGatewayHelperRequest): number {
   if (request.op === 'ensure-site') return ISSUE_TIMEOUT_MS;
-  if (request.op === 'environments-provision' || request.op === 'provision') return ENVIRONMENT_PROVISION_TIMEOUT_MS;
+  if (request.op === 'provision') return RUNTIME_PROVISION_TIMEOUT_MS;
   return HELPER_TIMEOUT_MS;
 }
 
@@ -235,38 +226,15 @@ function unavailable(detail: string): PublishedSitesGatewayStatus {
   return { available: false, active: false, hostnameBase: null, detail };
 }
 
-function environmentsUnavailable(detail: string): PublishedSitesEnvironmentStatus {
-  return { ready: false, items: [], detail };
-}
-
-/** One readiness row as it crosses the helper boundary. */
-function environmentItem(value: unknown): PublishedSitesEnvironmentItem | null {
-  if (!value || typeof value !== 'object') return null;
-  const item = value as Record<string, unknown>;
-  if (typeof item.id !== 'string' || !item.id || item.id.length > 80) return null;
-  if (typeof item.label !== 'string' || !item.label || item.label.length > 120) return null;
-  if (typeof item.ok !== 'boolean') return null;
-  return {
-    id: item.id,
-    label: item.label,
-    ok: item.ok,
-    ...(typeof item.detail === 'string' && item.detail ? { detail: item.detail.slice(0, 500) } : {}),
-  };
-}
-
 /** Build the narrow control published sites receive. Hostname and system paths never come from the
  * plugin: the hostname is derived from trusted install metadata here, while the root helper derives all
  * paths and the loopback upstream from its own root-owned deployment record. */
 export function createPublishedSitesGatewayControl(options: {
   publicWebUrl: string | null;
   invoke?: SiteGatewayHelperInvoker;
-  audit?: Pick<Logger, 'info' | 'warn'>;
-  helper?: SiteGatewayHelperMaintenance;
 }): PublishedSitesGatewayControl {
   const base = hostnameBase(options.publicWebUrl);
   const invoke = options.invoke ?? defaultInvoker;
-  const audit = options.audit ?? auditLog;
-  const helper = options.helper ?? defaultHelperMaintenance;
 
   const call = async (request: SiteGatewayHelperRequest): Promise<PublishedSitesGatewayStatus> => {
     if (!base) return unavailable('published sites require a trusted HTTPS domain deployment');
@@ -285,32 +253,6 @@ export function createPublishedSitesGatewayControl(options: {
       };
     } catch (error) {
       return unavailable(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const environmentsCall = async (op: 'environments-status' | 'environments-provision'): Promise<PublishedSitesEnvironmentStatus> => {
-    try {
-      if (op === 'environments-provision') await helper.install();
-      const helperItem = await helper.status();
-      if (!helperItem.ok) {
-        return {
-          ready: false,
-          items: [helperItem],
-          detail: 'the installed published-sites gateway helper differs from this Elowen release',
-        };
-      }
-      const result = await invoke({ op });
-      if (!result.ok) return { ...environmentsUnavailable(result.detail || 'the site gateway helper refused the request'), items: [helperItem] };
-      const items = Array.isArray(result.items)
-        ? result.items.map(environmentItem).filter((item): item is PublishedSitesEnvironmentItem => item !== null)
-        : [];
-      return {
-        ready: result.ready === true && items.length > 0 && items.every((item) => item.ok),
-        items: [helperItem, ...items],
-        ...(typeof result.detail === 'string' && result.detail ? { detail: result.detail.slice(0, 500) } : {}),
-      };
-    } catch (error) {
-      return environmentsUnavailable(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -344,15 +286,6 @@ export function createPublishedSitesGatewayControl(options: {
     },
     deny: () => call({ op: 'deny' }),
     status: () => call({ op: 'status' }),
-    environmentsStatus: () => environmentsCall('environments-status'),
-    provisionEnvironments: async () => {
-      audit.info('published sites environment provisioning requested through the privileged control');
-      const result = await environmentsCall('environments-provision');
-      const failedItems = result.items.filter((item) => !item.ok).map((item) => item.id);
-      if (result.ready) audit.info('published sites environment provisioning completed');
-      else audit.warn('published sites environment provisioning remains incomplete', { failedItems });
-      return result;
-    },
     prepareRuntimeSocket: async (siteId) => ({ path: await socketCall('prepare-runtime-socket', siteId) }),
     sealRuntimeSocket: async (siteId) => { await socketCall('seal-runtime-socket', siteId); },
     removeRuntimeSocket: async (siteId) => { await socketCall('remove-runtime-socket', siteId); },

@@ -21,20 +21,23 @@ export type ProjectExecutionRef =
   | { kind: 'host'; projectId?: number }
   | { kind: 'managed'; projectId: number };
 
-/** The ceilings a managed environment's container is created with. Each one is a flag Podman is given:
- *  a figure that no container setting carries is not a limit and does not belong here. */
+/** The ceilings a managed environment's machine is created with. Each one is a resource property the
+ *  runtime applies to the machine: a figure no runtime setting carries is not a limit and does not
+ *  belong here. */
 export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number }
+
+export type EnvironmentNetworkMode = 'shared' | 'isolated';
+export interface EnvironmentInboundPort { protocol: 'tcp' | 'udp'; hostPort: number; guestPort: number }
+export interface EnvironmentNetwork { mode: EnvironmentNetworkMode; inboundPorts: EnvironmentInboundPort[] }
 
 export type EnvironmentAction =
   /** `recreate` rebuilds the container from the current specification without touching the storage
    *  volumes: the repair for an environment whose container this runtime can no longer verify. */
-  /** `migrate-disk` turns a legacy image-backed environment into a rootfs-backed persistent disk. It is
-   *  administrator-only, runs one environment at a time, and keeps the old container as a rollback
-   *  target until the switch to the candidate is durable. */
-  | { kind: 'start' | 'stop' | 'restart' | 'delete' | 'recreate' | 'migrate-disk' }
+  | { kind: 'start' | 'stop' | 'restart' | 'delete' | 'recreate' }
   | { kind: 'snapshot'; note?: string; includeData?: boolean }
   | { kind: 'restore'; snapshotId: string; restoreData?: boolean }
-  | { kind: 'limits'; limits: EnvironmentLimits };
+  | { kind: 'limits'; limits: EnvironmentLimits }
+  | { kind: 'network'; network: EnvironmentNetwork };
 
 /** One durable environment lifecycle operation, as the managed delete response and the environment
  *  screens read it. `plugins/environmentTypes` re-exports these to the daemon side.

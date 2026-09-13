@@ -52,7 +52,7 @@ describe('RealGitReader managed execution', () => {
   it('recovers only stderr-attested git semantics in strict managed mode', async () => {
     const notARepo = Object.assign(new Error('git exited 128'), { code: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git\n' });
     expect(await new RealGitReader(async () => { throw notARepo; }, true).snapshot('/workspace')).toEqual(EMPTY);
-    // Launcher/runtime (podman 125, exec 126/127) and provider-shaped exits never look like a repo verdict.
+    // A launcher or exec failure, and a provider-shaped refusal, never look like a repo verdict.
     for (const code of [125, 126, 127, 403]) {
       const launcher = Object.assign(new Error(`launcher exited ${code}`), { code, stderr: 'fatal: not a git repository' });
       await expect(new RealGitReader(async () => { throw launcher; }, true).snapshot('/workspace')).rejects.toThrow(`launcher exited ${code}`);

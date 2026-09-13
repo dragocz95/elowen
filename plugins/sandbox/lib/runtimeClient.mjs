@@ -1,27 +1,20 @@
 /** The runtime client interface, written down.
  *
  *  `environmentRuntime.mjs` and `containerStorage.mjs` drive an environment through ONE injected object.
- *  For most of this runtime's life that object was a `PodmanClient` and the interface was whatever
- *  `PodmanClient` happened to expose. `NspawnClient` is a sibling behind the same surface, so the surface
- *  has to be stated rather than inferred: the typedef below is the complete list of methods those two
- *  modules actually call, and a client that answers all of them is a runtime.
+ *  `NspawnClient` is the only implementation, and the surface is stated here rather than inferred from it:
+ *  the typedef below is the complete list of methods those two modules actually call.
  *
- *  Three places used to carry Podman's own shape through the interface and are narrowed here rather than
- *  emulated on the other side:
+ *  Two of the names below read as a container runtime's because that is where they came from, and they
+ *  are the METHOD's vocabulary now:
  *
  *  - `containerInventory(namespace)` is a name→state map. HOW a client finds the envelopes of a namespace
- *    is its own business: Podman queries its ownership label, nspawn filters `machinectl list` by the
- *    namespace name prefix. The map is the contract; the label filter never was.
+ *    is its own business: nspawn filters `machinectl list` by the namespace name prefix. The map is the
+ *    contract.
  *  - `inspect(spec)` returns `{ id, state }` where `state` is the runtime-neutral vocabulary
- *    `configured | created | running | paused | stopped | exited | stopping`. It reads as Podman's because
- *    Podman is where it came from, but it is the METHOD's vocabulary now: nspawn maps
- *    `ActiveState`/`SubState`/`FreezerState` onto it, and the runtime never learns a second one.
- *  - The volume methods are legacy-only. A disk-backed environment mounts the disk's own directories and
- *    owns no named handles, which `podman.mjs` already reflects by skipping them whenever `spec.disk` is
- *    set. They stay on the interface because legacy image-backed rows still reach them; a client with no
- *    volume store refuses them instead of emulating one.
+ *    `configured | created | running | paused | stopped | exited | stopping`, which nspawn maps
+ *    `ActiveState`/`SubState`/`FreezerState` onto.
  *
- *  `id` is likewise not a Podman container id. It is the immutable, host-derived envelope identity that
+ *  `id` is not a container id. It is the immutable, host-derived envelope identity that
  *  `bindContainerIdentity` pins into a specification: 64 hex characters, stable while the envelope is
  *  unchanged, different the moment it changes.
  *
@@ -56,7 +49,10 @@
  * @property {(spec: object, publicationIds: string[]) => Promise<string[]>} activePublications
  *
  * Disk trees. Every path is host-derived and re-validated by the client against the trusted roots.
- * @property {(spec: object, pendingPath: string) => Promise<string>} materializeRootfs
+ * @property {(spec: object, pendingPath: string, options?: object) => Promise<string>} materializeRootfs
+ * @property {(spec: object) => Promise<{ uidBase: number, uidSize: number, entries: number }>} shiftOwnership
+ *   Re-stamps the disk's identity record from the specification and puts the tree on the machine's uid
+ *   range. Idempotent: a tree already in range is left alone, byte for byte.
  * @property {(spec: object, archivePath: string, targetPath: string) => Promise<void>} extractRootfsArchive
  * @property {(archivePath: string, targetPath: string) => Promise<{ members: number }>} verifyExtractedRootfs
  * @property {(sourcePath: string, targetPath: string) => Promise<void>} copyDiskTree
@@ -68,55 +64,33 @@
  * @property {(spec: object) => Promise<void>} removeGenerationStorage
  * @property {(spec: object, snapshotId: string) => Promise<void>} removeSnapshotStorage
  * @property {(spec: object, snapshotId: string) => Promise<void>} discardIncompleteSnapshot
+ * @property {(spec: object, operation: 'import' | 'export', archivePath: string) => Promise<void>} siteDataArchive
+ *   Seeds a Site's `data` tree from an archive, or captures it into one. An import replaces the tree
+ *   atomically and only while the environment is stopped; an export never overwrites its destination.
  *
- * Images. A runtime without an image store delegates these to one that has one; it never pretends.
- * @property {(spec: object, archivePath: string) => Promise<string>} exportImageRootfs Writes an image's
- *   merged filesystem to a host-owned archive and returns the image identity. A runtime with no image
- *   store delegates it and then extracts the archive its own way.
- * @property {(dataDir: string, onOutput?: (line: string) => void) => Promise<string>} ensureProjectImage
- * @property {(dataDir: string, recipe: object) => Promise<string>} ensureSiteImage
- * @property {(reference: string) => Promise<{ present: boolean, imageId: string | null }>} imageStatus
- * @property {(reference: string) => Promise<string>} imageIdentity
- * @property {(spec: object, snapshotId: string) => Promise<string>} snapshotImage
- * @property {(spec: object, snapshotId: string) => Promise<string>} inspectSnapshotImage
- * @property {(spec: object, snapshotId: string) => Promise<void>} removeSnapshotImage
- * @property {(spec: object, reference: string) => Promise<string>} discoverRetainedSiteImage
- * @property {(spec: object, reference: string, imageId: string) => Promise<string>} inspectRetainedSiteImage
- * @property {(spec: object, reference: string, imageId: string) => Promise<void>} removeRetainedSiteImage
- *
- * Legacy image-backed migration sources. A disk-backed specification is refused by both clients.
- * @property {(spec: object, destinationPath: string) => Promise<object>} preflightRootfsMigration
- * @property {(spec: object, archivePath: string) => Promise<string>} exportContainerRootfs
- * Host readiness. Present only on a runtime whose host needs preparing before it can hold an
- * environment at all; Podman has no such gate and does not answer it.
+ * Host readiness. The machine runtime needs its host prepared before it can hold an environment at all.
  * @property {() => Promise<{ ready: boolean, items: { id: string, label: string, ok: boolean, detail?: string }[] }>} [hostReadiness]
- *
- * @property {(spec: object, options?: { target?: string, uidBase?: number | null }) => Promise<object>} [shiftOwnership]
- *   The one-time ownership pass a RUNTIME change needs, and the only way back from it. Provided by the
- *   target of `migrate-runtime` alone; nothing else on this interface reaches for it.
- *
- * Named volumes. Legacy-only: a disk-backed specification never reaches them, and a client with no
- * volume store refuses them.
- * @property {(spec: object, component: string) => Promise<object>} ensureVolume
- * @property {(spec: object, component: string) => Promise<object>} inspectVolume
- * @property {(spec: object, component: string) => Promise<void>} removeVolume
- * @property {(spec: object, component: string, snapshotId: string) => Promise<void>} exportVolume
- * @property {(sourceSpec: object, snapshotId: string, targetSpec: object, component: string, options?: { resume?: boolean }) => Promise<void>} importSnapshotVolume
- * @property {(spec: object, operation: string, archivePath: string) => Promise<void>} siteDataArchive
  */
 
-/** Which runtime owns this specification. `disk.runtime` is persisted data on the disk record and the
- *  ONLY discriminator: absent means Podman, which is every environment that exists before an explicit
- *  `migrate-runtime`. There is no configuration flag and no registry.
+/** Which runtime owns this specification.
+ *
+ *  There is one runtime, and `disk.runtime` is the persisted proof that a row belongs to it. A row without
+ *  it was written by a release that ran containers, and there is no rule that turns a container into a
+ *  machine: its root filesystem was never materialized from a published artifact, and its envelope
+ *  identity was hashed from a specification this release no longer produces. So it is NAMED and refused
+ *  rather than adopted, in the same shape and with the same remedy as `parseArtifactReference` uses for a
+ *  disk that still names a container image tag.
  *
  * @param {object} spec
- * @param {{ podman: RuntimeClient, nspawn?: RuntimeClient | null }} clients
+ * @param {{ nspawn?: RuntimeClient | null }} clients
  * @returns {RuntimeClient}
  */
+export const UNSUPPORTED_RUNTIME_MESSAGE = 'This environment belongs to the removed Podman runtime. Delete the managed Project or Site that owns it, then create it again; this build only creates systemd-nspawn environments from published root filesystems.';
+export const unsupportedRuntime = () => Object.assign(new Error(UNSUPPORTED_RUNTIME_MESSAGE), { code: 'unsupported_runtime', status: 409 });
+
 export function selectRuntimeClient(spec, clients) {
   const runtime = spec?.disk?.runtime;
-  if (runtime === undefined) return clients.podman;
-  if (runtime !== 'nspawn') throw new Error('Unknown environment runtime');
+  if (runtime !== 'nspawn') throw unsupportedRuntime();
   if (!clients.nspawn) throw new Error('This environment runs on systemd-nspawn, which is unavailable');
   return clients.nspawn;
 }

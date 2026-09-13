@@ -1,0 +1,27 @@
+{
+  "$generated": "Generated file. Do not edit by hand. Every digest here was produced by a build that inspected the archive it hashed; a digest typed in by a person is a pin nobody can reproduce and nothing can check.",
+  "$generator": "scripts/build-rootfs-artifact.mjs",
+  "$consumer": "plugins/sandbox/lib/rootfsCatalog.mjs",
+  "artifacts": {
+    "project-base@1": {
+      "digest": "sha256:28de699957a0dae64690faa5013ff5c8c2bce5a93ff339cba12dd952513cdf00",
+      "sizeBytes": 593449181,
+      "path": "rootfs-project-base-v1/project-base-v1.tar.gz"
+    },
+    "site-base@1": {
+      "digest": "sha256:8026c43421129569265cad4ed96844ec59be3a4b4273f6de926262587ff10ecc",
+      "sizeBytes": 90701563,
+      "path": "rootfs-site-base-v1/site-base-v1.tar.gz"
+    },
+    "site-node@1": {
+      "digest": "sha256:a45b03f7cf7ff85189a0141a0ece88d6a7f09e7b4bf525335ac9a129f596f675",
+      "sizeBytes": 149514843,
+      "path": "rootfs-site-node-v1/site-node-v1.tar.gz"
+    },
+    "site-static@1": {
+      "digest": "sha256:fbfa3710750b226e6acb6076e406c8ffee5013314ff6cf7c02c97bf7c9bb937d",
+      "sizeBytes": 91580802,
+      "path": "rootfs-site-static-v1/site-static-v1.tar.gz"
+    }
+  }
+}

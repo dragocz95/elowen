@@ -17,6 +17,14 @@ import { logger } from '../../../shared/logger.js';
 import { ConfigRevisionConflict } from '../../../store/configStore.js';
 import { UserPluginConfigRevisionConflict } from '../../../store/userPluginConfigStore.js';
 
+/** What a data summary is allowed to cost. A plugin detail page is a look, not a scan. */
+const DATA_SUMMARY_MAX_ENTRIES = 50_000;
+const DATA_SUMMARY_BUDGET_MS = 2_000;
+
+/** `unreadable` counts entries this process could not measure; `partial` says the walk hit its bound. */
+type DataSummary = { path: string; exists: boolean; files: number; bytes: number; unreadable: number; partial: boolean };
+
+
 class PluginConfigValueError extends Error {}
 
 /** HTML number attributes are guidance, not a trust boundary. The write path enforces the same canonical
@@ -278,8 +286,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return needed.filter((g) => !acked.has(g));
   };
 
-  /** Enable + apply live, shared by the toggle and the marketplace install so both reach the runtime the
-   *  same way (config write, then registry swap; a deferred swap answers 202, see `applied`). */
   /** Control keys `name` declares it cannot work without, that nothing ENABLED would publish.
    *
    *  A plugin whose provider is missing does not crash - `ctx.control()` answers undefined and the plugin
@@ -313,12 +319,64 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     }));
   };
 
+  /** Enable + apply live, shared by the toggle and the marketplace install so both reach the runtime the
+   *  same way (config write, then registry swap; a deferred swap answers 202, see `applied`). */
   const enablePlugin = async (c: Context, name: string) => {
     const missing = missingControls(name);
     if (missing.length > 0) return c.json({ error: 'missing plugin dependency', controls: missing }, 409);
     const cur = new Set(d.config.get().plugins.enabled);
     cur.add(name);
     d.config.update({ plugins: { enabled: [...cur] } });
+    return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
+  };
+
+  /** Enabled plugins that declared a control `name` is the only remaining provider of.
+   *
+   *  The mirror image of `missingControls`, and needed for the same reason. A consumer left without its
+   *  provider does not crash — `ctx.control()` answers undefined — so turning off a provider silently
+   *  guts whatever depended on it, and the person who did it sees a plugin that is still enabled and
+   *  quietly no longer works. Sites on Sandbox is the case in hand: with the Sandbox off, a Site cannot
+   *  start, publish or hold a disk, and nothing on screen would have said so.
+   *
+   *  Keyed on the control, like the enable gate, so the daemon still never learns that one named plugin
+   *  needs another. Version compatibility is expressed the same way it is everywhere else here: a
+   *  contract that breaks gets a NEW key, and a consumer that needs the new contract requires the new
+   *  key. There is deliberately no version range to satisfy. */
+  const dependentsOf = (name: string): { key: string; requiredBy: string[] }[] => {
+    const installed = discoverPlugins(d.pluginDirs ?? []);
+    const provider = installed.find((p) => p.manifest.name === name);
+    const offered = provider?.manifest.provides?.controls ?? [];
+    if (offered.length === 0) return [];
+
+    const stillEnabled = new Set(d.config.get().plugins.enabled);
+    stillEnabled.delete(name);
+    const survives = new Set<string>();
+    for (const plugin of installed) {
+      if (!stillEnabled.has(plugin.manifest.name)) continue;
+      for (const key of plugin.manifest.provides?.controls ?? []) survives.add(key);
+    }
+
+    return offered
+      // A key another enabled plugin also publishes is not lost, so turning this one off breaks nothing.
+      .filter((key) => !survives.has(key))
+      .map((key) => ({
+        key,
+        requiredBy: installed
+          .filter((plugin) => stillEnabled.has(plugin.manifest.name)
+            && (plugin.manifest.requiresControls ?? []).includes(key))
+          .map((plugin) => plugin.manifest.name),
+      }))
+      .filter((row) => row.requiredBy.length > 0);
+  };
+
+  /** Take a plugin out of the enabled set, unless something enabled still depends on what it publishes. */
+  const disablePlugin = async (c: Context, name: string) => {
+    const blocking = dependentsOf(name);
+    if (blocking.length > 0) return c.json({ error: 'plugin dependency in use', controls: blocking }, 409);
+    const cur = new Set(d.config.get().plugins.enabled);
+    cur.delete(name);
+    d.config.update({ plugins: { enabled: [...cur] } });
+    // Apply live: drop the brain's memoized registry and restart running sessions with the new set.
     return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
   };
 
@@ -336,21 +394,53 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // Summary of a plugin's on-disk data (for the detail Data section): total files + bytes, recursively.
   // A missing dir (plugin never wrote anything) is a valid `exists:false`, not an error.
-  const dataSummary = (name: string): { path: string; exists: boolean; files: number; bytes: number } => {
+  //
+  // Two things make a naive recursive walk wrong here, and both were measured against a real instance
+  // rather than imagined.
+  //
+  // It cannot assume it may READ what it finds. A Sandbox environment's persistent root filesystem lives
+  // under this root and is owned by the machine's own uid range precisely so the service account cannot
+  // read it. An unguarded `readdirSync` throws EACCES and takes the whole endpoint down: every instance
+  // with at least one machine environment answered 500 on `GET /api/plugins/sandbox`. What it could not
+  // measure is reported as a count rather than folded silently into a total that would then be wrong.
+  //
+  // And it cannot walk without a bound. Measured on a host with two Sandbox projects: 596,255 files,
+  // 78,360 directories, 19.9 GB, 21.4 seconds for one page load. An admin opening a plugin's detail page
+  // must not pay for a recursive stat of every environment disk on the host, so the walk stops at a bound
+  // and says it stopped. A figure labelled partial is useful; a confident figure that took half a minute
+  // to be wrong is not.
+  const dataSummary = (name: string): DataSummary => {
     const dir = pluginDataDir(name);
-    if (!dir) return { path: '', exists: false, files: 0, bytes: 0 };
-    if (!existsSync(dir)) return { path: dir, exists: false, files: 0, bytes: 0 };
+    if (!dir) return { path: '', exists: false, files: 0, bytes: 0, unreadable: 0, partial: false };
+    if (!existsSync(dir)) return { path: dir, exists: false, files: 0, bytes: 0, unreadable: 0, partial: false };
     let files = 0;
     let bytes = 0;
+    let unreadable = 0;
+    let scanned = 0;
+    let partial = false;
+    const deadline = Date.now() + DATA_SUMMARY_BUDGET_MS;
     const walk = (p: string): void => {
-      for (const ent of readdirSync(p, { withFileTypes: true })) {
+      if (partial) return;
+      let entries;
+      // Every failure here is counted, not swallowed: a directory the service account may not read, one
+      // removed by its owner mid-walk, a device that errored. The caller is told how many, so a reader
+      // can tell a small total from a total measured over a tree that refused to be read.
+      try { entries = readdirSync(p, { withFileTypes: true }); }
+      catch { unreadable += 1; return; }
+      for (const ent of entries) {
+        if (partial) return;
+        scanned += 1;
+        if (scanned > DATA_SUMMARY_MAX_ENTRIES || Date.now() > deadline) { partial = true; return; }
         const full = join(p, ent.name);
         if (ent.isDirectory()) walk(full);
-        else if (ent.isFile()) { files += 1; bytes += statSync(full).size; }
+        else if (ent.isFile()) {
+          try { bytes += statSync(full).size; files += 1; }
+          catch { unreadable += 1; }
+        }
       }
     };
     walk(dir);
-    return { path: dir, exists: true, files, bytes };
+    return { path: dir, exists: true, files, bytes, unreadable, partial };
   };
 
   app.get('/plugins', (c) => {
@@ -628,11 +718,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (missingConsent(needed, b.acknowledgeGrants).length) return c.json({ error: 'grants require consent', grants: needed }, 409);
       return await enablePlugin(c, name);
     }
-    const cur = new Set(d.config.get().plugins.enabled);
-    cur.delete(name);
-    d.config.update({ plugins: { enabled: [...cur] } });
-    // Apply live: drop the brain's memoized registry and restart running sessions with the new set.
-    return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
+    return await disablePlugin(c, name);
   });
 
   // Remove a plugin. A user-source (marketplace) plugin is uninstalled outright — folder AND data
@@ -645,6 +731,11 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const name = c.req.param('name');
     const disc = discoverPlugins(d.pluginDirs ?? []).find((p) => p.manifest.name === name);
     if (!disc) return c.json({ error: 'unknown plugin' }, 404);
+    // Removal ends with the plugin out of the enabled set either way, so it owes the same answer as the
+    // toggle: a dependant left without its provider is the same broken instance whichever door it came
+    // through.
+    const blocking = dependentsOf(name);
+    if (blocking.length > 0) return c.json({ error: 'plugin dependency in use', controls: blocking }, 409);
     if (disc.source === 'user') {
       if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
       try {

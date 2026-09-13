@@ -25,9 +25,24 @@
     "defaultPidsLimit": {
       "label": "Procesy",
       "hint": "Najvyšší počet procesov a vlákien vnútri prostredia."
+    },
+    "sec_network": {
+      "label": "Sieť prostredia",
+      "hint": "Sieťový režim, ktorý sa skopíruje do prostredia projektu pri prvom vytvorení. Existujúce prostredia si ponechajú vlastné nastavenie."
+    },
+    "defaultNetworkMode": {
+      "label": "Predvolený sieťový režim",
+      "hint": "Zdieľaný režim poskytuje odchádzajúci internet cez privátnu sieť stroja. Izolovaný režim poskytuje iba loopback vnútri prostredia.",
+      "options": {
+        "shared": "Zdieľaná odchádzajúca sieť",
+        "isolated": "Iba izolovaný loopback"
+      }
     }
   },
   "web": {
+    "settings": {
+      "host-runtime": "Runtime hostiteľa"
+    },
     "user": {
       "environment": "Vývojové prostredie"
     },
@@ -141,9 +156,53 @@
       "runtimeNotReady": "Tento hostiteľ zatiaľ nemôže vytvoriť prostredie.",
       "runtimeMachine": "Stroj",
       "runtimeContainer": "Kontajner",
+      "hostRuntimeTitle": "Runtime strojov",
+      "hostRuntimeHint": "Balíky hostiteľa, systémové služby, privilegované pravidlá, izolácia siete a publikované koreňové systémy súborov potrebné pre spravované prostredia.",
+      "hostReady": "Pripravené pre nové prostredia",
+      "hostPrepared": "Pripravené a uložené lokálne",
+      "hostBlocked": "Je potrebná príprava",
+      "hostProvision": "Pripraviť hostiteľa",
+      "hostProvisioning": "Pripravujem hostiteľa",
+      "hostOperation": "Priebeh prípravy",
+      "hostWorking": "Pracujem",
+      "hostRequirementReady": "Pripravené",
+      "hostRequirementMissing": "Chýba",
+      "hostArea_package": "Nástroje kontajnerov",
+      "hostArea_packageHint": "Balíky operačného systému potrebné na spúšťanie systemd strojov.",
+      "hostArea_systemd": "Systémové služby",
+      "hostArea_systemdHint": "Koreňové šablóny jednotiek a služby, ktoré spúšťajú a strážia stroje.",
+      "hostArea_helper": "Privilegovaná hranica",
+      "hostArea_helperHint": "Pevný kontrakt pomocníka a kontroly kompatibility hostiteľa.",
+      "hostArea_polkit": "Pravidlá prístupu k strojom",
+      "hostArea_polkitHint": "Úzko vymedzené pravidlá pre životný cyklus strojov.",
+      "hostArea_firewall": "Izolácia siete",
+      "hostArea_firewallHint": "Presmerovanie, konfigurácia spojenia a pevné izolačné pravidlá privátnych sietí strojov.",
+      "hostArea_rootfs": "Publikované koreňové systémy",
+      "hostArea_rootfsHint": "Pripnuté archívy, ktoré táto verzia dokáže overiť a rozbaliť. Chýbajúce lokálne kópie sa stiahnu pri príprave alebo prvom použití.",
+      "hostArea_runtime": "Existujúce prostredia",
+      "hostArea_runtimeHint": "Stav kompatibility záznamov prostredí uložených v tejto inštancii.",
+      "hostStepHost": "Pripravujem služby hostiteľa",
+      "hostStepRootfs": "Ukladám koreňový systém",
+      "hostStepVerify": "Overujem pripravenosť",
       "restoreWarning": "Nahradiť prostredie touto snímkou? Zmeny od vytvorenia snímky budú stratené a bežiaca práca bude prerušená.",
       "resources": "Prostriedky",
       "resourcesHint": "Čo smie toto prostredie využívať. Zmena sa použije na bežiaci kontajner, reštart nie je potrebný.",
+      "networking": "Sieť",
+      "networkingHint": "Odchádzajúci prístup a malá sada portov hostiteľa presmerovaných do tohto Projektu. Použitie zmeny prostredie krátko zastaví a vráti do predchádzajúceho stavu.",
+      "networkMode": "Sieťový režim",
+      "networkShared": "Zdieľaná odchádzajúca sieť",
+      "networkSharedHint": "Prostredie má odchádzajúci internet cez privátne spojenie stroja a nemôže priamo pristupovať k službám hostiteľa.",
+      "networkIsolated": "Iba izolovaný loopback",
+      "networkIsolatedHint": "Komunikovať môžu iba procesy vnútri prostredia. Odchádzajúci prístup aj prichádzajúce presmerovanie sú vypnuté.",
+      "inboundPorts": "Prichádzajúce porty",
+      "inboundPortsHint": "Presmeruje neprivilegovaný port na adresách hostiteľa mimo loopback na jeden TCP alebo UDP port vnútri prostredia. Loopback hostiteľa zostáva zatvorený.",
+      "addInboundPort": "Pridať port",
+      "removeInboundPort": "Odobrať port",
+      "noInboundPorts": "Do tohto prostredia nie sú presmerované žiadne porty hostiteľa.",
+      "protocol": "Protokol",
+      "hostPort": "Port hostiteľa",
+      "guestPort": "Port prostredia",
+      "applyNetworking": "Použiť sieťové nastavenie",
       "limitsAdminOnly": "Iba pre správcov",
       "unitCpu": "CPU",
       "unitProcesses": "procesov",

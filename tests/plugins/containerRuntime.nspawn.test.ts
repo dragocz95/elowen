@@ -1,155 +1,160 @@
 import assert from 'node:assert/strict';
-import { lstatSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { it } from 'vitest';
 import { request as httpRequest } from 'node:http';
-import { PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
-import { createContainerSpec, executionUnit, withContainerLimits } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { NspawnClient } from '../../plugins/sandbox/lib/nspawn.mjs';
+import { SpawnExecutor } from '../../plugins/sandbox/lib/runtimeProcess.mjs';
+import { RootfsArtifactStore } from '../../plugins/sandbox/lib/rootfsArtifacts.mjs';
+import { createContainerSpec, createEnvironmentDiskSpec, executionUnit, withContainerLimits } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { managedGuestRoot } from '../../plugins/sandbox/lib/containerPaths.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
-import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import { runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
+import { announce, blockers, pinnedExecutor, PROJECT_ROOTFS, PROOF_HELPER, storageRoots } from './nspawnRealGuest.mjs';
 
-// Explicit opt-in. This harness never constructs a default-store client, even for cleanup.
-const storageOnly = process.env.ELOWEN_TEST_PODMAN_STAGE === 'storage';
-it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only private Podman storage metadata' : 'runs the managed runtime in a fresh private Podman store', async () => {
-  // Podman limits runroot to 50 bytes; long worktree paths cannot hold its runtime sockets.
-  const scratch = mkdtempSync(join(tmpdir(), 'ep-'));
-  const isolation = isolatedPodmanOptions(join(scratch, 'podman'), `test-${randomBytes(6).toString('hex')}`, { useUserSessionBus: true });
-  const paths = isolation.isolation;
-  const expectedPrefix = ['--root', paths.storage, '--runroot', paths.runroot, '--tmpdir', paths.tmp, '--storage-driver', 'vfs'];
-  const native = new SpawnExecutor();
-  let verifiedLaunch: any;
-  let engineVerified = false;
-  let stage = 'info';
-  const observations: any[] = [];
-  const guarded = { run: async (file: string, args: string[], options: any) => {
-    assert.equal(file, '/usr/bin/podman');
-    assert.deepEqual(args.slice(0, expectedPrefix.length), expectedPrefix);
-    assert.equal(options.env.HOME, paths.home);
-    assert.equal(options.env.XDG_RUNTIME_DIR, paths.runtime);
-    assert.equal(options.env.TMPDIR, paths.tmp);
-    for (const key of ['CONTAINER_HOST', 'CONTAINER_CONNECTION', 'CONTAINERS_STORAGE_CONF', 'GH_TOKEN', 'GITHUB_TOKEN']) assert.equal(options.env[key], undefined);
-    assert.ok(paths.userBus);
-    assert.equal(paths.userBus.path, `/run/user/${process.getuid?.()}/bus`);
-    const bus = lstatSync(paths.userBus.path);
-    assert.equal(bus.isSocket(), true);
-    assert.equal(bus.uid, process.getuid?.());
-    assert.equal(bus.ino, paths.userBus.ino);
-    assert.equal(bus.dev, paths.userBus.dev);
-    assert.equal(options.env.DBUS_SESSION_BUS_ADDRESS, `unix:path=${paths.userBus.path}`);
-    verifiedLaunch = { ...options, input: undefined, signal: undefined };
-    const command = args.slice(expectedPrefix.length);
-    const result = await native.run(file, args, options);
-    if (command[0] === 'inspect' || command[0] === 'update' || (command[0] === 'volume' && command[1] === 'inspect') || command.includes('show') || command.includes('mask') || command.includes('stop')) observations.push({ command, ...result });
-    if (command[0] === 'info') observations.push({ command, code: result.code, stderr: result.stderr });
-    return result;
-  } };
-  const client = new PodmanClient({ ...isolation, executor: guarded });
-  const execute = async (spec: any, script: string) => client.exec(spec, randomBytes(16).toString('hex'), ['/bin/bash', '-s'], { input: script, timeoutMs: 30_000 });
+/** The managed runtime against a REAL systemd-nspawn machine, end to end.
+ *
+ *  This is the successor of the private container-store suite, and the isolation model is the one thing that
+ *  could not survive the move: a machine is registered with the host's own machine manager and its disk
+ *  lives under the trusted storage root the privileged helper derives, so there is no per-run engine to
+ *  create and reset. What replaces it is the proof-host gate — the suite refuses to run on a host whose
+ *  teardown is not already armed — a resource id far outside the range a real project reaches, and a
+ *  teardown that removes exactly what this run created.
+ *
+ *  Everything the container store used to prove is still proved, by a different means: the executor is
+ *  pinned, so a program this runtime does not own or a helper invocation off its pinned argv fails the
+ *  test on the spot, and no daemon credential may appear in the environment any child is given. */
+
+announce('nspawn managed runtime');
+
+/** Far outside the range a real project reaches, so a run interrupted halfway leaves resources a person
+ *  can find and remove without guessing which project they belong to. */
+const SUFFIX = randomBytes(4).toString('hex');
+const RAW_PROJECT_ID = 991_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
+const RUNTIME_PROJECT_ID = 992_000_000 + Number(BigInt(`0x${SUFFIX}`) % 1_000_000n);
+const SITE_ID = `crproof-${SUFFIX}`;
+
+it.skipIf(blockers.length > 0)('runs the managed runtime against a real systemd-nspawn machine', async () => {
+  const sandboxDataDir = storageRoots!.sandboxDataDir;
+  const sitesDataDir = storageRoots!.sitesDataDir;
+  const paths = { sandboxDataDir, namespace: 'elowen' };
+  const scratch = mkdtempSync(join(sandboxDataDir, `crproof-${SUFFIX}-`));
+  const observed: string[] = [];
+  const client = new NspawnClient({ artifacts: new RootfsArtifactStore({ dataDir: sandboxDataDir }),
+    executor: pinnedExecutor(new SpawnExecutor(), observed), helperPath: PROOF_HELPER, namespace: 'elowen',
+    outputLimitBytes: 16 * 1024 * 1024 });
+  const storage = new ContainerStorage(client);
+  const execute = (spec: any, script: string) =>
+    client.exec(spec, randomBytes(16).toString('hex'), ['/bin/bash', '-s'], { input: script, timeoutMs: 120_000, persistent: true });
+
+  const rawDisk = createEnvironmentDiskSpec({ resource: { kind: 'project', id: RAW_PROJECT_ID }, image: PROJECT_ROOTFS, runtime: 'nspawn' },
+    paths, randomBytes(16).toString('hex'));
+  const rawSpec: any = createContainerSpec({ resource: { kind: 'project', id: RAW_PROJECT_ID }, workspaceTarget: '/demo',
+    generation: 1, image: PROJECT_ROOTFS, disk: rawDisk }, paths);
+  let runtimeStorageRoot: string | null = null;
+  let stage = 'host readiness';
   try {
-    console.log('Verified isolated Podman launch:', JSON.stringify({ args: expectedPrefix, HOME: paths.home, XDG_RUNTIME_DIR: paths.runtime, TMPDIR: paths.tmp, userBus: paths.userBus }));
-    const info = await client.info();
-    assert.equal(info.graphRoot, paths.storage);
-    assert.equal(info.runRoot, paths.runroot);
-    engineVerified = true;
-    console.log('Isolated rootless engine:', JSON.stringify(info));
-    const spec = createContainerSpec({ resource: { kind: 'project', id: 1 }, workspaceTarget: '/demo', generation: 1, image: PROJECT_BASE_IMAGE_TAG }, { sandboxDataDir: join(scratch, 'sandbox'), namespace: paths.namespace });
-    stage = 'persistent storage metadata';
-    await new ContainerStorage(client).prepare(spec);
-    if (storageOnly) {
-      const name = 'elowen-site-legacy-test-data';
-      const created = await guarded.run('/usr/bin/podman', [...expectedPrefix, 'volume', 'create', '--label', 'io.elowen.site=legacy-test', name], verifiedLaunch);
-      assert.equal(created.code, 0, created.stderr);
-      const inspected = await guarded.run('/usr/bin/podman', [...expectedPrefix, 'volume', 'inspect', name], verifiedLaunch);
-      assert.equal(inspected.code, 0, inspected.stderr);
-      console.log('Real legacy local volume metadata:', inspected.stdout);
-      console.log('Real managed local-bind volume metadata:', JSON.stringify(observations));
-      return;
-    }
-    stage = 'trusted project image';
-    assert.equal(await client.ensureProjectImage(join(scratch, 'sandbox')), PROJECT_BASE_IMAGE_TAG);
-    stage = 'container creation';
-    await client.create(spec);
+    // The deployed runtime, asked the way the settings page asks it. This replaces the private-store
+    // check: it is the statement that what follows runs against a real, provisioned machine host.
+    const readiness = await client.hostReadiness();
+    assert.equal(readiness.ready, true, JSON.stringify(readiness.items.filter((item: any) => !item.ok)));
+
+    stage = 'persistent disk materialized from the published root filesystem';
+    await storage.prepare(rawSpec);
+    // Nothing on this host built it: the bytes came from the published artifact the disk record names,
+    // verified by digest, and the disk's own durable manifest says so.
+    assert.equal(existsSync(join(dirname(rawSpec.disk.rootfsPath), 'disk.json')), true);
+
+    stage = 'envelope creation';
+    await client.create(rawSpec);
     stage = 'start and inspect';
-    await client.start(spec);
-    assert.equal((await client.inspect(spec))?.state, 'running');
+    await client.start(rawSpec);
+    await client.waitForSystemBus(rawSpec, { timeoutMs: 300_000 });
+    assert.equal((await client.inspect(rawSpec))?.state, 'running');
+
     stage = 'guest exec';
-    const result = await execute(spec, 'set -eu; git --version; printf rootfs > /rootfs-proof; printf home > /root/home-proof; printf workspace > /demo/workspace-proof; printf data > /data/data-proof');
-    assert.ok(result);
+    const result = await execute(rawSpec, 'set -eu; git --version; printf rootfs > /rootfs-proof; printf home > /root/home-proof; printf workspace > /demo/workspace-proof; printf data > /data/data-proof');
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /git version/);
+
     stage = 'guest Node npm and Chromium prerequisites';
-    const tools = await execute(spec, 'set -eu; node --version; npm --version; chromium --version; chromium --headless --no-sandbox --disable-dev-shm-usage --dump-dom "data:text/html,<h1>guest-browser</h1>"');
+    const tools = await execute(rawSpec, 'set -eu; node --version; npm --version; chromium --version; chromium --headless --no-sandbox --disable-dev-shm-usage --dump-dom "data:text/html,<h1>guest-browser</h1>"');
     assert.equal(tools.code, 0, tools.stderr);
     assert.match(tools.stdout, /v24\./);
     assert.match(tools.stdout, /Chromium/);
     assert.match(tools.stdout, /<h1>guest-browser<\/h1>/);
-    const limits = await execute(spec, 'cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max');
-    assert.ok(limits);
+
+    const limits = await execute(rawSpec, 'cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max');
     assert.equal(limits.code, 0, limits.stderr);
     assert.equal(limits.stdout.trim(), '100000 100000\n1073741824\n512');
+
     stage = 'stop/start persistence';
-    await client.stop(spec);
-    await client.start(spec);
-    const persisted = await execute(spec, 'set -eu; test "$(cat /rootfs-proof)" = rootfs; test "$(cat /root/home-proof)" = home; test "$(cat /demo/workspace-proof)" = workspace; test "$(cat /data/data-proof)" = data');
-    assert.ok(persisted);
+    await client.stop(rawSpec);
+    await client.start(rawSpec);
+    await client.waitForSystemBus(rawSpec, { timeoutMs: 300_000 });
+    const persisted = await execute(rawSpec, 'set -eu; test "$(cat /rootfs-proof)" = rootfs; test "$(cat /root/home-proof)" = home; test "$(cat /demo/workspace-proof)" = workspace; test "$(cat /data/data-proof)" = data');
     assert.equal(persisted.code, 0, persisted.stderr);
+
     stage = 'guest cancellation';
     const executionId = randomBytes(16).toString('hex');
-    const controller = new AbortController();
-    const container = await client.inspectBinding(spec);
-    const running = client.exec(spec, executionId, ['/bin/bash', '-s'], {
-      input: 'sleep 120 & echo $! > /data/cancel-child; wait', signal: controller.signal, timeoutMs: 30_000,
+    const running = client.exec(rawSpec, executionId, ['/bin/bash', '-s'], {
+      input: 'sleep 120 & echo $! > /data/cancel-child; wait', timeoutMs: 300_000, persistent: true,
     }).then(() => null, (error: unknown) => error);
-    try {
-      let active = false;
-      const deadline = Date.now() + 15_000;
-      while (Date.now() < deadline) {
-        const shown = await guarded.run('/usr/bin/podman', [...expectedPrefix, 'exec', container.id, 'systemctl', 'show', '--property=ActiveState', '--value', executionUnit(spec, executionId)], { ...verifiedLaunch, timeoutMs: 5000 });
-        if (shown.code === 0 && shown.stdout.trim() === 'active') {
-          const childReady = await guarded.run('/usr/bin/podman', [...expectedPrefix, 'exec', container.id, '/usr/bin/test', '-s', '/data/cancel-child'], { ...verifiedLaunch, timeoutMs: 5000 });
-          if (childReady.code === 0) { active = true; break; }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
+    let active = false;
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const shown = await client.exec(rawSpec, randomBytes(16).toString('hex'),
+        ['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', executionUnit(rawSpec, executionId)],
+        { timeoutMs: 15_000, allowFailure: true, persistent: true });
+      if (shown.code === 0 && shown.stdout.trim() === 'active') {
+        const childReady = await client.exec(rawSpec, randomBytes(16).toString('hex'), ['/usr/bin/test', '-s', '/data/cancel-child'],
+          { timeoutMs: 15_000, allowFailure: true, persistent: true });
+        if (childReady.code === 0) { active = true; break; }
       }
-      assert.equal(active, true, 'Cancellation must target an actually started guest unit');
-      controller.abort();
-      const error = await running;
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /aborted/);
-      assert.equal((await client.cancelExecution(spec, executionId)).terminated, true);
-      await client.releaseExecution(spec, executionId);
-      const gone = await execute(spec, 'set -eu; pid=$(cat /data/cancel-child); ! kill -0 "$pid" 2>/dev/null');
-      assert.ok(gone);
-      assert.equal(gone.code, 0, 'The guest descendant must be gone');
-    } finally { controller.abort(); await running; }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.equal(active, true, 'Cancellation must target an actually started guest unit');
+    assert.equal((await client.cancelExecution(rawSpec, executionId, { persistent: true })).terminated, true);
+    // A launcher whose unit was stopped under it still exits zero, so the client reports the cancellation
+    // itself rather than letting a killed command read as a success with no output.
+    const cancelled = await running;
+    assert.ok(cancelled instanceof Error, 'a cancelled execution must not settle as a success');
+    assert.match((cancelled as Error).message, /cancelled/i);
+    const gone = await execute(rawSpec, 'set -eu; pid=$(cat /data/cancel-child); ! kill -0 "$pid" 2>/dev/null');
+    assert.equal(gone.code, 0, 'The guest descendant must be gone');
+
+    // The first machine has served its purpose; its uid range stays spent either way, but the envelope
+    // and the disk go now so the coordinator below runs on a host this suite has already tidied once.
+    await client.stop(rawSpec);
+    await client.remove(rawSpec);
+    await client.removeDiskPath(rawSpec.storageRoot);
+
     stage = 'durable coordinator and guest file transport';
     const sql = openDb(':memory:');
     const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
-    const adoptedPath = mkdtempSync(join(scratch, 'adopted-'));
+    const adoptedPath = join(scratch, 'adopted');
+    mkdirSync(adoptedPath, { recursive: true });
     writeFileSync(join(adoptedPath, 'marker.txt'), 'adopted workspace');
-    const project: any = { id: 7, slug: 'runtime-demo', executionKind: 'managed', lifecycle: 'active', adoptedPath };
-    // Where this project is really mounted. Writing the proofs to `/workspace` instead left them on the
-    // container's own filesystem, so the snapshot and restore below proved nothing about the volume.
+    const project: any = { id: RUNTIME_PROJECT_ID, slug: 'runtime-demo', executionKind: 'managed', lifecycle: 'active', adoptedPath };
+    // Where this project is really mounted. Writing the proofs to `/workspace` instead would leave them
+    // on the machine's own root filesystem, so the snapshot and restore below would prove nothing.
     const projectRoot = managedGuestRoot(project.slug, project.id);
-    const runtimeSpec = createContainerSpec({ resource: { kind: 'project', id: project.id }, workspaceTarget: projectRoot, generation: 1,
-      image: PROJECT_BASE_IMAGE_TAG, previewBroker: true }, { sandboxDataDir: join(scratch, 'sandbox'), namespace: paths.namespace });
-    const ctx: any = { db: () => db, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
-      usersRead: { list: () => [{ id: 1 }], mayUsePlugin: () => true, isAdmin: () => true },
-      // Only project 7 exists for this actor: a denial case has to be able to actually be denied.
-      userProjects: { canAccess: (_userId: number, id: number) => id === project.id && project.lifecycle === 'active', canManage: (_userId: number, id: number) => id === project.id },
-      projects: { get: (id: number) => (id === project.id ? project : undefined), beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: () => true },
-    }) } };
+    const ctx: any = { db: () => db, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {},
+      logger: { info() {}, warn() {}, error() {} },
+      host: { stores: () => ({
+        usersRead: { list: () => [{ id: 1 }], mayUsePlugin: () => true, isAdmin: () => true },
+        // Only this project exists for this actor: a denial case has to be able to actually be denied.
+        userProjects: { canAccess: (_userId: number, id: number) => id === project.id && project.lifecycle === 'active', canManage: (_userId: number, id: number) => id === project.id },
+        projects: { get: (id: number) => (id === project.id ? project : undefined), beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: () => true },
+      }) } };
     initSandboxDb(ctx);
-    const runtime = createEnvironmentRuntime({ ctx, db, dataDir: join(scratch, 'sandbox'), namespace: paths.namespace, podman: client, daemon: true });
-    const actor = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
+    const runtime = createEnvironmentRuntime({ ctx, db, dataDir: sandboxDataDir, namespace: 'elowen', nspawn: client, storage, daemon: true });
+    const actor = { project: { kind: 'managed', projectId: RUNTIME_PROJECT_ID }, accountUserId: 1 };
     const perform = async (action: any) => {
       const op = await runtime.requestEnvironment({ ...actor, action }); await runtime.reconcile();
       const completed = await runtime.environmentOperation({ accountUserId: 1, operationId: op.id });
@@ -158,16 +163,22 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     };
     try {
       await perform({ kind: 'start' });
+      const stored = JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project'").get() as any).spec_json);
+      // The runtime a NEW environment is built on is decided once, against the host readiness answer, and
+      // recorded on the disk itself. There is nothing else it could have chosen.
+      assert.equal(stored.input.disk.runtime, 'nspawn');
+      runtimeStorageRoot = dirname(dirname(stored.input.disk.rootfsPath));
+      const runtimeSpec = createContainerSpec({ ...stored.input }, stored.paths) as any;
       assert.throws(() => lstatSync(adoptedPath));
       const adopted = await execute(runtimeSpec, `cat ${projectRoot}/marker.txt`);
-      assert.ok(adopted);
       assert.equal(adopted.stdout.trim(), 'adopted workspace');
+
       stage = 'adopted project live limits';
       const requestedLimits = { cpus: 2, memoryMb: 6144, pidsLimit: 4096 };
       await perform({ kind: 'limits', limits: requestedLimits });
       const raised = await execute(withContainerLimits(runtimeSpec, requestedLimits), 'cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max');
-      assert.ok(raised);
       assert.equal(raised.stdout.trim(), '200000 100000\n6442450944\n4096');
+
       const files = (operation: any) => runtime.projectFiles({ ...actor, operation });
       const created = await files({ kind: 'write', path: `${projectRoot}/runtime-proof`, base64: Buffer.from('snapshot value').toString('base64'), expectedVersion: null });
       assert.equal(created.kind, 'write');
@@ -179,7 +190,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
 
       stage = 'guest file tool operations';
       // What the file tools sit on: a directory listing, a content search, a stat, a rename and a
-      // removal, each answered by the guest rather than by a host view of the volume.
+      // removal, each answered by the guest rather than by a host view of the disk.
       await files({ kind: 'mkdir', path: `${projectRoot}/tools` });
       await files({ kind: 'write', path: `${projectRoot}/tools/needle.txt`, base64: Buffer.from('alpha NEEDLE omega\n').toString('base64'), expectedVersion: null });
       const listed = await files({ kind: 'list', path: `${projectRoot}/tools`, limit: 50 });
@@ -202,16 +213,17 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
       // Another project's identity must not reach this environment, and a stale generation must not
       // either — both are refusals the environment owes its caller, not conveniences.
       await assert.rejects(
-        runtime.projectFiles({ project: { kind: 'managed', projectId: 9 }, accountUserId: 1, operation: { kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 64 } }),
+        runtime.projectFiles({ project: { kind: 'managed', projectId: RUNTIME_PROJECT_ID + 1 }, accountUserId: 1, operation: { kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 64 } }),
         /forbidden|denied|not found|unavailable/i,
       );
       await assert.rejects(
         runtime.projectFiles({ ...actor, expectedGeneration: 99, operation: { kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 64 } }),
         /generation/i,
       );
-      // The container is the boundary, so a guest path is not refused for being outside the project mount.
+      // The machine is the boundary, so a guest path is not refused for being outside the project mount.
       // What must be refused is a path the protocol cannot express safely.
       await assert.rejects(files({ kind: 'read', path: 'relative/path', maxBytes: 64 }), /path|invalid|absolute/i);
+
       stage = 'managed worktrees and gateway preview';
       const worktrees = await runtime.managedWorktrees({ ...actor, action: { kind: 'create', label: 'retained', baseRef: 'main' } });
       assert.equal(worktrees.length, 1);
@@ -239,9 +251,9 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
         assert.equal(lstatSync(publication.socketPath).isSocket(), true);
         assert.equal(await published(), 200);
 
-        // A container restart takes the forwarder with it while its socket FILE stays behind on the host
+        // A machine restart takes the forwarder with it while its socket FILE stays behind on the host
         // side of the bind mount, which is why presence is never read as liveness. The application inside
-        // dies with the container too: what survives is the publication RECORD, and the transport answers
+        // dies with the machine too: what survives is the publication RECORD, and the transport answers
         // again the moment the application does.
         await perform({ kind: 'stop' });
         await perform({ kind: 'start' });
@@ -250,17 +262,18 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
         assert.equal(lstatSync(publication.socketPath).isSocket(), true);
         assert.equal(await published(), 200);
 
-        // And the reconcile that owns the container lifecycle leaves a healthy publication alone.
+        // And the reconcile that owns the machine lifecycle leaves a healthy publication alone.
         await runtime.reconcile();
         assert.equal(await published(), 200);
       } finally { await runtime.projectPublicationRelease({ ...actor, publicationId: 'storefront' }); }
       assert.throws(() => lstatSync(publication.socketPath));
-      assert.equal(sql.prepare("SELECT COUNT(*) AS count FROM p_sandbox_runtimes WHERE kind='publication'").get().count, 0);
+      assert.equal((sql.prepare("SELECT COUNT(*) AS count FROM p_sandbox_runtimes WHERE kind='publication'").get() as any).count, 0);
+
       stage = 'full project snapshot and fresh-generation restore';
       const saved = await perform({ kind: 'snapshot' });
       await runtime.managedWorktrees({ ...actor, action: { kind: 'create', label: 'after-snapshot', baseRef: 'main' } });
       await files({ kind: 'write', path: `${projectRoot}/runtime-proof`, base64: Buffer.from('changed').toString('base64'), expectedVersion: read.version });
-      await perform({ kind: 'restore', snapshotId: saved.snapshotId });
+      await perform({ kind: 'restore', snapshotId: saved!.snapshotId });
       assert.equal((await runtime.environmentFor(actor)).generation, 2);
       const restored = await files({ kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 1024 });
       assert.equal(Buffer.from(restored.base64, 'base64').toString(), 'snapshot value');
@@ -270,13 +283,16 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
       const retained = await runtime.managedWorktrees({ ...actor, action: { kind: 'list' } });
       assert.equal(retained.length, 1, 'Organizational worktree metadata must follow the restored snapshot');
       await runtime.managedWorktrees({ ...actor, action: { kind: 'remove', workspaceId: retained[0].id } });
+
       stage = 'managed source publication';
       const seed = await runtime.prepareExecution({ command: { type: 'shell', command: `mkdir ${projectRoot}/publication; printf executable > ${projectRoot}/publication/program.sh; chmod 755 ${projectRoot}/publication/program.sh; ln -s program.sh ${projectRoot}/publication/relative-link` }, projectRef: actor.project, cwd: projectRoot, leaseKind: 'terminal' }, 1);
       await runPrepared(seed);
-      const destination = join(scratch, 'published-copy');
-      const registration = { siteId: 'copy-site', projectId: 7, image: PROJECT_BASE_IMAGE_TAG, sourcePath: destination,
-        sitesDataDir: join(scratch, 'sites'), brokerDir: join(scratch, 'broker'), workspaceReadOnly: true, network: 'isolated',
-        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
+      const destination = join(sitesDataDir, SITE_ID, 'source');
+      mkdirSync(destination, { recursive: true, mode: 0o700 });
+      const registration = { siteId: SITE_ID, projectId: RUNTIME_PROJECT_ID, image: PROJECT_ROOTFS, sourcePath: destination,
+        sitesDataDir, brokerDir: join(sitesDataDir, SITE_ID, 'broker'), workspaceReadOnly: true, network: 'isolated',
+        persistentRootfs: true, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
+      mkdirSync(registration.brokerDir, { recursive: true, mode: 0o700 });
       runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {}, projectDependents: async () => [],
         resolveArtifact: async () => ({ kind: 'project-source', project: actor.project, guestPath: `${projectRoot}/publication`, destinationPath: destination }) });
       await runtime.registerSiteEnvironment({ siteId: registration.siteId, accountUserId: 1 });
@@ -289,25 +305,25 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
       assert.equal(lstatSync(join(destination, 'program.sh')).mode & 0o777, 0o755);
       assert.equal(readlinkSync(join(destination, 'relative-link')), 'program.sh');
       await siteAction({ kind: 'cleanup-stage' });
+
       stage = 'verified project cleanup';
       await perform({ kind: 'delete' });
+      runtimeStorageRoot = null;
     } finally { await runtime.dispose(); sql.close(); }
-    console.log('Real Podman inspect and guest-control observations:', JSON.stringify(observations));
+    console.log('Real machine control observations:', JSON.stringify([...new Set(observed)]));
   } catch (error) {
-    console.error(`Real Podman stage failed: ${stage}`);
-    console.error('Observed engine responses:', JSON.stringify(observations));
+    console.error(`Real machine stage failed: ${stage}`);
     throw error;
   } finally {
-    // Cleanup uses the already-verified prefix and env, never the daemon's account defaults.
-    // Reset is confined to this exclusively created store and its test images/volumes/containers.
-    if (engineVerified && verifiedLaunch) {
-      const result = await guarded.run('/usr/bin/podman', [...expectedPrefix, 'system', 'reset', '--force'], { ...verifiedLaunch, timeoutMs: 120_000 });
-      if (result.code !== 0) {
-        writeFileSync(join(scratch, 'cleanup-failed.json'), JSON.stringify({ stage, result, isolation: paths }));
-        throw new Error(`Private Podman cleanup failed; retained test scratch ${scratch}: ${result.stderr}`);
-      }
+    // Exactly what this run created, and nothing beside it. Each step is independently guarded: a failure
+    // part way through must still take the rest away rather than leave a machine registered on the host.
+    for (const spec of [rawSpec]) {
+      try { if (await client.containerExists(spec)) { await client.stop(spec).catch(() => {}); await client.removeByName(spec); } } catch { /* gone */ }
+    }
+    for (const path of [rawSpec.storageRoot, runtimeStorageRoot, join(sitesDataDir, SITE_ID), scratch]) {
+      if (!path) continue;
+      try { if (existsSync(path)) await client.removeDiskPath(path); } catch { /* gone */ }
     }
     rmSync(scratch, { recursive: true, force: true });
-    console.log('Private Podman resources and scratch removed:', scratch);
   }
-}, 600_000);
+}, 3_600_000);

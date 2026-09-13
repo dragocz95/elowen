@@ -48,13 +48,12 @@ export function createContainerSpec(input, paths) {
   return buildSpec(input, paths);
 }
 
-/** Create the complete persisted disk record for a new environment. Presence of this record is the sole
- * driver discriminator: specifications without it keep the legacy image-backed behavior.
+/** Create the complete persisted disk record for a new environment. Every environment this release drives
+ * has one; a stored specification without it is refused by `selectRuntimeClient` rather than adopted.
  *
- * `componentGeneration` is the migration of an EXISTING environment: its workspace, HOME and data
- * directories are already durable, already hold the environment's files and are named after the
- * generation that created them, so a migrated disk records those paths instead of copying the trees into
- * the disk directory. Only the root filesystem moves. */
+ * `componentGeneration` names an environment whose workspace, HOME and data directories are already
+ * durable and named after the generation that created them, so its disk record points at those paths
+ * instead of copying the trees into the disk directory. */
 export function createEnvironmentDiskSpec({ resource, image, runtime }, paths, diskId, componentGeneration) {
   closed(resource, ['kind', 'id']);
   if (runtime !== undefined && runtime !== 'nspawn') throw new Error('Invalid environment disk runtime');
@@ -79,13 +78,6 @@ export function createEnvironmentDiskSpec({ resource, image, runtime }, paths, d
     ...(componentGeneration === undefined ? {} : { componentGeneration }), ...(runtime === undefined ? {} : { runtime }) });
 }
 
-/** Reconstruct the trusted identity persisted by project records from before named guest mounts. This is
- * cleanup-only: current project specifications must still carry and validate their workspace target. */
-export function createLegacyProjectSpec(input, paths) {
-  if (input?.resource?.kind !== 'project' || input.workspaceTarget !== undefined) throw new Error('A legacy Project specification is required');
-  return buildSpec(input, paths, null, true);
-}
-
 export function createBoundSiteSpec(input, binding) {
   closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'namespace']);
   if (input?.resource?.kind !== 'site') throw new Error('A Site binding is required');
@@ -93,9 +85,9 @@ export function createBoundSiteSpec(input, binding) {
   return buildSpec(input, { namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir) }, binding);
 }
 
-/** Keep creation ownership stable while carrying the effective cgroup settings. Podman 4.9 applies a
- * live `update` but keeps the original values in inspect.HostConfig, so those values remain part of the
- * container's creation identity while `limits` records what the runtime has applied. */
+/** Keep creation ownership stable while carrying the effective cgroup settings. A live limit change is
+ * applied to the running envelope without rewriting the settings it was created with, so the creation
+ * values remain part of its identity while `limits` records what the runtime has actually applied. */
 export function withContainerLimits(spec, requested) {
   assertContainerSpec(spec);
   closed(requested, ['cpus', 'memoryMb', 'pidsLimit']);
@@ -107,7 +99,30 @@ export function withContainerLimits(spec, requested) {
   freeze(next); trustedSpecs.add(next); return next;
 }
 
-function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false) {
+/** The complete SIMPLE network policy. Legacy string values remain readable so an existing environment's
+ * identity stays byte-for-byte stable until an administrator explicitly changes its network policy. */
+export function normalizeEnvironmentNetwork(value) {
+  if (value === undefined || value === 'shared') return { mode: 'shared', inboundPorts: [] };
+  if (value === 'isolated') return { mode: 'isolated', inboundPorts: [] };
+  closed(value, ['mode', 'inboundPorts']);
+  if (value.mode !== 'shared' && value.mode !== 'isolated') throw new Error('Invalid container network mode');
+  if (!Array.isArray(value.inboundPorts) || value.inboundPorts.length > 32) throw new Error('Invalid container inbound ports');
+  const seen = new Set();
+  const inboundPorts = value.inboundPorts.map((entry) => {
+    closed(entry, ['protocol', 'hostPort', 'guestPort']);
+    if (entry.protocol !== 'tcp' && entry.protocol !== 'udp') throw new Error('Invalid container inbound port protocol');
+    if (!Number.isSafeInteger(entry.hostPort) || entry.hostPort < 1024 || entry.hostPort > 65535
+      || !Number.isSafeInteger(entry.guestPort) || entry.guestPort < 1 || entry.guestPort > 65535) throw new Error('Invalid container inbound port');
+    const key = `${entry.protocol}:${entry.hostPort}`;
+    if (seen.has(key)) throw new Error('Duplicate container inbound host port');
+    seen.add(key);
+    return { protocol: entry.protocol, hostPort: entry.hostPort, guestPort: entry.guestPort };
+  }).sort((a, b) => a.protocol.localeCompare(b.protocol) || a.hostPort - b.hostPort || a.guestPort - b.guestPort);
+  if (value.mode === 'isolated' && inboundPorts.length) throw new Error('An isolated container cannot publish inbound ports');
+  return { mode: value.mode, inboundPorts };
+}
+
+function buildSpec(input, paths, binding = null) {
   closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker', 'workspaceTarget', 'disk']);
   if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
   closed(input.resource, ['kind', 'id']);
@@ -117,12 +132,12 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
   if (kind === 'site') resourceToken(id);
   if (!Number.isSafeInteger(input.generation) || input.generation < 1) throw new Error('Invalid runtime generation');
   if (typeof input.image !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(input.image)) throw new Error('Invalid container image');
-  const network = input.network ?? 'shared';
-  if (network !== 'shared' && network !== 'isolated') throw new Error('Invalid container network');
+  const legacyNetwork = input.network === undefined || typeof input.network === 'string';
+  const network = normalizeEnvironmentNetwork(input.network);
   if (input.workspaceReadOnly !== undefined && (kind !== 'site' || typeof input.workspaceReadOnly !== 'boolean')) throw new Error('Invalid read-only workspace policy');
   closed(input.limits ?? {}, ['cpus', 'memoryMb', 'pidsLimit']);
-  // A container keeps the limits it was created with until an explicit limits action updates them
-  // through `withContainerLimits`, which is the only path that also runs `podman update`.
+  // An envelope keeps the limits it was created with until an explicit limits action updates them
+  // through `withContainerLimits`, which is the only path that also applies them to the live machine.
   const limits = { ...DEFAULT_CONTAINER_LIMITS, ...input.limits };
   if (!Number.isFinite(limits.cpus) || limits.cpus <= 0 || limits.cpus > 1024 || !Number.isSafeInteger(limits.cpus * 1e6)) throw new Error('Invalid CPU limit');
   for (const key of ['memoryMb', 'pidsLimit']) {
@@ -148,13 +163,13 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
   const volumes = components.map((component) => ({
     component, name: `${name}-${component}`, path: disk?.components.find((entry) => entry.component === component)?.path ?? join(storageRoot, 'storage', String(generation), component),
   }));
-  // A project is mounted under its own name; a Site and a historical project cleanup keep `/workspace`.
-  const workdir = kind === 'project' && !legacyProjectWorkspace ? guestMountTarget(input.workspaceTarget) : '/workspace';
-  // A named volume is a HANDLE over a host directory. A legacy environment keeps its handles, because
-  // that is the identity its container was created with; a disk-backed one mounts the disk's own
-  // directories, so the disk record stays the single owner of those paths and no handle outlives the
-  // generation that created it. `volumes` remains the component list either way, which is what deletion
-  // walks to remove the handles a previous generation left behind.
+  // A project is mounted under its own name; a Site keeps `/workspace`.
+  const workdir = kind === 'project' ? guestMountTarget(input.workspaceTarget) : '/workspace';
+  // A disk-backed environment binds the disk's own directories, so the disk record stays the single owner
+  // of those paths and nothing outlives the generation that created it. `volumes` remains the component
+  // list, which is what deletion walks. The `volume` shape below belongs to rows this release refuses to
+  // drive at all — `selectRuntimeClient` names them and stops — and is kept only so their stored
+  // specification still deserializes into the identity that refusal reports.
   const mountFor = (target) => {
     const volume = volumes.find((entry) => entry.component === target);
     return disk ? { type: 'bind', source: volume.path } : { type: 'volume', source: volume.name };
@@ -172,7 +187,8 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
     resource, generation, namespace, name, image: input.image, limits, ...(disk ? { disk } : {}),
     workdir,
     ipcMode: 'private',
-    network: network === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
+    network: network.mode === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
+    ...(legacyNetwork ? {} : { inboundPorts: network.inboundPorts }),
     storageRoot, volumes, mounts, envFile: kind === 'site' ? join(storageRoot, 'container.env') : null,
   };
   // The hash preimage keeps the `legacy: null` key every spec carried while Sites containers created by
@@ -210,16 +226,6 @@ export function assertContainerSpec(spec) {
   return spec;
 }
 
-export function volumeLabels(spec, component) {
-  assertContainerSpec(spec);
-  if (!spec.volumes.some((volume) => volume.component === component)) throw new Error('Unknown storage component');
-  return {
-    'io.elowen.runtime': 'sandbox', 'io.elowen.namespace': spec.namespace,
-    'io.elowen.resource': `${spec.resource.kind}:${spec.resource.id}`,
-    'io.elowen.generation': String(spec.generation), 'io.elowen.component': component,
-  };
-}
-
 export function executionUnit(spec, executionId) {
   assertContainerSpec(spec);
   if (typeof executionId !== 'string' || !/^[a-f0-9]{32}$/.test(executionId)) throw new Error('Invalid host execution ID');
@@ -238,10 +244,4 @@ export function publicationRuntimeToken(publicationId) {
  *  is derived from the publication alone and the same forwarder is found again instead of duplicated. */
 export function publicationUnit(publicationId) {
   return `elowen-pub-${publicationRuntimeToken(publicationId)}.service`;
-}
-
-export function snapshotReference(spec, snapshotId) {
-  assertContainerSpec(spec);
-  resourceToken(snapshotId);
-  return `localhost/${spec.namespace}-${spec.resource.kind}/${spec.resource.id}:g${spec.generation}-${snapshotId}`;
 }

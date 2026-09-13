@@ -98,11 +98,17 @@ export function isRequestId(value) { return typeof value === 'string' && /^[a-zA
 /** The one projection of an operation row onto the wire shape both the project and the Site surfaces
  *  read (`EnvironmentOperation`, `SiteEnvironmentOperation`). It lives beside the row mapper because a
  *  second copy of it is how the declared progress fields went missing from one of them. */
-export const operationView = (op) => ({ id: op.id, requestId: op.request_key, [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id,
-  accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
+const operationProgress = (op) => ({ id: op.id, requestId: op.request_key, accountUserId: op.user_id, generation: op.generation,
+  action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
   steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
   stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
   percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
+
+export const operationView = (op) => ({ ...operationProgress(op),
+  [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id });
+
+export const hostOperationView = (op) => ({ ...operationProgress(op), runtime: op.resource_id,
+  errorCode: op.checkpoint?.errorCode ?? null });
 
 /** How many operations one resource keeps. The project overview reads the newest of them, so a row that
  *  settles beyond this bound is history nothing reads and is deleted as it settles rather than kept for
@@ -153,6 +159,12 @@ export function createEnvironmentStore(db, identity) {
       const id = `env_${randomUUID()}`;
       db.prepare('INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json) VALUES(?,?,?,?,?,?,?)')
         .run(id, row.kind, row.resource_id, userId, key, row.generation, JSON.stringify(action));
+      return getOperation(id);
+    },
+    enqueueHost(userId, action, key = randomUUID()) {
+      const id = `env_${randomUUID()}`;
+      db.prepare("INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json) VALUES(?,'host','nspawn',?,?,1,?)")
+        .run(id, userId, key, JSON.stringify(action));
       return getOperation(id);
     },
     operations: () => db.prepare("SELECT * FROM p_sandbox_runtime_operations WHERE status IN ('pending','running') ORDER BY created_at,id").all().map(operation),

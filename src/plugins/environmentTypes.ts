@@ -1,9 +1,9 @@
 import type { ManagedProjectRef } from '../shared/projectExecution.js';
-import type { EnvironmentAction, EnvironmentLimits, EnvironmentOperation } from '../shared/wireContract.js';
+import type { EnvironmentAction, EnvironmentLimits, EnvironmentNetwork, EnvironmentOperation } from '../shared/wireContract.js';
 
 // Declared in the wire contract because the web reads them off the wire, and re-exported here so the
 // daemon keeps importing them from the module that owns this domain.
-export type { EnvironmentAction, EnvironmentLimits, EnvironmentOperation };
+export type { EnvironmentAction, EnvironmentLimits, EnvironmentNetwork, EnvironmentOperation };
 
 export interface ProjectEnvironment {
   projectId: number;
@@ -12,6 +12,7 @@ export interface ProjectEnvironment {
   desiredState: 'running' | 'stopped' | 'deleted';
   lastError: string | null;
   limits: EnvironmentLimits;
+  network: EnvironmentNetwork;
 }
 export interface EnvironmentSnapshot {
   id: string;
@@ -188,7 +189,7 @@ export interface SiteRuntimeAuthority {
   beforeCreate?(siteId: string): Promise<void>;
   /** Return a fresh bootstrap-only archive for every new container rootfs; Sandbox imports it before create. */
   containerSeed?(siteId: string): Promise<Extract<SiteRuntimeArtifact, { kind: 'data' }> | null>;
-  /** Sites owns privileged ingress preparation and application readiness, never the Podman lifecycle. */
+  /** Sites owns privileged ingress preparation and application readiness, never the machine lifecycle. */
   beforeStart(siteId: string): Promise<void>;
   /** Confirm the application answers through its own ingress. Sandbox calls it where a container that
    *  merely runs is not enough — the disk migration proves the candidate envelope before switching the

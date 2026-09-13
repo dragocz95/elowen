@@ -1,9 +1,8 @@
 #!/usr/bin/node
 /** Host preparation for the systemd-nspawn proof suite, and its removal.
  *
- *  The proof suite asserts properties of a RUNNING machine, so it needs three root-owned artefacts that
- *  an unprovisioned host does not have: the machine unit template, the polkit rule that lets the service
- *  account start those units without sudo, and a sudoers line naming one privileged helper.
+ *  The proof suite asserts properties of a RUNNING machine, so it installs a root-owned machine unit,
+ *  an isolated helper copy and wrapper, and a sudoers line naming only that typed helper.
  *
  *  The helper it names is deliberately NOT the installed one. `/usr/local/libexec/elowen-site-gateway`
  *  serves published sites in production; replacing it to test a branch would deploy that branch's whole
@@ -12,8 +11,8 @@
  *  the shape the production drop-in pins while the bytes that answer come from the branch.
  *
  *  Everything written here is recorded and removed again, and an artefact that already existed is left
- *  alone: an operator who has provisioned this host keeps their own unit template and rule. The uid
- *  ranges the run's environments were allocated are given back the same way, and on the same terms.
+ *  alone: an operator who has provisioned this host keeps their own unit template. The uid ranges the
+ *  run's environments were allocated are given back the same way, and on the same terms.
  *
  *  Run as root, from the working tree:
  *
@@ -22,6 +21,7 @@
  *    sudo node tests/plugins/nspawnProofHost.mjs uninstall  remove and verify
  */
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { chmodSync, chownSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,13 +40,13 @@ const SUDOERS_PATH = '/etc/sudoers.d/elowen-nspawn-proof';
  *  first artefact until teardown has finished. The suite reads it as the condition for running at all,
  *  because teardown is what gives the uid ranges back. */
 export const RECEIPT_PATH = '/var/tmp/elowen-nspawn-proof-host.json';
-/** The registry in which the privileged helper reserves one uid range per environment, named here the
- *  way the helper names it. Nothing about it is changed for a proof run: the reservation is forward-only
- *  on purpose — a restored disk carries its ownership on disk and the envelope refuses a mismatch — and a
- *  registry path the helper took from a request would be a path the service account can name, which is
- *  the one thing the trusted roots exist to prevent. So a run allocates from the real registry like
- *  everything else does, and gives its own reservations back at teardown. */
+/** Production keeps uid ranges in the fixed registry below. The proof helper copy is rewritten at install
+ *  time to use its own root-owned registry and a disjoint high uid base. That keeps a stale production alias
+ *  from blocking a test and prevents a proof allocation from colliding with any of the production registry's
+ *  4096 slots. Neither path nor base comes from the service account or from a helper request. */
 const UID_RANGE_REGISTRY = '/var/lib/elowen/nspawn-uid-ranges.json';
+const PROOF_UID_RANGE_REGISTRY = '/var/tmp/elowen-nspawn-proof-uid-ranges.json';
+const PROOF_UID_RANGE_BASE = '2_000_000_000';
 /** The ids the proof suite mints, as `tests/plugins/environmentNspawnProof.test.ts` derives them: a
  *  project id far outside the range a real project reaches, and a `nsproof-` site. Both key forms are
  *  matched, because the helper writes `kind:resource` and still adopts the earlier `kind:resource:disk`.
@@ -63,13 +63,12 @@ if (!existsSync(HELPER_SOURCE)) fail(`the working tree helper is missing at ${HE
 // of a unit template proves that copy works, not the one the branch ships. The module's self-invocation
 // guard compares `import.meta.url` against `process.argv[1]`, which is this file, so nothing runs.
 const helper = await import(`file://${HELPER_SOURCE}`);
-for (const name of ['MACHINE_UNIT_PATH', 'MACHINE_UNIT_TEMPLATE', 'POLKIT_RULE_PATH', 'renderPolkitRule',
-  'storageRootsFor', 'acquireMutationLock']) {
+for (const name of ['MACHINE_UNIT_PATH', 'MACHINE_UNIT_TEMPLATE', 'NSPAWN_FIREWALL_RULES', 'storageRootsFor', 'acquireMutationLock']) {
   if (helper[name] === undefined) fail(`the working tree helper does not export ${name}`);
 }
 
-/** The account the daemon runs as, which is the account the polkit rule and the sudoers line are scoped
- *  to. `sudo` states it; guessing it would scope a root-owned rule to the wrong user. */
+/** The account the daemon runs as, which is the account the sudoers line is scoped to. `sudo` states it;
+ *  guessing it would grant the proof helper to the wrong user. */
 function resolveServiceUser() {
   const user = process.env.ELOWEN_TEST_NSPAWN_USER ?? process.env.SUDO_USER ?? '';
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user) || user === 'root') {
@@ -78,7 +77,40 @@ function resolveServiceUser() {
   return user;
 }
 
-function artefactsFor(serviceUser) {
+function proofIdentity(suffix) {
+  if (!/^[0-9a-f]{8}$/.test(suffix)) fail('the proof suffix must be eight lowercase hexadecimal characters');
+  const projectId = 990_000_000 + Number(BigInt(`0x${suffix}`) % 1_000_000n);
+  return {
+    projectId,
+    siteId: `nsproof-${suffix}`,
+    machines: [`elowen-project-${projectId}-g1`, `elowen-site-nsproof-${suffix}-g1`],
+  };
+}
+
+function trustedInstanceOverride() {
+  const execStart = helper.MACHINE_UNIT_TEMPLATE.match(/^ExecStart=(.+)$/m)?.[1];
+  if (!execStart?.includes('--settings=trusted')) fail('the working tree machine unit has no trusted ExecStart');
+  return `# Written by tests/plugins/nspawnProofHost.mjs for one proof run. Not part of a deployment.
+[Service]
+ExecStart=
+ExecStart=${execStart}
+`;
+}
+
+function proofHelperSource() {
+  const source = readFileSync(HELPER_SOURCE, 'utf8');
+  const isolated = source
+    .replace("const NSPAWN_UID_STATE_PATH = '/var/lib/elowen/nspawn-uid-ranges.json';",
+      `const NSPAWN_UID_STATE_PATH = '${PROOF_UID_RANGE_REGISTRY}';`)
+    .replace('export const UID_RANGE_BASE = 1_073_741_824;', `export const UID_RANGE_BASE = ${PROOF_UID_RANGE_BASE};`);
+  if (isolated === source || !isolated.includes(PROOF_UID_RANGE_REGISTRY)
+    || !isolated.includes(`export const UID_RANGE_BASE = ${PROOF_UID_RANGE_BASE};`)) {
+    fail('the proof helper uid registry isolation could not be applied');
+  }
+  return isolated;
+}
+
+function artefactsFor(serviceUser, suffix) {
   const wrapper = `#!/bin/sh
 # Written by tests/plugins/nspawnProofHost.mjs for one proof run. Not part of a deployment.
 exec /usr/bin/node ${HELPER_PATH} "$@"
@@ -86,12 +118,21 @@ exec /usr/bin/node ${HELPER_PATH} "$@"
   const sudoers = `# Written by tests/plugins/nspawnProofHost.mjs for one proof run. Not part of a deployment.
 ${serviceUser} ALL=(root) NOPASSWD: ${WRAPPER_PATH} ""
 `;
+  const identity = proofIdentity(suffix);
   return [
-    { id: 'helper', path: HELPER_PATH, content: readFileSync(HELPER_SOURCE, 'utf8'), mode: 0o755 },
-    { id: 'wrapper', path: WRAPPER_PATH, content: wrapper, mode: 0o755 },
-    { id: 'sudoers', path: SUDOERS_PATH, content: sudoers, mode: 0o440 },
+    { id: 'helper', path: HELPER_PATH, content: proofHelperSource(), mode: 0o755, fresh: true },
+    { id: 'wrapper', path: WRAPPER_PATH, content: wrapper, mode: 0o755, fresh: true },
+    { id: 'sudoers', path: SUDOERS_PATH, content: sudoers, mode: 0o440, fresh: true },
+    ...identity.machines.map((machine, index) => ({
+      id: index === 0 ? 'project-unit-override' : 'site-unit-override',
+      path: `/etc/systemd/system/elowen-machine@${machine}.service.d/00-proof-trusted.conf`,
+      content: trustedInstanceOverride(),
+      mode: 0o644,
+      reload: true,
+      fresh: true,
+      removeParent: true,
+    })),
     { id: 'unit', path: helper.MACHINE_UNIT_PATH, content: helper.MACHINE_UNIT_TEMPLATE, mode: 0o644, reload: true },
-    { id: 'polkit', path: helper.POLKIT_RULE_PATH, content: helper.renderPolkitRule(serviceUser), mode: 0o644 },
   ];
 }
 
@@ -153,20 +194,25 @@ function storageRootsOf(serviceUser) {
   return helper.storageRootsFor(home);
 }
 
-function install(serviceUser) {
+function install(serviceUser, suffix) {
   if (readReceipt()) fail(`a previous run left ${RECEIPT_PATH}; run uninstall first`);
-  const artefacts = artefactsFor(serviceUser);
+  if (existsSync(PROOF_UID_RANGE_REGISTRY)) fail(`the proof uid registry ${PROOF_UID_RANGE_REGISTRY} already exists without a receipt`);
+  const artefacts = artefactsFor(serviceUser, suffix);
+  for (const artefact of artefacts) {
+    if (artefact.fresh && existsSync(artefact.path)) fail(`the proof path ${artefact.path} already exists without a receipt`);
+  }
   // Which artefacts this run is responsible for. One that already exists belongs to whoever put it
   // there, so it is neither rewritten nor removed, and the receipt records that decision.
   const owned = [];
+  const firewallRuleIds = [];
   // Every uid range the registry already holds, so teardown can tell this run's reservations from the
   // ones that were here before it and the ones the daemon makes while it runs.
-  const uidRangeKeys = Object.keys(readUidRanges(UID_RANGE_REGISTRY));
+  const uidRangeKeys = Object.keys(readUidRanges(PROOF_UID_RANGE_REGISTRY));
   // The receipt is written after EVERY artefact, and an empty one before the first. Anything that can
   // fail between here and the end — a rejected sudoers file, a failed daemon-reload — would otherwise
   // leave root-owned files on disk that teardown has no record of, and `uninstall` would answer that
   // there was nothing to remove while a sudo grant sat there.
-  const record = () => writeFileSync(RECEIPT_PATH, JSON.stringify({ owned, serviceUser, uidRangeKeys, worktree: WORKTREE, at: new Date().toISOString() }), { mode: 0o600 });
+  const record = () => writeFileSync(RECEIPT_PATH, JSON.stringify({ owned, firewallRuleIds, serviceUser, suffix, uidRangeKeys, worktree: WORKTREE, at: new Date().toISOString() }), { mode: 0o600 });
   record();
   let reload = false;
   for (const artefact of artefacts) {
@@ -191,6 +237,15 @@ function install(serviceUser) {
     const reloaded = run('/usr/bin/systemctl', ['daemon-reload']);
     if (reloaded.status !== 0) fail(`systemd daemon-reload failed: ${String(reloaded.stderr || '').trim()}`);
   }
+  for (const rule of helper.NSPAWN_FIREWALL_RULES) {
+    const present = run(rule.binary, ['-C', rule.chain, ...rule.spec]);
+    if (present.status === 0) continue;
+    const inserted = run(rule.binary, ['-I', rule.chain, String(rule.insertAt), ...rule.spec]);
+    if (inserted.status !== 0) fail(`the proof firewall rule ${rule.id} could not be inserted: ${String(inserted.stderr || '').trim()}`);
+    firewallRuleIds.push(rule.id);
+    record();
+    console.log(`nspawn proof host: inserted ${rule.id}`);
+  }
   console.log(`nspawn proof host: prepared (${owned.length ? owned.join(', ') : 'nothing to write'})`);
   return owned;
 }
@@ -198,11 +253,21 @@ function install(serviceUser) {
 async function uninstall() {
   const receipt = readReceipt();
   if (!receipt) { console.log('nspawn proof host: nothing recorded to remove'); return true; }
-  const artefacts = artefactsFor(receipt.serviceUser);
+  const artefacts = artefactsFor(receipt.serviceUser, receipt.suffix);
+  const firewallFailures = [];
+  for (const id of [...(receipt.firewallRuleIds ?? [])].reverse()) {
+    const rule = helper.NSPAWN_FIREWALL_RULES.find((entry) => entry.id === id);
+    if (!rule) { firewallFailures.push(`unknown recorded firewall rule ${id}`); continue; }
+    const present = run(rule.binary, ['-C', rule.chain, ...rule.spec]);
+    if (present.status !== 0) continue;
+    const removed = run(rule.binary, ['-D', rule.chain, ...rule.spec]);
+    if (removed.status !== 0) firewallFailures.push(`${id} could not be removed: ${String(removed.stderr || '').trim()}`);
+  }
   let reload = false;
   for (const artefact of artefacts) {
     if (!receipt.owned.includes(artefact.id)) continue;
     rmSync(artefact.path, { force: true });
+    if (artefact.removeParent) rmSync(dirname(artefact.path), { recursive: true, force: true });
     reload = reload || artefact.reload === true;
   }
   if (reload) run('/usr/bin/systemctl', ['daemon-reload']);
@@ -210,20 +275,27 @@ async function uninstall() {
   // another range while the registry is being rewritten.
   const release = await helper.acquireMutationLock();
   let ranges;
-  try { ranges = retireProofRanges(receipt.uidRangeKeys ?? [], storageRootsOf(receipt.serviceUser)); }
+  try { ranges = retireProofRanges(receipt.uidRangeKeys ?? [], storageRootsOf(receipt.serviceUser), PROOF_UID_RANGE_REGISTRY); }
   finally { release(); }
   for (const key of ranges.retired) console.log(`nspawn proof host: gave back the uid range of ${key}`);
-  rmSync(RECEIPT_PATH, { force: true });
+  if (ranges.kept.length === 0) rmSync(PROOF_UID_RANGE_REGISTRY, { force: true });
   // Verified, not assumed: an artefact this run created must be gone, and one it did not create must
-  // still be there.
-  const failures = ranges.kept.map((key) => `${key} keeps its uid range: its disk tree is still on this host`);
+  // still be there. An incomplete cleanup keeps its receipt so another uninstall can resume it.
+  const failures = [...firewallFailures, ...ranges.kept.map((key) => `${key} keeps its uid range: its disk tree is still on this host`)];
   for (const artefact of artefacts) {
     const owned = receipt.owned.includes(artefact.id);
     const present = existsSync(artefact.path);
     if (owned && present) failures.push(`${artefact.path} is still present`);
+    if (owned && artefact.removeParent && existsSync(dirname(artefact.path))) failures.push(`${dirname(artefact.path)} is still present`);
     if (!owned && !present) failures.push(`${artefact.path} was not this run's and is now missing`);
   }
-  if (existsSync(RECEIPT_PATH)) failures.push(`${RECEIPT_PATH} is still present`);
+  if (existsSync(PROOF_UID_RANGE_REGISTRY) && ranges.kept.length === 0) failures.push(`${PROOF_UID_RANGE_REGISTRY} is still present`);
+  if (failures.length === 0) {
+    rmSync(RECEIPT_PATH, { force: true });
+    if (existsSync(RECEIPT_PATH)) failures.push(`${RECEIPT_PATH} is still present`);
+  } else if (!existsSync(RECEIPT_PATH)) {
+    failures.push(`${RECEIPT_PATH} is missing after incomplete cleanup`);
+  }
   for (const line of failures) console.error(`nspawn proof host: ${line}`);
   console.log(failures.length ? 'nspawn proof host: CLEANUP INCOMPLETE' : 'nspawn proof host: cleanup verified');
   return failures.length === 0;
@@ -236,15 +308,20 @@ const invoked = process.argv[1] && import.meta.url === new URL(`file://${process
 if (invoked) {
   if (process.getuid() !== 0) fail('run this as root');
   const mode = process.argv[2] ?? 'run';
-  if (mode === 'install') { install(resolveServiceUser()); }
+  if (mode === 'install') {
+    const suffix = process.env.ELOWEN_TEST_NSPAWN_SUFFIX ?? randomBytes(4).toString('hex');
+    install(resolveServiceUser(), suffix);
+    console.log(`nspawn proof host: suffix ${suffix}`);
+  }
   else if (mode === 'uninstall') { process.exit(await uninstall() ? 0 : 1); }
   else if (mode === 'run') {
     const serviceUser = resolveServiceUser();
-    install(serviceUser);
-    const suite = run('/usr/bin/sudo', ['-u', serviceUser, '--preserve-env=ELOWEN_TEST_NSPAWN_HELPER',
-      'npx', 'vitest', 'run', 'tests/plugins/environmentNspawnProof.test.ts'], {
+    const suffix = process.env.ELOWEN_TEST_NSPAWN_SUFFIX ?? randomBytes(4).toString('hex');
+    install(serviceUser, suffix);
+    const suite = run('/usr/bin/sudo', ['-u', serviceUser, '--preserve-env=ELOWEN_TEST_NSPAWN_HELPER,ELOWEN_TEST_NSPAWN_ARTIFACT,ELOWEN_TEST_NSPAWN_SITE_ARTIFACT,ELOWEN_TEST_NSPAWN_SUFFIX,ELOWEN_REQUIRE_NSPAWN_PROOF',
+      'npx', 'vitest', 'run', 'tests/plugins/environmentNspawnProof.test.ts', ...process.argv.slice(3)], {
       cwd: WORKTREE, stdio: 'inherit', timeout: 45 * 60_000,
-      env: { ...process.env, ELOWEN_TEST_NSPAWN_HELPER: WRAPPER_PATH },
+      env: { ...process.env, ELOWEN_TEST_NSPAWN_HELPER: WRAPPER_PATH, ELOWEN_TEST_NSPAWN_SUFFIX: suffix, ELOWEN_REQUIRE_NSPAWN_PROOF: '1' },
     });
     const clean = await uninstall();
     process.exit(suite.status === 0 && clean ? 0 : 1);

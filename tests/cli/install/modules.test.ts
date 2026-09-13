@@ -400,9 +400,12 @@ describe('privileged/provisionMachineRuntime', () => {
     // Both callers run as root, where the inner sudo names root and the helper cannot derive the account
     // the environments belong to. Without the name the documented operator path provisions nothing.
     await provisionMachineRuntime(null, invoke);
+    // `veth` is asked for on both, because an ordinary environment asks for one. Without it the helper
+    // reports a prepared host while forwarding is off and the link service is disabled, so the install
+    // says ready and the first environment created on it still cannot reach anything.
     expect(sent).toEqual([
-      { domain: 'nspawn', op: 'provision', user: 'www-data' },
-      { domain: 'nspawn', op: 'provision' },
+      { domain: 'nspawn', op: 'provision', veth: true, user: 'www-data' },
+      { domain: 'nspawn', op: 'provision', veth: true },
     ]);
   });
 

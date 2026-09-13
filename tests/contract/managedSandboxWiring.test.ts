@@ -61,3 +61,27 @@ describe('managed Sandbox seam wiring', () => {
     expect(result.content[0]!.text).toContain('/data/.elowen/plans/');
   });
 });
+
+/** Every route `registerEnvironmentApi` registers must be declared in the shipped plugin manifest.
+ *
+ *  `PluginRegistry` refuses an undeclared path with a warning and nothing else: the route simply never
+ *  registers, the plugin loads, every unit test around the handler still passes, and the feature is
+ *  unreachable at runtime with no failure anyone sees. A manifest and a registration that drift apart is
+ *  therefore not a lint concern, it is a silently dead surface — so they are held against each other
+ *  here, by running the real registration rather than by reading it. */
+describe('Sandbox environment API manifest', () => {
+  it('declares every route the environment API actually registers', async () => {
+    const manifest = JSON.parse(readFileSync(new URL('../../plugins/sandbox/elowen-plugin.json', import.meta.url), 'utf8'));
+    const { registerEnvironmentApi } = await import('../../plugins/sandbox/lib/environmentApi.mjs');
+
+    const registered: string[] = [];
+    registerEnvironmentApi(
+      { registerApiRoute: ({ path }: { path: string }) => { registered.push(path); } } as never,
+      { control: new Proxy({}, { get: () => () => undefined }) } as never,
+    );
+
+    expect(registered.length).toBeGreaterThan(0);
+    const declared: string[] = manifest.provides.apiRoutes;
+    expect([...new Set(registered)].filter((path) => !declared.includes(path))).toEqual([]);
+  });
+});

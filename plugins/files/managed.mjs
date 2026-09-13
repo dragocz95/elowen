@@ -11,11 +11,11 @@ const GUEST_STDERR_BOUND = 2000;
 
 /** Turn a failed guest command into an error that describes the GUEST.
  *
- *  The launcher is a host `podman` invocation carrying its store flags, the container id and the whole
+ *  The launcher is a host invocation carrying the privileged helper, the machine identity and the whole
  *  wrapped argv, and Node puts that entire command line into the message of a non-zero exit. Reporting it
- *  told whoever asked to read a PDF that `/usr/bin/podman --root … exec <64 hex chars> …` had failed,
- *  which names none of their concern, cannot be acted on, and writes the container's identity into a
- *  transcript. What the caller needs is which program failed, in which environment, and why.
+ *  told whoever asked to read a PDF that a root helper invocation naming the machine had failed, which
+ *  names none of their concern, cannot be acted on, and writes the machine's identity into a transcript.
+ *  What the caller needs is which program failed, in which environment, and why.
  *
  *  `code` is stable and is the contract other plugins match on; the guest's own stderr is sanitised and
  *  bounded, and the host command line never appears in either. */

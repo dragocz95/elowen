@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventBus } from '../../src/api/sse.js';
@@ -37,9 +37,9 @@ function makePlugin(root: string, name: string, extra: Record<string, unknown> =
   writeFileSync(join(dir, 'index.mjs'), 'export function register(){}');
 }
 
-function setup() {
+function setup(overrides: { pluginDataRoot?: string } = {}) {
   const root = tmpDir('plugroutes');
-  const dataRoot = tmpDir('plugdata');
+  const dataRoot = overrides.pluginDataRoot ?? tmpDir('plugdata');
   makePlugin(root, 'skills');
   makePlugin(root, 'files');
   // A consumer and its provider, wired only through a control KEY - the daemon never learns that one is
@@ -79,7 +79,9 @@ function setup() {
     brain: { reloadPlugins } as never,
     brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
   });
-  return { app, config, reloadPlugins, dataRoot, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+  // `root` is returned so a case can add a fixture plugin of its own without widening the shared set that
+  // the listing test asserts by name.
+  return { app, config, reloadPlugins, root, dataRoot, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -301,6 +303,105 @@ describe('plugin routes', () => {
     expect(config.get().plugins.enabled).toContain('mirror');
   });
 
+  it('refuses to switch off the provider a live consumer still depends on, and names the dependant', async () => {
+    // The mirror image of the enable gate, and needed for the same reason: `ctx.control()` simply answers
+    // undefined, so switching the provider off leaves the consumer enabled, silent and useless, with
+    // nothing on screen saying what happened.
+    const { app, config, reloadPlugins, adminTok } = setup();
+    config.update({ plugins: { enabled: ['identity', 'mirror'], removed: [] } });
+
+    const refused = await app.request('/plugins/identity', patch(adminTok, { enabled: false }));
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: 'plugin dependency in use',
+      controls: [{ key: 'cloudIdentity', requiredBy: ['mirror'] }],
+    });
+    expect(config.get().plugins.enabled).toEqual(['identity', 'mirror']);
+    expect(reloadPlugins).not.toHaveBeenCalled();
+  });
+
+  it('lets the provider go once the consumer is switched off first', async () => {
+    // The order the refusal above is asking for. Nothing else has to change for it to be accepted.
+    const { app, config, adminTok } = setup();
+    config.update({ plugins: { enabled: ['identity', 'mirror'], removed: [] } });
+
+    expect((await app.request('/plugins/mirror', patch(adminTok, { enabled: false }))).status).toBe(200);
+    expect((await app.request('/plugins/identity', patch(adminTok, { enabled: false }))).status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual([]);
+  });
+
+  it('refuses to REMOVE the provider a live consumer depends on, the same way the toggle does', async () => {
+    // Removal ends with the plugin out of the enabled set either way, so it owes the same answer: the
+    // consumer is equally broken whichever door the provider left by.
+    const { app, config, adminTok } = setup();
+    config.update({ plugins: { enabled: ['identity', 'mirror'], removed: [] } });
+
+    const refused = await app.request('/plugins/identity', { method: 'DELETE', ...auth(adminTok) });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: 'plugin dependency in use',
+      controls: [{ key: 'cloudIdentity', requiredBy: ['mirror'] }],
+    });
+    expect(config.get().plugins.enabled).toEqual(['identity', 'mirror']);
+    expect(config.get().plugins.removed).toEqual([]);
+  });
+
+  it('lets one of two publishers of the same key go, because the key survives', async () => {
+    // The gate is keyed on the CONTROL, never on a plugin name, and this is what that buys: a second
+    // provider of `cloudIdentity` means the first one leaving takes nothing away from the consumer.
+    const { app, config, root, adminTok } = setup();
+    makePlugin(root, 'identity-backup', { provides: { tools: ['backup_tool'], controls: ['cloudIdentity'] } });
+    config.update({ plugins: { enabled: ['identity', 'identity-backup', 'mirror'], removed: [] } });
+
+    expect((await app.request('/plugins/identity', patch(adminTok, { enabled: false }))).status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual(['identity-backup', 'mirror']);
+
+    // And with the last publisher of the key, the refusal is back — there is nothing left to satisfy it.
+    const last = await app.request('/plugins/identity-backup', patch(adminTok, { enabled: false }));
+    expect(last.status).toBe(409);
+    expect(await last.json()).toEqual({
+      error: 'plugin dependency in use',
+      controls: [{ key: 'cloudIdentity', requiredBy: ['mirror'] }],
+    });
+  });
+
+  it('does not deadlock a plugin that publishes and consumes its own key', async () => {
+    // Both gates read the enabled set around the plugin being changed, so the one plugin in question is
+    // never counted as its own missing provider, nor as its own dependant.
+    const { app, config, root, adminTok } = setup();
+    makePlugin(root, 'loopback', { requiresControls: ['selfKey'], provides: { tools: ['loopback_tool'], controls: ['selfKey'] } });
+    config.update({ plugins: { enabled: [], removed: [] } });
+
+    expect((await app.request('/plugins/loopback', patch(adminTok, { enabled: true }))).status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual(['loopback']);
+    expect((await app.request('/plugins/loopback', patch(adminTok, { enabled: false }))).status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual([]);
+  });
+
+  it('answers a non-admin with 403 on both gates, before either one is consulted', async () => {
+    // Authorization decides first. A 409 here would be a dependency map handed to somebody with no
+    // business reading which plugins this instance runs, let alone what depends on what.
+    const { app, config, reloadPlugins, amyTok } = setup();
+    config.update({ plugins: { enabled: ['identity'], removed: [] } });
+
+    // Exactly the request the enable gate would refuse with a 409.
+    const enable = await app.request('/plugins/mirror', patch(amyTok, { enabled: true }));
+    expect(enable.status).toBe(403);
+    expect(await enable.json()).toEqual({ error: 'forbidden' });
+
+    config.update({ plugins: { enabled: ['identity', 'mirror'], removed: [] } });
+    // And exactly the request the disable gate would refuse with a 409.
+    const disable = await app.request('/plugins/identity', patch(amyTok, { enabled: false }));
+    expect(disable.status).toBe(403);
+    expect(await disable.json()).toEqual({ error: 'forbidden' });
+
+    const remove = await app.request('/plugins/identity', { method: 'DELETE', ...auth(amyTok) });
+    expect(remove.status).toBe(403);
+
+    expect(config.get().plugins.enabled).toEqual(['identity', 'mirror']);
+    expect(reloadPlugins).not.toHaveBeenCalled();
+  });
+
   it('lets a plugin that declares no control dependency through untouched', async () => {
     // The gate must be invisible to every plugin that never asked for it - which is all of them today.
     const { app, config, adminTok } = setup();
@@ -471,7 +572,47 @@ describe('plugin routes', () => {
   it('GET /plugins/:name includes a data summary', async () => {
     const { app, adminTok } = setup();
     const body = await (await app.request('/plugins/discord', auth(adminTok))).json() as { data: { exists: boolean; files: number; bytes: number } };
-    expect(body.data).toEqual({ path: expect.any(String), exists: false, files: 0, bytes: 0 });
+    expect(body.data).toEqual({ path: expect.any(String), exists: false, files: 0, bytes: 0, unreadable: 0, partial: false });
+  });
+
+  it('answers rather than failing when part of a plugin data directory cannot be read', async () => {
+    // The live regression: a Sandbox environment's root filesystem lives under the plugin data root and
+    // is owned by the machine's own uid range, so the service account cannot read it. An unguarded
+    // recursive walk threw EACCES straight out of the handler, and every instance holding at least one
+    // machine environment answered 500 on GET /api/plugins/sandbox.
+    const dataRoot = tmpDir('unreadable-plugin-data');
+    const dir = join(dataRoot, 'discord');
+    mkdirSync(join(dir, 'readable'), { recursive: true });
+    writeFileSync(join(dir, 'readable', 'note.txt'), 'hello');
+    const sealed = join(dir, 'machine-owned');
+    mkdirSync(sealed);
+    writeFileSync(join(sealed, 'secret.txt'), 'unreachable');
+    chmodSync(sealed, 0o000);
+    try {
+      const { app, adminTok } = setup({ pluginDataRoot: dataRoot });
+      const res = await app.request('/plugins/discord', auth(adminTok));
+      expect(res.status).toBe(200);
+      const body = await res.json() as { data: { files: number; bytes: number; unreadable: number; partial: boolean } };
+      // What it could read is counted, what it could not is reported as a number rather than folded
+      // silently into a total that would then understate the footprint without saying so.
+      expect(body.data.files).toBe(1);
+      expect(body.data.bytes).toBe(5);
+      expect(body.data.unreadable).toBe(1);
+      expect(body.data.partial).toBe(false);
+    } finally { chmodSync(sealed, 0o700); }
+  });
+
+  it('stops a data summary at its bound instead of walking every environment disk on the host', async () => {
+    // Measured on a real host with two Sandbox projects: 596,255 files and 78,360 directories, 21.4
+    // seconds for one page load. A plugin detail page is a look, not a scan.
+    const dataRoot = tmpDir('bounded-plugin-data');
+    const dir = join(dataRoot, 'discord');
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 60_000; i += 1) writeFileSync(join(dir, `f${i}`), 'x');
+    const { app, adminTok } = setup({ pluginDataRoot: dataRoot });
+    const body = await (await app.request('/plugins/discord', auth(adminTok))).json() as { data: { files: number; partial: boolean } };
+    expect(body.data.partial).toBe(true);
+    expect(body.data.files).toBeLessThan(60_000);
   });
 
   it('does not expose the removed legacy MCP management endpoints', async () => {
