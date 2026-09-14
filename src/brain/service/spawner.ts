@@ -139,7 +139,15 @@ function contextWindowOf(
 }
 
 export class LiveSessionSpawner {
+  /** Per-account generation fence: a session composed across a plugin-skill availability write is
+   * discarded before it can enter a live registry, then rebuilt from the new effective catalog. */
+  private readonly pluginSkillGenerations = new Map<number, number>();
+
   constructor(private d: SpawnerDeps) {}
+
+  bumpPluginSkillGeneration(userId: number): void {
+    this.pluginSkillGenerations.set(userId, (this.pluginSkillGenerations.get(userId) ?? 0) + 1);
+  }
 
   /** The current provider set (live-resolved when a thunk was injected). */
   private runtimeConfig(): BrainRuntimeConfig {
@@ -179,6 +187,15 @@ export class LiveSessionSpawner {
   }
 
   async spawn(opts: SpawnOpts): Promise<LiveBrain> {
+    for (;;) {
+      const generation = this.pluginSkillGenerations.get(opts.ownerUserId) ?? 0;
+      const live = await this.spawnOnce(opts);
+      if ((this.pluginSkillGenerations.get(opts.ownerUserId) ?? 0) === generation) return live;
+      live.session.dispose();
+    }
+  }
+
+  private async spawnOnce(opts: SpawnOpts): Promise<LiveBrain> {
     const { sessionId, ownerUserId } = opts;
 
     const cfg = this.runtimeConfig();
