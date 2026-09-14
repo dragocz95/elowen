@@ -8,35 +8,31 @@ group: Plugin reference
 
 # Sites
 
-The `sites` plugin publishes immutable static releases or forwards an address to an application already running inside an explicit managed Project. Every publication keeps its own address and visibility rules for the owner, Project members, signed-in accounts, named guests, or the public.
+The `sites` plugin publishes an address for an application already running inside an explicit managed Project. Every publication keeps its own hostname and visibility rules for the owner, Project members, signed-in accounts, named guests, or the public.
 
 ## Where it appears
 
 The plugin appears in **Settings → Plugins** as an installed plugin. In the Web UI it contributes a top-level **Sites** entry that lists your publications and those shared with you, with filters for visibility and status. Each Project also gains a **Sites** tab. The plugin adds no slash commands; its surface is the screen, the Project tab, and the ten tools below.
 
-Opening a publication shows its address, publication kind, last publish, visits, access rules, named guests and retained releases where applicable. Deleting a publication asks for confirmation and names exactly what is removed.
+Opening a publication shows its address, managed Project, target port, last publish, visits, access rules and named guests. When Browser 0.4.0 is installed, the register also shows a bounded picture taken through the publication's own address.
 
-## Publication kinds
+## Publication model
 
-### Static release
+A new Site is always a proxy to a service inside a running managed Project. Select the Project, then call `SiteCreate` with the TCP port where the application listens on `127.0.0.1` inside that Project. Host Projects are refused because they have no managed environment transport.
 
-`SiteCreate` creates a draft and a source folder inside the active Project. Build the site with the normal Project tools, then use `SitePublish` to copy the finished output into an immutable release. Sites performs no separate build.
+`SitePublish` establishes a durable Sandbox publication binding and verifies the application through the same transport a visitor request uses before making the address live. Nothing is copied, built or started. The address always shows what the Project application currently serves.
 
-The address serves the copied files and keeps working while the Project is stopped or the site source folder is unavailable. `SiteGet` lists retained releases with file counts, sizes and notes. `SiteRollback` restores an earlier release. Older releases beyond the configured count are removed automatically, while the live release is always retained.
+Lifecycle, logs, dependencies, networking, snapshots and resource limits belong to the managed Project. If the Project or application stops, the address remains published but cannot answer until the service runs again. A Site has no runtime, command, PHP process, copied source or per-Site environment of its own.
 
-Static publication accepts browser-facing file types. Unsupported files and symlinks are skipped and reported. A missing top-level `index.html` is reported as a warning.
+### Project preview
 
-### Managed Project proxy
+`SitePreview` opens a running managed Project application on an isolated preview origin. Only current Project members and administrators can open it. A preview is not a published Site and does not create a permanent address.
 
-Create a proxy publication by selecting a managed Project, setting `kind` to `proxy` and giving the TCP port where its application listens on `127.0.0.1` inside the Project.
+### Existing legacy file publications
 
-`SitePublish` establishes the durable Sandbox publication binding and verifies the application through that transport before making the address live. Nothing is copied and no Site process is started. The address always shows what the Project application currently serves.
+A file publication created by an older Sites release keeps serving the immutable files and releases it already holds. `SiteGet` can read its retained release ledger, `SiteRollback` can restore one of those releases, and `SiteDelete` removes the address and retained files.
 
-Lifecycle, logs, dependencies, networking and resource limits belong to the managed Project. If the Project or application is stopped, the publication cannot answer until it is running again. `SiteRollback` does not apply because a proxy publication owns no file releases.
-
-### Preview
-
-`SitePreview` opens a running managed Project application on an isolated preview origin. Only current Project members and administrators can open it. A preview is not a published release and does not create a permanent publication.
+New file publications cannot be created, and `SitePublish` refuses to republish a legacy file row. The removed copier, source/output inputs and retention settings do not return through compatibility handling. Move the application into a managed Project publication before deleting an old address that still matters.
 
 ## Sharing and visibility
 
@@ -53,7 +49,7 @@ Making a publication public is always a person's explicit decision, confirmed in
 
 `SiteShare` gives one named account access regardless of visibility. `SiteUnshare` removes that access immediately; an existing session stops working on its next request. Permission is checked on every request.
 
-The visibility setting governs the published address. A static publication's source folder remains inside the Project, so everyone with Project access can read that source.
+The visibility setting governs the published address. Access to the application, its source and its files remains governed separately by the managed Project.
 
 ## Addresses and certificates
 
@@ -61,28 +57,38 @@ Every publication keeps its own address for as long as it exists. Public Sites D
 
 Certificate issuance requires a contact email address. The address is sent to the certificate authority and stored nowhere else. `SitePublish` and `SiteGet` report certificate readiness as ready, pending or error. The address is presented as usable HTTPS only after a TLS check confirms that the gateway serves the publication's own certificate.
 
+## Page pictures
+
+Browser 0.4.0 provides the internal `browserCapture` control used by Sites. Core exposes that control only to the Sites plugin.
+
+A picture is rendered in a fresh headless Chrome process with a throwaway profile. The published HTTPS hostname is resolved once, checked as a public address and pinned behind an enforcing proxy. Every document, redirect, subresource, fetch, WebSocket and worker request must stay on that exact origin; loopback, private, link-local, metadata and literal-IP alternatives are refused. The capture carries no account cookies or profile data, denies downloads and removes the process and profile after the attempt.
+
+For a private Site, Sites mints a one-use anonymous capture grant bound to that Site and its current access generation. The first request spends it. It grants only the published page, forwards no account identity to the Project application and does not count as a visit.
+
+Each Site stores one bounded picture. A newer picture replaces it atomically. Missing or stale pictures are requested lazily while the register is open, after publication, or through the manager's rate-limited refresh action. A failed attempt keeps the previous picture.
+
 ## Tools
 
 | Tool | What it does |
 | --- | --- |
-| `SiteCreate` | Creates a static draft and source folder, or a managed Project proxy publication. |
+| `SiteCreate` | Creates an address for a port inside the selected running managed Project. |
 | `SitePreview` | Opens a running managed Project application on an isolated preview origin. |
-| `SitePublish` | Copies a finished static output or verifies and publishes a managed Project proxy. |
-| `SiteGet` | Returns full detail for one publication, including its kind, source or Project, access and releases. |
+| `SitePublish` | Verifies the managed Project service through its publication transport and makes the address live. |
+| `SiteGet` | Returns full detail for one publication. Legacy file rows also include retained source and release information. |
 | `SiteList` | Lists owned publications with address, visibility, status and publication kind. |
-| `SiteUpdate` | Changes the title, summary, static router behaviour or visibility. |
-| `SiteRollback` | Restores a retained static release. |
+| `SiteUpdate` | Changes the title, summary or visibility. |
+| `SiteRollback` | Restores a retained release of an existing legacy file publication. |
 | `SiteShare` | Gives one named account access regardless of visibility. |
 | `SiteUnshare` | Takes one named account's access away, effective from the next request. |
-| `SiteDelete` | Removes the publication, address and retained releases while leaving Project source untouched. |
+| `SiteDelete` | Removes the publication and address. Legacy retained releases are removed; the managed Project is untouched. |
 
 ## How to install and enable
 
-Install the plugin from **Settings → Plugins → Available**. Sites 0.12.0 requires Elowen 0.28.45 or newer, and the marketplace refuses installation on an older core. The plugin is not user-grantable, so there is no per-user grant step. Enabling asks for consent to the plugin's declared reads, event mutation and network access. See [Plugins](plugins) for the general lifecycle.
+Install the plugin from **Settings → Plugins → Available**. Sites 0.14.0 requires Elowen 0.28.45 or newer. Browser 0.4.0 and Elowen 0.28.46 are required only for page pictures; Sites continues listing and serving publications when capture is unavailable. The plugin is not user-grantable, so there is no per-user grant step. Enabling asks for consent to the plugin's declared reads, event mutation and network access. See [Plugins](plugins) for the general lifecycle.
 
 ## Configuration
 
-Configuration is instance-wide and edited in the plugin detail under **Settings → Plugins**. The schema contains three section headings and ten fields. Advanced fields appear under the **Advanced** tab.
+Configuration is instance-wide and edited in the plugin detail under **Settings → Plugins**. The schema contains three section headings and seven fields.
 
 ### Publishing
 
@@ -96,10 +102,7 @@ Configuration is instance-wide and edited in the plugin detail under **Settings 
 
 | Field | Key | Type | Default | What it does |
 | --- | --- | --- | --- | --- |
-| Largest file | `maxAssetMb` | number | 8 | Files above this size are refused when publishing. Range 1 to 1,048,576 MB. |
-| Largest site | `maxSiteMb` | number | 200 | Total size of one static release. Range 1 to 1,048,576 MB. |
 | Sites per account | `maxSitesPerAccount` | number | 20 | How many publications one account may keep. Range 1 to 500. |
-| Releases kept | `releasesKept` | number | 5 | Number of retained static releases. The live release is never removed. Range 1 to 50. |
 
 ### Access
 
@@ -126,11 +129,10 @@ The plugin is not user-grantable, so authenticated accounts reach its tools acco
 | Area | Limit |
 | --- | --- |
 | Project proxy transport | Request bodies are capped at 1 MB; responses are bounded and buffered; streaming, server-sent events and WebSockets are not supported. |
-| Build | `SitePublish` runs no build. Build first, then publish the finished output. |
-| Static releases | Unsupported file types and symlinks are skipped. |
-| Releases | Retention follows `releasesKept`; the live release is never removed. |
+| Service binding | The application must listen on `127.0.0.1` at the declared port inside an active managed Project. |
 | Per-account caps | `maxSitesPerAccount` publications. |
 | Public visibility | Requires explicit confirmation in the Sites screen. |
-| Preview | Available only to Project members and administrators and is not a published release. |
+| Preview | Available only to Project members and administrators and is not a published Site. |
+| Legacy files | Existing file releases keep serving and rolling back, but cannot be created or published again. |
 
 [Next: Skills Plugin](skills-plugin)

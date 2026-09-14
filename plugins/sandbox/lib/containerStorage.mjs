@@ -126,6 +126,10 @@ export class ContainerStorage {
       try { return validateManifest(JSON.parse(readFileSync(checkedHostPath(path, { file: true }), 'utf8'))); }
       catch (cause) { if (cause.code === 'ENOENT') return null; throw cause; }
     };
+    const normalizeExistingRootfs = async () => {
+      const driver = this.#driver(spec);
+      if (typeof driver.normalizeRootfs === 'function') await driver.normalizeRootfs(spec);
+    };
     const manifest = readManifest(manifestPath);
     if (manifest) {
       try {
@@ -137,6 +141,7 @@ export class ContainerStorage {
         missing.code = 'disk_missing';
         throw missing;
       }
+      await normalizeExistingRootfs();
       return;
     }
     const pending = join(directory, 'rootfs.pending');
@@ -155,6 +160,7 @@ export class ContainerStorage {
         }
         renameSync(pendingManifestPath, manifestPath);
         syncPath(directory);
+        await normalizeExistingRootfs();
         return;
       }
       unlinkSync(pendingManifestPath);
@@ -486,9 +492,17 @@ export class ContainerStorage {
   async removeDisk(spec, owningSpecs) {
     assertContainerSpec(spec);
     if (!spec.disk || !Array.isArray(owningSpecs) || owningSpecs.length < 1) throw new Error('A complete disk cleanup ownership set is required');
+    // A machine that is UP under one of these names owns this disk even when its envelope files are gone:
+    // `inspect` reads those files and a missing one reads as "no envelope", which would have deleted the
+    // disk under a machine still running on it. One inventory read for the whole ownership set, on the
+    // destructive path only, and every name of the set is held against it.
+    const machines = await this.#driver(spec).containerInventory(spec.namespace);
     for (const owner of owningSpecs) {
       assertContainerSpec(owner);
       if (owner.disk?.id !== spec.disk.id) continue;
+      // Named back rather than reported generically: the envelope files can be gone while the machine is
+      // still registered, and the machine name is then the only handle an operator can act on.
+      if (machines.has(owner.name)) throw new Error(`A running machine still owns environment disk: ${owner.name}`);
       if (await this.#driver(owner).inspect(owner)) throw new Error('An envelope still owns environment disk');
     }
     const directory = dirname(spec.disk.rootfsPath);

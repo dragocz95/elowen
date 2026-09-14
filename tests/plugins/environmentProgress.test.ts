@@ -47,6 +47,14 @@ function setup() {
       if (spec.disk?.runtime !== 'nspawn') throw new Error('systemd-nspawn runs only rootfs-backed environments');
       const row = { id: 'a'.repeat(64), state: 'created', workdir: spec.workdir }; containers.set(spec.name, row); return row;
     }),
+    // The file-only half of the ownership proof: the inventory says a name is up, this says whether the
+    // envelope and disk identity behind that name are this environment's.
+    proveOwnership: vi.fn(async (spec: any) => {
+      const row = containers.get(spec.name);
+      if (!row) throw new Error('No machine envelope of this name exists on this host');
+      if (row.workdir !== spec.workdir) throw new Error('Machine ownership or runtime specification mismatch: identity.specHash');
+      return { id: row.id };
+    }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     stop: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'stopped'; }),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),

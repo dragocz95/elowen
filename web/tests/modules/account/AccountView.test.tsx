@@ -48,7 +48,7 @@ const openSection = (id: string) => {
 afterEach(() => { window.history.replaceState(null, '', '/account'); });
 
 describe('AccountView', () => {
-  it('carries no navigation of its own: the sections are rows of the menu outside it', async () => {
+  it('opens with the shell carrying no section navigation of its own', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
@@ -59,12 +59,12 @@ describe('AccountView', () => {
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
-    // The section rail and the phone tab strip are both gone. What used to be two menus — one in the
-    // chrome and one that only appeared once you had arrived — is one menu.
+    // The SHELL mounts no section navigation for the deck: no rail, no tab strip, no `data-section-layout`.
+    // The way between sections is the deck's own, covered by AccountNavigation.test.tsx.
     expect(screen.queryByRole('radiogroup')).toBeNull();
     expect(document.querySelector('.workspace-shell__section-navigation')).toBeNull();
     expect(document.querySelector('.workspace-shell')).not.toHaveAttribute('data-section-layout');
-    // Landing with no section named, the page writes the one it opened on, so the menu has a row to mark.
+    // Landing with no section named, the page writes the one it opened on, so the deck has a row to mark.
     await waitFor(() => expect(window.location.search).toBe('?cat=profile'));
     // The deck carries the hero's metric rail, with the account's own facts on it. Every one of them
     // comes from /auth/me and the model list the sections already load, so the rail renders for a plain
@@ -76,8 +76,9 @@ describe('AccountView', () => {
   });
 
   // A plugin's account panel is a section of this page like any other, reached by its own address. The
-  // menu lists it (see the sidebar's deck sub-menu tests); what has to hold HERE is that the page mounts
-  // it when that address names it.
+  // deck's OWN navigation carries it — the sidebar holds one row for Account, and its sections are listed
+  // by the page (see AccountNavigation.test.tsx, which covers a contributed section) — and what has to
+  // hold HERE is that the page mounts it when that address names it.
   it('mounts a plugin account section when the address names it', async () => {
     loadPluginUi.mockResolvedValue({ requiresApiVersion: 3, account: { connection: () => <div>GitHub device flow</div> } });
     server.use(
@@ -197,6 +198,48 @@ describe('AccountView', () => {
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByRole('button', { name: 'Linked accounts' })).toBeInTheDocument();
+  });
+
+  /** A section URL outlives the section it names. The page already falls back to Profile; the ADDRESS has
+   *  to follow that, or the same dead link comes back on the next reload and the fallback reads as the page
+   *  ignoring the reader. This is the id no registry answers to at all — an older build's link, or a
+   *  hand-typed address — which needs no listing to be judged. */
+  it('canonicalizes an address naming a section this page cannot render', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    await screen.findByText('@bob');
+    openSection('retired-section');
+
+    await waitFor(() => expect(window.location.search).toBe('?cat=profile'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
+  });
+
+  /** The other way a section URL goes stale: its owner is not installed any more. Here the answer depends
+   *  on the listings, so the page waits for them before deciding — but once BOTH have arrived and neither
+   *  claims the id, the address has to stop naming it. */
+  it('canonicalizes an address naming a plugin section whose owner is gone', async () => {
+    server.use(
+      http.get('*/api/plugins/ui', () => HttpResponse.json([])),
+      http.get('*/api/plugins/user-config', () => HttpResponse.json([])),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    await screen.findByText('@bob');
+    openSection('plugin-account:github:connection');
+
+    await waitFor(() => expect(window.location.search).toBe('?cat=profile'));
   });
 
   it('saves only the platform link edited in this form, preserving a concurrent Teams TOFU link', async () => {

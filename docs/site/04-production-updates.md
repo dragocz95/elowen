@@ -93,8 +93,9 @@ launchctl kickstart -k gui/$(id -u)/io.elowen.daemon
 
 For a domain deployment, the installer configures nginx or Apache. If you maintain the proxy yourself, route these paths:
 
-- `/` to the web UI on `127.0.0.1:4500`; and
-- `/hooks/` to the daemon on `127.0.0.1:4400`.
+- `/` to the web UI on `127.0.0.1:4500`;
+- `/hooks/` to the daemon on `127.0.0.1:4400`; and
+- the exact `/api/brain/uploads` path to the web UI without request buffering or an inherited body-size limit.
 
 For nginx, the important shape is:
 
@@ -118,6 +119,20 @@ server {
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;
     }
 
+    # Conversation uploads are raw streams into the selected Project. Do not buffer the whole file at
+    # the proxy or apply the ordinary request-body ceiling to this exact route.
+    location = /api/brain/uploads {
+        client_max_body_size 0;
+        proxy_pass http://127.0.0.1:4500;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:4500;
         proxy_http_version 1.1;
@@ -134,6 +149,8 @@ server {
 ```
 
 `X-Real-IP` must be overwritten by the trusted proxy, not copied from an incoming client header. Elowen uses it for rate limiting and request-origin handling. Keep `/hooks/` ahead of the catch-all location.
+
+The upload exception belongs only on `/api/brain/uploads`. Other API requests are JSON and should keep a bounded body limit. `proxy_request_buffering off` matters because the web BFF and daemon already stream the upload to its Project destination; buffering at nginx writes another full copy and delays forwarding until that copy finishes.
 
 The installer can obtain HTTPS with Certbot for a domain. An IP deployment is HTTP-only and binds the web and daemon to `0.0.0.0`; open the required ports in the firewall and understand that this exposes the daemon's listener as well as the web UI.
 

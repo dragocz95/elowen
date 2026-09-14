@@ -18,7 +18,7 @@ Use semantic tokens from `web/app/styles/` and the shared UI components. Do not 
 `WorkspaceShell` is the canonical page frame. Its variants are:
 
 - `register`: a browsable collection with metrics, a toolbar, and optional view tabs;
-- `deck`: a configuration surface whose sections are addresses, listed in the sidebar's submenu;
+- `deck`: a configuration surface whose sections are addresses it navigates itself (`/settings`, `/account`);
 - `single`: one working surface under a title block, with no navigation of its own.
 
 The primary navigation is one left sidebar column, mounted once by the shell and built on the shadcn `Sidebar` primitive. The former profile-based swap between a spatial rail and a flat column is gone; a skin restyles the single column through its `--sidebar-*` tokens.
@@ -31,7 +31,7 @@ The layout is stored as two id lists, hidden and order, saved server-side with a
 
 Submenus are inline collapsible accordions. An entry gets a submenu only when it has two or more sub-pages; a single child stays a plain link. Where a submenu exists the parent is a button rather than a link, and the parent's own page sits inside the submenu as its first item. Several submenus can be open at once, the open set persists per account, the route's own submenu opens on arrival, and once the user folds it, it stays folded. In collapsed icon-rail mode a submenu collapses to its parent destination.
 
-Settings and Account are decks whose sections are declared as sidebar sub-items, so the sidebar is the only navigation between their sections; the in-page section rail that used to sit inside Account is gone.
+Settings and Account are decks, and each is ONE row of the sidebar — not a disclosure over its sections. The sidebar is the way to a deck, not through it: both decks carry their own section navigation on every surface that draws them (a secondary column beside the content where there is width for it, one line of tabs above it on a phone), so a hard-loaded `/settings?cat=plugins` is not a dead end. The sidebar used to list every section of both decks, plus every plugin-contributed one, which made the longest lists in the product part of the column meant to reach anywhere.
 
 The active route is resolved once for the whole column by scoring the path prefix plus a matching `?cat=` query and a matching hash, so `/settings?cat=models` outranks `/settings`. Only `cat` is treated as an addressing parameter.
 
@@ -43,7 +43,7 @@ Keyboard: `Ctrl`/`⌘` + `\` toggles the sidebar fold and `Ctrl`/`⌘` + `K` tog
 
 The top bar has two variants, a frameless floating masthead and a sticky ruled bar. It carries the hamburger in drawer mode, a navigation collapse toggle in bar mode, the page location or eyebrow plus heading, a portal slot where route-owned toolbars mount, and an action cluster with the palette search glyph, sign out, the skin switcher, the language switcher and an avatar linking to `/account`. On `/chat` at phone width the floating design withholds the bar entirely.
 
-The only navigation left inside a page is a register's own view tabs, and the distinction is deliberate: a register's tabs filter what the page is showing, while a deck's sections are addresses, so they belong in the sidebar. A deck therefore passes no in-page navigation at all.
+A register's own view tabs and a deck's section navigation are the page-level navigation there is, and the distinction is deliberate: a register's tabs filter what the page is showing, while a deck's sections are addresses, so the deck lists them beside or above the section they change.
 
 Register view tabs are one single-line, touch-scrollable track at every width:
 
