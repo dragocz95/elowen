@@ -1101,7 +1101,9 @@ export class NspawnClient {
     // with this storage mounted — a helper that removed them and then failed, a hand-edit, an interrupted
     // destroy — and removing the tree under a live machine leaves it running on a deleted root filesystem.
     // The machine inventory is the liveness this refuses on, and it is asked on the DESTRUCTIVE path only.
-    if ((await this.containerInventory(spec.namespace)).has(spec.name)) throw new Error('A running machine still owns environment storage');
+    // Named back rather than reported generically: an envelope can be gone while a machine of this name is
+    // still registered, and the machine name is then the only handle an operator can act on.
+    if ((await this.containerInventory(spec.namespace)).has(spec.name)) throw new Error(`A running machine still owns environment storage: ${spec.name}`);
     try {
       checkedHostPath(spec.storageRoot);
       await this.removeDiskPath(spec.storageRoot);

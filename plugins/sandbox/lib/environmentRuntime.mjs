@@ -221,8 +221,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  unmet rows back, exactly as the creation-time decision does.
    *
    *  An isolated environment is asked nothing: it gets no link, so none of those rows are its to depend on.
-   *  This is the SINGLE place a start is gated, so automatic recovery, which runs operations through the
-   *  same `perform`, cannot start a networked machine on a host that has lost its firewall. */
+   *  Both shapes a start can take — booting a machine and thawing a paused one — pass through this gate
+   *  inside `startRow`, which is the ONLY place a start is gated: automatic recovery, which runs operations
+   *  through the same `perform`, cannot bring a networked machine up on a host that has lost its firewall.
+   *  Stopping is deliberately NOT gated: an environment that is already up has to stay stoppable on a host
+   *  that is not ready, and `stopRow` thaws only in order to take the machine down. */
   async function assertNetworkedStartAllowed(row) {
     if (effectiveNetwork(row.spec).mode === 'isolated') return;
     const readiness = await hostReadiness(true);
@@ -811,6 +814,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = specFor(row.spec);
     const current = await runtimeFor(spec).inspect(spec);
     if (!current) return;
+    // Thawing here is the first half of taking the machine DOWN, so it is not gated on host readiness: an
+    // environment that is up must stay stoppable on a host whose rows are gone. The gate belongs to the
+    // starts, which is where the machine would be brought back up and left up.
     if (current.state === 'paused') await runtimeFor(spec).unpause(spec);
     if (['running', 'paused', 'stopping'].includes(current.state)) {
       await cancelLeases(row);
@@ -870,8 +876,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const current = await ensureInitialContainer(row, op);
     const spec = specFor(row.spec);
     step(op, 'boot');
-    if (current.state === 'paused') await runtimeFor(spec).unpause(spec);
-    else if (current.state !== 'running') {
+    if (current.state === 'paused') {
+      // A thawed machine IS a running machine, and it is the machine that already holds the virtual
+      // ethernet, so the resume goes through the gate a boot goes through rather than beside it: an unready
+      // host must not carry that link in either shape. Asked BEFORE the thaw, so a refusal leaves the
+      // machine frozen instead of running unisolated.
+      await assertNetworkedStartAllowed(row);
+      await runtimeFor(spec).unpause(spec);
+    } else if (current.state !== 'running') {
       // Before the link is turned on, never after: the envelope this start activates is what gives the
       // machine its virtual ethernet, and a host that cannot isolate that link must not carry one.
       await assertNetworkedStartAllowed(row);
@@ -1252,6 +1264,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       && (row.state === 'running' || row.desired_state === 'running')
       && row.spec?.input?.disk?.runtime === 'nspawn' && typeof row.spec?.containerId === 'string');
     for (const row of candidates) {
+      // One Site machine is one unit of work, and a detach ends the sweep at the next of them exactly as it
+      // does in every loop of the sweep. Without this, a batch of historical Site rows would be retired
+      // after the generation that owns them is already going away.
+      if (disposed) break;
       const key = `${row.resource_id}:${row.generation}:${row.spec.containerId}`;
       try {
         await nspawn.retireLegacySiteMachine(row.spec);
@@ -1316,6 +1332,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // over this namespace.
       const inventory = await nspawn.containerInventory(namespace);
       const runningContainers = new Set([...inventory.entries()].filter(([, state]) => state === 'running').map(([name]) => name));
+      // The report below only ever describes a STANDING condition, and it is keyed by project: an entry for
+      // a project this pass did not find the condition on — one that was stopped, deleted or released —
+      // goes with the condition, exactly as a publication recovery state does, instead of being held for
+      // the life of the process and hiding the first report the next time the project runs. This set is
+      // what a COMPLETE pass actually observed, and the map is trimmed to it afterwards.
+      const unownedNameStanding = new Set();
       for (const row of store.all().filter((entry) => entry.kind === 'project')) {
         if (disposed) break;
         if (row.desired_state !== 'running' || store.active('project', row.resource_id)) continue;
@@ -1330,12 +1352,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           try {
             await runtimeFor(spec).proveOwnership(spec);
             runningContainers.add(spec.name);
-            unownedNameReports.delete(Number(row.resource_id));
             continue;
           } catch (cause) {
             // Reported once per standing condition rather than once per sweep: a foreign machine keeps
             // holding the name, and a line every ten seconds would bury everything else in the log.
             const message = `Machine ${spec.name} is not provably this environment's: ${cause.message}`;
+            unownedNameStanding.add(Number(row.resource_id));
             if (unownedNameReports.get(Number(row.resource_id)) !== message) {
               unownedNameReports.set(Number(row.resource_id), message);
               store.log(row.kind, row.resource_id, message);
@@ -1343,7 +1365,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
             continue;
           }
         }
-        unownedNameReports.delete(Number(row.resource_id));
         // A machine this runtime cannot verify (a mismatched specification, a helper error) is not a
         // recovery candidate, and it must not stop the sweep for every other environment either.
         try {
@@ -1352,6 +1373,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           await queueAutomaticRecovery(row, observed);
         } catch (cause) {
           store.log(row.kind, row.resource_id, `Automatic recovery skipped: ${cause.message}`);
+        }
+      }
+      // A pass cut short by a detach has not looked at every project, so it trims nothing: the map is only
+      // ever reduced to what a complete pass saw.
+      if (!disposed) {
+        for (const key of unownedNameReports.keys()) {
+          if (!unownedNameStanding.has(key)) unownedNameReports.delete(key);
         }
       }
       for (const op of store.operations()) {
@@ -1764,11 +1792,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       disposed = true;
       // A sweep already under way is WAITED FOR, not abandoned: it may be part-way through a machine start
       // or stop, and the generation that replaces this one would otherwise run a sweep of its own over the
-      // same rows and the same host at the same time. Its `disposed` checks end it at the next unit of
-      // work, so this waits for one operation at most. A failure of the sweep is its own caller's to
-      // report, and it never reaches here: the marker only says the sweep has ended.
+      // same rows and the same host at the same time. Every loop of the sweep — the host operations, the
+      // legacy Site retirements, the environments, the operations, the leases and the publications — breaks
+      // on this flag, so this waits for one unit of work at most. A failure of the sweep is its own caller's
+      // to report, and it never reaches here: the marker only says the sweep has ended.
       const sweep = reconcileInFlight;
       if (sweep) await sweep;
+      // A publication binding or release that was already admitted keeps going after the detach: it holds
+      // the publication lock, and the forwarder it is spawning would otherwise be created by a generation
+      // that is going away and outlive it. `assertLive()` precedes registration in both entry points, so
+      // every promise held here is work this generation admitted while it was still live.
+      await Promise.allSettled([...publicationMutations.values()]);
       for (const release of [...previews]) await release();
     } };
 }

@@ -280,7 +280,9 @@ describe('nspawn disk cleanup', () => {
     rmSync(state.envelope.nspawn, { force: true });
     rmSync(state.envelope.dropIn, { force: true });
 
-    await expect(storage.removeDisk(state.spec, [state.spec])).rejects.toThrow(/A running machine still owns environment disk/);
+    // The machine is named back: with the envelope gone, its name is the only handle an operator has.
+    await expect(storage.removeDisk(state.spec, [state.spec]))
+      .rejects.toThrow(`A running machine still owns environment disk: ${state.spec.name}`);
     expect(existsSync(directory)).toBe(true);
     expect(state.requests.some((request) => request.op === 'tree-remove')).toBe(false);
 
@@ -633,7 +635,8 @@ describe('nspawn privileged transport', () => {
     rmSync(envelope.dropIn, { force: true });
     rmSync(spec.storageRoot, { recursive: true, force: true });
 
-    await expect(client.removeStorage(spec)).rejects.toThrow(/A running machine still owns environment storage/);
+    // The machine is named back: with the envelope gone, its name is the only handle an operator has.
+    await expect(client.removeStorage(spec)).rejects.toThrow(`A running machine still owns environment storage: ${spec.name}`);
     expect(requests.filter((request) => request.op === 'release-uid-range')).toHaveLength(0);
 
     machines.delete(spec.name);

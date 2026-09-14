@@ -494,7 +494,9 @@ export class ContainerStorage {
     for (const owner of owningSpecs) {
       assertContainerSpec(owner);
       if (owner.disk?.id !== spec.disk.id) continue;
-      if (machines.has(owner.name)) throw new Error('A running machine still owns environment disk');
+      // Named back rather than reported generically: the envelope files can be gone while the machine is
+      // still registered, and the machine name is then the only handle an operator can act on.
+      if (machines.has(owner.name)) throw new Error(`A running machine still owns environment disk: ${owner.name}`);
       if (await this.#driver(owner).inspect(owner)) throw new Error('An envelope still owns environment disk');
     }
     const directory = dirname(spec.disk.rootfsPath);
