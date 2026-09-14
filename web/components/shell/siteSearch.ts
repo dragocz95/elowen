@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Bell, Brain, Cpu, KeyRound, Sparkles, SquareTerminal, UserCog } from 'lucide-react';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { MODULES } from '../../modules/registry';
+import { accountSectionHref } from '../../modules/account/sections';
 import { SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
 import { PROVIDERS } from '../../modules/settings/providers';
 import { pluginNavEntries } from '../../lib/pluginNav';
@@ -221,6 +222,41 @@ export function buildSettingsSearchEntries(t: LocaleDict): SearchEntry[] {
   return entries;
 }
 
+/** The Account deck's searchable labels, built exactly as the Settings deck's are: the section rows plus
+ *  the records inside them, from the shared registries. The site-wide palette consumes this, and so does
+ *  the deck's own navigation column, so neither can drift into a second index of the same page.
+ *
+ *  Plugin-contributed account sections stay out for the reason given at the top of this file — they exist
+ *  only while their plugin is enabled — and the deck's navigation matches those on their own label. */
+export function buildAccountSearchEntries(t: LocaleDict): SearchEntry[] {
+  const loc = (path: string): string => dictAt(t, path);
+  const entries: SearchEntry[] = [];
+  for (const section of ACCOUNT_SECTIONS) {
+    entries.push({
+      id: `account:${section.id}`,
+      group: 'account',
+      title: loc(section.titlePath),
+      subtitle: loc('account.title'),
+      keywords: [section.hintPath ? loc(section.hintPath) : ''].filter(Boolean),
+      href: accountSectionHref(section.id),
+      icon: section.icon,
+    });
+    const accountRows: readonly RowSpec[] = ACCOUNT_ROW_SPECS[section.id];
+    for (const row of accountRows) {
+      entries.push({
+        id: `account:${section.id}:${row.path}`,
+        group: 'account',
+        title: loc(row.path),
+        subtitle: loc(section.titlePath),
+        keywords: [row.hint ? loc(row.hint) : '', ...(row.keywords ?? [])].filter((keyword) => keyword !== ''),
+        href: rowHref(accountSectionHref(section.id), row.path),
+        icon: section.icon,
+      });
+    }
+  }
+  return entries;
+}
+
 /** The palette's rows, from data that already exists. Pure — unit-tested in `tests/lib/siteSearch.test.ts`. */
 export function buildSearchIndex(t: LocaleDict, pluginEntries: PluginUiListing[]): SearchEntry[] {
   // Read the string the component renders. Nothing here holds a second copy of any label.
@@ -245,30 +281,8 @@ export function buildSearchIndex(t: LocaleDict, pluginEntries: PluginUiListing[]
   // SETTINGS — one shared index powers the global palette and the in-overlay navigation.
   entries.push(...buildSettingsSearchEntries(t));
 
-  // ACCOUNT — the account deck and its sections, using the account page's `?cat=` deep-link form.
-  for (const section of ACCOUNT_SECTIONS) {
-    entries.push({
-      id: `account:${section.id}`,
-      group: 'account',
-      title: loc(section.titlePath),
-      subtitle: loc('account.title'),
-      keywords: [section.hintPath ? loc(section.hintPath) : ''].filter(Boolean),
-      href: `/account?cat=${section.id}`,
-      icon: section.icon,
-    });
-    const accountRows: readonly RowSpec[] = ACCOUNT_ROW_SPECS[section.id];
-    for (const row of accountRows) {
-      entries.push({
-        id: `account:${section.id}:${row.path}`,
-        group: 'account',
-        title: loc(row.path),
-        subtitle: loc(section.titlePath),
-        keywords: [row.hint ? loc(row.hint) : '', ...(row.keywords ?? [])].filter((keyword) => keyword !== ''),
-        href: rowHref(`/account?cat=${section.id}`, row.path),
-        icon: section.icon,
-      });
-    }
-  }
+  // ACCOUNT — one shared index powers the global palette and the deck's own navigation.
+  entries.push(...buildAccountSearchEntries(t));
 
   // PLUGINS — one entry per plugin PAGE (a world with sub-items contributes each of them), already
   // localized by the daemon's listing. Plugin account/config sections stay out: they exist only while

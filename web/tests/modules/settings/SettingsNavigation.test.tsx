@@ -284,7 +284,7 @@ describe('SettingsNavigation, section strip', () => {
     render(<StripHarness plugins={[sandbox]} />, { wrapper: W });
 
     const strip = screen.getByTestId('settings-navigation-tabs');
-    expect(strip).toHaveClass('settings-section-strip', 'overflow-x-auto', 'whitespace-nowrap');
+    expect(strip).toHaveClass('section-deck-strip', 'overflow-x-auto', 'whitespace-nowrap');
     // The named region survives the shape change, so the overlay still announces one navigation.
     expect(strip).toHaveAccessibleName(en.settings.navigationLabel);
 
@@ -322,7 +322,7 @@ describe('SettingsNavigation, section strip', () => {
 
     for (const tab of within(screen.getByTestId('settings-navigation-tabs')).getAllByRole('button')) {
       expect(tab).toHaveAttribute('type', 'button');
-      expect(tab).toHaveClass('settings-section-strip__tab', 'select-none');
+      expect(tab).toHaveClass('section-deck-strip__tab', 'select-none');
       expect(tab).toHaveClass('focus-visible:ring-2');
     }
   });

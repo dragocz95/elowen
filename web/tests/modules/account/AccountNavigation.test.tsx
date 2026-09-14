@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { useState, type ReactNode } from 'react';
 import { Blocks } from 'lucide-react';
 import { AccountNavigation } from '../../../modules/account/AccountNavigation';
 import { accountSectionHref, accountSections, type AccountSectionDescriptor } from '../../../modules/account/sections';
 import { pluginAccountSectionId } from '../../../modules/account/pluginSections';
+import { LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 
 /** THE PHONE'S ONE LINE OF TABS.
@@ -13,6 +15,11 @@ import { en } from '../../../lib/i18n/dictionaries/en';
  *  through a deep link or through the shell's menu has to bring it into view, on the HORIZONTAL axis
  *  only: `scrollIntoView` would also ask the overlay's scroller to move, which on a phone means the page
  *  jumping under the reader's thumb. */
+
+/** The records carry the shared HelpTip, which reads the dictionary through `useTranslation`. */
+function W({ children }: { children: ReactNode }) {
+  return <LanguageProvider initialLocale="en">{children}</LanguageProvider>;
+}
 
 /** A CONTRIBUTED section, which is the case the reach matters for: it arrives from a live query a commit
  *  after the core list, and it is drawn after every one of them, so it is the section most likely to sit
@@ -47,14 +54,29 @@ function measure(nav: HTMLElement, label: string): void {
   });
 }
 
+/** One navigation, in whichever shape a case needs. `query` is inert unless a case types into it. */
+function Navigation({ active, sections = SECTIONS, layout, onNavigate = () => {} }: {
+  active: string;
+  sections?: readonly AccountSectionDescriptor[];
+  layout: 'sidebar' | 'tabs';
+  onNavigate?: (href: string, section: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  return (
+    <AccountNavigation
+      t={en}
+      sections={sections}
+      active={active}
+      query={query}
+      layout={layout}
+      onQueryChange={setQuery}
+      onNavigate={onNavigate}
+    />
+  );
+}
+
 const tabs = (props: { active: string; sections?: readonly AccountSectionDescriptor[] }) => (
-  <AccountNavigation
-    label={en.account.title}
-    sections={props.sections ?? SECTIONS}
-    active={props.active}
-    layout="tabs"
-    onNavigate={() => {}}
-  />
+  <Navigation active={props.active} sections={props.sections} layout="tabs" />
 );
 
 afterEach(() => { vi.restoreAllMocks(); document.documentElement.scrollTop = 0; });
@@ -62,7 +84,7 @@ afterEach(() => { vi.restoreAllMocks(); document.documentElement.scrollTop = 0; 
 describe('AccountNavigation tab strip', () => {
   it('scrolls the section that becomes active into view without moving the page', () => {
     const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
-    const { rerender } = render(tabs({ active: 'profile' }));
+    const { rerender } = render(tabs({ active: 'profile' }), { wrapper: W });
     const nav = screen.getByTestId('account-navigation-tabs');
     measure(nav, LAST.label);
     document.documentElement.scrollTop = 75;
@@ -78,7 +100,7 @@ describe('AccountNavigation tab strip', () => {
   /** The deep-link case: a plugin's section — or any section at all — arrives from a live query one
    *  commit after the strip first painted, so the reveal has to follow the CONTENT, not just the id. */
   it('reveals the active section when it only appears later', () => {
-    const { rerender } = render(tabs({ active: LAST.id, sections: SECTIONS.slice(0, 2) }));
+    const { rerender } = render(tabs({ active: LAST.id, sections: SECTIONS.slice(0, 2) }), { wrapper: W });
     const nav = screen.getByTestId('account-navigation-tabs');
     expect(within(nav).queryByRole('button', { name: LAST.label })).toBeNull();
     measure(nav, LAST.label);
@@ -90,7 +112,7 @@ describe('AccountNavigation tab strip', () => {
   });
 
   it('keeps every section a tab stop of its own, with the active one marked', () => {
-    render(tabs({ active: LAST.id }));
+    render(tabs({ active: LAST.id }), { wrapper: W });
     const nav = screen.getByTestId('account-navigation-tabs');
     const buttons = within(nav).getAllByRole('button');
     expect(buttons).toHaveLength(SECTIONS.length);
@@ -98,11 +120,17 @@ describe('AccountNavigation tab strip', () => {
     expect(within(nav).getByRole('button', { name: LAST.label })).toHaveAttribute('aria-current', 'page');
   });
 
+  /** The strip is a line of destinations, not a pane switch and never a select menu: every section stays
+   *  addressable with one tap at the phone's width. */
+  it('carries no search field and no select menu', () => {
+    render(tabs({ active: 'profile' }), { wrapper: W });
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
+  });
+
   /** The column is a vertical list in a pane of its own; the horizontal reveal belongs to the strip. */
   it('leaves the desktop column alone', () => {
-    render(
-      <AccountNavigation label={en.account.title} sections={SECTIONS} active={LAST.id} layout="sidebar" onNavigate={() => {}} />,
-    );
+    render(<Navigation active={LAST.id} layout="sidebar" />, { wrapper: W });
     const nav = screen.getByTestId('account-navigation-sidebar');
     expect(nav.scrollLeft).toBe(0);
   });
@@ -113,18 +141,14 @@ describe('AccountNavigation tab strip', () => {
    *  — including the id's own spelling, which is the plugin's and has to survive into the link. */
   it('carries a contributed section as a row of its own, in both shapes', () => {
     const onNavigate = vi.fn();
-    const { unmount } = render(
-      <AccountNavigation label={en.account.title} sections={SECTIONS} active={CONTRIBUTED.id} layout="tabs" onNavigate={onNavigate} />,
-    );
-    const tabs = screen.getByTestId('account-navigation-tabs');
-    const tab = within(tabs).getByRole('button', { name: CONTRIBUTED.label });
+    const { unmount } = render(<Navigation active={CONTRIBUTED.id} layout="tabs" onNavigate={onNavigate} />, { wrapper: W });
+    const strip = screen.getByTestId('account-navigation-tabs');
+    const tab = within(strip).getByRole('button', { name: CONTRIBUTED.label });
     expect(tab).toHaveAttribute('aria-current', 'page');
-    expect(within(tabs).getAllByRole('button')).toHaveLength(SECTIONS.length);
+    expect(within(strip).getAllByRole('button')).toHaveLength(SECTIONS.length);
     unmount();
 
-    render(
-      <AccountNavigation label={en.account.title} sections={SECTIONS} active={CONTRIBUTED.id} layout="sidebar" onNavigate={onNavigate} />,
-    );
+    render(<Navigation active={CONTRIBUTED.id} layout="sidebar" onNavigate={onNavigate} />, { wrapper: W });
     const column = screen.getByTestId('account-navigation-sidebar');
     const row = within(column).getByRole('button', { name: CONTRIBUTED.label });
     expect(row).toHaveAttribute('aria-current', 'page');
@@ -132,5 +156,73 @@ describe('AccountNavigation tab strip', () => {
     // address back with `URLSearchParams`.
     fireEvent.click(row);
     expect(onNavigate).toHaveBeenCalledWith(accountSectionHref(CONTRIBUTED.id), CONTRIBUTED.id);
+  });
+});
+
+/** THE COLUMN'S SEARCH, which `/account` now has for the same reason `/settings` does: the deck is a
+ *  dozen sections of records, the shell's menu holds one row for all of them, and a reader who knows the
+ *  name of a record should not have to know which section keeps it.
+ *
+ *  It reads the SHARED static index (`components/shell/siteSearch.ts`) — the one the command palette
+ *  searches — so a match here and a match there are the same row, and nothing typed into a field on the
+ *  page can ever be searched. */
+describe('AccountNavigation search', () => {
+  const searchbox = () => screen.getByRole('searchbox', { name: en.account.navigationSearch });
+
+  it('filters the sections to the ones a record matches', () => {
+    render(<Navigation active="profile" layout="sidebar" />, { wrapper: W });
+    const column = () => screen.getByTestId('account-navigation-sidebar');
+    expect(within(column()).getByRole('button', { name: en.account.tabNotifications })).toBeInTheDocument();
+
+    fireEvent.change(searchbox(), { target: { value: en.push.title } });
+
+    expect(within(column()).getByRole('button', { name: en.account.tabNotifications })).toBeInTheDocument();
+    expect(within(column()).queryByRole('button', { name: en.account.tabSecurity })).toBeNull();
+  });
+
+  /** A matching record is offered on its own, and the link carries the row anchor beside the section, so
+   *  choosing it opens the section AND blinks the record — the palette's behaviour, from the same href. */
+  it('links a matching record to its section and its row anchor', () => {
+    const onNavigate = vi.fn();
+    render(<Navigation active="profile" layout="sidebar" onNavigate={onNavigate} />, { wrapper: W });
+    fireEvent.change(searchbox(), { target: { value: en.push.title } });
+
+    fireEvent.click(screen.getByRole('button', { name: en.push.title }));
+    expect(onNavigate).toHaveBeenCalledWith('/account?cat=notifications&row=push.title', 'notifications');
+  });
+
+  /** Diacritics are not a spelling the reader has to get right: the shared normalizer is what both the
+   *  palette and this column match through. */
+  it('matches without diacritics', () => {
+    render(<Navigation active="profile" layout="sidebar" />, { wrapper: W });
+    fireEvent.change(searchbox(), { target: { value: 'notificat' } });
+    expect(screen.getByTestId('account-navigation-sidebar')).toBeInTheDocument();
+    expect(within(screen.getByTestId('account-navigation-sidebar')).getByRole('button', { name: en.account.tabNotifications })).toBeInTheDocument();
+  });
+
+  /** A section a plugin contributed is not in the static index — it exists only while its plugin is
+   *  enabled — so it is matched on its own label instead of disappearing from a search. */
+  it('keeps a contributed section findable by its own label', () => {
+    render(<Navigation active="profile" layout="sidebar" />, { wrapper: W });
+    fireEvent.change(searchbox(), { target: { value: 'GitHub' } });
+    expect(within(screen.getByTestId('account-navigation-sidebar')).getByRole('button', { name: CONTRIBUTED.label })).toBeInTheDocument();
+  });
+
+  it('says so when nothing matches, rather than showing an empty column', () => {
+    render(<Navigation active="profile" layout="sidebar" />, { wrapper: W });
+    fireEvent.change(searchbox(), { target: { value: 'sk-secret-value' } });
+    expect(screen.getByText(en.account.navigationNoMatches)).toBeInTheDocument();
+  });
+
+  /** The field is reachable and announced like the settings one: a real searchbox with its own name, not
+   *  a decorated div. */
+  it('is a named searchbox the keyboard reaches', () => {
+    render(<Navigation active="profile" layout="sidebar" />, { wrapper: W });
+    const field = searchbox();
+    expect(field).toHaveAttribute('type', 'search');
+    field.focus();
+    expect(field).toHaveFocus();
+    fireEvent.change(field, { target: { value: 'push' } });
+    expect(field).toHaveValue('push');
   });
 });

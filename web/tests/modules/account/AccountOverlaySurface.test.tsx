@@ -49,7 +49,7 @@ afterAll(() => server.close());
 function renderOverlaySurface() {
   const { wrapper: Wrapper } = createWrapper();
   return render(
-    <Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView surface="overlay" /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>,
+    <Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>,
   );
 }
 
@@ -58,6 +58,13 @@ function renderInterceptedAccount() {
   return render(
     <Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountOverlay /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>,
   );
+}
+
+/** A navigation record's control is a button STRETCHED over the row, with the name beside it rather than
+ *  inside it (see components/ui/SectionDeck.tsx), so the label is read the way a screen reader reads it. */
+function getAccessibleLabel(node: Element): string {
+  const id = node.getAttribute('aria-labelledby');
+  return (id ? document.getElementById(id)?.textContent : node.textContent) ?? '';
 }
 
 describe('AccountView overlay surface', () => {
@@ -78,14 +85,16 @@ describe('AccountView overlay surface', () => {
     expect(tabs).toHaveClass('md:hidden');
     expect(tabs.className).toContain('overflow-x-auto');
     for (const nav of [sidebar, tabs]) {
-      expect(nav).toHaveAttribute('aria-label', en.account.title);
-      const labels = Array.from(nav.querySelectorAll('button')).map((button) => button.textContent);
+      expect(nav).toHaveAttribute('aria-label', en.account.navigationLabel);
+      const labels = within(nav).getAllByRole('button').map((button) => button.textContent || getAccessibleLabel(button));
       expect(labels).toContain(en.account.tabProfile);
       expect(labels).toContain(en.account.tabSecurity);
     }
-    // The account's sections are a handful of named places; Settings' search box answers a question this
-    // navigation does not have.
-    expect(screen.queryByRole('searchbox')).toBeNull();
+    // The column is searchable, exactly as the settings one is: same field, same shared index. The strip
+    // is not — it is a way between places, and a filter box belongs with the column that can show what it
+    // filtered.
+    expect(within(sidebar.parentElement!).getByRole('searchbox', { name: en.account.navigationSearch })).toBeInTheDocument();
+    expect(within(tabs).queryByRole('searchbox')).toBeNull();
   });
 
   it('marks the section on screen and switches without stacking history entries', async () => {
@@ -94,11 +103,11 @@ describe('AccountView overlay surface', () => {
     await waitFor(() => expect(window.location.search).toBe('?cat=profile'));
 
     const sidebar = screen.getByTestId('account-navigation-sidebar');
-    const current = () => Array.from(sidebar.querySelectorAll('[aria-current="page"]')).map((node) => node.textContent);
+    const current = () => Array.from(sidebar.querySelectorAll('[aria-current="page"]')).map(getAccessibleLabel);
     expect(current()).toEqual([en.account.tabProfile]);
 
     const entriesBefore = window.history.length;
-    fireEvent.click(within(sidebar).getByText(en.account.tabSecurity));
+    fireEvent.click(within(sidebar).getByRole('button', { name: en.account.tabSecurity }));
 
     expect(await screen.findByRole('heading', { level: 1, name: en.account.tabSecurity })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/account');

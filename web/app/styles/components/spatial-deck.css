@@ -329,8 +329,8 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
   }
 }
 
-/* THE PHONE'S SECTION STRIP (modules/settings/SettingsNavigation.tsx, `layout="tabs"`). One line of
-   sections above the content, swiped sideways.
+/* THE PHONE'S SECTION STRIP (components/ui/SectionDeck.tsx, `layout="tabs"`). One line of sections above
+   the content, swiped sideways — the same strip on every section deck, Settings and Account alike.
 
    The native scrollbar is hidden because the strip IS the affordance: it is a thumb-scrolled line whose
    own overflow is read from the tabs running off the edge, and an 8px trough under a 32px row of pills
@@ -341,10 +341,10 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    A coarse pointer raises the tab to the touch floor. The pills stay 32px for a cursor, because the
    strip is also what a narrow DESKTOP window shows, and inflating it there would cost the content the
    room the strip exists to save. */
-.settings-section-strip { scrollbar-width: none; }
-.settings-section-strip::-webkit-scrollbar { display: none; }
+.section-deck-strip { scrollbar-width: none; }
+.section-deck-strip::-webkit-scrollbar { display: none; }
 @media (pointer: coarse) {
-  .settings-section-strip__tab { min-height: var(--touch-target); }
+  .section-deck-strip__tab { min-height: var(--touch-target); }
 }
 
 .settings-toolbar { position: sticky; top: 0; z-index: var(--z-sticky); border-radius: var(--radius-lg); background: linear-gradient(180deg, var(--color-document) 88%, transparent); }

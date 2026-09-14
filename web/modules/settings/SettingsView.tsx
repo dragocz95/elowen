@@ -26,7 +26,6 @@ import { isPluginSettingsSectionId, parsePluginSettingsSectionId } from '../../m
 import { pluginSectionHref } from '../../lib/pluginNav';
 import { useToast } from '../../components/ui/Toast';
 import { apiErrorMessage } from '../../lib/elowenClient';
-import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
@@ -43,7 +42,7 @@ import { MotionReveal } from '../../components/ui/Motion';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
-import { ModuleShell } from '../../components/shell/ModuleShell';
+import { SectionDeck } from '../../components/ui/SectionDeck';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { rowAnchor } from '../../lib/rowAnchors';
 import { useRowAnchor } from '../../lib/useRowAnchor';
@@ -111,7 +110,7 @@ function SettingsPanel({ id, active, visited, children }: {
   );
 }
 
-export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay' }) {
+export function SettingsView() {
   const [navigationQuery, setNavigationQuery] = useState('');
   const config = useConfig();
   const update = useUpdateConfig();
@@ -368,10 +367,13 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     setOverride(setModelMaxTokens, key, limits.maxTokens);
   };
 
-  if (config.isLoading) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><LoadingState /></ModuleShell>;
-  if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
+  // The deck's own states, bare. The surface around them — the title, the icon, the close control — is
+  // the page overlay this deck is always presented in, so repeating a module header here would put the
+  // word "Settings" on screen twice while the deck is still loading.
+  if (config.isLoading) return <LoadingState />;
+  if (config.isError) return <ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} />;
   // Administration surface — admins only. A non-admin who deep-links here gets a clear stop.
-  if (me.data?.user && !me.data.user.is_admin) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></ModuleShell>;
+  if (me.data?.user && !me.data.user.is_admin) return <EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} />;
 
   // Model allow-list changes auto-persist immediately. The catalog itself is owned by configured brain
   // providers; retired worker presets and custom worker entries are not editable on this surface.
@@ -830,7 +832,7 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
         </SettingsPanel>
 
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}>
-          <PluginsSection historyMode={surface === 'overlay' ? 'replace' : 'push'} />
+          <PluginsSection />
         </SettingsPanel>
 
         <SettingsPanel id="data" active={category} visited={visitedCategories}>
@@ -898,9 +900,9 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
   // section the reader had just opened disappeared behind the way back to it and moving between two
   // sections cost four taps. The strip keeps both on screen and never hides the current section.
   //
-  // BOTH presentations carry it. The canonical page used to leave the sections to the sidebar's own
-  // sub-menu, which is gone: a deck that is one row of the menu has to be navigable once you are in it,
-  // and a hard-loaded `/settings?cat=security` with no way to anywhere else is a dead end.
+  // It is the deck's OWN navigation, on every arrival: the sidebar holds one row for Settings and nothing
+  // under it, so a deck reached by a deep link, a refresh or the menu has to be navigable once you are in
+  // it — `/settings?cat=security` with no way to anywhere else is a dead end.
   {
     const navigation = (layout: 'sidebar' | 'tabs', className?: string) => (
       <SettingsNavigation
@@ -918,27 +920,10 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
           : router.replace(href)}
       />
     );
-    const deck = (
-      <div data-testid="settings-deck-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[15rem_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
-          {navigation('sidebar')}
-        </aside>
-        <section
-          role="region"
-          aria-label={activeSection.label}
-          className="flex min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 md:px-6 md:pb-4 md:pt-3"
-        >
-          {navigation('tabs', 'md:hidden')}
-          {settingsWorkspace}
-        </section>
-      </div>
-    );
-    if (surface === 'overlay') return deck;
     return (
-      <ModuleShell moduleId="settings">
-        <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
-        {deck}
-      </ModuleShell>
+      <SectionDeck testId="settings-deck-layout" contentLabel={activeSection.label} navigation={navigation}>
+        {settingsWorkspace}
+      </SectionDeck>
     );
   }
 }

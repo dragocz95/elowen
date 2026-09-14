@@ -4,7 +4,6 @@ import { render, screen, fireEvent, waitFor, within, act } from '@testing-librar
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
-import SettingsPage from '../../app/settings/page';
 import { SettingsView } from '../../modules/settings/SettingsView';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
@@ -53,11 +52,11 @@ beforeAll(() => server.listen({ onUnhandledRequest }));
 afterEach(() => { server.resetHandlers(); localStorage.clear(); window.history.replaceState(null, '', '/settings'); });
 afterAll(() => server.close());
 
-describe('SettingsPage', () => {
+describe('Settings deck', () => {
   it('opens with the shell carrying no section navigation of its own, and renders real System diagnostics', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     // The SHELL mounts no section navigation for a deck: no rail, no tab strip, no `data-section-layout`.
     // The six sections are addressed inside the deck's own navigation — a column beside the content, one
@@ -76,7 +75,7 @@ describe('SettingsPage', () => {
   it('offers conversation diagnostics without capture controls in Data', async () => {
     localStorage.setItem('elowen.settings.category', 'data');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     expect(await screen.findByText('Conversation diagnostics')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open diagnostics' })).toBeInTheDocument();
     expect(screen.queryByRole('switch', { name: /capture/i })).not.toBeInTheDocument();
@@ -85,14 +84,14 @@ describe('SettingsPage', () => {
   it('treats a missing model allowlist as empty instead of crashing', async () => {
     server.use(http.get('*/api/config', () => HttpResponse.json({ ...config, allowedExecs: undefined })));
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
     expect(screen.getByLabelText('Claude Opus')).not.toBeChecked();
   });
 
   it('renders the embedded model catalog without removed CLI-provider controls', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     expect(await screen.findByLabelText('Claude Opus')).toBeChecked();
     expect(screen.queryByText('Claude Code')).toBeNull();
     expect(screen.queryByText('Codex')).toBeNull();
@@ -105,7 +104,7 @@ describe('SettingsPage', () => {
       { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec: 'chatgpt-account/openai/gpt-5.6-sol', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
     ])));
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
 
     const anthropicHeading = screen.getByRole('heading', { name: 'Anthropic' });
@@ -131,7 +130,7 @@ describe('SettingsPage', () => {
   it('auto-saves an embedded model allowlist change', async () => {
     putBody = null;
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     const toggle = await screen.findByLabelText('Claude Opus');
     fireEvent.click(toggle);
     await waitFor(() => expect((putBody as { allowedExecs: string[] }).allowedExecs).not.toContain('elowen:anthropic::opus'));
@@ -140,7 +139,7 @@ describe('SettingsPage', () => {
   it('toggles conversation auto-cleanup and persists sessionRetention', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
     putBody = null;
     fireEvent.click(screen.getByRole('switch', { name: en.settings.retention.label }));
@@ -150,7 +149,7 @@ describe('SettingsPage', () => {
   it('keeps the policy rows compact and edits token TTL through canonical presets', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
     expect(screen.queryByRole('spinbutton')).toBeNull();
@@ -170,7 +169,7 @@ describe('SettingsPage', () => {
   it('saves retention presets and custom values from the shared days editor', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
     fireEvent.click(screen.getByRole('button', { name: en.settings.retention.edit }));
@@ -196,7 +195,7 @@ describe('SettingsPage', () => {
   it('restores an invalid custom day value without saving it', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
     fireEvent.click(screen.getByRole('button', { name: en.settings.tokenTtlEdit }));
     fireEvent.click(screen.getByRole('radio', { name: en.settings.daysPolicy.custom }));
@@ -229,7 +228,7 @@ describe('SettingsPage', () => {
     }));
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
     fireEvent.click(screen.getByRole('button', { name: en.settings.retention.edit }));
     const dialog = screen.getByRole('dialog', { name: en.settings.retention.label });
@@ -247,7 +246,7 @@ describe('SettingsPage', () => {
   it('falls back to System for a stale moved-section deep-link', async () => {
     localStorage.setItem('elowen.settings.category', 'retired-section');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
   });
 
@@ -259,7 +258,7 @@ describe('SettingsPage', () => {
   it('resolves the retired ?cat=memory link to Models, from the URL and from localStorage alike', async () => {
     window.history.replaceState(null, '', '/settings?cat=memory');
     const { wrapper: Wrapper } = createWrapper();
-    const { unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { unmount } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
     await waitFor(() => expect(window.location.search).toBe('?cat=models'));
     unmount();
@@ -267,7 +266,7 @@ describe('SettingsPage', () => {
     window.history.replaceState(null, '', '/settings');
     localStorage.setItem('elowen.settings.category', 'memory');
     const { wrapper: Wrapper2 } = createWrapper();
-    render(<Wrapper2><ToastProvider><SettingsPage /></ToastProvider></Wrapper2>);
+    render(<Wrapper2><ToastProvider><SettingsView /></ToastProvider></Wrapper2>);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
     await waitFor(() => expect(window.location.search).toBe('?cat=models'));
   });
@@ -279,7 +278,7 @@ describe('SettingsPage', () => {
     localStorage.setItem('elowen.settings.category', 'data');
     window.history.replaceState(null, '', '/settings?cat=nowhere');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Data' })).toBeInTheDocument();
     await waitFor(() => expect(window.location.search).toBe('?cat=data'));
@@ -291,7 +290,7 @@ describe('SettingsPage', () => {
   it('canonicalizes a stale address that arrives through history', async () => {
     localStorage.setItem('elowen.settings.category', 'models');
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'Models' });
 
     await act(async () => {
@@ -317,7 +316,7 @@ describe('SettingsPage', () => {
     localStorage.setItem('elowen.settings.fold.settings.modelRoles', 'closed');
     window.history.replaceState(null, '', '/settings?cat=models&row=settings.modelRoles.digest');
     const { wrapper: Wrapper } = createWrapper();
-    const { container, unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container, unmount } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
 
     const row = await waitFor(() => {
       const node = container.querySelector<HTMLElement>('[data-row-id="settings.modelRoles.digest"]');
@@ -337,7 +336,7 @@ describe('SettingsPage', () => {
 
     window.history.replaceState(null, '', '/settings?cat=models&row=settings.rowThatMoved');
     const { wrapper: Wrapper2 } = createWrapper();
-    render(<Wrapper2><ToastProvider><SettingsPage /></ToastProvider></Wrapper2>);
+    render(<Wrapper2><ToastProvider><SettingsView /></ToastProvider></Wrapper2>);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
     expect(document.querySelector('.row-flash')).toBeNull();
   });
@@ -349,7 +348,7 @@ describe('SettingsPage', () => {
   it('hangs both hero restart actions directly off the hero action row', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
     const actions = container.querySelector('.workspace-hero__actions');
@@ -364,7 +363,7 @@ describe('SettingsPage', () => {
    *  so a section with nothing to put in it must leave the row genuinely empty rather than draw a band. */
   it('puts the model search in the canonical toolbar row', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByLabelText('Claude Opus');
 
     const search = screen.getByLabelText(en.settings.modelSearchPlaceholder);
@@ -376,7 +375,7 @@ describe('SettingsPage', () => {
   it('hangs the Elowen AI cross-link off the toolbar actions', async () => {
     localStorage.setItem('elowen.settings.category', 'brain');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
 
     const link = await screen.findByRole('button', { name: en.settings.brainModelsLink });
     expect(container.querySelector('.page-toolbar__actions')).toContainElement(link);
@@ -398,7 +397,7 @@ describe('SettingsPage', () => {
       // wins over the remembered one — so each pass starts from a silent URL, the way a fresh visit does.
       window.history.replaceState(null, '', '/settings');
       const { wrapper: Wrapper } = createWrapper();
-      const { container, unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+      const { container, unmount } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
       await screen.findByRole('heading', { level: 1, name: heading });
 
       const rail = container.querySelector('[data-testid="workspace-hero-metrics"]');
@@ -411,7 +410,7 @@ describe('SettingsPage', () => {
   it('keeps the rail between the heading and the one toolbar row', async () => {
     localStorage.setItem('elowen.settings.category', 'models');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'Models' });
 
     const shell = container.querySelector('.workspace-shell')!;
@@ -429,7 +428,7 @@ describe('SettingsPage', () => {
   it('fills a non-system rail from that section\'s own data', async () => {
     localStorage.setItem('elowen.settings.category', 'data');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'Data' });
 
     const rail = container.querySelector('[data-testid="workspace-hero-metrics"]')!;
@@ -449,7 +448,7 @@ describe('SettingsPage', () => {
   it('leaves the toolbar row empty for a section with no page-level controls', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
     const row = container.querySelector('.page-toolbar__row');
@@ -462,7 +461,7 @@ describe('SettingsPage', () => {
   it('renders the shared searchable category navigation in the overlay presentation, without the module frame', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
     // Both shapes of the one list are in the DOM; the stylesheet shows exactly one of them per viewport,
@@ -487,7 +486,7 @@ describe('SettingsPage', () => {
   it('navigates the mobile overlay from a persistent section strip above the content', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
+    const { container } = render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
     const layout = container.querySelector('[data-testid="settings-deck-layout"]')!;

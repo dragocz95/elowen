@@ -1,6 +1,6 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain } from 'lucide-react';
+import { Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
@@ -18,7 +18,6 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
-import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -37,6 +36,7 @@ import { MotionReveal } from '../../components/ui/Motion';
 import { useSearchParams } from 'next/navigation';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { AccountNavigation } from './AccountNavigation';
+import { SectionDeck } from '../../components/ui/SectionDeck';
 import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
@@ -74,7 +74,7 @@ function AccountPanel({ id, active, visited, children }: {
   );
 }
 
-export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay' }) {
+export function AccountView() {
   const me = useMe();
   const cli = useMyCliSettings();
   const brainModels = useBrainModels();
@@ -91,6 +91,9 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
   const fileRef = useRef<HTMLInputElement>(null);
   const prefPct = Math.round(preference * 100);
   const [section, setSection] = usePersistentState<AccountSection>('elowen.account.section', 'profile', isAccountSection);
+  // The deck navigation's filter. Local to the page, like the settings deck's: it narrows a list of
+  // places, it is not part of the address, and nothing outside this view reads it.
+  const [navigationQuery, setNavigationQuery] = useState('');
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
   // Deep link: `/account?cat=<section>` opens that section, the same form `/settings?cat=` uses (and the
   // site search's account entries point at). Two sources, exactly as on Settings: `useSearchParams`
@@ -342,12 +345,10 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
     }
   };
 
-  if (me.isError) {
-    return <div className="flex w-full min-w-0 flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => me.refetch()} /></div>;
-  }
-  if (me.isLoading || !me.data?.user) {
-    return <div className="flex w-full min-w-0 flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><LoadingState /></div>;
-  }
+  // Bare, like the settings deck's: the page overlay around them already carries the title and the way
+  // out, so a module header here would name the page a second time while it is still loading.
+  if (me.isError) return <ErrorState message={t.common.daemonUnreachable} onRetry={() => me.refetch()} />;
+  if (me.isLoading || !me.data?.user) return <LoadingState />;
 
   const u = me.data.user;
   const restricted = u.allowed_execs.length > 0;
@@ -669,49 +670,29 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
       </WorkspaceShell>
   );
 
-  // THE DECK'S OWN WAY BETWEEN ITS SECTIONS: a secondary column where there is width for it, one line of
-  // tabs above the content on a phone.
+  // THE DECK'S OWN WAY BETWEEN ITS SECTIONS, in the shared frame `/settings` is read in too: a searchable
+  // secondary column where there is width for it, one line of tabs above the content on a phone.
   //
-  // BOTH presentations carry it. It used to belong to the overlay alone, because the sidebar's Account
-  // sub-menu was the way between sections on the canonical page. That sub-menu is gone — the column
-  // holds one row for the deck — so a hard-loaded `/account?cat=security` would otherwise have no way to
-  // any other section at all.
+  // It is carried on every arrival. The shell's menu holds one row for the whole deck, so a
+  // `/account?cat=security` opened from a link or a refresh would otherwise have no way to any other
+  // section at all.
   {
-    const deck = (
-      <div data-testid="account-deck-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
-          <AccountNavigation
-            label={t.account.title}
-            sections={spatialSections}
-            active={section}
-            layout="sidebar"
-            onNavigate={navigateToAccount}
-          />
-        </aside>
-        <section
-          role="region"
-          aria-label={activeSection.label}
-          className="flex min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 md:p-5"
-        >
-          <AccountNavigation
-            label={t.account.title}
-            sections={spatialSections}
-            active={section}
-            layout="tabs"
-            onNavigate={navigateToAccount}
-            className="md:hidden"
-          />
-          {accountWorkspace}
-        </section>
-      </div>
+    const navigation = (layout: 'sidebar' | 'tabs', className?: string) => (
+      <AccountNavigation
+        t={t}
+        sections={spatialSections}
+        active={section}
+        query={navigationQuery}
+        layout={layout}
+        className={className}
+        onQueryChange={setNavigationQuery}
+        onNavigate={navigateToAccount}
+      />
     );
-    if (surface === 'overlay') return deck;
     return (
-      /* Match the settings workspace width so account controls have the same calm, useful measure. */
-      <div className="flex w-full min-w-0 flex-col">
-        <ModuleHeader title={t.account.title} icon={UserCog} />
-        {deck}
-      </div>
+      <SectionDeck testId="account-deck-layout" contentLabel={activeSection.label} navigation={navigation}>
+        {accountWorkspace}
+      </SectionDeck>
     );
   }
 }

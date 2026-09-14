@@ -44,7 +44,7 @@ const entry = (over: Partial<MarketplaceEntry>): MarketplaceEntry => ({
   name: 'weather', version: '1.0.0', description: 'Weather tools', status: 'available', ...over,
 });
 
-const renderSection = (historyMode: 'push' | 'replace' = 'push') => render(<EffectsProvider><LanguageProvider><SettingsDocument><PluginsSection historyMode={historyMode} /></SettingsDocument></LanguageProvider></EffectsProvider>);
+const renderSection = () => render(<EffectsProvider><LanguageProvider><SettingsDocument><PluginsSection /></SettingsDocument></LanguageProvider></EffectsProvider>);
 
 afterEach(() => {
   window.history.replaceState(null, '', '/settings?cat=plugins');
@@ -80,7 +80,7 @@ describe('PluginsSection URL state', () => {
     expect(screen.queryByText('files')).toBeNull();
   });
 
-  it('pushes the selected plugin into the URL and removes it through the Plugins back action', async () => {
+  it('writes the selected plugin into the URL and removes it through the Plugins back action', async () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'browser' })], isLoading: false });
     renderSection();
 
@@ -95,11 +95,13 @@ describe('PluginsSection URL state', () => {
     expect(window.location.hash).toBe('');
   });
 
-  it('replaces plugin detail history inside the Settings overlay', async () => {
+  /** Settings is a page presented as an overlay wherever it is opened from, and a plugin detail is a place
+   *  inside that one surface — so it REPLACES the entry instead of pushing one per plugin looked at. */
+  it('replaces plugin detail history rather than stacking an entry per plugin', async () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'browser' })], isLoading: false });
     const push = vi.spyOn(window.history, 'pushState');
     const replace = vi.spyOn(window.history, 'replaceState');
-    renderSection('replace');
+    renderSection();
 
     fireEvent.click(screen.getByText('browser').closest('button')!);
     expect(await screen.findByTestId('plugin-detail')).toHaveAttribute('data-plugin', 'browser');
