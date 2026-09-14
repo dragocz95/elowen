@@ -1,5 +1,6 @@
 /** Brain session id conventions. User conversations and platform-channel sessions share the
  * `brain_sessions` table; channel sessions stay outside user-facing conversation routes. */
+import { platformIdentity } from '../shared/platformIdentity.js';
 
 export function defaultUserSessionId(userId: number): string {
   return `brain-${userId}`;
@@ -42,6 +43,17 @@ export function subagentSessionId(channelId: string): string {
 
 export function channelSessionId(channelId: string): string {
   return `${CHANNEL_PREFIX}${channelId}`;
+}
+
+/** Recover the native destination for adapters whose provider ids cannot contain Elowen's
+ * `#<generation>` conversation suffix. Discord and Teams keep their established adapter-side
+ * normalization because their ids are opaque enough to need platform-specific compatibility rules. */
+export function channelTransportId(platform: string, channelId: string): string {
+  const grammar = platformIdentity(platform)?.channelTransport;
+  if (!grammar) return channelId;
+  const transportId = channelId.replace(/(?:#\d+)+$/, '');
+  if (grammar === 'numeric') return /^-?\d+$/.test(transportId) ? transportId : channelId;
+  return /^[^#@]+@[^#@]+$/.test(transportId) ? transportId : channelId;
 }
 
 /** A fresh, unique id to ARCHIVE a channel conversation under when it idle-rolls over: the old

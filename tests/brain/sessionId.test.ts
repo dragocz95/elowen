@@ -1,11 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, isNonUserSession, isChannelSession, isSubagentSession, isArchivedChannelSession, channelIdOf, platformOfSession, isOwnedUserSession, mayDeliverToSession, contributionOwnerForSession, resolvesContributionsPerTurn } from '../../src/brain/sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, channelSessionId, channelTransportId, archivedChannelSessionId, isNonUserSession, isChannelSession, isSubagentSession, isArchivedChannelSession, channelIdOf, platformOfSession, isOwnedUserSession, mayDeliverToSession, contributionOwnerForSession, resolvesContributionsPerTurn } from '../../src/brain/sessionId.js';
 
 describe('brain session id conventions', () => {
   it('builds the user and channel id shapes', () => {
     expect(defaultUserSessionId(7)).toBe('brain-7');
     expect(freshUserSessionId(7)).toMatch(/^brain-7-[a-z0-9]+$/);
     expect(channelSessionId('discord-123')).toBe('brain-ch-discord-123');
+  });
+
+  it('separates Telegram and WhatsApp transport ids without changing Discord or Teams contracts', () => {
+    expect(channelTransportId('telegram', '-100123456#4')).toBe('-100123456');
+    expect(channelTransportId('whatsapp', '420778433908@s.whatsapp.net#2#2')).toBe('420778433908@s.whatsapp.net');
+    expect(channelTransportId('discord', 'thread:789#0')).toBe('thread:789#0');
+    expect(channelTransportId('msteams', 'a:conversation#4')).toBe('a:conversation#4');
+    expect(channelTransportId('telegram', 'opaque#4')).toBe('opaque#4');
+    expect(channelTransportId('whatsapp', 'opaque#4')).toBe('opaque#4');
   });
 
   it('classifies channel sessions as non-user (excluded from list/resume/delete)', () => {

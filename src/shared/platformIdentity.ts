@@ -60,6 +60,9 @@ export interface PlatformIdentityDescriptor {
    *  in the database was validated when it was written, and re-judging it later would unlink people
    *  whenever the shape is tightened. */
   readonly validate: (value: string) => boolean;
+  /** Native conversation-address grammar when the adapter appends Elowen's `#<generation>` suffix.
+   *  Absent means the adapter owns any provider-specific normalization itself. */
+  readonly channelTransport?: 'numeric' | 'jid';
   /** Czech 409 copy when another account already holds this identity. */
   readonly conflictMessage: string;
   readonly bootstrap?: PlatformIdentityBootstrap;
@@ -98,6 +101,7 @@ export const PLATFORM_IDENTITIES = [
     indexName: 'idx_user_settings_telegram_id',
     normalize: digits,
     validate: (value: string) => /^\d{5,25}$/.test(value),
+    channelTransport: 'numeric',
     conflictMessage: 'Toto Telegram ID už má propojené jiný uživatel.',
   },
   {
@@ -123,6 +127,7 @@ export const PLATFORM_IDENTITIES = [
       return digits(jid.replace(/[@:].*$/, ''));
     },
     validate: (value: string) => /^\d{6,15}$/.test(value),
+    channelTransport: 'jid',
     conflictMessage: 'Toto WhatsApp číslo už má propojené jiný uživatel.',
   },
 ] as const satisfies readonly PlatformIdentityDescriptor[];
