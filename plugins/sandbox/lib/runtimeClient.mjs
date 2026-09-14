@@ -27,6 +27,10 @@
  *   proof, so an envelope built from a superseded specification can still be REPORTED.
  * @property {(namespace: string) => Promise<Map<string, string>>} containerInventory
  * @property {(spec: object) => Promise<{ id: string, state: string }>} create
+ * @property {(spec: object) => Promise<{ id: string }>} proveOwnership Ownership proved from the files the
+ *   runtime owns — the disk's identity record and the two envelope files — with no privileged call and no
+ *   statement about liveness. Throws on any mismatch, so a name reported UP by `containerInventory` can be
+ *   held against the specification that claims it before the caller adopts or replaces anything.
  * @property {(spec: object) => Promise<void>} start
  * @property {(spec: object, timeoutSeconds?: number) => Promise<void>} stop
  * @property {(spec: object) => Promise<void>} remove

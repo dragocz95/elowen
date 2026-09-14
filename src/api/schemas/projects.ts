@@ -15,8 +15,9 @@ export const createProjectSchema = z.union([
   }).strict(),
 ]);
 
-/** Edit a project. All fields optional; trimming and icon validation stay in the handler.
- *  `memoryShared` toggles the project's shared memory pool (admin-only, like the rest of the patch). */
+/** Edit a project. All fields optional; trimming and icon validation stay in the handler, and so does the
+ *  authority split: `path` is admin-only along with every host project, `notes` and `icon` belong to the
+ *  project's members, and `memoryShared` — which pools every member's memories — stays admin-only. */
 export const updateProjectSchema = z.object({
   path: z.string().optional(),
   notes: z.string().optional(),

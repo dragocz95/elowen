@@ -395,7 +395,9 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       throw error;
     }
   });
-  // Host path changes remain admin-only; managed metadata belongs to all project members.
+  // Host path changes remain admin-only; notes and icon belong to all project members. Shared memory
+  // does not: it decides whether every member's memories become readable by the others, so it stays an
+  // administrator's decision even on a managed project a member may otherwise edit.
   app.patch('/projects/:id', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const id = Number(c.req.param('id'));
@@ -444,6 +446,10 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
       patch.icon = b.icon;
     }
+    // Shared memory is a visibility change over other people's memories, not project metadata, so it is
+    // refused HERE rather than only being hidden in the web panel: a member who may edit notes and icon
+    // must not be able to pool every member's recollections by calling the API directly.
+    if (typeof b.memoryShared === 'boolean' && notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     if (typeof b.memoryShared === 'boolean') patch.memoryShared = b.memoryShared;
     return c.json(await toProjectView(d.projects.update(id, patch)!));
   });
