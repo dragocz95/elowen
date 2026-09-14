@@ -1126,6 +1126,46 @@ describe('durable managed environment lifecycle', () => {
     expect(project.lifecycle).toBe('deleted');
   });
 
+  it('deletes only nspawn generations after completed runtime migration history', async () => {
+    const { runtime, nspawn, storage, db, containers } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'migrated-start', action: { kind: 'start' } }); await runtime.reconcile();
+    const row = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const current = JSON.parse(row.spec_json);
+    const active = containers.get('elowen-project-7-g1');
+    current.input.generation = 2;
+    containers.delete('elowen-project-7-g1');
+    containers.set('elowen-project-7-g2', active);
+    db.prepare("UPDATE p_sandbox_runtimes SET generation=2,spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(current));
+
+    const legacy = JSON.parse(JSON.stringify(current));
+    legacy.input.generation = 1;
+    delete legacy.input.disk.runtime;
+    legacy.containerId = 'b'.repeat(64);
+    db.prepare(`INSERT INTO p_sandbox_runtime_operations
+      (id,kind,resource_id,user_id,request_key,generation,action_json,status,checkpoint_json)
+      VALUES('env_completed_runtime_migration','project','7',3,'completed-runtime-migration',1,?,'succeeded',?)`)
+      .run(JSON.stringify({ kind: 'migrate-runtime' }), JSON.stringify({ oldSpec: legacy, newSpec: current,
+        migration: { oldContainerId: legacy.containerId, done: ['legacy-removed', 'complete'] } }));
+    db.prepare(`INSERT INTO p_sandbox_runtime_snapshots
+      (id,kind,resource_id,generation,spec_json,manifest_json)
+      VALUES('legacy-runtime-snapshot','project','7',1,?,?)`)
+      .run(JSON.stringify(legacy), JSON.stringify({ version: 2, snapshotId: 'legacy-runtime-snapshot', trees: [] }));
+
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'migrated-delete', action: { kind: 'delete' } });
+    await runtime.reconcile();
+
+    const done = await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 });
+    expect(done?.status, done?.error ?? '').toBe('succeeded');
+    expect(nspawn.inspect.mock.calls.every(([spec]: any[]) => spec.disk?.runtime === 'nspawn')).toBe(true);
+    expect(nspawn.remove).toHaveBeenCalledWith(expect.objectContaining({ name: 'elowen-project-7-g2',
+      disk: expect.objectContaining({ runtime: 'nspawn' }) }));
+    expect(nspawn.removeSnapshotStorage).not.toHaveBeenCalledWith(expect.anything(), 'legacy-runtime-snapshot');
+    expect(storage.removeDisk).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ runtime: 'nspawn' }) }), expect.any(Array));
+    expect(nspawn.removeStorage).toHaveBeenCalledWith(expect.objectContaining({ name: 'elowen-project-7-g2' }));
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_snapshots WHERE kind='project' AND resource_id='7'").get()).toEqual({ n: 0 });
+    expect(containers.size).toBe(0);
+  });
+
   it('keeps a failed delete checkpoint and converges when the same delete is requested again', async () => {
     const { runtime, nspawn, stores, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
