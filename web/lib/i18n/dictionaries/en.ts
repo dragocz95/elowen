@@ -759,7 +759,6 @@ export const en = {
     openProject: 'Open project {slug}',
     noMatches: 'No projects match this search',
     tableLabel: 'Project registry',
-    columnResources: 'Resources',
     cardOpen: 'Open',
     runtimeManaged: 'Managed',
     runtimeHost: 'Host',

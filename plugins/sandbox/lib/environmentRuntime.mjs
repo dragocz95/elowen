@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, unlinkSync } from 'node:fs';
+import { cpus } from 'node:os';
 import { join, posix } from 'node:path';
 import { manageWorktrees } from './managedWorktrees.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
@@ -23,6 +24,7 @@ const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url
 const PROJECT_ROOTFS = artifactReference(PROJECT_ARTIFACT);
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512 };
 const DEFAULT_NETWORK = Object.freeze({ mode: 'shared', inboundPorts: [] });
+const detectedCpuModel = () => cpus().find((cpu) => cpu.model.trim())?.model.trim().slice(0, 160) || null;
 const LIMIT_KEYS = Object.keys(DEFAULT_LIMITS);
 const HOST_KIND = 'host';
 const HOST_RESOURCE = 'nspawn';
@@ -158,8 +160,9 @@ function fileOperation(op) {
 export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen',
   artifacts = new RootfsArtifactStore({ dataDir, logger: ctx.logger, ...(ctx.config?.[ARTIFACT_MIRROR_SETTING] ? { baseUrl: ctx.config[ARTIFACT_MIRROR_SETTING] } : {}) }),
   nspawn = new NspawnClient({ artifacts, namespace, outputLimitBytes: 16 * 1024 * 1024 }),
-  storage = new ContainerStorage(nspawn), daemon = typeof process.send !== 'function' }) {
+  storage = new ContainerStorage(nspawn), cpuModel = detectedCpuModel(), daemon = typeof process.send !== 'function' }) {
   const store = createEnvironmentStore(db, processIdentity);
+  const hostCpuModel = typeof cpuModel === 'string' && cpuModel.trim() ? cpuModel.trim().slice(0, 160) : null;
   /** Which runtime drives THIS specification. The disk record is the only discriminator, and a row whose
    *  disk does not name this runtime is refused by name rather than adopted. */
   const runtimeFor = (spec) => selectRuntimeClient(spec, { nspawn });
@@ -1795,7 +1798,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const environment = row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
         limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) };
       const empty = {
-        cpu: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedCpus: null, percent: null },
+        cpu: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedCpus: null, percent: null, model: hostCpuModel },
         memory: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedBytes: null, limitBytes: environment.limits.memoryMb * 1024 * 1024 },
         disk: { state: row ? 'unavailable' : 'ready', usedBytes: row ? null : 0, limitBytes: null },
       };
@@ -1808,7 +1811,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       try {
         const measured = await nspawn.resourceUsageBatch(measurable.map(({ spec, state }) => ({ spec, state })));
         if (!Array.isArray(measured) || measured.length !== measurable.length) throw new Error('Invalid resource usage batch');
-        measurable.forEach(({ index }, offset) => { projects[index].resources = measured[offset]; });
+        measurable.forEach(({ index }, offset) => {
+          const resources = measured[offset];
+          projects[index].resources = { ...resources, cpu: { ...resources.cpu, model: hostCpuModel } };
+        });
       } catch { /* The per-row unavailable resource state above is the explicit failure result. */ }
     }
     return { sampledAt: new Date().toISOString(), projects };

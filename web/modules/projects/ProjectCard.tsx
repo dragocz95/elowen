@@ -75,14 +75,14 @@ function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
  *  whose sample has not arrived is not an environment using none of its share. */
 const UNKNOWN_VALUE = '—';
 
-/** The figure in the hole, as ONE rule for all three resources.
- *
- *  `<1%` rather than `0%` for a reading that is real but rounds away. The ring lifts a tiny fraction to a
- *  visible floor so a barely-used resource does not read as untouched, and half a gigabyte of a 200 GB
- *  volume is exactly that case — an arc on screen beside the figure `0%` reads as a drawing error rather
- *  than as a small number. Zero itself keeps `0%`, because zero is the one reading with no arc at all. */
-function centreValue(percent: number | null): string {
+/** The figure in the hole. CPU keeps one decimal below one per cent because that precision is useful at
+ *  idle; capacity readings keep the compact `<1%` mark. The ring lifts either tiny fraction to a visible
+ *  floor, while an exact zero keeps `0%` and no arc. */
+function centreValue(percent: number | null, preciseFraction = false): string {
   if (percent === null) return UNKNOWN_VALUE;
+  if (preciseFraction && percent > 0 && percent < 1) {
+    return `${Math.max(0.1, Math.round(percent * 10) / 10).toFixed(1)}%`;
+  }
   const rounded = Math.round(percent);
   return rounded === 0 && percent > 0 ? '<1%' : `${rounded}%`;
 }
@@ -107,15 +107,13 @@ function ProjectResourceMeter({ item }: { item: PluginProjectRowMetric }) {
   const percent = item.state === 'ready' && typeof item.percent === 'number' && Number.isFinite(item.percent)
     ? Math.max(0, Math.min(100, item.percent))
     : null;
-  const title = item.valueText ?? `${item.label}: ${item.value}`;
-  const centre = centreValue(percent);
-  // The line under the label exists to say what the hole cannot. It is dropped when it would only repeat
-  // what is already in the ring: CPU's compact reading IS its percentage, and a resource nothing is known
-  // about carries one honest mark rather than two. Matched on the FIGURE rather than on the rendered
-  // string, so the two never disagree about how a fraction below one per cent reads.
-  const detail = item.value === UNKNOWN_VALUE || (percent !== null && item.value === `${Math.round(percent)}%`)
+  const centre = centreValue(percent, item.id === 'cpu');
+  const title = item.id === 'cpu' && percent !== null ? `${item.label}: ${centre}` : item.valueText ?? `${item.label}: ${item.value}`;
+  // A plugin may add one compact identity beneath a metric, such as the host CPU model. Otherwise the line
+  // says what the hole cannot; it disappears when it would only repeat the percentage or an unknown mark.
+  const detail = item.description ?? (item.value === UNKNOWN_VALUE || (percent !== null && item.value === `${Math.round(percent)}%`)
     ? ''
-    : item.value;
+    : item.value);
   return (
     <div
       className="flex min-w-0 flex-col items-center gap-1"
@@ -135,24 +133,21 @@ function ProjectResourceMeter({ item }: { item: PluginProjectRowMetric }) {
       </span>
       {/* The slot is kept whether or not it is used, so the three columns of the strip share a baseline
           however many of them have an exact pair to show. */}
-      <span className="min-h-[12px] w-full truncate text-center text-[10px] leading-none tabular-nums text-foreground">
+      <span
+        className={`min-h-[12px] w-full max-w-[7rem] truncate text-center text-[10px] leading-none ${item.description ? 'text-muted-foreground' : 'tabular-nums text-foreground'}`}
+        title={item.description}
+      >
         {detail}
       </span>
     </div>
   );
 }
 
-/** The three rings of one snapshot, in the card and in the drawer alike: ONE strip, one arrangement.
- *
- *  The card used to stack them and the drawer used to set them three abreast, because a horizontal meter
- *  needs a track as wide as it can get and a stack was the only way to give each one the card's whole
- *  width. A ring needs a square instead, so the two surfaces stopped needing different answers and the
- *  layout that reads as one instrument won outright.
- *
- *  The figures are the ones the plugin last measured in EVERY state: a refresh in flight only dims them,
+/** The three rings of one register snapshot: one compact instrument rather than three dashboard tiles.
+ *  The figures are the ones the plugin last measured in every state: a refresh in flight only dims them,
  *  and a failed read only marks them, because replacing a measurement with a placeholder is how a
  *  populated environment reported nothing each time a poll missed. */
-export function ProjectResourceMeters({ metrics }: { metrics?: PluginProjectRowMetrics }) {
+function ProjectResourceMeters({ metrics }: { metrics?: PluginProjectRowMetrics }) {
   if (!metrics || !Array.isArray(metrics.items) || metrics.items.length === 0) return null;
   const items = metrics.items.slice(0, 3);
   const label = metrics.stale && metrics.staleLabel ? `${metrics.label} — ${metrics.staleLabel}` : metrics.label;

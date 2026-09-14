@@ -233,7 +233,6 @@
       "usageStopped": "Stopped",
       "usageLimitUnknown": "No disk ceiling could be read for this environment.",
       "usageDiskVolume": "Measured against the volume this environment is stored on, not a Project quota.",
-      "usageRefresh": "Refresh resources",
       "usageStale": "Last known figures",
       "networking": "Networking",
       "networkingHint": "Outbound access and the small set of host ports forwarded into this Project. Applying a change briefly stops the environment and returns it to its previous state.",

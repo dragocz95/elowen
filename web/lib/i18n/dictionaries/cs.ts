@@ -716,7 +716,6 @@ export const cs = {
     openProject: 'Otevřít projekt {slug}',
     noMatches: 'Hledání neodpovídá žádný projekt',
     tableLabel: 'Registr projektů',
-    columnResources: 'Prostředky',
     cardOpen: 'Otevřít',
     runtimeManaged: 'Spravované',
     runtimeHost: 'Hostitel',
