@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { AGENT_CLIS, detectAgentClis, installCommand } from '../../../src/cli/install/agentClis.js';
 import { preflight, preflightBlockers } from '../../../src/cli/install/preflight.js';
 import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
-import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs, provisionSiteGatewayHelper } from '../../../src/cli/install/index.js';
+import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs, provisionSiteGatewayHelper, provisionSudoers } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import { provisionMachineRuntime } from '../../../src/privileged/publishedSitesGateway.js';
 import { MACHINE_STORAGE_RECEIPT_PATH, siteGatewayPluginDataDir } from '../../../src/shared/siteGateway.js';
@@ -469,6 +469,74 @@ describe('install/provisionSiteGatewayHelper', () => {
     await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' }, '/home/elowen');
     const record = JSON.parse(writes.find(({ path }) => path === '/etc/elowen/.elowen-site-gateway-json.A1b2C3')!.content);
     expect(record).toEqual({ appHost: 'agent.example.com', daemonPort: 4400 });
+  });
+});
+
+describe('install/provisionSudoers', () => {
+  const DROP_IN = '/etc/sudoers.d/elowen';
+
+  function recordingRunner() {
+    const writes: { path: string; content: string }[] = [];
+    const calls: { cmd: string; args: string[] }[] = [];
+    return {
+      writes,
+      calls,
+      r: runner({
+        which: async (cmd: string) => (cmd === 'npm' ? '/usr/bin/npm' : null),
+        writeFile: async (path: string, content: string) => { writes.push({ path, content }); },
+        exec: async (cmd: string, args: string[]) => {
+          calls.push({ cmd, args });
+          return { code: 0, stdout: cmd === 'mktemp' ? `${args[0]!.replace('XXXXXX', 'A1b2C3')}\n` : '', stderr: '' };
+        },
+      }),
+    };
+  }
+
+  // The drop-in decides who may become root, which puts it in the same class as the helper files: the
+  // SOURCE of an `install` run as root must not be a path the service user can own. It used to be written
+  // to a fixed /tmp/elowen.sudoers, so any local account could leave its own bytes there and win the
+  // window between the root write and the root install.
+  it('stages the drop-in inside /etc/elowen and hands visudo the staged temp', async () => {
+    const { r, writes, calls } = recordingRunner();
+    await provisionSudoers(r, 'elowen');
+
+    const temp = '/etc/elowen/.elowen-sudoers.A1b2C3';
+    expect(calls).toContainEqual({ cmd: 'mktemp', args: ['/etc/elowen/.elowen-sudoers.XXXXXX'] });
+    expect(calls).toContainEqual({ cmd: 'chown', args: ['root:root', temp] });
+    expect(calls).toContainEqual({ cmd: 'chmod', args: ['0600', temp] });
+    expect(writes.map(({ path }) => path)).toEqual([temp]);
+    expect(writes[0]!.content).toContain('NOPASSWD');
+    expect(calls).toContainEqual({ cmd: 'visudo', args: ['-cf', temp] });
+    expect(calls).toContainEqual({ cmd: 'install', args: ['-o', 'root', '-g', 'root', '-m', '0440', temp, DROP_IN] });
+    expect(calls).toContainEqual({ cmd: 'rm', args: ['-f', '--', temp] });
+
+    // Ordering is the property, not membership: the staging directory has to exist before mktemp writes
+    // into it, and visudo has to see the bytes while they are still this purpose's temp.
+    const at = (cmd: string, match: (args: string[]) => boolean) => calls.findIndex((call) => call.cmd === cmd && match(call.args));
+    const stagingDir = at('install', (args) => args.includes('/etc/elowen'));
+    expect(stagingDir).toBeGreaterThanOrEqual(0);
+    expect(stagingDir).toBeLessThan(at('mktemp', () => true));
+    expect(at('visudo', (args) => args[1] === temp)).toBeLessThan(at('install', (args) => args.at(-1) === DROP_IN));
+
+    // And nothing is staged at a fixed path outside the root-owned directory.
+    expect(calls.some((call) => call.args.some((arg) => arg.startsWith('/tmp/')))).toBe(false);
+  });
+
+  it('refuses a drop-in visudo rejects, leaving the installed one alone', async () => {
+    const temp = '/etc/elowen/.elowen-sudoers.Q1w2E3';
+    const calls: { cmd: string; args: string[] }[] = [];
+    const r = runner({
+      exec: async (cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        if (cmd === 'mktemp') return { code: 0, stdout: `${args[0]!.replace('XXXXXX', 'Q1w2E3')}\n`, stderr: '' };
+        if (cmd === 'visudo') return { code: 1, stdout: '', stderr: 'syntax error near line 2' };
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    await expect(provisionSudoers(r, 'elowen')).rejects.toThrow(/visudo rejected the drop-in: syntax error near line 2/);
+    expect(calls.some((call) => call.cmd === 'install' && call.args.at(-1) === DROP_IN)).toBe(false);
+    expect(calls).toContainEqual({ cmd: 'rm', args: ['-f', '--', temp] });
   });
 });
 
