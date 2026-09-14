@@ -177,14 +177,35 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  delay a refusal but never turn one into a success. */
   const HOST_READINESS_TTL_MS = 15_000;
   let readinessCache = null;
-  async function hostReadiness() {
+  /** `fresh` is for the ONE caller that must not reuse the cached answer: a start, which turns a network
+   *  link on and therefore depends on the host's forwarding and firewall rows as they are NOW — a rule can
+   *  be flushed between two sweeps, and a cached `ready` would then start a machine onto a link the host no
+   *  longer isolates. A fresh probe deliberately does NOT write the cache: the TTL above is the overview's,
+   *  and a privileged round trip taken for a start has no business reordering the polled answer. */
+  async function hostReadiness(fresh = false) {
     if (!nspawn || typeof nspawn.hostReadiness !== 'function') {
       return { ready: false, items: [{ id: 'runtime:machine', label: 'Machine runtime', ok: false, detail: 'this runtime has no machine client' }] };
     }
-    if (readinessCache && Date.now() - readinessCache.at < HOST_READINESS_TTL_MS) return readinessCache.value;
+    if (!fresh && readinessCache && Date.now() - readinessCache.at < HOST_READINESS_TTL_MS) return readinessCache.value;
     const value = await nspawn.hostReadiness();
-    readinessCache = { at: Date.now(), value };
+    if (!fresh) readinessCache = { at: Date.now(), value };
     return value;
+  }
+  /** What a start that turns a network link ON has to be able to prove first.
+   *
+   *  A machine given a virtual ethernet is only isolated while the host's forwarding, link and firewall
+   *  rows are in place, and the privileged side is the only thing that knows which rows those are — so the
+   *  gate is the helper's OWN conjunctive verdict on a fresh probe rather than a list of row ids matched
+   *  here, which would be a second source of truth for a naming the helper owns. It refuses by quoting the
+   *  unmet rows back, exactly as the creation-time decision does.
+   *
+   *  An isolated environment is asked nothing: it gets no link, so none of those rows are its to depend on.
+   *  This is the SINGLE place a start is gated, so automatic recovery, which runs operations through the
+   *  same `perform`, cannot start a networked machine on a host that has lost its firewall. */
+  async function assertNetworkedStartAllowed(row) {
+    if (effectiveNetwork(row.spec).mode === 'isolated') return;
+    const readiness = await hostReadiness(true);
+    if (!readiness.ready) throw error('runtime_not_ready', `This host cannot start a networked environment — ${readinessRefusal(readiness)}`);
   }
   /** How many non-deleted environments belong to a runtime this release cannot drive.
    *
@@ -306,6 +327,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   const publicationMutations = new Map();
   const publicationRecoveryStates = new Map();
   const legacySiteRetirementErrors = new Map();
+  /** Names the machine inventory reports and the envelope cannot prove, by environment: the standing
+   *  condition is reported once and again only when the reason changes, exactly as a legacy Site machine
+   *  that will not retire is. */
+  const unownedNameReports = new Map();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
     assertLive();
@@ -821,7 +846,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = specFor(row.spec);
     step(op, 'boot');
     if (current.state === 'paused') await runtimeFor(spec).unpause(spec);
-    else if (current.state !== 'running') await runtimeFor(spec).start(spec);
+    else if (current.state !== 'running') {
+      // Before the link is turned on, never after: the envelope this start activates is what gives the
+      // machine its virtual ethernet, and a host that cannot isolate that link must not carry one.
+      await assertNetworkedStartAllowed(row);
+      await runtimeFor(spec).start(spec);
+    }
     if ((await runtimeFor(spec).inspect(spec))?.state !== 'running') throw error('start_unverified', 'Container start could not be verified');
     const root = rootOf(row);
     // A running container is not yet a usable guest: initialization below, and every execution after it,
@@ -1253,7 +1283,29 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (row.desired_state !== 'running' || store.active('project', row.resource_id)) continue;
         if (!rootOf(row) || releasingAdoptions.has(Number(row.resource_id))) continue;
         const spec = specFor(row.spec);
-        if (inventory.get(spec.name) === 'running') continue;
+        // An inventory name is LIVENESS, never ownership: `machinectl list` reports what the host has
+        // registered, and a machine left over from another specification can hold this name. A name that is
+        // up and OURS is skipped without paying for a full ownership proof — that is what keeps a steady
+        // sweep cheap — but the proof is taken from the files this runtime owns, and a name that fails it is
+        // neither adopted nor replaced: it is reported, and nothing is started under it.
+        if (inventory.get(spec.name) === 'running') {
+          try {
+            await runtimeFor(spec).proveOwnership(spec);
+            runningContainers.add(spec.name);
+            unownedNameReports.delete(Number(row.resource_id));
+            continue;
+          } catch (cause) {
+            // Reported once per standing condition rather than once per sweep: a foreign machine keeps
+            // holding the name, and a line every ten seconds would bury everything else in the log.
+            const message = `Machine ${spec.name} is not provably this environment's: ${cause.message}`;
+            if (unownedNameReports.get(Number(row.resource_id)) !== message) {
+              unownedNameReports.set(Number(row.resource_id), message);
+              store.log(row.kind, row.resource_id, message);
+            }
+            continue;
+          }
+        }
+        unownedNameReports.delete(Number(row.resource_id));
         // A machine this runtime cannot verify (a mismatched specification, a helper error) is not a
         // recovery candidate, and it must not stop the sweep for every other environment either.
         try {

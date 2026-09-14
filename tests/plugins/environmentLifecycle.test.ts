@@ -60,6 +60,14 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     retireLegacySiteMachine: vi.fn(async (spec: any) => ({ retired: true, machine: `elowen-site-${spec.input.resource.id}-g${spec.input.generation}` })),
     containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
+    // Ownership from the files this runtime owns, without the state read `inspect` makes: a name the
+    // inventory reports UP is only adopted when the envelope and the disk identity are provably this
+    // environment's, and the fake refuses a name it does not hold exactly as the real client does.
+    proveOwnership: vi.fn(async (spec: any) => {
+      const row = containers.get(spec.name);
+      if (!row) throw new Error('No machine envelope of this name exists on this host');
+      return { id: row.id };
+    }),
     create: vi.fn(async (spec: any) => {
       if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
       if (!spec.disk || spec.disk.runtime !== 'nspawn') throw new Error('systemd-nspawn runs only rootfs-backed environments');
@@ -388,6 +396,80 @@ describe('durable managed environment lifecycle', () => {
 
     expect(nspawn.containerInventory).toHaveBeenCalledOnce();
     expect(nspawn.inspect).not.toHaveBeenCalled();
+  });
+
+  /** An inventory name is what the HOST has registered, not proof that the machine is this environment's.
+   *  A machine left over from another specification can hold the name, and adopting or replacing it would
+   *  be the runtime guessing about a container it cannot verify. */
+  it.each([
+    ['a foreign envelope', 'Machine ownership or runtime specification mismatch: identity.specHash'],
+    ['no envelope at all', 'No machine envelope of this name exists on this host'],
+  ])('reports a machine name it cannot prove it owns, and starts nothing (%s)', async (_case, refusal) => {
+    const { runtime, nspawn, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    nspawn.start.mockClear();
+    nspawn.create.mockClear();
+    nspawn.proveOwnership.mockRejectedValue(new Error(refusal));
+    const logged = () => db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
+      .map((entry: any) => entry.message).filter((message: string) => message.includes('not provably')).length;
+
+    await runtime.reconcile();
+    await runtime.reconcile();
+
+    // Nothing is started or created under a name this runtime cannot prove, and the standing condition is
+    // reported ONCE rather than on every ten-second sweep.
+    expect(nspawn.start).not.toHaveBeenCalled();
+    expect(nspawn.create).not.toHaveBeenCalled();
+    expect(logged()).toBe(1);
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+  });
+
+  /** A networked machine is only isolated while the host's forwarding and firewall rows are in place, and
+   *  the host can lose one between two sweeps. Automatic recovery is the path that would start it again, so
+   *  the refusal has to be in the start itself — and the machine must not be started onto a link nothing
+   *  guards. */
+  it('refuses to start a networked machine on a host that can no longer prove its network rows', async () => {
+    const { runtime, nspawn, containers, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'stopped';
+    nspawn.start.mockClear();
+    nspawn.hostReadiness.mockResolvedValue({ ready: false, items: [
+      { id: 'os:supported', label: 'Supported operating system', ok: true, detail: 'Ubuntu 24.04' },
+      { id: 'firewall:host-guard', label: 'Machine-to-host guard', ok: false, detail: 'everything else a machine addresses to the host arrives here — run: /usr/sbin/iptables -A INPUT -i ve-+ -j DROP' },
+    ] });
+
+    await runtime.reconcile();
+
+    expect(nspawn.start).not.toHaveBeenCalled();
+    const environment = await runtime.environmentFor(input);
+    expect(environment.state).toBe('failed');
+    // The row the host is missing is quoted back rather than summarised, exactly as the creation decision
+    // does it, so an operator reads what to fix.
+    expect(environment.lastError).toContain('Machine-to-host guard');
+    expect(environment.lastError).toContain('/usr/sbin/iptables');
+    expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
+      .map((entry: any) => entry.message).join('\n')).toMatch(/start queued automatically/);
+  });
+
+  /** The other half of the same rule: an isolated environment gets no virtual ethernet, so none of those
+   *  rows are its to depend on and a host that has lost them must not stop it recovering. */
+  it('asks nothing of an isolated environment, which has no link to isolate', async () => {
+    const { runtime, nspawn, containers } = setup({ defaultNetworkMode: 'isolated' });
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).network.mode).toBe('isolated');
+    containers.values().next().value.state = 'stopped';
+    nspawn.start.mockClear();
+    nspawn.hostReadiness.mockClear();
+    nspawn.hostReadiness.mockResolvedValue({ ready: false, items: [
+      { id: 'unit:elowen-machine', label: 'Machine unit template', ok: false, detail: 'on disk but the manager has not read it — run: systemctl daemon-reload' },
+    ] });
+
+    await runtime.reconcile();
+
+    // Not even the probe: there is no link, so there is nothing to ask the host about.
+    expect(nspawn.hostReadiness).not.toHaveBeenCalled();
+    expect(nspawn.start).toHaveBeenCalledOnce();
+    expect((await runtime.environmentFor(input)).state).toBe('running');
   });
 
   it('recovers a desired running environment whose container was left created after a host reboot', async () => {

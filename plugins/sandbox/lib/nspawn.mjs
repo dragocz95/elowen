@@ -408,6 +408,28 @@ export class NspawnClient {
     return inventory;
   }
 
+  /** The file-borne half of the ownership proof: the disk's identity record and the two envelope files,
+   *  held against the specification, and the envelope identity those very bytes hash to. It reads what is
+   *  on disk and makes no privileged call, which is what lets a sweep that already has liveness from the
+   *  machine inventory prove ownership too, without a `systemctl show` per environment per pass.
+   *
+   *  `inspect` appends these mismatches to the ones it collected from the live unit and registration, so
+   *  the two proofs are one comparison over one set of fields rather than two that can drift apart. */
+  #envelopeEvidence(spec, machine, envelope, rootfs) {
+    const identity = readIdentity(this.#diskDirectory(spec));
+    const expected = { namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id),
+      generation: spec.generation, diskId: spec.disk.id, machine, runtime: 'nspawn',
+      specHash: spec.labels['io.elowen.spec'] };
+    const mismatches = [];
+    for (const [key, value] of Object.entries(expected)) {
+      if (identity[key] !== value) mismatches.push(`identity.${key}`);
+    }
+    if (!Number.isSafeInteger(identity.uidBase) || identity.uidBase < 1 || identity.uidSize !== UID_RANGE_SIZE) mismatches.push('identity.uidRange');
+    const id = createHash('sha256').update(JSON.stringify([spec.namespace, machine, spec.disk.id, rootfs, envelope.nspawn, envelope.dropIn])).digest('hex');
+    if (spec.expectedId && spec.expectedId !== id) mismatches.push('expectedId');
+    return { id, mismatches };
+  }
+
   /** The three independent host-side facts an environment is identified by. All of them have to match or
    *  every destructive operation refuses. */
   async inspect(spec) {
@@ -444,18 +466,27 @@ export class NspawnClient {
       const registered = unitProperties(machineShown.stdout);
       if (machineShown.code !== 0 || registered.Unit !== unitFor(machine) || registered.RootDirectory !== rootfs) mismatches.push('machine');
     }
-    const identity = readIdentity(this.#diskDirectory(spec));
-    const expected = { namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id),
-      generation: spec.generation, diskId: spec.disk.id, machine, runtime: 'nspawn',
-      specHash: spec.labels['io.elowen.spec'] };
-    for (const [key, value] of Object.entries(expected)) {
-      if (identity[key] !== value) mismatches.push(`identity.${key}`);
-    }
-    if (!Number.isSafeInteger(identity.uidBase) || identity.uidBase < 1 || identity.uidSize !== UID_RANGE_SIZE) mismatches.push('identity.uidRange');
-    const id = createHash('sha256').update(JSON.stringify([spec.namespace, machine, spec.disk.id, rootfs, envelope.nspawn, envelope.dropIn])).digest('hex');
-    if (spec.expectedId && spec.expectedId !== id) mismatches.push('expectedId');
+    const evidence = this.#envelopeEvidence(spec, machine, envelope, rootfs);
+    mismatches.push(...evidence.mismatches);
     if (mismatches.length) throw new Error(`Machine ownership or runtime specification mismatch: ${mismatches.join(', ')}`);
-    return { id, state };
+    return { id: evidence.id, state };
+  }
+
+  /** The proof that needs no privileged call: what the two envelope files and the disk identity record say
+   *  this machine name belongs to, held against the specification, plus the identity those bytes hash to.
+   *  It refuses a name held by a machine built from another specification exactly as `inspect` does, so a
+   *  caller that already knows the name is UP — from the machine inventory — can still ask whether it is
+   *  OURS without paying for a `systemctl show` per environment per sweep.
+   *
+   *  It says nothing about whether that machine is running: liveness stays the inventory's answer. */
+  async proveOwnership(spec) {
+    const machine = this.#machine(spec);
+    if (!await this.containerExists(spec)) throw new Error('No machine envelope of this name exists on this host');
+    const envelope = readEnvelope(this.#envelopePaths(machine));
+    const rootfs = realpathSync(spec.disk.rootfsPath);
+    const { id, mismatches } = this.#envelopeEvidence(spec, machine, envelope, rootfs);
+    if (mismatches.length) throw new Error(`Machine ownership or runtime specification mismatch: ${mismatches.join(', ')}`);
+    return { id };
   }
 
   #cgroupValue(machine, name) {
@@ -1066,6 +1097,11 @@ export class NspawnClient {
   async removeStorage(spec) {
     this.#assertScope(spec);
     if (await this.containerExists(spec)) throw new Error('Container still owns environment storage');
+    // The envelope FILES are not the machine. They can be gone while a machine of this name is still up
+    // with this storage mounted — a helper that removed them and then failed, a hand-edit, an interrupted
+    // destroy — and removing the tree under a live machine leaves it running on a deleted root filesystem.
+    // The machine inventory is the liveness this refuses on, and it is asked on the DESTRUCTIVE path only.
+    if ((await this.containerInventory(spec.namespace)).has(spec.name)) throw new Error('A running machine still owns environment storage');
     try {
       checkedHostPath(spec.storageRoot);
       await this.removeDiskPath(spec.storageRoot);
