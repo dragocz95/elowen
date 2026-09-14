@@ -81,7 +81,7 @@ export function MetricDonut({ percent, colour, label, valueText, centre }: {
       // A measurement is a progressbar and announces its bounds; a ring with nothing in it is not one, so
       // it is an image whose name is the sentence the sighted reader gets. Neither invents a value.
       {...(measured
-        ? { role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(reading), 'aria-valuetext': valueText }
+        ? { role: 'progressbar', 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': reading, 'aria-valuetext': valueText }
         : { role: 'img', 'aria-label': valueText })}
       className="relative block shrink-0"
       style={{ width: DONUT_SIZE, height: DONUT_SIZE }}

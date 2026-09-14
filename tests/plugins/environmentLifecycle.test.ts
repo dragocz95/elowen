@@ -157,7 +157,7 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
   const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn(),
     removeDisk: vi.fn(async (spec: any) => { diskFiles.delete(spec.disk.id); }) };
   const dependencies = { ctx, db, dataDir: root, nspawn: nspawn as unknown as NspawnClient,
-    storage: storage as unknown as ContainerStorage };
+    storage: storage as unknown as ContainerStorage, cpuModel: 'AMD EPYC 7B13 64-Core Processor' };
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
@@ -172,7 +172,10 @@ describe('durable managed environment lifecycle', () => {
     expect(cold.projects).toEqual([expect.objectContaining({
       projectId: 7,
       environment: expect.objectContaining({ state: 'unprovisioned', limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } }),
-      resources: expect.objectContaining({ disk: { state: 'ready', usedBytes: 0, limitBytes: null } }),
+      resources: expect.objectContaining({
+        cpu: { state: 'stopped', usedCpus: null, percent: null, model: 'AMD EPYC 7B13 64-Core Processor' },
+        disk: { state: 'ready', usedBytes: 0, limitBytes: null },
+      }),
     })]);
     expect(nspawn.resourceUsageBatch).not.toHaveBeenCalled();
 
@@ -182,7 +185,7 @@ describe('durable managed environment lifecycle', () => {
     expect(live.projects[0]).toMatchObject({
       environment: { state: 'running' },
       resources: {
-        cpu: { state: 'ready', usedCpus: 0.5, percent: 50 },
+        cpu: { state: 'ready', usedCpus: 0.5, percent: 50, model: 'AMD EPYC 7B13 64-Core Processor' },
         memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
         disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
       },

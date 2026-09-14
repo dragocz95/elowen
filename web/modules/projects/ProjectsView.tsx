@@ -3,7 +3,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, Code2, Copy, Pencil, RefreshCw, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, useProjectEnvironmentState, usePluginPresent, useMe } from '../../lib/queries';
 import { useAdoptProject, useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
@@ -33,45 +33,8 @@ import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { requestEnvironmentAction } from '../../lib/environmentActions';
-import { usePluginProjectRows, type PluginProjectRowMetrics } from '../../lib/pluginProjectRows';
-import { ProjectCard, ProjectResourceMeters, type ProjectCardLabels } from './ProjectCard';
-
-/** The drawer's copy of the SAME snapshot, so opening a project shows the figures already on its card
- *  rather than a spinner over a fresh request. The revalidation is explicit here — a card in a grid has
- *  no room for a control of its own, and a reader who wants a current figure should not have to wait out
- *  a poll. It keeps the three-abreast `grid` arrangement: the rail is one column wide, so its figures do
- *  not have to give the label a track of their own the way a card's do. */
-function ProjectResourcePanel({ metrics, title }: { metrics: PluginProjectRowMetrics; title: string }) {
-  return (
-    <section data-project-resource-panel className="border-b border-border/70 py-3">
-      {/* The title yields before the stale mark and the control do: on a 320px drawer the three of them
-          together are wider than the rail, and the two that state something the reader has to act on are
-          the ones worth keeping whole. */}
-      <div className="mb-2 flex min-w-0 items-center gap-2">
-        <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">{title}</h3>
-        {metrics.stale && metrics.staleLabel ? <span className="shrink-0"><Badge tone="warning">{metrics.staleLabel}</Badge></span> : null}
-        {metrics.onRefresh && metrics.refreshLabel ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0"
-            aria-label={metrics.refreshLabel}
-            aria-busy={metrics.refreshing === true}
-            // The control exists to produce ONE fresh measurement, so it is closed while that read is in
-            // flight rather than inviting a second sweep of the host on top of the first.
-            disabled={metrics.refreshing === true}
-            title={metrics.refreshLabel}
-            onClick={metrics.onRefresh}
-          >
-            <RefreshCw size={13} aria-hidden className={metrics.refreshing ? 'animate-spin' : ''} />
-          </Button>
-        ) : null}
-      </div>
-      <ProjectResourceMeters metrics={metrics} />
-    </section>
-  );
-}
-
+import { usePluginProjectRows } from '../../lib/pluginProjectRows';
+import { ProjectCard, type ProjectCardLabels } from './ProjectCard';
 
 export function ProjectsView() {
   const projects = useProjects();
@@ -288,7 +251,6 @@ export function ProjectsView() {
   const observedProjects = useMemo(() => projects.data ?? [], [projects.data]);
   const pluginRows = usePluginProjectRows(observedProjects);
   const pluginRowActions = (project: Project) => pluginRows.actionsFor(project.id);
-  const selectedResources = selectedProject ? pluginRows.metricsFor(selectedProject.id) : undefined;
 
   const summary = useMemo(() => {
     const items = projects.data ?? [];
@@ -444,12 +406,6 @@ export function ProjectsView() {
                         ? <Button variant="ghost" onClick={() => setAdoption({ project: selectedProject, undo: true })}>{s.undoAdoption}</Button>
                         : null}
                     </div>
-
-                    {/* The SAME snapshot the row is already showing. The drawer opens over a row whose
-                        CPU, memory and disk figures are on screen, so it renders them straight from that
-                        frame — no second request to wait out, and no spinner replacing numbers the
-                        reader can see behind the rail. Revalidation is the Refresh control inside it. */}
-                    {selectedResources ? <ProjectResourcePanel metrics={selectedResources} title={t.projects.columnResources} /> : null}
 
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
                       {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-muted-foreground">{selectedProject.notes}</p> : null}

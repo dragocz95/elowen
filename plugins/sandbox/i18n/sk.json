@@ -143,7 +143,6 @@
       "usageStopped": "Zastavené",
       "usageLimitUnknown": "Strop disku tohto prostredia sa nepodarilo zistiť.",
       "usageDiskVolume": "Merané voči zväzku, na ktorom je prostredie uložené, nie voči kvóte Projektu.",
-      "usageRefresh": "Aktualizovať prostriedky",
       "usageStale": "Posledné známe hodnoty",
       "networking": "Sieť",
       "networkingHint": "Odchádzajúci prístup a malá sada portov hostiteľa presmerovaných do tohto Projektu. Použitie zmeny prostredie krátko zastaví a vráti do predchádzajúceho stavu.",

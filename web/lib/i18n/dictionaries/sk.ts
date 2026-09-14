@@ -710,7 +710,6 @@ export const sk = {
     openProject: 'Otvoriť projekt {slug}',
     noMatches: 'Hľadaniu nezodpovedá žiadny projekt',
     tableLabel: 'Register projektov',
-    columnResources: 'Prostriedky',
     cardOpen: 'Otvoriť',
     runtimeManaged: 'Spravované',
     runtimeHost: 'Hostiteľ',

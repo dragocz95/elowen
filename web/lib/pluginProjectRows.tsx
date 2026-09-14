@@ -57,17 +57,17 @@ export interface PluginProjectRowMetric {
   value: string;
   /** The full sentence, for the tooltip and the meter's `aria-valuetext`. */
   valueText?: string;
+  /** A compact secondary identity shown beneath the metric when it adds information, such as a CPU model. */
+  description?: string;
   /** Present only on `ready`. A percentage on anything else is a fabricated denominator. */
   percent?: number;
   state: PluginProjectRowMetricState;
 }
 
-/** ONE resource snapshot of ONE project, shared by the register row and the project drawer.
+/** ONE resource snapshot of ONE project in the register.
  *
- *  It is a snapshot rather than a query result on purpose: the drawer opens over a row whose figures are
- *  already on screen, so it hydrates from this same frame and shows them immediately instead of throwing
- *  them away for a spinner. `refreshing` and `stale` describe what is happening AROUND the figures; the
- *  figures themselves stay the last ones actually measured, in every state. */
+ *  `refreshing` and `stale` describe what is happening AROUND the figures; the figures themselves stay the
+ *  last ones actually measured, in every state. */
 export interface PluginProjectRowMetrics {
   label: string;
   items: PluginProjectRowMetric[];
@@ -79,10 +79,6 @@ export interface PluginProjectRowMetrics {
   stale?: boolean;
   /** Names the stale mark, in the plugin's own vocabulary. */
   staleLabel?: string;
-  /** Asks the owning plugin for a fresh sample. The host draws a Refresh control only when the plugin
-   *  offers both the callback and its label. Must stay callable across renders. */
-  onRefresh?: () => void;
-  refreshLabel?: string;
 }
 
 /** One plugin-owned entry of a project row's action menu. */
@@ -129,11 +125,7 @@ export interface PluginProjectRows {
 const EMPTY: (PluginProjectRowAction & { plugin: string })[] = [];
 
 /** What the host must re-render for. Closures are excluded on purpose: their identity changes on every
- *  bundle render and none of it is visible, while a label, an icon, a tone or a disabled flag is.
- *
- *  A snapshot's `onRefresh` is a closure and therefore drops out of `JSON.stringify` by itself, which is
- *  exactly right — whether a refresh is OFFERED is visible and is carried by `refreshLabel`, while the
- *  identity of the callback is not. */
+ *  bundle render and none of it is visible, while a label, an icon, a tone or a disabled flag is. */
 function signatureOf(contributions: Map<string, PluginProjectRowContribution>): string {
   return JSON.stringify([...contributions].map(([plugin, contribution]) => [
     plugin,

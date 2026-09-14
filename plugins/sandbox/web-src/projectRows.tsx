@@ -15,6 +15,7 @@ interface UsageMetric {
   state: MetricState;
   usedCpus?: number | null;
   percent?: number | null;
+  model?: string | null;
   usedBytes?: number | null;
   limitBytes: number | null;
 }
@@ -24,10 +25,10 @@ interface ProjectUsage {
   resources: { cpu: UsageMetric; memory: UsageMetric; disk: UsageMetric };
 }
 interface UsageBatch { sampledAt: string; projects: ProjectUsage[] }
-interface RowMetric { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable' }
-/** The snapshot shape the host draws in BOTH the register row and the project drawer. The figures are
- *  always the last ones actually measured; `refreshing` and `stale` describe the read around them. */
-interface RowMetrics { label: string; items: RowMetric[]; refreshing?: boolean; stale?: boolean; staleLabel?: string; onRefresh?: () => void; refreshLabel?: string }
+interface RowMetric { id: string; label: string; value: string; valueText?: string; description?: string; percent?: number; state: 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable' }
+/** The snapshot shape the host draws in the Project register. The figures are always the last ones actually
+ *  measured; `refreshing` and `stale` describe the read around them. */
+interface RowMetrics { label: string; items: RowMetric[]; refreshing?: boolean; stale?: boolean; staleLabel?: string }
 
 const STATE_PRESENTATION: Record<EnvironmentState, { icon: string; tone: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }> = {
   running: { icon: 'Play', tone: 'success' },
@@ -99,7 +100,7 @@ function metricValue(metric: UsageMetric, kind: 'cpu' | 'memory' | 'disk', s: Re
     // figure beside it saying 140 would be the ring and the text disagreeing about the same reading.
     const percent = clampPercent(metric.percent ?? 0);
     const value = `${Math.round(percent)}%`;
-    return { id: kind, label, value, valueText: `${label}: ${value}`, percent, state: 'ready' };
+    return { id: kind, label, value, valueText: `${label}: ${value}`, ...(metric.model ? { description: metric.model } : {}), percent, state: 'ready' };
   }
   const used = formatBytes(metric.usedBytes ?? 0);
   // No ceiling could be read at all — an environment whose disk was never materialized, or a volume the
@@ -160,12 +161,6 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   const usageByProject = new Map((refused ? [] : usage.data?.projects ?? []).map((item) => [item.projectId, item]));
   const refreshing = usage.isFetching && !usage.isLoading;
   const stale = usage.isError && !refused && usageByProject.size > 0;
-  const refresh = useCallback(() => {
-    // `cancelRefetch: false` is what makes a second click a no-op while a read is in flight. The default
-    // ABORTS the running request and starts another, so an impatient reader produced one host measurement
-    // per click on the one control whose whole job is to produce a single fresh one.
-    void qc.invalidateQueries({ queryKey: USAGE_QUERY_PREFIX }, { cancelRefetch: false });
-  }, [qc]);
 
   // The last figure actually MEASURED for one resource of one project, keyed
   // `<projectId>:<generation>:<kind>`.
@@ -213,8 +208,6 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
     items,
     ...(refreshing ? { refreshing: true } : {}),
     ...(stale || keeping ? { stale: true, staleLabel: s.usageStale } : {}),
-    onRefresh: refresh,
-    refreshLabel: s.usageRefresh,
   });
 
   // A refusal fences the ACTIVE read by dropping its data above. A cache entry left behind by an earlier
@@ -276,8 +269,6 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
         ...placeholderMetrics(s, failed ? 'unavailable' : 'unknown',
           failed ? (refusedStatus === 403 ? s.error_project_forbidden : s.usageUnavailable) : UNKNOWN_VALUE),
         ...(refreshing ? { refreshing: true } : {}),
-        onRefresh: refresh,
-        refreshLabel: s.usageRefresh,
       };
       continue;
     }

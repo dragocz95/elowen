@@ -104,16 +104,14 @@ type PluginProjectComponent = ComponentType<{ plugin: string; panelId: string; p
  *  a state per project, the actions that state allows, and the dialogs those actions raise. */
 type PluginProjectRowsHook = (input: { projects: Project[] }) => {
   status?: Record<number, { label: string; icon?: string; tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }>;
-  /** One resource snapshot per project, shared by the register row and the project drawer. `percent` is
-   *  carried only by `ready`; `absolute` is a real figure with no configured ceiling to divide by. */
+  /** One resource snapshot per project in the register. `percent` is carried only by `ready`; `absolute`
+   *  is a real figure with no configured ceiling to divide by. */
   metrics?: Record<number, {
     label: string;
-    items: { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable' }[];
+    items: { id: string; label: string; value: string; valueText?: string; description?: string; percent?: number; state: 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable' }[];
     refreshing?: boolean;
     stale?: boolean;
     staleLabel?: string;
-    onRefresh?: () => void;
-    refreshLabel?: string;
   }>;
   actions?: Record<number, { id: string; label: string; icon?: string; disabled?: boolean; tone?: 'danger'; onSelect: () => void }[]>;
   overlay?: unknown;

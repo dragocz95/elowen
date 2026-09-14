@@ -46,9 +46,9 @@ describe('MetricDonut', () => {
     expect(focusable, 'the chart added a tab stop inside the card').toEqual([]);
   });
 
-  it('reports a fractional reading as the whole number a reader hears', () => {
+  it('keeps the measured fraction in its numeric accessibility value', () => {
     draw({ percent: 41.6, valueText: 'RAM: 416 MiB / 1 GiB' });
-    expect(screen.getByRole('progressbar', { name: 'CPU' })).toHaveAttribute('aria-valuenow', '42');
+    expect(screen.getByRole('progressbar', { name: 'CPU' })).toHaveAttribute('aria-valuenow', '41.6');
   });
 
   it('draws an arc and its remaining track for a reading with something in it', () => {
