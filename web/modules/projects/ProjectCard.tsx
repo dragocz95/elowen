@@ -23,6 +23,7 @@ import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu'
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { consumeHorizontalWheel } from '../../components/ui/horizontalScroll';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { MeterBar } from '../../components/ui/MeterBar';
 import { Spinner } from '../../components/ui/states';
@@ -272,21 +273,16 @@ function ProjectTeamStrip({ members, labels }: {
   };
 
   // React registers `wheel` passively at the root, so a handler that has to decide whether to take the
-  // event from the page cannot be a React prop. It is bound here, non-passively, on the strip itself.
+  // event from the page cannot be a React prop. It is bound here, non-passively, on the strip itself, and
+  // the decision is the shared one for every one-line track: `consumeHorizontalWheel` reserves ctrl+wheel
+  // for the browser's zoom, normalises the wheel's own units, and takes only a turn this strip can
+  // actually consume — at either end the event keeps travelling, so a pointer that happens to rest on a
+  // team never traps the register's own scroll. A swipe along the axis the strip already scrolls natively
+  // is not this handler's business.
   useEffect(() => {
     const node = strip.current;
     if (!node || !overflow) return undefined;
-    const onWheel = (event: WheelEvent) => {
-      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-      if (delta === 0) return;
-      const limit = node.scrollWidth - node.clientWidth;
-      const next = Math.max(0, Math.min(limit, node.scrollLeft + delta));
-      // Only a turn this strip can actually consume is taken from the page. At either end the event keeps
-      // travelling, so a pointer that happens to rest on a team never traps the register's own scroll.
-      if (next === node.scrollLeft) return;
-      event.preventDefault();
-      node.scrollLeft = next;
-    };
+    const onWheel = (event: WheelEvent) => consumeHorizontalWheel(node, event);
     node.addEventListener('wheel', onWheel, { passive: false });
     return () => node.removeEventListener('wheel', onWheel);
   }, [overflow]);
@@ -488,14 +484,25 @@ export function ProjectCard({ project, selected, metrics, status, actions, membe
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex min-w-0 items-center gap-1">
-              <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary" title={project.slug}>{project.slug}</h3>
+              {/* Level 2, not 3: the register's page title is the hero's `h1` and nothing sits between
+                  it and a card, so a project is the next level down — not a step skipped. */}
+              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary" title={project.slug}>{project.slug}</h2>
               <ProjectLocationTip project={project} labels={labels.location} />
             </span>
             <p className="min-w-0 truncate text-xs leading-tight text-muted-foreground" title={identityLine(project, labels)}>
               {identityLine(project, labels)}
             </p>
           </div>
-          <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
+          {/* The actions menu is a MENU: it owns the arrow keys, Home and End while it is open, and the
+              panel is deliberately not portalled (see shadcn/dropdown-menu), so those keystrokes bubble
+              through the card. They must not also move the register's selection — a reader walking the
+              menu would watch the grid jump a project per press. The card's own roving navigation stays
+              on everything else inside it. */}
+          <span
+            className="shrink-0"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
             <ActionMenu
               label={`${project.slug}: ${labels.actions}`}
               items={actions}

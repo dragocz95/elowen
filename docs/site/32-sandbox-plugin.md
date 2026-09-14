@@ -16,7 +16,7 @@ That page covers how Projects, environments and GitHub fit together from a membe
 
 - **Settings → Plugins** shows the bundled card `sandbox`, label **Environments**. Its detail view carries the **Host runtime** readiness section.
 - The **Project → Environments** page shows that Project's environment: state, generation, effective limits, live usage, snapshots, logs and its organizational worktrees.
-- **Account → Development environment**, in the account view of an administrator, is one account's private HOME: its execution mode and confinement probe, active processes, the Git author name and email, and **Reset HOME**.
+- **Users → account → Development environment**, in the detail of one account, is that account's private HOME: its execution mode and confinement probe, active processes, the Git author name and email, and **Reset HOME**.
 
 The plugin registers no slash command of its own.
 

@@ -1,5 +1,5 @@
 'use client';
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, Rectangle, ResponsiveContainer, XAxis, YAxis, type BarShapeProps } from 'recharts';
 
 /** The one bar the app draws for a single reading against a ceiling that exists.
  *
@@ -29,8 +29,24 @@ const TRACK_RADIUS = 2;
 
 /** A real but tiny fraction still shows a sliver, so a meter that is barely used never reads as
  *  untouched. Recharts sizes this in pixels, which is the right unit for "visible at all" and holds
- *  whether the bar is 40px wide on a phone or 200px on a desk. */
+ *  whether the bar is 40px wide on a phone or 200px on a desk.
+ *
+ *  It applies to a fraction that has something in it and to nothing else. `minPointSize` widens ANY
+ *  rectangle narrower than itself — a reading of exactly zero included — so an idle environment drew a
+ *  sliver of CPU it was not using. A meter's whole meaning is the part of the track that is NOT filled,
+ *  and at zero that part is all of it. */
 const MIN_VISIBLE_PX = 2;
+const minVisiblePx = (percent: number): number => (percent > 0 ? MIN_VISIBLE_PX : 0);
+
+/** The reading, drawn — and not drawn when it has nothing in it.
+ *
+ *  Recharts' own rectangle cannot express "empty": it drops a zero-width bar from the plot entirely, and
+ *  the track the same entry carries goes with it, so an exact zero would have painted no meter at all
+ *  beside every other reading's channel. Supplying a shape is what stops Recharts filtering the entry
+ *  (`hasCustomShape`, cartesian/Bar); the shape then simply paints nothing, and the track stays. */
+function MeterFill({ width, ...rect }: BarShapeProps) {
+  return width > 0 ? <Rectangle {...rect} width={width} radius={TRACK_RADIUS} /> : null;
+}
 
 export function MeterBar({ percent, colour, label, valueText, className = 'h-1' }: {
   /** Already clamped to 0..100 by the caller, which owns what its own ceiling means. */
@@ -74,7 +90,8 @@ export function MeterBar({ percent, colour, label, valueText, className = 'h-1' 
               dataKey="reading"
               fill={colour}
               radius={TRACK_RADIUS}
-              minPointSize={MIN_VISIBLE_PX}
+              minPointSize={minVisiblePx(percent)}
+              shape={MeterFill}
               background={{ fill: 'var(--color-border)', radius: TRACK_RADIUS }}
               // Never animated, exactly as `Sparkline` and the system dials are not. These are re-read on
               // a poll, and a register of them replaying a grow-from-zero every thirty seconds is motion

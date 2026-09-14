@@ -278,6 +278,27 @@ describe('project card: team strip', () => {
     expect(passed.defaultPrevented).toBe(false);
   });
 
+  // Ctrl+wheel (and the pinch gesture it stands in for) is the browser's zoom. A strip that consumed it
+  // would scroll its faces under a reader who asked to enlarge the page — the same reservation
+  // `consumeHorizontalWheel` makes for every other one-line track in the app.
+  it('leaves ctrl+wheel to the browser, and keeps the plain turn', async () => {
+    geometry.scrollWidth = 400;
+    geometry.clientWidth = 120;
+    server.use(summaryOf({ projectId: 1, members: team(9), indicators: [] }));
+    mount();
+    const strip = await stripOf('elowen');
+    await waitFor(() => expect(strip).toHaveAttribute('tabindex', '0'));
+
+    const zoom = new WheelEvent('wheel', { deltaY: 90, ctrlKey: true, bubbles: true, cancelable: true });
+    strip.dispatchEvent(zoom);
+    expect(strip.scrollLeft, 'the strip scrolled a zoom gesture').toBe(0);
+    expect(zoom.defaultPrevented, 'the strip took the browser\u2019s zoom').toBe(false);
+
+    const turn = new WheelEvent('wheel', { deltaY: 90, bubbles: true, cancelable: true });
+    strip.dispatchEvent(turn);
+    expect(strip.scrollLeft).toBe(90);
+  });
+
   it('drifts while a mouse rests at an edge, stops when it leaves, and ends at the edge', async () => {
     geometry.scrollWidth = 400;
     geometry.clientWidth = 120;
@@ -374,5 +395,57 @@ describe('project card: team strip', () => {
     fireEvent.keyDown(strip, { key: 'ArrowRight' });
     expect(screen.queryByRole('dialog', { name: 'elowen' })).toBeNull();
     expect(strip.closest('[data-project-card]')).not.toHaveAttribute('data-selected');
+  });
+});
+
+/** The register's roving navigation lives on the card, so a keystroke aimed at anything inside it reaches
+ *  that navigation — which is right for a control with no keyboard behaviour of its own and wrong for one
+ *  that HAS one. A menu owns the arrow keys, Home and End; the card must not also act on them. */
+describe('project card: keys the card must not take', () => {
+  it('leaves the actions menu\u2019s own keys to the menu', async () => {
+    mount();
+    const open = await screen.findByRole('button', { name: 'Open project elowen' });
+    const card = open.closest('[data-project-card]') as HTMLElement;
+    const trigger = within(card).getByRole('button', { name: 'elowen: Actions' });
+    trigger.focus();
+
+    // Opening at the first row is the menu-button pattern, and it must not move the register with it.
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').length).toBeGreaterThan(0);
+    expect(document.querySelector('[data-project-card][data-selected]'), 'opening the menu moved the register').toBeNull();
+
+    // …nor may walking its rows: the panel is rendered inside the card on purpose (see dropdown-menu),
+    // so every one of these keystrokes travels through the card on its way to the menu.
+    for (const key of ['ArrowDown', 'ArrowUp', 'End', 'Home']) {
+      fireEvent.keyDown(within(menu).getAllByRole('menuitem')[0]!, { key });
+      expect(document.querySelector('[data-project-card][data-selected]'), `${key} inside the menu moved the register`).toBeNull();
+    }
+    // The menu is still open, and the card it belongs to is still not the selected one.
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(card).not.toHaveAttribute('data-selected');
+  });
+
+  // The other half of the same rule: a nested control with no keyboard behaviour of its own still lets the
+  // register's navigation through, so the card does not become a keyboard dead end.
+  it('still moves the register from a nested control that claims no keys', async () => {
+    mount();
+    const open = await screen.findByRole('button', { name: 'Open project elowen' });
+    const card = open.closest('[data-project-card]') as HTMLElement;
+    const location = within(card).getByRole('button', { name: 'Host directory of elowen' });
+
+    fireEvent.keyDown(location, { key: 'ArrowDown' });
+    await waitFor(() => expect(document.querySelector('[data-project-card="3"]')).toHaveAttribute('data-selected', 'true'));
+  });
+
+  // A card is an item of the register, and the register's page title is the hero's `h1` — so the project's
+  // own name is the next level down, never one skipped.
+  it('names the project at the heading level under the register\u2019s title', async () => {
+    mount();
+    const open = await screen.findByRole('button', { name: 'Open project elowen' });
+    const card = open.closest('[data-project-card]') as HTMLElement;
+
+    expect(within(card).getByRole('heading', { level: 2, name: 'elowen' })).toBeInTheDocument();
+    expect(within(card).queryByRole('heading', { level: 3 })).toBeNull();
   });
 });

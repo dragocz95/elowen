@@ -8,12 +8,17 @@
 //
 // The unit suites cover the wiring — which snapshot a card draws, which states it refuses to fake, what
 // the team strip consumes. What is here is only what a laid-out document can answer.
-import { test, expect, Seed, type Page } from '../fixtures/index.ts';
+import { test, expect, Seed, type Browser, type Page } from '../fixtures/index.ts';
 import type { Seed as SeedFixture } from '../fixtures/Seed.ts';
 import { adminUser } from '../seed/fixtures.ts';
+import { STORAGE_STATE } from '../../../playwright.config.ts';
 
 const authedOnly = (testInfo: { project: { name: string } }) =>
   test.skip(testInfo.project.name !== 'authed', 'needs the authenticated shell');
+
+/** The touch floor the app declares in `--touch-target` (web/app/styles/tokens.css). Restated as a number
+ *  because a test asserts against a measured box, not against the token. */
+const TOUCH_TARGET = 44;
 
 const SHOTS = process.env.E2E_SHOT_DIR ?? '/tmp/project-card-shots';
 
@@ -298,5 +303,53 @@ test.describe('the Project register card grid', () => {
     await openRegister(app);
     expect(await app.evaluate(columnCount)).toBe(3);
     await app.screenshot({ path: `${SHOTS}/cards-1440-oled.png`, fullPage: true });
+  });
+
+  // A card on a phone is the only way into a project, and its controls are drawn for a mouse: 24px for the
+  // location mark, 32px for the actions trigger, a 11px label in a small pad for the team count. The floor
+  // those have to clear is a COARSE-pointer rule, and only a context that reports one can measure it —
+  // `viewport` plus `hasTouch` leaves the pointer media feature at `fine`, which is exactly how a test
+  // written to prove a 44px target ends up measuring the compact mouse control (see viewport.e2e.ts).
+  test('gives every control on a card a finger-sized target on a coarse pointer', async ({ browser, seed }) => {
+    test.skip(test.info().project.name !== 'authed', 'needs the authenticated shell');
+    const context = await browser.newContext({ storageState: STORAGE_STATE, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    const page = await context.newPage();
+    try {
+      await prepare(page, seed, 'studio-light');
+      await page.goto('/projects');
+      await expect(page.locator('[data-project-card]').first()).toBeVisible();
+      await expect(page.locator('[data-project-card]')).toHaveCount(PROJECTS.length);
+
+      const controls = await page.evaluate((floor) => [...document.querySelectorAll<HTMLElement>('[data-project-card] button')]
+        .map((element) => ({
+          label: element.getAttribute('aria-label') ?? (element.textContent ?? '').trim(),
+          width: Math.round(element.getBoundingClientRect().width),
+          height: Math.round(element.getBoundingClientRect().height),
+        }))
+        .filter((box) => box.width < floor || box.height < floor), TOUCH_TARGET);
+      expect(controls, `card controls under ${TOUCH_TARGET}px on a coarse pointer`).toEqual([]);
+
+      // And the floor may not be paid for with a card that no longer fits: the same content check the
+      // fine-pointer case makes, at the narrowest width the app supports, where four 44px controls share
+      // one column with the project's own name.
+      await page.setViewportSize({ width: 320, height: 700 });
+      await page.goto('/projects');
+      await expect(page.locator('[data-project-card]').first()).toBeVisible();
+      const overflow = await page.evaluate(() => {
+        const offenders: string[] = [];
+        for (const card of document.querySelectorAll<HTMLElement>('[data-project-card]')) {
+          for (const node of card.querySelectorAll<HTMLElement>('*')) {
+            if (node.closest('.project-card-team')) continue;
+            if (getComputedStyle(node).overflowX !== 'visible') continue;
+            if (node.scrollWidth > node.clientWidth + 1) offenders.push(`${node.className || node.tagName} ${node.scrollWidth}>${node.clientWidth}`);
+          }
+        }
+        return { offenders, page: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+      });
+      expect(overflow.offenders, 'card content overflows with finger-sized controls').toEqual([]);
+      expect(overflow.page, 'the page scrolls sideways with finger-sized controls').toBeLessThanOrEqual(1);
+    } finally {
+      await context.close();
+    }
   });
 });

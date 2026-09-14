@@ -171,6 +171,52 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
     if (userConfigId && !userConfigSections.some((item) => item.id === section)) setSection('profile');
   }, [deckPluginSections, pluginUi.data, section, setSection, userConfigSections]);
 
+  /** The address must name the section this page is SHOWING, spelled the one way the registry spells it.
+   *
+   *  A stale section URL is the same fault wherever it comes from: an id no section answers to (a link
+   *  from an older build, a hand-typed address) or a plugin section that is gone, disabled, or has moved
+   *  into the Linked accounts drawer. The page already falls back to Profile for those; leaving the
+   *  address naming the vanished section is what makes the fallback LOOK like the page ignoring the
+   *  reader — reload it, share it, and the same dead id comes back.
+   *
+   *  A plugin id is judged only once BOTH listings have arrived: before that nothing has had a chance to
+   *  claim it, and an unclaimed id must not be declared dead. An id a listing DOES claim is left alone
+   *  even if the page has not caught up yet — the effects above are what move the section to it. */
+  const listingsReady = pluginUi.data !== undefined && userPluginConfigs.data !== undefined;
+  useEffect(() => {
+    if (!addressReady) return undefined;
+    // On the same events this page reads its own address on: arrival, and every popstate — including the
+    // ones its own section switches announce. A stale address reached through HISTORY is the case that
+    // has to be caught here, because nothing about the section changes when it arrives.
+    const write = () => {
+      const named = new URLSearchParams(window.location.search).get('cat');
+      if (named === null || named === section) return;
+      // Only `cat` is rewritten: `?row=` and the fragment are state within this page and belong to the
+      // reader. `replaceState`, because this is the same place by another spelling.
+      const canonicalize = () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('cat', section);
+        announceLocation(`${url.pathname}${url.search}${url.hash}`);
+      };
+      const pluginShaped = parsePluginAccountSectionId(named) !== null || parsePluginUserConfigSectionId(named) !== null;
+      if (!pluginShaped) {
+        // A core id this page CAN render is the reader's address, even for the one render before the
+        // state catches up with it — a section switch announces its own href, and rewriting it back here
+        // would undo the very navigation that prompted the event. A core id it cannot render is the same
+        // answer to every listing, so none of them is needed to judge it.
+        if (isAccountSection(named)) return;
+        canonicalize();
+        return;
+      }
+      if (!listingsReady) return;
+      if (deckPluginSections.some((item) => item.id === named) || userConfigSections.some((item) => item.id === named)) return;
+      canonicalize();
+    };
+    write();
+    window.addEventListener('popstate', write);
+    return () => window.removeEventListener('popstate', write);
+  }, [addressReady, listingsReady, section, deckPluginSections, userConfigSections]);
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [linksSeeded, setLinksSeeded] = useState(false);
@@ -331,8 +377,8 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
-  // The same list, in the same order, that the sidebar draws its sub-items from — the menu is now the
-  // only way between sections, so a second copy here would offer a section this page cannot open.
+  // The deck's sections, in the one order both shapes of its own navigation draw. The sidebar holds one
+  // row for Account and nothing under it, so this list is the only place that order is stated.
   const spatialSections = accountSections(t, [
     ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     ...userConfigSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),

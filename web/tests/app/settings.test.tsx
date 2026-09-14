@@ -54,13 +54,14 @@ afterEach(() => { server.resetHandlers(); localStorage.clear(); window.history.r
 afterAll(() => server.close());
 
 describe('SettingsPage', () => {
-  it('carries no section navigation of its own and renders real System diagnostics', async () => {
+  it('opens with the shell carrying no section navigation of its own, and renders real System diagnostics', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
-    // The six sections are rows of the sidebar's sub-menu now (tests/components/shell/deckSubMenus).
-    // Neither the desktop rail nor the phone tab strip is left behind in the page: one menu, one place.
+    // The SHELL mounts no section navigation for a deck: no rail, no tab strip, no `data-section-layout`.
+    // The six sections are addressed inside the deck's own navigation — a column beside the content, one
+    // line of tabs above it on a phone — which is the surface that marks them.
     expect(screen.queryByRole('radiogroup', { name: 'Settings sections' })).toBeNull();
     expect(container.querySelector('.workspace-shell__section-navigation')).toBeNull();
     expect(container.querySelector('.workspace-shell')).not.toHaveAttribute('data-section-layout');
@@ -252,12 +253,15 @@ describe('SettingsPage', () => {
 
   /** The Memory section held nothing but the embedding and categorization models, and those are roles
    *  now. A retired id with a KNOWN successor must land there rather than share the generic System
-   *  fallback above — an old bookmark that silently drops the reader on System reads as a broken link. */
+   *  fallback above — an old bookmark that silently drops the reader on System reads as a broken link.
+   *  The address is rewritten to the successor with it: a spelled-out retired id left in the bar is a
+   *  link that goes on misleading whoever copies it. */
   it('resolves the retired ?cat=memory link to Models, from the URL and from localStorage alike', async () => {
     window.history.replaceState(null, '', '/settings?cat=memory');
     const { wrapper: Wrapper } = createWrapper();
     const { unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe('?cat=models'));
     unmount();
 
     window.history.replaceState(null, '', '/settings');
@@ -265,6 +269,38 @@ describe('SettingsPage', () => {
     const { wrapper: Wrapper2 } = createWrapper();
     render(<Wrapper2><ToastProvider><SettingsPage /></ToastProvider></Wrapper2>);
     expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe('?cat=models'));
+  });
+
+  /** An id this deck answers to NOWHERE — a link from an older build, a hand-typed address — is the other
+   *  half of the same rule: the reader gets the section the page can actually show, and the address says
+   *  so rather than keeping the dead id they arrived with. */
+  it('canonicalizes an address naming a section this deck cannot render', async () => {
+    localStorage.setItem('elowen.settings.category', 'data');
+    window.history.replaceState(null, '', '/settings?cat=nowhere');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Data' })).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe('?cat=data'));
+  });
+
+  /** The same stale id can arrive through HISTORY rather than through a link: Back to an address a
+   *  previous build wrote. Nothing about the section changes when that happens, so the address has to be
+   *  canonicalized from the event the page already reads its location on — the popstate. */
+  it('canonicalizes a stale address that arrives through history', async () => {
+    localStorage.setItem('elowen.settings.category', 'models');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'Models' });
+
+    await act(async () => {
+      window.history.replaceState(null, '', '/settings?cat=memory');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe('?cat=models'));
   });
 
   /** A palette result names a ROW, not just a section: `&row=` opens Models and then marks the digest
@@ -423,7 +459,7 @@ describe('SettingsPage', () => {
     expect(row!.querySelector('.page-toolbar__slot')!.children).toHaveLength(0);
   });
 
-  it('renders the shared searchable category navigation only in the overlay presentation', async () => {
+  it('renders the shared searchable category navigation in the overlay presentation, without the module frame', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);
