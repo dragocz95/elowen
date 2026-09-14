@@ -10,22 +10,16 @@ async function openSidebar(page: Page): Promise<Locator> {
   return page.locator('[data-shell="sidebar"][data-open="true"], [data-shell="sidebar"]:not([data-mode="drawer"])').first();
 }
 
-/** Disclose a deck's sections in the column. The route opens its own parent, so a click there would fold
- *  it shut instead. */
-async function discloseSections(sidebar: Locator, deck: string): Promise<void> {
-  const disclosure = sidebar.locator('button').filter({ hasText: deck }).first();
-  if (await disclosure.getAttribute('aria-expanded') === 'false') await disclosure.click();
-}
-
 const accountOverlay = (page: Page) => page.getByRole('dialog', { name: 'My account' });
 
 async function openFromChat(page: Page): Promise<Locator> {
   await page.goto('/chat');
   await expect(page.locator('[data-module="chat"]')).toBeVisible();
   const sidebar = await openSidebar(page);
-  await discloseSections(sidebar, 'Account');
-  await sidebar.locator('a[href="/account?cat=profile"]').click();
-  await expect(page).toHaveURL(/\/account\?cat=/);
+  // ONE row for the whole deck. The column used to list every section of it inline; the deck carries its
+  // own section navigation, so the menu's job is to open it.
+  await sidebar.locator('a[href="/account"]').click();
+  await expect(page).toHaveURL(/\/account/);
   return accountOverlay(page);
 }
 
@@ -41,7 +35,7 @@ test('Account intercepts navigation over chat and keeps canonical history', asyn
   const geometry = await dialog.evaluate((node) => {
     const dialogBox = node.getBoundingClientRect();
     const nav = node.querySelector('[data-testid="account-navigation-sidebar"]')!.getBoundingClientRect();
-    const content = node.querySelector('[data-testid="account-overlay-layout"] > section')!.getBoundingClientRect();
+    const content = node.querySelector('[data-testid="account-deck-layout"] > section')!.getBoundingClientRect();
     return {
       dialog: { x: dialogBox.x, y: dialogBox.y, width: dialogBox.width, height: dialogBox.height },
       nav: { x: nav.x, width: nav.width },
@@ -76,7 +70,7 @@ test('Account refreshes as the canonical full page', async ({ page }, testInfo) 
   await page.reload();
   await expect(accountOverlay(page)).toHaveCount(0);
   await expect(page.locator('[data-module="account"]')).toBeVisible();
-  await expect(page).toHaveURL(/\/account\?cat=/);
+  await expect(page).toHaveURL(/\/account/);
 });
 
 /** THE CANONICAL PAGE ANSWERS ITS OWN SECTION ROWS.
@@ -92,15 +86,16 @@ test('a section row on the hard-loaded page changes the section without opening 
   await expect(page.locator('[data-module="account"]')).toBeVisible();
 
   const sidebar = await openSidebar(page);
-  await discloseSections(sidebar, 'Account');
-  await sidebar.locator('a[href="/account?cat=security"]').click();
+  // The page's OWN navigation owns its sections now, and it is the surface being asserted: a section
+  // changes the page the reader is standing on rather than raising a second Account above it.
+  await page.locator('[data-testid="account-navigation-sidebar"]').getByRole('button', { name: 'Security' }).click();
 
   await expect(page).toHaveURL('/account?cat=security');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('[data-module="account"]')).toHaveCount(1);
   await expect(page.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
-  // The row the address names is the one the column marks, on this page as in the overlay.
-  await expect(sidebar.locator('a[href="/account?cat=security"]')).toHaveAttribute('aria-current', 'page');
+  // And the deck row stays marked, because the reader has not left the deck.
+  await expect(sidebar.locator('a[href="/account"]')).toHaveAttribute('aria-current', 'page');
 });
 
 test('Account opens from the identity in the top bar and gives focus back on close', async ({ page }, testInfo) => {
@@ -145,10 +140,9 @@ test('Settings opens Account as an overlay over it, without leaving the settings
   await expect(page.locator('[data-module="settings"]')).toBeVisible();
 
   const sidebar = await openSidebar(page);
-  await discloseSections(sidebar, 'Account');
-  await sidebar.locator('a[href="/account?cat=cli"]').click();
+  await sidebar.locator('a[href="/account"]').click();
 
-  await expect(page).toHaveURL('/account?cat=cli');
+  await expect(page).toHaveURL(/\/account/);
   await expect(accountOverlay(page)).toBeVisible();
   // Settings is the surface underneath, and it stayed a page rather than becoming a second overlay.
   await expect(page.locator('[data-module="settings"]')).toBeAttached();
@@ -168,7 +162,7 @@ test('Back leaves the overlay and Forward brings the same one back', async ({ pa
   await expect(page.locator('[data-module="chat"]')).toBeVisible();
 
   await page.goForward();
-  await expect(page).toHaveURL(/\/account\?cat=/);
+  await expect(page).toHaveURL(/\/account/);
   await expect(accountOverlay(page)).toBeVisible();
   await expect(page.locator('[data-module="chat"]')).toBeAttached();
 });
@@ -225,34 +219,34 @@ test('the phone overlay is one full-screen pane with a single line of tabs', asy
 /** A section near the end of the strip is off to the right of a 390px screen. Arriving on it — from the
  *  menu, from a link, from the section this browser remembers — has to bring its tab into view, on the
  *  horizontal axis alone. */
-test('a section at the end of the phone tab strip is scrolled into view on arrival', async ({ page }, testInfo) => {
+/** Its own phone context rather than a resized desktop one: a coarse pointer changes the strip's own
+ *  metrics, and a context that began life at 1440 carries layout the reveal was never measured against. */
+test.describe('the phone tab strip', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('a section at the end of the phone tab strip is scrolled into view on arrival', async ({ page }, testInfo) => {
   authedOnly(testInfo);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/chat');
-  await expect(page.locator('[data-module="chat"]')).toBeVisible();
-  const sidebar = await openSidebar(page);
-  await discloseSections(sidebar, 'Account');
-  await sidebar.locator('a[href="/account?cat=terminal"]').click();
+  // A deep link, which is the plainest arrival there is: the address names one section and the browser
+  // opens the canonical page on it. That page carries the deck's own strip now — the column holds a
+  // single row for Account — so this is also the only navigation the reader has here.
+  await page.goto('/account?cat=terminal');
+  await expect(page.locator('[data-module="account"]')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Terminal' })).toBeVisible();
 
-  const dialog = accountOverlay(page);
-  await expect(dialog).toBeVisible();
-  await expect(page).toHaveURL('/account?cat=terminal');
-
-  const strip = await dialog.locator('[data-testid="account-navigation-tabs"]').evaluate((track) => {
-    const item = track.querySelector<HTMLElement>('[aria-current="page"]')!;
+  // Polled and scoped INSIDE the account module: the page hydrates and the deck settles before the strip
+  // can reveal anything, and a route transition can leave the outgoing document's own track in the DOM
+  // beside it — measuring that one reads a strip laid out for the width the reader came from.
+  await expect.poll(async () => page.locator('[data-module="account"] [data-testid="account-navigation-tabs"]').evaluate((track) => {
+    const item = track.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!item) return null;
     const trackBox = track.getBoundingClientRect();
     const itemBox = item.getBoundingClientRect();
     return {
-      label: item.textContent,
-      scrollLeft: track.scrollLeft,
-      pageScrollTop: document.scrollingElement?.scrollTop ?? 0,
+      label: (item.textContent ?? '').trim(),
       within: itemBox.left >= trackBox.left - 1 && itemBox.right <= trackBox.right + 1,
+      // The strip moved, not the pane behind it: the reveal is horizontal and nothing else.
+      pageStill: (document.scrollingElement?.scrollTop ?? 0) === 0,
     };
+  })).toEqual({ label: 'Terminal', within: true, pageStill: true });
   });
-  expect(strip.label).toContain('Terminal');
-  expect(strip.within).toBe(true);
-  // It really had to travel: the last of seven tabs does not fit on a 390px line.
-  expect(strip.scrollLeft).toBeGreaterThan(0);
-  // …and the strip moved, not the pane behind it.
-  expect(strip.pageScrollTop).toBe(0);
 });

@@ -69,9 +69,12 @@ export function registerSandboxRoutes(app: Hono): void {
   // because the register's whole argument for a card over a row is that the exact figures have room, and
   // that cannot be measured against a card with no figures on it.
   //
-  // The three resources are deliberately not alike: CPU is a percentage against a real ceiling, memory
-  // is a pair of byte figures, and disk has NO configured quota — `limitBytes: null` is what a managed
-  // environment actually reports, and the card has to render it as a bare measurement with no meter.
+  // The three resources are deliberately not alike, because the point of the measurement is that one
+  // meter can carry all three: CPU is a percentage against the environment's CPU share, memory a pair of
+  // byte figures against its configured limit, and disk a pair against the VOLUME it is stored on — a
+  // ceiling it genuinely cannot grow past, reported by the runtime rather than configured per project.
+  // The three ratios are deliberately far apart (42 %, 62.5 %, 0.25 %) so a meter drawn against its own
+  // datum instead of a fixed 0..100 domain shows up as three identical bars.
   app.post('/plugins/sandbox/api/environments/usage', async (c) => {
     const { projectIds } = (await c.req.json().catch(() => ({}))) as { projectIds?: number[] };
     const running = environmentState === 'running';
@@ -84,7 +87,7 @@ export function registerSandboxRoutes(app: Hono): void {
           ? {
             cpu: { state: 'ready', usedCpus: 0.42, percent: 42, usedBytes: null, limitBytes: null },
             memory: { state: 'ready', usedCpus: null, percent: null, usedBytes: 671_088_640, limitBytes: 1_073_741_824 },
-            disk: { state: 'ready', usedCpus: null, percent: null, usedBytes: 536_870_912, limitBytes: null },
+            disk: { state: 'ready', usedCpus: null, percent: null, usedBytes: 536_870_912, limitBytes: 214_748_364_800 },
           }
           : {
             cpu: { state: 'stopped', usedCpus: null, percent: null, usedBytes: null, limitBytes: null },

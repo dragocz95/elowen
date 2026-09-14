@@ -15,6 +15,7 @@ vi.mock('../../lib/pluginUi', async (loadOriginal) => ({
 
 import { ensurePluginUiRuntime } from '../../lib/pluginUi';
 import { ProjectsView } from '../../modules/projects/ProjectsView';
+import { usageProgressColour } from '../../modules/settings/OAuthUsageRail';
 import { PROJECT_USAGE_QUERY_POLICY, useProjectRowContribution } from '../../../plugins/sandbox/web-src/projectRows';
 
 ensurePluginUiRuntime();
@@ -152,9 +153,44 @@ describe('sandbox contribution to the Project register cards', () => {
     const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
     const cpu = (await within(card).findAllByRole('progressbar', { name: strings.usageCpu }))[0]!;
     const ram = within(card).getAllByRole('progressbar', { name: strings.usageRam })[0]!;
-    // The meter is the shared shadcn `Progress`, so the fill is its indicator slot rather than a bare span.
-    expect(cpu.querySelector('[data-slot="progress-indicator"]')).toHaveClass('bg-destructive');
-    expect(ram.querySelector('[data-slot="progress-indicator"]')).toHaveClass('bg-warning');
+    // The meter is a chart now, and a chart has no measurable size in jsdom — so the assertion is on what
+    // the register actually decides: the reading it hands the meter, and the tone that reading maps to.
+    // The fill itself is `usageProgressColour`'s single ramp, covered where that ramp lives.
+    expect(cpu).toHaveAttribute('aria-valuenow', '95');
+    expect(usageProgressColour(95)).toBe('var(--color-destructive)');
+    expect(ram).toHaveAttribute('aria-valuenow', '75');
+    expect(usageProgressColour(75)).toBe('var(--color-warning)');
+  });
+
+  /** Disk used to be the one reading the register could not draw: measured, but with nothing to be a
+   *  fraction of. The runtime now reports the volume the environment is stored on, which is a ceiling it
+   *  genuinely cannot grow past, so the card draws all three with the same meter — and says in the
+   *  accessible text which ceiling it is, because a volume is not a Project quota. */
+  it('gives disk the same meter as RAM once the runtime reports the volume it sits on', async () => {
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds.map((projectId) => {
+        const item = usageOf(projectId, projectId === 3 ? 'running' : 'stopped');
+        if (projectId === 3) Object.assign(item.resources.disk, { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: 200 * 1024 * 1024 * 1024 });
+        return item;
+      }) });
+    }));
+    mount();
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    const disk = await waitFor(() => {
+      const found = card.querySelector('[data-metric="disk"]') as HTMLElement | null;
+      expect(found).toHaveAttribute('data-metric-state', 'ready');
+      return found!;
+    });
+    // The exact figures, both of them measured: nothing here is normalized against another project.
+    expect(within(disk).getByText('512 MiB / 200 GiB')).toBeInTheDocument();
+    expect(disk.querySelector('[data-metric-track="none"]')).toBeNull();
+    const meter = within(disk).getByRole('progressbar', { name: strings.usageDisk });
+    expect(meter).toHaveAttribute('aria-valuenow', '0');
+    expect(meter).toHaveAttribute('aria-valuetext', expect.stringContaining(strings.usageDiskVolume!));
+    // RAM is the same grammar against a different ceiling, and its text says nothing about a volume.
+    expect(within(card).getByRole('progressbar', { name: strings.usageRam }))
+      .toHaveAttribute('aria-valuetext', `${strings.usageRam}: 256 MiB / 1 GiB`);
   });
 
   it('keeps stable unavailable bars when the batch loses access', async () => {

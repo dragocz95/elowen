@@ -623,12 +623,16 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
       </WorkspaceShell>
   );
 
-  // Presented as an intercepted page over the surface that linked here. The shell's menu is inert while
-  // an overlay is up, so this presentation — and only this one — carries the way between the sections:
-  // a secondary column where there is width for it, one line of tabs above the content on a phone.
-  if (surface === 'overlay') {
-    return (
-      <div data-testid="account-overlay-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)]">
+  // THE DECK'S OWN WAY BETWEEN ITS SECTIONS: a secondary column where there is width for it, one line of
+  // tabs above the content on a phone.
+  //
+  // BOTH presentations carry it. It used to belong to the overlay alone, because the sidebar's Account
+  // sub-menu was the way between sections on the canonical page. That sub-menu is gone — the column
+  // holds one row for the deck — so a hard-loaded `/account?cat=security` would otherwise have no way to
+  // any other section at all.
+  {
+    const deck = (
+      <div data-testid="account-deck-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)]">
         <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
           <AccountNavigation
             label={t.account.title}
@@ -655,13 +659,13 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
         </section>
       </div>
     );
+    if (surface === 'overlay') return deck;
+    return (
+      /* Match the settings workspace width so account controls have the same calm, useful measure. */
+      <div className="flex w-full min-w-0 flex-col">
+        <ModuleHeader title={t.account.title} icon={UserCog} />
+        {deck}
+      </div>
+    );
   }
-
-  return (
-    /* Match the settings workspace width so account controls have the same calm, useful measure. */
-    <div className="flex w-full min-w-0 flex-col">
-      <ModuleHeader title={t.account.title} icon={UserCog} />
-      {accountWorkspace}
-    </div>
-  );
 }

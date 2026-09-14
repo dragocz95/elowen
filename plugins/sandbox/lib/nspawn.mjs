@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync, statfsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
@@ -214,6 +214,7 @@ export class NspawnClient {
   #diskUsageTtlMs;
   #cpuSamples = new Map();
   #diskUsageCache = new Map();
+  #diskUsageCapacityCache = new Map();
   #diskUsageFlight = null;
   /** Guest executions this client is currently running, by leased unit. `cancelExecution` marks the
    *  record it finds here, and `exec` reads its own record to decide what verdict it owes the caller.
@@ -487,6 +488,38 @@ export class NspawnClient {
     return unique.filter((path) => !unique.some((other) => other !== path && path.startsWith(`${other}/`)));
   }
 
+  /** The size of the volume an environment's disk actually lives on, so its usage has a denominator that
+   *  exists.
+   *
+   *  A managed environment has no disk quota of its own — nothing in the container spec caps it, and the
+   *  used figure alone left the register with one reading it could not draw. What DOES bound it is the
+   *  host filesystem holding the rootfs: the environment cannot grow past it, every byte counted against
+   *  it was really written to it, and it is the same ceiling the operator sees in `df`. That is a
+   *  measurement, not a quota, and the reader is told which it is.
+   *
+   *  `statfsSync` is the seam `containerStorage` already uses to decide whether a move fits, so this adds
+   *  no new mechanism and needs no privilege: total capacity is `blocks * bsize`, the counterpart of the
+   *  `bavail * bsize` free space computed there. The path is the storage-boundary-checked rootfs, falling
+   *  back to its parent while a disk is still being materialized and the directory does not exist yet.
+   *
+   *  A filesystem that cannot be read yields `null`, which the register renders as the bare used figure
+   *  exactly as before. A fabricated ceiling would be worse than none. */
+  #diskCapacityFor(rootfsPath, now) {
+    const cached = this.#diskUsageCapacityCache.get(rootfsPath);
+    if (cached && now - cached.at < this.#diskUsageTtlMs) return cached.bytes;
+    let bytes = null;
+    for (const candidate of [rootfsPath, dirname(rootfsPath)]) {
+      try {
+        const filesystem = statfsSync(candidate);
+        const total = filesystem.blocks * filesystem.bsize;
+        // A filesystem reporting no blocks at all is a pseudo-filesystem, not a volume with no room on it.
+        if (Number.isSafeInteger(total) && total > 0) { bytes = total; break; }
+      } catch { /* Try the parent, then report the ceiling as unknown. */ }
+    }
+    this.#diskUsageCapacityCache.set(rootfsPath, { at: now, bytes });
+    return bytes;
+  }
+
   /** One cached batch over every live tree of every visible environment, summed back per disk.
    *
    *  A disk whose own paths do not stand up is unavailable ALONE: its validation failure used to be thrown
@@ -502,6 +535,9 @@ export class NspawnClient {
     const paths = [...new Set([...trees.values()].filter(Boolean).flat())].sort();
     for (const [path, cached] of this.#diskUsageCache) {
       if (now - cached.at > this.#diskUsageTtlMs * 2) this.#diskUsageCache.delete(path);
+    }
+    for (const [path, cached] of this.#diskUsageCapacityCache) {
+      if (now - cached.at > this.#diskUsageTtlMs * 2) this.#diskUsageCapacityCache.delete(path);
     }
     while (paths.some((path) => !this.#diskUsageCache.has(path) || now - this.#diskUsageCache.get(path).at >= this.#diskUsageTtlMs)) {
       if (this.#diskUsageFlight) {
@@ -536,7 +572,7 @@ export class NspawnClient {
         if (bytes === null) return [key, unavailable];
         total += bytes;
       }
-      return [key, { state: 'ready', usedBytes: total, limitBytes: null }];
+      return [key, { state: 'ready', usedBytes: total, limitBytes: this.#diskCapacityFor(key, now) }];
     }));
   }
 

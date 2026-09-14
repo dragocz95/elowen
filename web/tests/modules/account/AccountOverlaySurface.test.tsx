@@ -68,13 +68,13 @@ describe('AccountView overlay surface', () => {
     const { container } = renderOverlaySurface();
     expect(await screen.findByRole('heading', { level: 1, name: en.account.tabProfile })).toBeInTheDocument();
 
-    expect(container.querySelector('[data-testid="account-overlay-layout"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-testid="account-deck-layout"]')).toBeInTheDocument();
     expect(container.querySelector('[data-module="account"]')).toBeNull();
 
     const sidebar = screen.getByTestId('account-navigation-sidebar');
     const tabs = screen.getByTestId('account-navigation-tabs');
     // One list, two shapes: the column belongs to the width, the tab strip to the phone.
-    expect(container.querySelector('[data-testid="account-overlay-layout"] > aside')).toContainElement(sidebar);
+    expect(container.querySelector('[data-testid="account-deck-layout"] > aside')).toContainElement(sidebar);
     expect(tabs).toHaveClass('md:hidden');
     expect(tabs.className).toContain('overflow-x-auto');
     for (const nav of [sidebar, tabs]) {
@@ -108,7 +108,7 @@ describe('AccountView overlay surface', () => {
     expect(window.history.length).toBe(entriesBefore);
     expect(current()).toEqual([en.account.tabSecurity]);
     // The region is named for what it holds, so the content pane announces the section it switched to.
-    expect(container.querySelector('[data-testid="account-overlay-layout"] > section'))
+    expect(container.querySelector('[data-testid="account-deck-layout"] > section'))
       .toHaveAttribute('aria-label', en.account.tabSecurity);
   });
 

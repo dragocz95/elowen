@@ -234,18 +234,41 @@ test.describe('the Project register card grid', () => {
     await expect(card.locator('[data-project-team="strip"] [data-slot="avatar"]').first()).toBeVisible();
     await expect(card.locator('[data-project-team="detail"]')).toBeVisible();
 
-    // Measurement: three labelled resources, each with an exact figure. CPU and memory carry a meter
-    // against a real ceiling; disk has no configured quota, so it is the figure alone.
+    // Measurement: three labelled resources, each with an exact figure and ONE meter grammar. Disk used
+    // to be the exception with no ceiling to divide by; the runtime now measures it against the volume it
+    // is stored on, so all three are proportions of something real and all three are drawn the same way.
     const metrics = card.locator('[data-project-row-metrics]');
     await expect(metrics).toHaveCount(1);
     await expect(metrics).toHaveAttribute('data-metrics-layout', 'rows');
     await expect(card.locator('[data-metric]')).toHaveCount(3);
     await expect(card.locator('[data-metric="cpu"][data-metric-state="ready"]')).toContainText('42');
-    await expect(card.locator('[data-metric="memory"][data-metric-state="ready"]')).toContainText('/');
-    await expect(card.locator('[data-metric="disk"][data-metric-state="absolute"]')).toContainText('512');
-    await expect(card.locator('[data-metric="cpu"] [role="progressbar"]')).toHaveCount(1);
-    await expect(card.locator('[data-metric="disk"] [role="progressbar"]'), 'no meter without a ceiling').toHaveCount(0);
-    await expect(card.locator('[data-metric="disk"] [data-metric-track="none"]')).toHaveCount(1);
+    await expect(card.locator('[data-metric="memory"][data-metric-state="ready"]')).toContainText('640 MiB / 1 GiB');
+    await expect(card.locator('[data-metric="disk"][data-metric-state="ready"]')).toContainText('512 MiB / 200 GiB');
+    await expect(card.locator('[data-metric] [role="progressbar"]')).toHaveCount(3);
+    await expect(card.locator('[data-metric-track="none"]'), 'nothing is left without a ceiling').toHaveCount(0);
+
+    // THE MEASUREMENT THE UNIT TESTS CANNOT MAKE: a chart has no size under jsdom, so whether the bar is
+    // a fraction of a fixed 0..100 domain or of its own datum is only visible in a real browser. Three
+    // readings this far apart would otherwise render as three identical full bars.
+    const filled = await card.locator('[data-metric] [role="progressbar"] svg').evaluateAll((charts) => charts.map((chart) => {
+      // Both are paths of the same plot area: the track is the ceiling, the other one is the reading.
+      const track = chart.querySelector('.recharts-bar-background-rectangle');
+      const bar = chart.querySelector('.recharts-bar-rectangle path');
+      if (!track || !bar) return -1;
+      const width = track.getBoundingClientRect().width;
+      return width > 0 ? Math.round(bar.getBoundingClientRect().width / width * 100) : -1;
+    }));
+    expect(filled).toHaveLength(3);
+    // Against the ceiling, not against itself: normalizing each datum to its own peak would put all three
+    // at 100. The tolerance is the bar's own end caps, not slack in the measurement.
+    expect(filled[0], 'CPU at 42 % of its share').toBeGreaterThan(38);
+    expect(filled[0]).toBeLessThan(46);
+    expect(filled[1], 'memory at 640 MiB of 1 GiB').toBeGreaterThan(59);
+    expect(filled[1]).toBeLessThan(67);
+    // Half a gigabyte of a 200 GB volume is a sliver, and it stays a visible sliver rather than being
+    // rounded away to nothing or inflated to look like the others.
+    expect(filled[2], 'disk is a true fraction of the volume').toBeGreaterThan(0);
+    expect(filled[2]).toBeLessThan(10);
     // No host-state block: this project HAS a measured runtime, so nothing stands in for it.
     await expect(card.locator('[data-project-host-state]')).toHaveCount(0);
 

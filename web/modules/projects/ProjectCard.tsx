@@ -24,14 +24,14 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
+import { MeterBar } from '../../components/ui/MeterBar';
 import { Spinner } from '../../components/ui/states';
-import { Progress } from '../../components/ui/shadcn/progress';
 import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { useEffects } from '../../lib/useEffects';
 import type { Project, ProjectSummary } from '../../lib/types';
 import type { PluginProjectRowMetric, PluginProjectRowMetrics, PluginProjectRowStatus, PluginProjectRowTone } from '../../lib/pluginProjectRows';
-import { usageProgressClass } from '../settings/OAuthUsageRail';
+import { usageProgressColour } from '../settings/OAuthUsageRail';
 
 const ROW_STATUS_TONE: Record<PluginProjectRowTone, string> = {
   muted: 'text-muted-foreground',
@@ -77,11 +77,16 @@ function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
 
 /** ONE measured resource of the snapshot its owning plugin published.
  *
- *  A meter is drawn for `ready` and for nothing else, because `ready` is the only state that carries a
- *  percentage against a ceiling that exists. `absolute` is an equally real figure with no ceiling to
- *  divide by — a managed environment has no disk quota — and `loading`, `stopped` and `unavailable` carry
- *  no figure at all. All four get a dashed channel in the meter's place: the card keeps one rhythm, and a
- *  filled bar never claims a proportion of something that was never measured.
+ *  CPU, memory and disk are drawn with ONE grammar, and it is the charting library's: `MeterBar` is a
+ *  recharts bar over a fixed 0..100 domain, the flat sibling of the dials on the System screen. All three
+ *  now qualify for it, because disk stopped being the odd reading out — the plugin measures it against
+ *  the volume the environment is stored on rather than against a quota it never had.
+ *
+ *  A meter is still drawn for `ready` and for nothing else, because `ready` is the only state carrying a
+ *  percentage against a ceiling that exists. `absolute` is an equally real figure whose ceiling could not
+ *  be read, and `loading`, `stopped` and `unavailable` carry no figure at all. All four get a dashed
+ *  channel in the meter's place: the card keeps one rhythm, and a filled bar never claims a proportion of
+ *  something that was never measured.
  *
  *  The figure sits ABOVE the bar rather than after the label. At three cards across, a row of
  *  label + bar + figure puts `640 MiB / 1 GiB` and `CPU` in the same 250px of inline space, and whichever
@@ -99,13 +104,7 @@ function ProjectResourceMeter({ item, layout }: { item: PluginProjectRowMetric; 
       className={`block h-1 rounded-full border border-dashed border-border bg-transparent ${item.state === 'loading' ? 'animate-pulse' : ''}`}
     />
   ) : (
-    <Progress
-      className="h-1"
-      value={percent}
-      indicatorClassName={usageProgressClass(percent)}
-      aria-label={item.label}
-      aria-valuetext={title}
-    />
+    <MeterBar percent={percent} colour={usageProgressColour(percent)} label={item.label} valueText={title} />
   );
   if (layout === 'grid') {
     return (
