@@ -1922,7 +1922,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         // content, so `target.top - zoneTop` is exactly the deficit and never a whole card height. With no
         // wrap target at all (a turn ending in tool rows or an image) the same measure falls back to the
         // real end of the content.
-        const reserve = Math.max(0, (target ? target.getBoundingClientRect().top : content.bottom) - zoneTop);
+        //
+        // Bounded by the card, which is the deficit's own ceiling — and load-bearing while the dock is
+        // STUCK (a soft keyboard, a reader up in the history): a stuck dock's top does not move when the
+        // reserve grows, so the `- applied` above has nothing to cancel and the two terms would otherwise
+        // chase each other upward frame after frame.
+        const reserve = Math.min(cardHeight, Math.max(0, (target ? target.getBoundingClientRect().top : content.bottom) - zoneTop));
 
         // Guarded: this lands on the SAME style attribute the MutationObserver below watches, so an
         // unconditional write would re-enter this measurement every frame, forever.
@@ -2210,16 +2215,18 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
       </div>
 
       {/* Composer footer (statusline + staged attachments + queue + composer). In the full page it sticks
-          to the viewport bottom so it stays reachable while the whole page scrolls behind it; the compact
-          dock keeps it in normal flow at the bottom of its own scroll box.
+          to the bottom of the visible band — the page scrolls behind it, and while a soft keyboard is up
+          that band ends above the keyboard; the compact dock keeps it in normal flow at the bottom of its
+          own scroll box.
 
-          `.chat-composer-dock` (chat.css) carries the bottom safe-area inset. Without it the composer's
-          send button sits UNDER a phone's home indicator: the dock is pinned at `bottom: 0`, which is the
-          edge of the viewport, not the edge of the usable screen. */}
+          `.chat-composer-dock` (chat.css) owns ALL of that: the stickiness, the visual-viewport inset it
+          rests on, and the bottom safe-area inset that keeps the send button clear of a phone's home
+          indicator. Deliberately no position utility here — two declarations of one element's position is
+          how a `sticky` utility came to be silently overridden by the stylesheet. */}
       {/* No hairline and NO fade above the footer: a gradient over the transcript's last lines read as
           "there is more below" and had readers scrolling for text that was never hidden. The dock's own
           opaque background is the only edge. */}
-      <div ref={composerDockRef} data-testid="chat-composer-dock" className={variant === 'full' ? 'chat-composer-dock sticky z-10 bg-background' : ''}>
+      <div ref={composerDockRef} data-testid="chat-composer-dock" className={variant === 'full' ? 'chat-composer-dock z-10 bg-background' : ''}>
       {/* One-line server status notice when the daemon sends one. The running state itself is signalled by
           the composer's Stop button (no separate "thinking" spinner). Hidden while a question is pending. */}
       {notice && !ask ? (
