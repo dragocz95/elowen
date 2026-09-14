@@ -490,6 +490,12 @@ function defaultReadOwner(path) {
   return lstatSync(path).uid;
 }
 
+/** Read the owner of the object held by an already-open descriptor. Unlike `lstat` on its procfs
+ *  spelling, `fstat` measures the pinned object rather than the process-owned descriptor symlink. */
+export function defaultReadDescriptorOwner(fd) {
+  return fstatSync(fd).uid;
+}
+
 /** Give an already-opened directory away, through the descriptor it was opened on. Injected beside
  *  `readOwner` for the same reason: only root can hand a file to another account, so a test cannot. */
 function defaultSetOwner(fd, uid, gid) {
@@ -1669,7 +1675,7 @@ function nspawnNormalizeRootfs(request, storage, options) {
     if (!Number.isSafeInteger(identity?.uidBase) || identity.uidBase < UID_RANGE_BASE) fail('the machine disk identity is invalid');
     const expected = identityFields(request, paths, identity.uidBase);
     if (Object.entries(expected).some(([key, value]) => identity[key] !== value)) fail('the machine disk identity does not match the requested environment');
-    const owner = (options.readOwner ?? defaultReadOwner)(pinnedEntry(pinnedRoot));
+    const owner = (options.readDescriptorOwner ?? defaultReadDescriptorOwner)(pinnedRoot.fd);
     if (owner !== identity.uidBase) fail('the root filesystem ownership does not match its identity');
     return { ok: true, rootfsPath: rootfs,
       ...normalizeRootfsEnabledUnits(runner, pinnedRoot, [pinnedIdentity.fd, pinnedRoot.fd]) };
