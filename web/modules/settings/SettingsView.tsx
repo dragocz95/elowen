@@ -20,6 +20,7 @@ import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUpdateConfig, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { announceLocation } from '../../lib/sameDocumentNavigation';
 import { SECTION_ALIASES, SETTINGS_CATEGORY_VALUES, settingsSectionHref, settingsSections, type SettingsCategory } from '../../modules/settings/categories';
 import { isPluginSettingsSectionId, parsePluginSettingsSectionId } from '../../modules/settings/pluginSections';
 import { pluginSectionHref } from '../../lib/pluginNav';
@@ -167,7 +168,14 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     setCategoryState('system'); // never leave the deck remembering a category it can no longer render
     const parsed = parsePluginSettingsSectionId(category);
     const entry = parsed && pluginUi.data.find((p) => p.name === parsed.plugin);
-    if (parsed && entry?.settings.some((s) => s.id === parsed.settingId)) router.replace(pluginSectionHref(entry, parsed.settingId));
+    if (parsed && entry?.settings.some((s) => s.id === parsed.settingId)) {
+      router.replace(pluginSectionHref(entry, parsed.settingId));
+      return;
+    }
+    // …and with no such page to forward to, the reader is standing on System while the address still
+    // names a plugin section nothing can open. A shared or reloaded link would put them here again, so
+    // the address is rewritten to the section the deck is actually showing.
+    announceLocation(settingsSectionHref('system'));
   }, [pluginUi.data, category, setCategoryState, router]);
   // React to CLIENT-side URL changes — the sidebar's nested settings sub-items navigate to `?cat=x`
   // without remounting the page, and useSearchParams updates on those.
@@ -184,11 +192,15 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // A bare `/settings` — from the instance menu, a bookmark, a redirect — names none of the six sections,
-  // and the menu outside this page can only mark the section the address names. So the page writes the one
-  // it opened on, and ONLY into that silence: an address that already names a section is the reader's, and
-  // the effect above is what follows it. `replaceState` because this is the same place by another
-  // spelling, not a step in the reader's history.
+  // The address must name the section this deck is SHOWING, spelled the one way the registry spells it.
+  // Three addresses arrive stale and mean the same thing: a bare `/settings` — from the instance menu, a
+  // bookmark, a redirect — which names no section at all; a retired spelling the alias table carries to a
+  // successor (`?cat=memory`); and an id no section here answers to. Each is rewritten to the canonical
+  // href for the section on screen, because the reader who reloads or shares that address must land on
+  // the page they are looking at rather than on whatever the stale id resolves to next time.
+  //
+  // A plugin section id is deliberately NOT handled here: whether it still has a page is a question for
+  // the forward/retire effect above, which asks the listing, and it is the only place that knows.
   //
   // It waits one commit. Both of this page's own sources — the remembered category and the URL — arrive
   // from mount effects, so on the first render `category` is still the bare fallback; writing THAT into
@@ -197,23 +209,41 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
   const [addressReady, setAddressReady] = useState(false);
   useEffect(() => { setAddressReady(true); }, []);
   useEffect(() => {
-    if (!addressReady || isValidCat(new URLSearchParams(window.location.search).get('cat'))) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set('cat', category);
-    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  }, [addressReady, category]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!addressReady) return undefined;
+    // On the same events the deck reads its own address on: arrival, and every popstate — including the
+    // ones its own section switches announce. A stale address reached through HISTORY is exactly the case
+    // that has to be caught here, because nothing about the category changes when it arrives.
+    const write = () => {
+      const named = new URLSearchParams(window.location.search).get('cat');
+      if (named !== null) {
+        // A plugin section id is not this rule's to judge: the forward/retire effect above asks the
+        // listing, and it is the only place that knows whether the section still has a page.
+        if (named === category || isPluginSettingsSectionId(named)) return;
+        // A section this deck CAN render is the reader's address, even for the one render before the state
+        // catches up with it — a section switch announces its own href, and rewriting it back here would
+        // undo the very navigation that prompted the event.
+        if (isValidCat(named) && resolveSectionId(named) === named) return;
+      }
+      // Only `cat` is rewritten: the rest of the address is state within this page — the plugin detail
+      // `?plugin=` names, a fragment, a filter — and it belongs to the reader, not to this rule.
+      const url = new URL(window.location.href);
+      url.searchParams.set('cat', category);
+      announceLocation(`${url.pathname}${url.search}${url.hash}`);
+    };
+    write();
+    window.addEventListener('popstate', write);
+    return () => window.removeEventListener('popstate', write);
+  }, [addressReady, category]);
   // …and the row within it, when the link named one: `?row=<anchor>` scrolls that record into view and
   // blinks it once. It reads the same three sources this section state does and consumes the parameter.
   useRowAnchor();
   const navigateToSettings = (href: string, next: string) => {
     setCategoryState(next);
-    // Rewrite the canonical Settings URL directly (the Next router's replace() doesn't reliably update
-    // this statically optimized route), then fire popstate so the shell highlight and row-anchor listener
-    // follow the same navigation. Category changes replace the current overlay history entry, so Back
-    // returns to the surface that opened Settings.
-    window.history.replaceState(window.history.state, '', href);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    // The one announcement a same-page navigation makes: it rewrites the canonical Settings URL directly
+    // (the Next router's replace() doesn't reliably update this statically optimized route) and fires
+    // popstate so the shell highlight and row-anchor listener follow the same navigation. Category
+    // changes replace the current overlay history entry, so Back returns to the surface that opened it.
+    announceLocation(href);
   };
   const setCategory = (next: string) => navigateToSettings(settingsSectionHref(next), next);
 

@@ -360,8 +360,13 @@ test('a 390px Studio deck reaches its sections through the navigation sheet', as
     const short = targets.filter((target) => target.height < TOUCH_TARGET);
     expect(short, `menu rows under ${TOUCH_TARGET}px: ${JSON.stringify(short)}`).toEqual([]);
 
-    // And the phone's way between sections is the deck's own tab strip, above its own scrim.
-    await page.getByRole('button', { name: 'Close menu' }).click().catch(() => {});
+    // And the phone's way between sections is the deck's own tab strip, above its own scrim. The sheet is
+    // dismissed through its own close control first — the one the drawer specs address — and its CLOSED
+    // state (parked outside the viewport, as `viewport.e2e.ts` establishes) is asserted rather than
+    // hoped for: a click that silently found nothing would leave the reader behind a modal scrim.
+    const drawer = page.locator('.overlay-nav-drawer');
+    await drawer.getByRole('button', { name: /close/i }).click();
+    await expect.poll(async () => (await drawer.boundingBox())!.x, 'the sheet closes again').toBeLessThan(0);
     await page.getByRole('button', { name: 'Security', exact: true }).first().click();
     await expect(page).toHaveURL(/\/account\?cat=security/);
     await expect(page.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();

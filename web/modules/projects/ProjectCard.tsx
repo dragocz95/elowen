@@ -277,6 +277,9 @@ function ProjectTeamStrip({ members, labels }: {
     const node = strip.current;
     if (!node || !overflow) return undefined;
     const onWheel = (event: WheelEvent) => {
+      // Ctrl+wheel (and the pinch gesture it stands in for) is the browser's zoom, not this strip's
+      // scroll. Consuming it would scroll the faces under a reader who asked to enlarge the page.
+      if (event.ctrlKey) return;
       const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
       if (delta === 0) return;
       const limit = node.scrollWidth - node.clientWidth;
@@ -488,14 +491,25 @@ export function ProjectCard({ project, selected, metrics, status, actions, membe
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex min-w-0 items-center gap-1">
-              <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary" title={project.slug}>{project.slug}</h3>
+              {/* Level 2, not 3: the register's page title is the hero's `h1` and nothing sits between
+                  it and a card, so a project is the next level down — not a step skipped. */}
+              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary" title={project.slug}>{project.slug}</h2>
               <ProjectLocationTip project={project} labels={labels.location} />
             </span>
             <p className="min-w-0 truncate text-xs leading-tight text-muted-foreground" title={identityLine(project, labels)}>
               {identityLine(project, labels)}
             </p>
           </div>
-          <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
+          {/* The actions menu is a MENU: it owns the arrow keys, Home and End while it is open, and the
+              panel is deliberately not portalled (see shadcn/dropdown-menu), so those keystrokes bubble
+              through the card. They must not also move the register's selection — a reader walking the
+              menu would watch the grid jump a project per press. The card's own roving navigation stays
+              on everything else inside it. */}
+          <span
+            className="shrink-0"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
             <ActionMenu
               label={`${project.slug}: ${labels.actions}`}
               items={actions}

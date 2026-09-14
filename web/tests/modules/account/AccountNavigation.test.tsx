@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { Blocks } from 'lucide-react';
 import { AccountNavigation } from '../../../modules/account/AccountNavigation';
-import { accountSections, type AccountSectionDescriptor } from '../../../modules/account/sections';
+import { accountSectionHref, accountSections, type AccountSectionDescriptor } from '../../../modules/account/sections';
+import { pluginAccountSectionId } from '../../../modules/account/pluginSections';
 import { en } from '../../../lib/i18n/dictionaries/en';
 
 /** THE PHONE'S ONE LINE OF TABS.
@@ -12,7 +14,16 @@ import { en } from '../../../lib/i18n/dictionaries/en';
  *  only: `scrollIntoView` would also ask the overlay's scroller to move, which on a phone means the page
  *  jumping under the reader's thumb. */
 
-const SECTIONS = accountSections(en, []);
+/** A CONTRIBUTED section, which is the case the reach matters for: it arrives from a live query a commit
+ *  after the core list, and it is drawn after every one of them, so it is the section most likely to sit
+ *  off the end of the strip. Its id is the plugin's own, spelled by the shared registry helper. */
+const CONTRIBUTED: AccountSectionDescriptor = {
+  id: pluginAccountSectionId('github', 'connection'),
+  icon: Blocks,
+  label: 'GitHub',
+  description: 'Your GitHub identity.',
+};
+const SECTIONS = accountSections(en, [CONTRIBUTED]);
 const LAST = SECTIONS[SECTIONS.length - 1]!;
 const rect = (left: number, right: number, top: number): DOMRect => ({
   left, right, top, bottom: top + 40, width: right - left, height: 40, x: left, y: top, toJSON: () => ({}),
@@ -94,5 +105,32 @@ describe('AccountNavigation tab strip', () => {
     );
     const nav = screen.getByTestId('account-navigation-sidebar');
     expect(nav.scrollLeft).toBe(0);
+  });
+
+  /** A section an installed plugin contributes is a section of this deck like any other, in both shapes
+   *  of the navigation and reached by the SAME address grammar. It used to be a row of the shell's menu,
+   *  which is where the way to it was tested; the deck owns that now, so the deck is what has to carry it
+   *  — including the id's own spelling, which is the plugin's and has to survive into the link. */
+  it('carries a contributed section as a row of its own, in both shapes', () => {
+    const onNavigate = vi.fn();
+    const { unmount } = render(
+      <AccountNavigation label={en.account.title} sections={SECTIONS} active={CONTRIBUTED.id} layout="tabs" onNavigate={onNavigate} />,
+    );
+    const tabs = screen.getByTestId('account-navigation-tabs');
+    const tab = within(tabs).getByRole('button', { name: CONTRIBUTED.label });
+    expect(tab).toHaveAttribute('aria-current', 'page');
+    expect(within(tabs).getAllByRole('button')).toHaveLength(SECTIONS.length);
+    unmount();
+
+    render(
+      <AccountNavigation label={en.account.title} sections={SECTIONS} active={CONTRIBUTED.id} layout="sidebar" onNavigate={onNavigate} />,
+    );
+    const column = screen.getByTestId('account-navigation-sidebar');
+    const row = within(column).getByRole('button', { name: CONTRIBUTED.label });
+    expect(row).toHaveAttribute('aria-current', 'page');
+    // The canonical href, from the one helper: a plugin id carries colons, and the page writes the same
+    // address back with `URLSearchParams`.
+    fireEvent.click(row);
+    expect(onNavigate).toHaveBeenCalledWith(accountSectionHref(CONTRIBUTED.id), CONTRIBUTED.id);
   });
 });

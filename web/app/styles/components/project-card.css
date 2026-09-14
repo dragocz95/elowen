@@ -33,6 +33,19 @@
 }
 .project-card-team::-webkit-scrollbar { display: none; }
 
+/* A finger needs a target it can actually hit. Every control on a card is drawn for a MOUSE — the
+   location mark is 24px, the actions trigger 32px, the team count an 11px label in a 0.5rem pad and the
+   open control is sized by its own line — so on a coarse pointer they are all grown to the app's touch
+   floor together. Scoped to the card, so the grid keeps the compact rhythm it is read at on a desk, and
+   to the card's controls, since the card's quiet surface (which opens the project) is already an area no
+   finger can miss. */
+@media (pointer: coarse) {
+  [data-project-card] :is(button, a) {
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .project-card-team { scroll-behavior: auto; }
 }
