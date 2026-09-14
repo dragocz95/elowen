@@ -310,6 +310,7 @@ export class BrainService {
       get cwd() { return d.cwd; },
       get projectPath() { return d.projectPath; },
       get userSettings() { return d.userSettings; },
+      get disabledPluginSkills() { return d.disabledPluginSkills; },
       get fastMode() { return d.fastMode; },
       get activeUserInstructions() { return d.activeUserInstructions; },
       toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
@@ -424,6 +425,7 @@ export class BrainService {
       spawn: (o) => this.spawner.spawn(o), // composition stays in the spawner — single source
       // Verified channel senders get memory too, keyed on their linked account and their own toggles.
       memoryService: d.memoryService, memoryCategoryStore: d.memoryCategoryStore, curator: this.curator, userSettings: d.userSettings,
+      disabledPluginSkills: d.disabledPluginSkills,
       elicitation: this.elicitation, // one registry so Discord interactions resolve channel questions
       titler: this.titler, // name a brand-new channel conversation, same as owner chat
       permissions: d.permissions, // deny rules apply to channel turns too (asks follow unattendedAsks there)
@@ -2502,6 +2504,14 @@ export class BrainService {
   /** Restart a user's live session so changed settings apply — see ConversationLifecycle.restart. */
   async restart(userId: number, opts: { reapplyModelPreference?: boolean } = {}): Promise<void> {
     return this.lifecycle.restart(userId, opts);
+  }
+
+  /** Apply a per-account plugin-skill override without cycling the global plugin runtime. Owner-chat skill
+   * names live in that account's cached system prefix, so all of its live owner sessions must respawn. Channel
+   * and delegated execution resolve the effective catalog per turn and need no registry or service restart. */
+  async applyPluginSkillAvailabilityChange(userId: number): Promise<void> {
+    this.spawner.bumpPluginSkillGeneration(userId);
+    await this.serial(`plugin-skill-availability-${userId}`, async () => this.lifecycle.restartAll(userId));
   }
 
   /** A user saved their auto-compact settings: re-apply the threshold to every conversation of theirs that

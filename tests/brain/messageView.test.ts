@@ -120,7 +120,8 @@ describe('shapeBrainMessages: platform envelopes', () => {
 describe('shapeBrainMessages: durable sub-agent state', () => {
   const run = {
     toolCallId: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running' as const, task: 'inspect',
-    detail: 'Read src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
+    detail: 'Read src/a.ts', tools: 2, tokens: 900, effectiveTps: 45.5,
+    effectiveTurnId: 'turn-1', effectiveModel: 'provider/m', seconds: 4, model: 'm',
   };
 
   it('keeps the tool-call id and attaches the validated sidecar snapshot for reconnect/drill-in', () => {
@@ -136,7 +137,8 @@ describe('shapeBrainMessages: durable sub-agent state', () => {
       kind: 'tool', id: 'delegate-1', name: 'Delegate',
       sub: {
         sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect',
-        detail: 'Read src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
+        detail: 'Read src/a.ts', tools: 2, tokens: 900, effectiveTps: 45.5,
+    effectiveTurnId: 'turn-1', effectiveModel: 'provider/m', seconds: 4, model: 'm',
       },
     });
   });
@@ -180,7 +182,8 @@ describe('shapeBrainMessages: durable workflow state', () => {
     }];
     const run = {
       id: 'wf-1', toolCallId: 'call-1', title: 'Ship it', status: 'running' as const,
-      nodes: [{ id: 'gather', task: 'gather facts', status: 'done' as const, deps: [], sessionId: 'child', tokens: 120 }],
+      nodes: [{ id: 'gather', task: 'gather facts', status: 'done' as const, deps: [], sessionId: 'child', tokens: 120,
+        effectiveTps: 30.25, effectiveTurnId: 'turn-1', effectiveModel: 'provider/m' }],
     };
     const [view] = shapeBrainMessages(rows, [], [], [run]);
     expect(view?.segments?.[0]).toMatchObject({ kind: 'tool', id: 'call-1', name: 'WorkflowStart', wf: run });

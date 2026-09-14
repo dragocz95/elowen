@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -19,11 +19,15 @@ const STATUS = {
 };
 
 class FakeES {
+  static latest: FakeES | undefined;
   onerror: (() => void) | null = null;
   private listeners = new Map<string, ((e: { data: string }) => void)[]>();
-  constructor(public url: string) {}
+  constructor(public url: string) { FakeES.latest = this; }
   addEventListener(type: string, fn: (e: { data: string }) => void) {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]);
+  }
+  emit(type: string, data: unknown) {
+    for (const fn of this.listeners.get(type) ?? []) fn({ data: JSON.stringify(data) });
   }
   close() {}
 }
@@ -45,7 +49,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); localStorage.clear(); status = STATUS; });
+afterEach(() => { server.resetHandlers(); localStorage.clear(); status = STATUS; FakeES.latest = undefined; });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -87,5 +91,25 @@ describe('chat header provider identity', () => {
     expect(model).toHaveTextContent('kimi-k2.7-code');
     expect(model).toHaveAttribute('title', 'ollama/kimi-k2.7-code');
     expect(statusline).not.toHaveTextContent('ollama/');
+  });
+
+  it('keeps top-level t/s visible when a later tool row carries no usage measurement', async () => {
+    status = {
+      ...STATUS,
+      running: true,
+      usage: {
+        tokens: 10, contextWindow: 100, percent: 10, totalTokens: 30, cost: 0,
+        effectiveTps: 42.4, effectiveOutput: 212, effectiveMs: 5000,
+        effectiveTurnId: 'turn-1', effectiveModel: 'ollama/kimi-k2.7-code',
+      },
+      statusline: { showModel: false, showContext: false, showTokens: false, showCost: false, showSpeed: true },
+    };
+    renderSurface();
+    const statusline = await screen.findByTestId('chat-statusline');
+    expect(statusline).toHaveTextContent('42 tok/s');
+
+    act(() => FakeES.latest?.emit('tool', { type: 'tool', name: 'Read', id: 'call-1', detail: 'a.ts' }));
+
+    expect(statusline).toHaveTextContent('42 tok/s');
   });
 });

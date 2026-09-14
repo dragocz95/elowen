@@ -13,14 +13,15 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenu
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
-import { useBrainChat } from './BrainChatProvider';
+import { useBrainChat, useBrainChatStatus } from './BrainChatProvider';
 
 /** Selection comes from durable execution identity, never from cwd or conversation filing. */
 export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compact' }) {
   const { t } = useTranslation();
   const s = t.projects;
   const { toast } = useToast();
-  const { telemetry, activeSessionId, selectProjectExecution } = useBrainChat();
+  const { activeSessionId, selectProjectExecution } = useBrainChat();
+  const { telemetry } = useBrainChatStatus();
   const projects = useProjects();
   const [open, setOpen] = useState(false);
   const [moving, setMoving] = useState(false);

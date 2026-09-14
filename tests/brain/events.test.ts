@@ -307,93 +307,96 @@ describe('tool_execution_end → lifecycle-only event', () => {
   });
 });
 
-/** The statusline's speed figures. `usageOf` keeps the legacy session-wide post-header average for the
- *  wire contract, while `effectiveTps` is the conversation's LATEST COMPLETED measured model call — the
- *  figure the approved proposal put on the statusline instead of a blend of every model it ever ran. */
+/** The statusline keeps the legacy session-wide post-header figure for compatibility, while the effective
+ *  fields expose one explicit turn/model aggregate produced at the provider-request seam. */
 describe('sessionUsageSnapshot — effective speed', () => {
   const store = { descendantUsage: () => ({ totalTokens: 0, cost: 0 }) };
   const snapshot = (messages: unknown[]) => sessionUsageSnapshot({ messages } as never, store, 's1');
   const msg = (over: Record<string, unknown> = {}) => ({
     role: 'assistant', stopReason: 'stop',
-    usage: { input: 10, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 110, cost: { total: 0 } },
+    usage: { input: 10, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 20, totalTokens: 110, cost: { total: 0 } },
     content: [{ type: 'text', text: 'answer' }],
+    effectiveTimingVersion: 3,
+    effectiveMs: 1000,
+    effectiveTurnId: 'turn-1',
+    effectiveModel: 'wire/chat-model',
+    effectiveTurnOutput: 100,
+    effectiveTurnMs: 1000,
     ...over,
   });
 
-  it('shows the LATEST completed call, not a session-wide blend', () => {
+  it('uses the cumulative turn pair, never the latest rate or an arithmetic average', () => {
     const usage = snapshot([
-      msg({ effectiveMs: 1000, firstContentMs: 120 }),           // 100 tok/s
-      msg({ effectiveMs: 8000, firstContentMs: 2500, usage: { input: 10, output: 200, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 210, cost: { total: 0 } } }),
+      msg(),
+      msg({
+        effectiveMs: 8000, firstContentMs: 2500,
+        effectiveTurnOutput: 300, effectiveTurnMs: 9000,
+        usage: { input: 10, output: 200, cacheRead: 0, cacheWrite: 0, reasoning: 50, totalTokens: 210, cost: { total: 0 } },
+      }),
     ]);
-    expect(usage.effectiveTps).toBeCloseTo(25); // the LATEST call: 200 / 8 s
-    expect(usage.firstContentMs).toBe(2500);    // its first-content wait, carried verbatim
+    expect(usage.effectiveTps).toBeCloseTo(300 / 9);
+    expect(usage.effectiveOutput).toBe(300);
+    expect(usage.effectiveMs).toBe(9000);
+    expect(usage.effectiveTurnId).toBe('turn-1');
+    expect(usage.effectiveModel).toBe('wire/chat-model');
+    expect(usage.firstContentMs).toBe(2500);
   });
 
-  it('does not skip past the latest completed call when that call is unmeasured', () => {
+  it('includes provider-counted reasoning and tool-call output', () => {
+    const usage = snapshot([msg({
+      content: [{ type: 'thinking', thinking: 'plan' }, { type: 'toolCall', name: 'Write', arguments: { content: 'large model output' } }],
+      effectiveTurnOutput: 140,
+      effectiveTurnMs: 2000,
+    })]);
+    expect(usage.effectiveTps).toBeCloseTo(70);
+  });
+
+  it('retains the last valid same-turn aggregate when a later successful response has no usable sample', () => {
     const usage = snapshot([
-      msg({ effectiveMs: 1000 }),
-      msg({ usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10, cost: { total: 0 } } }),
+      msg(),
+      msg({ effectiveMs: undefined, effectiveTurnOutput: 100, effectiveTurnMs: 1000,
+        usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10, cost: { total: 0 } } }),
     ]);
-    expect(usage.effectiveTps).toBeUndefined();
-  });
-
-  it('skips failed and aborted attempts — the previous completed call still answers', () => {
-    const usage = snapshot([
-      msg({ effectiveMs: 1000 }),
-      msg({ effectiveMs: 90_000, stopReason: 'aborted', usage: { input: 5, output: 3, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 8, cost: { total: 0 } } }),
-    ]);
-    expect(usage.effectiveTps).toBeCloseTo(100); // the completed 100/1s call, not the aborted tail
-  });
-
-  it('withholds speed when the latest content is missing, non-array, or contains a scalar block', () => {
-    for (const content of [undefined, 'text', [{ type: 'text', text: 'ok' }, 'broken']]) {
-      const usage = snapshot([msg({ effectiveMs: 1000 }), msg({ effectiveMs: 1000, content })]);
-      expect(usage.effectiveTps).toBeUndefined();
-    }
-  });
-
-  it('withholds speed for a thinking-only generation that also contains a tool call', () => {
-    const usage = snapshot([msg({ effectiveMs: 1000, content: [{ type: 'thinking', thinking: 'plan' }, { type: 'toolCall', name: 'Read', arguments: {} }] })]);
-    expect(usage.effectiveTps).toBeUndefined();
-  });
-
-  it('withholds speed for text plus a tool call', () => {
-    const usage = snapshot([msg({ effectiveMs: 1000, content: [{ type: 'text', text: 'done' }, { type: 'toolCall', name: 'Read', arguments: {} }] })]);
-    expect(usage.effectiveTps).toBeUndefined();
-  });
-
-  it('keeps first content timing when speed is unknown because of a tool call', () => {
-    const usage = snapshot([msg({ effectiveMs: 1000, firstContentMs: 120, content: [{ type: 'toolCall', name: 'Read', arguments: {} }] })]);
-    expect(usage.effectiveTps).toBeUndefined();
-    expect(usage.firstContentMs).toBe(120);
-  });
-
-  it('does not fall back to a previous rate after the latest call contains a tool call', () => {
-    const usage = snapshot([
-      msg({ effectiveMs: 1000 }),
-      msg({ effectiveMs: 1000, content: [{ type: 'toolCall', name: 'Read', arguments: {} }] }),
-    ]);
-    expect(usage.effectiveTps).toBeUndefined();
-  });
-
-  it('keeps full provider output for thinking and text without tool calls', () => {
-    const usage = snapshot([msg({ effectiveMs: 1000, content: [{ type: 'thinking', thinking: 'plan' }, { type: 'text', text: 'done' }] })]);
     expect(usage.effectiveTps).toBeCloseTo(100);
   });
 
-  it('reports nothing effective while only legacy-window generations exist', () => {
-    const usage = snapshot([msg({ durationMs: 2000 })]);
-    expect(usage.effectiveTps).toBeUndefined();  // never reinterpreted as an end-to-end sample
-    expect(usage.outputTps).toBeCloseTo(50);     // the legacy window keeps its own meaning
+  it('skips an aborted tail without adding its tokens or duration', () => {
+    const usage = snapshot([
+      msg(),
+      msg({ stopReason: 'aborted', effectiveMs: 90_000, effectiveTurnOutput: 999, effectiveTurnMs: 91_000 }),
+    ]);
+    expect(usage.effectiveTps).toBeCloseTo(100);
   });
 
-  it('blends nothing when a legacy history sits beside one effective sample', () => {
+  it('does not reinterpret pre-v3 timing or malformed/zero pairs', () => {
+    for (const over of [
+      { effectiveTimingVersion: 2 },
+      { effectiveTurnMs: 0 },
+      { effectiveTurnOutput: 0 },
+      { effectiveTurnMs: Number.NaN },
+      { effectiveTurnOutput: Number.POSITIVE_INFINITY },
+    ]) expect(snapshot([msg(over)]).effectiveTps).toBeUndefined();
+  });
+
+  it('uses the latest turn identity and never falls back across a boundary', () => {
     const usage = snapshot([
-      msg({ durationMs: 1000 }),                                        // legacy only
-      msg({ effectiveMs: 2000, durationMs: 1000 }),                     // both stamps, like a new row
+      msg(),
+      msg({ effectiveTurnId: 'turn-2', effectiveTurnOutput: undefined, effectiveTurnMs: undefined, effectiveMs: undefined }),
     ]);
-    expect(usage.effectiveTps).toBeCloseTo(50);  // 100 / 2 s — effective from the new sample only
-    expect(usage.outputTps).toBeCloseTo(100);    // 200 / 2 s — legacy window over every stamp
+    expect(usage.effectiveTurnId).toBe('turn-2');
+    expect(usage.effectiveTps).toBeUndefined();
+  });
+
+  it('clears a persisted speed when the active model identity changed', () => {
+    const usage = sessionUsageSnapshot({ messages: [msg()] } as never, store, 's1', 'wire/other-model');
+    expect(usage.effectiveTps).toBeUndefined();
+    expect(usage.effectiveTurnId).toBeUndefined();
+  });
+
+  it('reports nothing effective while only legacy-window generations exist', () => {
+    const usage = snapshot([msg({ effectiveTimingVersion: undefined, effectiveTurnId: undefined, durationMs: 2000 })]);
+    expect(usage.effectiveTps).toBeUndefined();
+    expect(usage.outputTps).toBeCloseTo(50);
   });
 
   it('reports nothing at all before anything was measured', () => {

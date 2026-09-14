@@ -2,7 +2,7 @@ import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import type { PluginHostPush, PluginUserView } from '../plugins/api.js';
-import { currentContributionUserId, currentSessionId, currentTurnModel } from '../plugins/policyContext.js';
+import { currentAccountUserId, currentApiRequest, currentContributionUserId, currentIdentity, currentSessionId, currentTurnModel } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
 import { withOriginUsage } from '../inference/originUsage.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
@@ -543,6 +543,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       : cat.providerId && cat.model ? { providerId: cat.providerId, model: cat.model } : null;
     return piInferenceClient({ runtime: brainRuntime, config: brainConfig, route: () => route });
   };
+  // Assigned after the lazy plugin provider is built. Management controls call it only after startup, but
+  // their closures need the final brain so a successful availability write can await session respawn.
+  let brain: BrainService | undefined;
   // ONE shared plugin registry for the whole daemon (brain chat + platforms):
   // loading is lazy (plugins load on first use, not at boot), and a plugin toggle invalidates every consumer at once —
   // a per-service memo would leave the workers on a stale registry until a daemon restart.
@@ -745,12 +748,57 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
     }).then(async (registry) => {
+      const catalogFor = (userId: number | null) => registry.skillCatalogFor(
+        userId,
+        userId == null ? null : users.get(userId),
+        userId == null ? new Set<string>() : userSettings.disabledPluginSkills(userId),
+      );
       registry.registerHostControl('skillCatalog', {
-        visibleSkills: () => {
-          const userId = currentContributionUserId();
-          return registry.skillsFor(userId, userId == null ? null : users.get(userId));
-        },
+        visibleSkills: () => catalogFor(currentContributionUserId()).filter((entry) => entry.effective).map((entry) => entry.skill),
+        visibleEntries: () => catalogFor(currentContributionUserId()).filter((entry) => entry.effective),
         canonicalBaseDir: (skill) => registry.skillCanonicalBaseDir(skill),
+      });
+      // Separate authority from the broadly readable live catalog. The host rechecks API/turn identity,
+      // account existence and the opaque key against this registry generation before touching persistence.
+      registry.registerHostControl('skillManagement', {
+        catalogForAccount: (userId) => {
+          if (!currentApiRequest()) throw new Error('forbidden');
+          const actor = currentAccountUserId();
+          const instanceAdmin = currentIdentity()?.owner === true;
+          if (actor == null || (actor !== userId && !instanceAdmin)) throw new Error('forbidden');
+          if (!users.get(userId)) throw new Error('unknown user');
+          const entries = catalogFor(userId);
+          return instanceAdmin ? entries : entries.filter((entry) => entry.effective);
+        },
+        setPluginSkillEnabled: async ({ userId, key, enabled }) => {
+          const identity = currentIdentity();
+          if (!currentApiRequest() || currentAccountUserId() == null || identity?.owner !== true) {
+            return { ok: false, reason: 'forbidden' };
+          }
+          const user = users.get(userId);
+          if (!user) return { ok: false, reason: 'unknown-user' };
+          const known = registry.skillCatalogFor(userId, user)
+            .some((entry) => entry.source === 'plugin' && entry.key === key);
+          if (!known) return { ok: false, reason: 'unknown-skill' };
+          try { userSettings.setPluginSkillEnabled(userId, key, enabled); }
+          catch (error) {
+            if (error instanceof Error && (error.message === 'invalid persisted plugin skill overrides'
+              || error.message === 'too many plugin skill overrides')) {
+              return { ok: false, reason: 'invalid-overrides' };
+            }
+            throw error;
+          }
+          // Owner-chat skill names live in this account's cached provider prefix. Refresh only that session;
+          // a per-account override must not cycle unrelated plugin services, platforms or conversations.
+          if (brain) {
+            try { await brain.applyPluginSkillAvailabilityChange(userId); }
+            catch (error) {
+              log.error(`plugin skill availability saved for user ${userId}, but session refresh failed`, error);
+              return { ok: false, reason: 'refresh-failed' };
+            }
+          }
+          return { ok: true };
+        },
       });
       // Its OWN key, not a third method on the catalog above: this one returns a path core then reads for
       // a caller that cannot read it, so `CONTROL_CONSUMERS` can hold it to the single plugin that owns
@@ -758,7 +806,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       registry.registerHostControl('skillResources', {
         resolveResource: (requestedPath) => {
           const userId = currentContributionUserId();
-          for (const skill of registry.skillsFor(userId, userId == null ? null : users.get(userId))) {
+          for (const skill of catalogFor(userId).filter((entry) => entry.effective).map((entry) => entry.skill)) {
             // Directory-form skills only. A FLAT skill's pinned base is the shared loader folder it sits
             // in, which on the instance skills directory also holds every account's personal skills — so
             // one visible flat skill would have authorized reading all of them. Its own file is already
@@ -807,7 +855,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Per-user embedded brain (the new advisor engine): an in-process PI agent session. Wired only when
   // a provider is configured (reuses the relay endpoint) and not for the in-memory test DB. Coexists
   // with the spawn-CLI advisor — routes degrade to 503 when left unwired.
-  const brain: BrainService | undefined = opts.dbPath !== ':memory:'
+  brain = opts.dbPath !== ':memory:'
     ? new BrainService({
         store: brainStore, users, config: brainConfig, prompts, url: elowenCli.url,
         runtime: brainRuntime,
@@ -850,6 +898,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         hookAudit,
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
+        disabledPluginSkills: (userId) => userSettings.disabledPluginSkills(userId),
         fastMode: (userId) => userSettings.fastMode(userId),
         setFastMode: (userId, on) => on === undefined ? userSettings.toggleFastMode(userId) : userSettings.setFastMode(userId, on),
         projectModelPreference: (userId, projectRoot) => userSettings.projectModelPreference(userId, projectRoot),

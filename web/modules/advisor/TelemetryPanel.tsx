@@ -26,7 +26,7 @@ import { useNow } from '../../lib/useNow';
 import { TODO_PREVIEW_ITEMS } from '../../lib/chatPresentation';
 import { cardTasks, cardTasksAddressable, orderTasks, sessionTaskRows, type RailTask } from '../../lib/railTasks';
 import { workflowLabel, workflowProgress } from '../../lib/workflowDag';
-import { useBrainChat } from './BrainChatProvider';
+import { useBrainChat, useBrainChatStatus } from './BrainChatProvider';
 import { useTelemetryRail } from './telemetryRailState';
 import { ProcessOutputModal } from './ProcessPanel';
 import { TodoRow, type TodoRowIds } from './TodoRow';
@@ -319,7 +319,8 @@ function ContextMeter({ percent, label }: { percent: number; label: string }) {
 function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { usage, telemetry, activeSessionId, usageProvider, goal, subagents, workflows, cards, setAgentsOpen, setTasksOpen, syncSessionTasks } = useBrainChat();
+  const { activeSessionId, usageProvider, setAgentsOpen, setTasksOpen, syncSessionTasks } = useBrainChat();
+  const { usage, telemetry, goal, subagents, workflows, cards } = useBrainChatStatus();
   const { data: allProcesses = [] } = useBrainProcesses();
   const rail = useTelemetryRail();
   const qc = useQueryClient();
@@ -507,7 +508,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
               <LiveRow
                 label={agent.name || agent.task}
                 secondary={agent.detail}
-                meta={agent.tokens != null ? formatTokens(agent.tokens) : undefined}
+                meta={[
+                  agent.tokens != null ? formatTokens(agent.tokens) : '',
+                  typeof agent.effectiveTps === 'number' && agent.effectiveTps >= 1
+                    ? `${Math.round(agent.effectiveTps)} ${t.brainChat.tokensPerSecond}` : '',
+                ].filter(Boolean).join(' · ') || undefined}
                 tone={agent.status === 'running' ? 'running' : 'idle'}
                 title={agent.task}
                 ariaLabel={t.telemetry.agentsOpen}
@@ -676,7 +681,7 @@ function TelemetryHead({ busy, collapsible, collapsed, onToggle }: {
  *  it never changes with. */
 function TelemetryFoot() {
   const { t } = useTranslation();
-  const { telemetry } = useBrainChat();
+  const { telemetry } = useBrainChatStatus();
   const project = telemetry.project;
   if (!project?.cwd && !project?.branch) return null;
   return (
@@ -758,7 +763,8 @@ function CompactTelemetryItem({ id, icon: Icon, label, value, progress, tone = '
  *  so even a short desktop can reach every instrument without widening the conversation gutter. */
 function TelemetryStub({ busy, onToggle }: { busy: boolean; onToggle?: () => void }) {
   const { t } = useTranslation();
-  const { usage, telemetry, activeSessionId, usageProvider, goal, subagents, workflows, cards } = useBrainChat();
+  const { activeSessionId, usageProvider } = useBrainChat();
+  const { usage, telemetry, goal, subagents, workflows, cards } = useBrainChatStatus();
   const { data: limitsByProvider = {} } = useBrainRateLimitsAll();
   const { data: allProcesses = [] } = useBrainProcesses();
   // The strip reads the cards directly and never falls back to a fetch: a card with no structured ids
@@ -995,7 +1001,7 @@ export function TelemetryPanel({ variant, open = false, collapsed = false, onClo
   onOpenWorkflow?: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const { busy } = useBrainChat();
+  const { busy } = useBrainChatStatus();
 
   if (variant === 'drawer') {
     // Mounted only while open, like the history drawer: a closed drawer leaves nothing focusable behind.

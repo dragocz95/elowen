@@ -23,8 +23,9 @@ import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu'
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { consumeHorizontalWheel } from '../../components/ui/horizontalScroll';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
-import { MeterBar } from '../../components/ui/MeterBar';
+import { MetricDonut } from '../../components/ui/MetricDonut';
 import { Spinner } from '../../components/ui/states';
 import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
@@ -44,11 +45,6 @@ const ROW_STATUS_TONE: Record<PluginProjectRowTone, string> = {
 function MissingProjectPathBadge({ label }: { label: string }) {
   return <Badge tone="danger"><AlertTriangle size={11} className="mr-1" aria-hidden />{label}</Badge>;
 }
-
-/** `grid` is the drawer's three abreast, `rows` is the card's stack. Named rather than left to a
- *  className, because the two arrangements put the figure in different places and a caller cannot express
- *  that with a utility. */
-export type ProjectMetricsLayout = 'grid' | 'rows';
 
 /** A plugin's word on what this project is DOING, as a pill in the card's runtime band.
  *
@@ -75,79 +71,103 @@ function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
   );
 }
 
-/** ONE measured resource of the snapshot its owning plugin published.
+/** What sits in a ring with nothing measured behind it. An honest mark, never a zero: an environment
+ *  whose sample has not arrived is not an environment using none of its share. */
+const UNKNOWN_VALUE = '—';
+
+/** The figure in the hole, as ONE rule for all three resources.
  *
- *  CPU, memory and disk are drawn with ONE grammar, and it is the charting library's: `MeterBar` is a
- *  recharts bar over a fixed 0..100 domain, the flat sibling of the dials on the System screen. All three
- *  now qualify for it, because disk stopped being the odd reading out — the plugin measures it against
- *  the volume the environment is stored on rather than against a quota it never had.
+ *  `<1%` rather than `0%` for a reading that is real but rounds away. The ring lifts a tiny fraction to a
+ *  visible floor so a barely-used resource does not read as untouched, and half a gigabyte of a 200 GB
+ *  volume is exactly that case — an arc on screen beside the figure `0%` reads as a drawing error rather
+ *  than as a small number. Zero itself keeps `0%`, because zero is the one reading with no arc at all. */
+function centreValue(percent: number | null): string {
+  if (percent === null) return UNKNOWN_VALUE;
+  const rounded = Math.round(percent);
+  return rounded === 0 && percent > 0 ? '<1%' : `${rounded}%`;
+}
+
+/** ONE measured resource of the snapshot its owning plugin published, as a ring.
  *
- *  A meter is still drawn for `ready` and for nothing else, because `ready` is the only state carrying a
+ *  CPU, memory and disk are drawn with ONE grammar and one size. All three qualify for it because disk
+ *  stopped being the odd reading out: the plugin measures it against the volume the environment is
+ *  stored on rather than against a quota it never had.
+ *
+ *  An ARC is drawn for `ready` and for nothing else, because `ready` is the only state carrying a
  *  percentage against a ceiling that exists. `absolute` is an equally real figure whose ceiling could not
- *  be read, and `loading`, `stopped` and `unavailable` carry no figure at all. All four get a dashed
- *  channel in the meter's place: the card keeps one rhythm, and a filled bar never claims a proportion of
+ *  be read; `unknown`, `stopped` and `unavailable` carry no figure at all. All four keep the ring and
+ *  lose the arc, so the strip holds its shape in every state and an arc never claims a proportion of
  *  something that was never measured.
  *
- *  The figure sits ABOVE the bar rather than after the label. At three cards across, a row of
- *  label + bar + figure puts `640 MiB / 1 GiB` and `CPU` in the same 250px of inline space, and whichever
- *  of the two gives way is the one the reader came for. Stacking them gives the figure the card's whole
- *  width and leaves the label its own column, so nothing has to be clipped to fit. */
-function ProjectResourceMeter({ item, layout }: { item: PluginProjectRowMetric; layout: ProjectMetricsLayout }) {
+ *  The percentage lives in the hole, which is what lets three of these stand side by side in a card that
+ *  is only ~270px wide on a phone: the value and the proportion occupy the same square instead of
+ *  competing for one line. The exact pair — `640 MiB / 1 GiB` — is shown under the label when it says
+ *  more than the percentage does, and is in the accessible text in every case. */
+function ProjectResourceMeter({ item }: { item: PluginProjectRowMetric }) {
   const percent = item.state === 'ready' && typeof item.percent === 'number' && Number.isFinite(item.percent)
     ? Math.max(0, Math.min(100, item.percent))
     : null;
   const title = item.valueText ?? `${item.label}: ${item.value}`;
-  const track = percent === null ? (
-    <span
-      aria-hidden
-      data-metric-track="none"
-      className={`block h-1 rounded-full border border-dashed border-border bg-transparent ${item.state === 'loading' ? 'animate-pulse' : ''}`}
-    />
-  ) : (
-    <MeterBar percent={percent} colour={usageProgressColour(percent)} label={item.label} valueText={title} />
-  );
-  if (layout === 'grid') {
-    return (
-      <div className="min-w-0" title={title} data-metric={item.id} data-metric-state={item.state}>
-        <div className="mb-1 flex min-w-0 items-baseline justify-between gap-1.5 text-[10px] leading-none">
-          <span className="shrink-0 font-semibold uppercase tracking-[0.08em] text-muted-foreground">{item.label}</span>
-          <span className="min-w-0 truncate tabular-nums text-foreground">{item.value}</span>
-        </div>
-        {track}
-      </div>
-    );
-  }
+  const centre = centreValue(percent);
+  // The line under the label exists to say what the hole cannot. It is dropped when it would only repeat
+  // what is already in the ring: CPU's compact reading IS its percentage, and a resource nothing is known
+  // about carries one honest mark rather than two. Matched on the FIGURE rather than on the rendered
+  // string, so the two never disagree about how a fraction below one per cent reads.
+  const detail = item.value === UNKNOWN_VALUE || (percent !== null && item.value === `${Math.round(percent)}%`)
+    ? ''
+    : item.value;
   return (
-    <div className="flex min-w-0 items-center gap-2.5" title={title} data-metric={item.id} data-metric-state={item.state}>
-      <span className="w-11 shrink-0 truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{item.label}</span>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="min-w-0 truncate text-right text-[11px] leading-none tabular-nums text-foreground">{item.value}</span>
-        {track}
-      </div>
+    <div
+      className="flex min-w-0 flex-col items-center gap-1"
+      title={title}
+      data-metric={item.id}
+      data-metric-state={item.state}
+    >
+      <MetricDonut
+        percent={percent}
+        colour={usageProgressColour(percent ?? 0)}
+        label={item.label}
+        valueText={title}
+        centre={centre}
+      />
+      <span data-metric-label className="w-full truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-muted-foreground">
+        {item.label}
+      </span>
+      {/* The slot is kept whether or not it is used, so the three columns of the strip share a baseline
+          however many of them have an exact pair to show. */}
+      <span className="min-h-[12px] w-full truncate text-center text-[10px] leading-none tabular-nums text-foreground">
+        {detail}
+      </span>
     </div>
   );
 }
 
-/** The three meters of one snapshot, in the card and in the drawer alike. The figures are the ones the
- *  plugin last measured in EVERY state: a refresh in flight only dims them, and a failed read only marks
- *  them, because replacing a measurement with a placeholder is how a populated environment reported
- *  nothing each time a poll missed. */
-export function ProjectResourceMeters({ metrics, layout = 'grid' }: { metrics?: PluginProjectRowMetrics; layout?: ProjectMetricsLayout }) {
+/** The three rings of one snapshot, in the card and in the drawer alike: ONE strip, one arrangement.
+ *
+ *  The card used to stack them and the drawer used to set them three abreast, because a horizontal meter
+ *  needs a track as wide as it can get and a stack was the only way to give each one the card's whole
+ *  width. A ring needs a square instead, so the two surfaces stopped needing different answers and the
+ *  layout that reads as one instrument won outright.
+ *
+ *  The figures are the ones the plugin last measured in EVERY state: a refresh in flight only dims them,
+ *  and a failed read only marks them, because replacing a measurement with a placeholder is how a
+ *  populated environment reported nothing each time a poll missed. */
+export function ProjectResourceMeters({ metrics }: { metrics?: PluginProjectRowMetrics }) {
   if (!metrics || !Array.isArray(metrics.items) || metrics.items.length === 0) return null;
   const items = metrics.items.slice(0, 3);
-  const loading = items.every((item) => item.state === 'loading');
   const label = metrics.stale && metrics.staleLabel ? `${metrics.label} — ${metrics.staleLabel}` : metrics.label;
   return (
     <div
-      role={loading ? 'status' : 'group'}
+      // A group, never a live region. These figures are re-read on a poll, and a `status` here made a
+      // screen reader announce a register of environments every thirty seconds.
+      role="group"
       aria-label={label}
       data-project-row-metrics
-      data-metrics-layout={layout}
       data-refreshing={metrics.refreshing ? 'true' : undefined}
       data-stale={metrics.stale ? 'true' : undefined}
-      className={`min-w-0 transition-opacity duration-300 ${layout === 'grid' ? 'grid w-full grid-cols-3 gap-x-3' : 'flex flex-col gap-2'} ${metrics.stale ? 'opacity-70' : metrics.refreshing ? 'opacity-80' : ''}`}
+      className={`grid min-w-0 grid-cols-3 items-start gap-x-2 transition-opacity duration-300 ${metrics.stale ? 'opacity-70' : metrics.refreshing ? 'opacity-80' : ''}`}
     >
-      {items.map((item) => <ProjectResourceMeter key={item.id} item={item} layout={layout} />)}
+      {items.map((item) => <ProjectResourceMeter key={item.id} item={item} />)}
     </div>
   );
 }
@@ -272,21 +292,16 @@ function ProjectTeamStrip({ members, labels }: {
   };
 
   // React registers `wheel` passively at the root, so a handler that has to decide whether to take the
-  // event from the page cannot be a React prop. It is bound here, non-passively, on the strip itself.
+  // event from the page cannot be a React prop. It is bound here, non-passively, on the strip itself, and
+  // the decision is the shared one for every one-line track: `consumeHorizontalWheel` reserves ctrl+wheel
+  // for the browser's zoom, normalises the wheel's own units, and takes only a turn this strip can
+  // actually consume — at either end the event keeps travelling, so a pointer that happens to rest on a
+  // team never traps the register's own scroll. A swipe along the axis the strip already scrolls natively
+  // is not this handler's business.
   useEffect(() => {
     const node = strip.current;
     if (!node || !overflow) return undefined;
-    const onWheel = (event: WheelEvent) => {
-      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-      if (delta === 0) return;
-      const limit = node.scrollWidth - node.clientWidth;
-      const next = Math.max(0, Math.min(limit, node.scrollLeft + delta));
-      // Only a turn this strip can actually consume is taken from the page. At either end the event keeps
-      // travelling, so a pointer that happens to rest on a team never traps the register's own scroll.
-      if (next === node.scrollLeft) return;
-      event.preventDefault();
-      node.scrollLeft = next;
-    };
+    const onWheel = (event: WheelEvent) => consumeHorizontalWheel(node, event);
     node.addEventListener('wheel', onWheel, { passive: false });
     return () => node.removeEventListener('wheel', onWheel);
   }, [overflow]);
@@ -488,14 +503,25 @@ export function ProjectCard({ project, selected, metrics, status, actions, membe
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex min-w-0 items-center gap-1">
-              <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary" title={project.slug}>{project.slug}</h3>
+              {/* Level 2, not 3: the register's page title is the hero's `h1` and nothing sits between
+                  it and a card, so a project is the next level down — not a step skipped. */}
+              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary" title={project.slug}>{project.slug}</h2>
               <ProjectLocationTip project={project} labels={labels.location} />
             </span>
             <p className="min-w-0 truncate text-xs leading-tight text-muted-foreground" title={identityLine(project, labels)}>
               {identityLine(project, labels)}
             </p>
           </div>
-          <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
+          {/* The actions menu is a MENU: it owns the arrow keys, Home and End while it is open, and the
+              panel is deliberately not portalled (see shadcn/dropdown-menu), so those keystrokes bubble
+              through the card. They must not also move the register's selection — a reader walking the
+              menu would watch the grid jump a project per press. The card's own roving navigation stays
+              on everything else inside it. */}
+          <span
+            className="shrink-0"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
             <ActionMenu
               label={`${project.slug}: ${labels.actions}`}
               items={actions}
@@ -531,7 +557,7 @@ export function ProjectCard({ project, selected, metrics, status, actions, membe
             `mt-auto` keeps the footer on the card's floor so a grid of uneven cards still lines up. */}
         <div className="mt-auto min-w-0">
           {metrics
-            ? <ProjectResourceMeters metrics={metrics} layout="rows" />
+            ? <ProjectResourceMeters metrics={metrics} />
             : managed ? null : <ProjectHostState title={labels.hostStateTitle} hint={labels.hostStateHint} />}
         </div>
 

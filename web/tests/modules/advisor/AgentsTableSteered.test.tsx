@@ -15,7 +15,7 @@ const steered: SubagentState = {
 
 const finished: SubagentState = {
   sessionId: 'brain-ch-subagent-sub-dlg-xyz', status: 'done', task: 'Audit the delegation rail',
-  name: 'rail audit', tools: 18, seconds: 900, model: 'deepseek-v4-flash',
+  name: 'rail audit', tools: 18, seconds: 900, model: 'deepseek-v4-flash', effectiveTps: 42.5,
 };
 
 const row = (sessionId: string): HTMLElement => {
@@ -46,6 +46,8 @@ describe('AgentsTable with a steered continuation', () => {
     const cells = row(finished.sessionId).textContent ?? '';
     expect(cells).toContain('done');
     expect(cells).toContain('18');
+    expect(cells).toContain('43');
+    expect(screen.getByText('tok/s')).toBeTruthy();
     expect(cells).not.toContain('steered');
     expect(screen.getByText('Audit the delegation rail')).toBeTruthy();
   });

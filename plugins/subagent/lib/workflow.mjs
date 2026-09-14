@@ -12,7 +12,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { validateWorkflowNodes, mergeWorkflowNodes, readyNodeIds } from './dag.mjs';
 import { toolListCovers, toolPolicyAllows } from './toolLists.mjs';
-import { foldToolDetail } from './progress.mjs';
+import { foldEffectiveUsage, foldToolDetail } from './progress.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './thinking.mjs';
 import {
   CONTEXT_HEADER,
@@ -287,7 +287,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     try { unlinkSync(journalPath(workflowId)); } catch { /* already gone — the common case for a clean finish */ }
   };
 
-  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, seconds: undefined, model: undefined, thinkingLevel: undefined, startedAt: undefined, result: undefined, handover: undefined, error: undefined });
+  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, effectiveTps: undefined, effectiveTurnId: undefined, effectiveModel: undefined, seconds: undefined, model: undefined, thinkingLevel: undefined, startedAt: undefined, result: undefined, handover: undefined, error: undefined });
 
   /** Appended to a node's task when a resume puts it back into the conversation it already worked in. It has
    *  to read sensibly BOTH ways: the child session usually survives (the node reads its own prior work and
@@ -365,6 +365,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ...(s.sessionId ? { sessionId: s.sessionId } : {}),
         ...(s.detail ? { detail: s.detail } : {}),
         ...(s.tokens !== undefined ? { tokens: s.tokens } : {}),
+        ...(s.effectiveTps !== undefined ? { effectiveTps: s.effectiveTps } : {}),
+        ...(s.effectiveTurnId ? { effectiveTurnId: s.effectiveTurnId } : {}),
+        ...(s.effectiveModel ? { effectiveModel: s.effectiveModel } : {}),
         ...(s.seconds !== undefined ? { seconds: s.seconds } : {}),
         // The resolved model once the node has started; before that, the declared override if there is one.
         ...(s.model ?? n.model ? { model: s.model ?? n.model } : {}),
@@ -580,7 +583,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000);
         snapshot(wf);
       }
-      else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { ns.tokens = e.usage.totalTokens; ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000); snapshot(wf); }
+      else if ((e.type === 'step' || e.type === 'idle') && e.usage) { foldEffectiveUsage(ns, e.usage); ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000); snapshot(wf); }
     };
     try {
       const { access, handover } = await buildNodeAccess(wf, node);

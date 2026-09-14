@@ -5,6 +5,7 @@ import type { PluginChatArtifactProps, PluginChatPendingInput, PluginUiRegistrat
 import { createWrapper } from '../../test-utils';
 import type { BrainInlineArtifact, PluginUiListing } from '../../../lib/types';
 import { InlineArtifact } from '../../../modules/advisor/InlineArtifact';
+import { ChatArtifactScope } from '../../../modules/advisor/chatArtifactScope';
 
 const mocks = vi.hoisted(() => ({
   loadPluginUi: vi.fn(),
@@ -42,9 +43,15 @@ const entry: PluginUiListing = {
   settings: [],
 };
 
+/** Narration and the pending-input notice reach an artifact through the transcript's artifact scope, not
+ *  as props — so every case here publishes them the way BrainChatSurface does. */
 function draw(value: BrainInlineArtifact = artifact, narration?: string) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><InlineArtifact artifact={value} narration={narration} /></Wrapper>);
+  return render(
+    <Wrapper><ChatArtifactScope artifacts={[value]} narration={narration}>
+      <InlineArtifact artifact={value} />
+    </ChatArtifactScope></Wrapper>,
+  );
 }
 
 beforeEach(() => {
@@ -100,7 +107,11 @@ describe('InlineArtifact', () => {
     mocks.loadPluginUi.mockResolvedValue({ requiresApiVersion: 14, chatArtifacts: { preview: View } });
 
     const { wrapper: Wrapper } = createWrapper();
-    const show = (narration?: string) => <Wrapper><InlineArtifact artifact={artifact} narration={narration} /></Wrapper>;
+    const show = (narration?: string) => (
+      <Wrapper><ChatArtifactScope artifacts={[artifact]} narration={narration}>
+        <InlineArtifact artifact={artifact} />
+      </ChatArtifactScope></Wrapper>
+    );
     const view = render(show('Opening the portal'));
     expect(await screen.findByTestId('artifact-view')).toHaveTextContent('Opening the portal');
     // The whole chat contract is four props: the plugin name, its own artifact, the visible prose and the
@@ -132,7 +143,9 @@ describe('InlineArtifact', () => {
     const reveal = vi.fn();
     const { wrapper: Wrapper } = createWrapper();
     const show = (pendingInput?: PluginChatPendingInput | null) => (
-      <Wrapper><InlineArtifact artifact={artifact} pendingInput={pendingInput} /></Wrapper>
+      <Wrapper><ChatArtifactScope artifacts={[artifact]} pendingInput={pendingInput}>
+        <InlineArtifact artifact={artifact} />
+      </ChatArtifactScope></Wrapper>
     );
     const view = render(show({ label: 'The assistant is waiting for your choice', reveal }));
     expect(await screen.findByTestId('artifact-view')).toHaveTextContent('The assistant is waiting for your choice');

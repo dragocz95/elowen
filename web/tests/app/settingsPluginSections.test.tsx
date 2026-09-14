@@ -5,7 +5,7 @@ import { render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
-import SettingsPage from '../../app/settings/page';
+import { SettingsView } from '../../modules/settings/SettingsView';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 
@@ -36,10 +36,10 @@ afterAll(() => server.close());
 
 const mountPage = () => {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+  return render(<Wrapper><ToastProvider><SettingsView /></ToastProvider></Wrapper>);
 };
 
-describe('SettingsPage and plugin-contributed sections', () => {
+describe('the Settings deck and plugin-contributed sections', () => {
   it('never mounts a plugin\'s section in the core deck, whatever the plugin declares', async () => {
     mountPage();
     await screen.findByRole('heading', { level: 1, name: 'System' });

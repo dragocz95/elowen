@@ -98,7 +98,16 @@ export function consumeHorizontalWheel(track: HTMLElement, event: WheelEvent): b
   return true;
 }
 
-/** Keep one item visible on the horizontal axis without asking any ancestor page scroller to move. */
+/** Keep one item visible on the horizontal axis without asking any ancestor page scroller to move.
+ *
+ *  The shortfall is measured from client rects, which are VISUAL pixels: every ancestor transform is
+ *  already applied to them. `scrollLeft` is LAYOUT pixels. The two agree until something above the track
+ *  is scaled — and a page overlay animates in with exactly that, so a strip revealing its section while
+ *  the surface was still growing moved by a fraction of the distance it needed and stopped a few pixels
+ *  short, with nothing later to correct it. `scale` converts one into the other, measured off the item
+ *  itself in the same frame (`offsetWidth` is its layout width, the rect its visual one), so an ancestor's
+ *  translation cancels out and its scale divides out. An environment that reports no layout box at all
+ *  (jsdom) reads as "not scaled", which is what it is. */
 export function revealHorizontalItem(track: HTMLElement, item: HTMLElement): boolean {
   const trackRect = track.getBoundingClientRect();
   const itemRect = item.getBoundingClientRect();
@@ -106,9 +115,10 @@ export function revealHorizontalItem(track: HTMLElement, item: HTMLElement): boo
   if (itemRect.left < trackRect.left) delta = itemRect.left - trackRect.left;
   else if (itemRect.right > trackRect.right) delta = itemRect.right - trackRect.right;
   if (Math.abs(delta) <= EDGE_EPSILON) return false;
+  const scale = item.offsetWidth > 0 && itemRect.width > 0 ? item.offsetWidth / itemRect.width : 1;
 
   const maxScrollLeft = Math.max(0, track.scrollWidth - track.clientWidth);
   const before = track.scrollLeft;
-  track.scrollLeft = Math.max(0, Math.min(maxScrollLeft, before + delta));
+  track.scrollLeft = Math.max(0, Math.min(maxScrollLeft, before + delta * scale));
   return Math.abs(track.scrollLeft - before) > EDGE_EPSILON;
 }

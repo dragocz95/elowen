@@ -32,6 +32,8 @@ import { useBrainChatHistory } from './brainChatHistory';
 import { useBrainChatStream } from './brainChatStream';
 
 const THOUGHTS_VALUES = ['show', 'hide'] as const;
+/** The command catalog before it has loaded. Module-level so it is one identity for the app's lifetime. */
+const NO_COMMANDS: SlashCommandDef[] = [];
 const withoutBackgroundProcessCards = (cards: readonly BrainCard[]): BrainCard[] =>
   cards.filter((card) => !isBackgroundProcessCardId(card.id));
 
@@ -149,32 +151,84 @@ const telemetryOf = (st: BrainStatus): BrainTelemetry => ({
   mcp: st.mcp ?? null,
 });
 
-/** The single chat controller value: transcript + draft + attachments + cards + queue + ask + usage +
- *  notice state PLUS the session-scoped mutations. Consumed identically by the dock surface (compact) and
- *  — in a later phase — the full /chat surface. Owned by BrainChatProvider so a Chat↔Terminál toggle or a
- *  route change (which only unmount the presentational surface) never tears down the SSE stream or draft. */
-export interface BrainChatValue {
+/** The chat controller's state, split into THREE context values by how often each half changes.
+ *
+ *  One object for all of it is what made a streamed token the most expensive event in the app: every
+ *  delta rebuilt the single value, so the shell, the top bar, the model picker, the composer, the
+ *  telemetry rail and the deck hero all re-rendered for a token none of them display. The split is by
+ *  UPDATE FREQUENCY, not by feature:
+ *
+ *    - `BrainChatActions` — the session's identity, the controls, and everything a user action changes
+ *      (model catalog, modal flags, work mode). Its identity survives a whole streamed turn.
+ *    - `BrainChatStatus` — what daemon EVENTS change: usage, cards, queue, question, telemetry, goal,
+ *      attachments, the sub-agent and workflow projections. Several times a turn, never per token.
+ *    - `BrainChatTranscript` — the per-token half: the turns and the live narration.
+ *
+ *  Each value keeps its identity while its own members do (`useShallowStable`), so a consumer re-renders
+ *  exactly when the data it reads changes. Owned by BrainChatProvider so a Chat↔Terminál toggle or a route
+ *  change (which only unmount the presentational surface) never tears down the SSE stream or draft. */
+export interface BrainChatTranscript {
   turns: ChatTurn[];
+  /** The assistant prose a reader can see right now (see `liveNarration`), handed to inline plugin
+   *  artifacts so a surface drawn OVER the transcript can still show what is being said. Empty when the
+   *  newest turn is not the assistant speaking. */
+  narration: string;
+}
+
+/** What daemon events change several times a turn. Read it only where the value is actually displayed. */
+export interface BrainChatStatus {
   busy: boolean;
   ready: boolean;
   /** A dropped stream is being recovered (the reconnect controller has an attempt in flight). Distinct from
    *  `ready`, which is also false on the very first load — this is only ever a RE-connect, so it drives the
    *  blur-and-spinner overlay without flashing it on initial boot. */
   reconnecting: boolean;
-  /** Called by a chat surface on mount; the returned cleanup runs on unmount. The provider sits above every
-   *  route, so without knowing whether any surface is actually on screen it blurred the whole app —
-   *  dashboard and tasks included — whenever the stream dropped. */
-  registerSurface: () => () => void;
   /** Whether at least one chat surface is currently mounted. */
   hasSurface: boolean;
   notice: string;
   ask: Ask | null;
   cards: BrainCard[];
   artifacts: BrainInlineArtifact[];
-  /** The assistant prose a reader can see right now (see `liveNarration`), handed to inline plugin
-   *  artifacts so a surface drawn OVER the transcript can still show what is being said. Empty when the
-   *  newest turn is not the assistant speaking. */
-  narration: string;
+  queued: { id: string; text: string }[];
+  readOnly: string | null;
+  /** The OWN delegated child currently focused (drill-in), if any: the composer stays and its sends
+   *  ride the subagent send seam — distinct from a read-only preview, which hides the composer. */
+  childFocus: string | null;
+  usage: BrainUsage | null;
+  /** Project / LSP / MCP sections of the daemon's status poll — the telemetry panel's non-numeric half. */
+  telemetry: BrainTelemetry;
+  /** The conversation's autonomous goal, or null when none runs. Server-authoritative: the live `goal`
+   *  event and the reconnect snapshot both replace it wholesale, so it can be cleared, never only set. */
+  goal: BrainGoal | null;
+  /** The delegated sub-agents of this transcript (latest state per child session) — the agents drill-in
+   *  and the telemetry rail read this ONE projection instead of each folding the turns again. Its identity
+   *  is held across a token whose fold changes nothing (`useStableList`), so a rail that lists running
+   *  agents is not re-rendered by prose arriving under one of them. */
+  subagents: SubagentState[];
+  /** The workflows (DAGs) of this transcript, latest state per workflow id. Identity-stable, like `subagents`. */
+  workflows: WorkflowState[];
+  lineCfg: StatuslineConfig | null;
+  attachments: Attachment[];
+  /** Whether an older page of stored history remains to lazy-load (drives the scroll-up sentinel). */
+  hasMoreHistory: boolean;
+  /** Bumped when the composer should take focus (compose bridge / seeded draft); the surface watches it. */
+  focusNonce: number;
+  /** The plan waiting on the user's implement/cancel decision, `null` when none is. Derived from the
+   *  DAEMON's answer (mode + submitted plan, hydrated on connect and on every snapshot frame) and kept in
+   *  step by the transcript, so the decision survives a reload, a second tab, and plan mode having been
+   *  entered from another surface — none of which tab-local state could ever see. */
+  planDecision: BrainPendingPlan | null;
+  /** True while an approval is in flight — the button disables itself instead of firing twice. */
+  planSubmitting: boolean;
+}
+
+/** The session's identity and every control. Stable across a whole streamed turn: the callbacks keep one
+ *  identity for the provider's lifetime (`useStableActions`), so only a real user action invalidates it. */
+export interface BrainChatActions {
+  /** Called by a chat surface on mount; the returned cleanup runs on unmount. The provider sits above every
+   *  route, so without knowing whether any surface is actually on screen it blurred the whole app —
+   *  dashboard and tasks included — whenever the stream dropped. */
+  registerSurface: () => () => void;
   agentsOpen: boolean;
   setAgentsOpen: (v: boolean) => void;
   statsOpen: boolean;
@@ -199,27 +253,9 @@ export interface BrainChatValue {
   /** Push a skill into THIS conversation as PI's native `/skill:name`, exactly as the CLI's skills picker
    *  does — the daemon expands it to the skill's full instructions on the way in. */
   loadSkill: (name: string) => void;
-  queued: { id: string; text: string }[];
-  readOnly: string | null;
-  /** The OWN delegated child currently focused (drill-in), if any: the composer stays and its sends
-   *  ride the subagent send seam — distinct from a read-only preview, which hides the composer. */
-  childFocus: string | null;
   activeSessionId: string | null;
-  usage: BrainUsage | null;
-  /** Project / LSP / MCP sections of the daemon's status poll — the telemetry panel's non-numeric half. */
-  telemetry: BrainTelemetry;
-  /** The conversation's autonomous goal, or null when none runs. Server-authoritative: the live `goal`
-   *  event and the reconnect snapshot both replace it wholesale, so it can be cleared, never only set. */
-  goal: BrainGoal | null;
-  /** The delegated sub-agents of this transcript (latest state per child session) — the agents drill-in
-   *  and the telemetry rail read this ONE projection instead of each folding the turns again. */
-  subagents: SubagentState[];
-  /** The workflows (DAGs) of this transcript, latest state per workflow id. */
-  workflows: WorkflowState[];
-  lineCfg: StatuslineConfig | null;
   draft: ReturnType<typeof createComposerDraft>;
   setInput: React.Dispatch<React.SetStateAction<string>>;
-  attachments: Attachment[];
   addFiles: (files: Iterable<File>) => Promise<void>;
   removeAttachment: (index: number) => void;
   submit: () => Promise<void>;
@@ -250,10 +286,6 @@ export interface BrainChatValue {
   /** Lazy-load older history: fetches the next backwards page and prepends it. No-op (resolves immediately)
    *  when nothing older remains or a fetch is already in flight. The surface calls it on scroll-up. */
   loadOlder: () => Promise<void>;
-  /** Whether an older page of stored history remains to lazy-load (drives the scroll-up sentinel). */
-  hasMoreHistory: boolean;
-  /** Bumped when the composer should take focus (compose bridge / seeded draft); the surface watches it. */
-  focusNonce: number;
   /** The lazily-fetched model catalog (null until first load) — shared by the header ModelPicker and the
    *  composer `/model` slash. `[]` means the RBAC filter stripped every model for this user. */
   models: BrainModelOption[] | null;
@@ -289,19 +321,12 @@ export interface BrainChatValue {
    *  `planDecision` rather than by overwriting the composer's own choice. */
   workMode: BrainWorkMode;
   setWorkMode: (m: BrainWorkMode) => void;
-  /** The plan waiting on the user's implement/cancel decision, `null` when none is. Derived from the
-   *  DAEMON's answer (mode + submitted plan, hydrated on connect and on every snapshot frame) and kept in
-   *  step by the transcript, so the decision survives a reload, a second tab, and plan mode having been
-   *  entered from another surface — none of which tab-local state could ever see. */
-  planDecision: BrainPendingPlan | null;
   /** Approve the submitted plan: switch to build mode and send the CLI's implement prompt. Without it a web
    *  user who entered plan mode would have no way to act on the plan they just got. */
   implementPlan: () => void;
   /** Decline the decision without leaving plan mode (the CLI picker's Cancel): the plan stays in the
    *  transcript and another message keeps refining it. */
   dismissPlan: () => void;
-  /** True while an approval is in flight — the button disables itself instead of firing twice. */
-  planSubmitting: boolean;
   /** The `/rename` dialog's open state (the surface renders the modal; the controller owns the write). */
   renameOpen: boolean;
   closeRename: () => void;
@@ -319,17 +344,46 @@ export interface BrainChatValue {
   /** Execute a catalog command exactly as the composer's slash menu does. Exposed so a second entry point
    *  (the telemetry mascot's command field) dispatches through THIS path instead of a parallel copy. */
   runSlash: (cmd: SlashCommandDef, argument?: string) => void;
-  sessions: ReturnType<typeof useBrainSessions>;
+  /** The caller's conversations, narrowed to what a consumer reads. A React Query result object is a fresh
+   *  identity on every render, so passing it through whole would invalidate this value per token. */
+  sessions: { data: ReturnType<typeof useBrainSessions>['data']; isLoading: boolean };
 }
 
-const BrainChatContext = createContext<BrainChatValue | null>(null);
+/** The whole controller, for the controller itself and for tests that drive one surface end to end. */
+export type BrainChatValue = BrainChatActions & BrainChatStatus & BrainChatTranscript;
 
-/** Read the single chat controller. Throws when used outside <BrainChatProvider> so a missing mount is a
- *  loud programmer error, never a silent dead surface. */
-export function useBrainChat(): BrainChatValue {
-  const v = useContext(BrainChatContext);
-  if (!v) throw new Error('useBrainChat must be used within <BrainChatProvider>');
-  return v;
+/** What the controller hands the provider: one value per update frequency. */
+interface BrainChatSlices {
+  actions: BrainChatActions;
+  status: BrainChatStatus;
+  transcript: BrainChatTranscript;
+}
+
+const BrainChatActionsContext = createContext<BrainChatActions | null>(null);
+const BrainChatStatusContext = createContext<BrainChatStatus | null>(null);
+const BrainChatTranscriptContext = createContext<BrainChatTranscript | null>(null);
+
+function readChatContext<T>(value: T | null, hook: string): T {
+  if (!value) throw new Error(`${hook} must be used within <BrainChatProvider>`);
+  return value;
+}
+
+/** The session's identity and its controls. The default read: a consumer that only acts on the
+ *  conversation is not re-rendered by anything the conversation says. */
+export function useBrainChat(): BrainChatActions {
+  return readChatContext(useContext(BrainChatActionsContext), 'useBrainChat');
+}
+
+/** What daemon events change (usage, cards, queue, question, telemetry, agents). Read it only where one of
+ *  those values is actually displayed — it invalidates several times a turn. */
+export function useBrainChatStatus(): BrainChatStatus {
+  return readChatContext(useContext(BrainChatStatusContext), 'useBrainChatStatus');
+}
+
+/** The transcript itself. Invalidates on EVERY streamed token, so only the component that renders the
+ *  turns (or the live narration) may read it. */
+export function useBrainChatTranscript(): BrainChatTranscript {
+  return readChatContext(useContext(BrainChatTranscriptContext), 'useBrainChatTranscript');
 }
 
 /** Subscribe only where the draft is displayed, never in the transcript or telemetry consumers. */
@@ -338,16 +392,62 @@ export function useBrainChatInput(): string {
   return useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getServerSnapshot);
 }
 
+/** Keep the previous object while every member is identical. The three context values are built from state
+ *  that already holds its identity (React state, memoized projections, `useStableActions` callbacks), so a
+ *  shallow compare is exact here: the value changes when — and only when — a member does. A missed
+ *  `useMemo` dependency cannot silently widen a re-render, which is what a hand-written dependency list of
+ *  forty members would eventually do. */
+function useShallowStable<T extends object>(next: T): T {
+  const previous = useRef(next);
+  const current = previous.current;
+  const keys = Object.keys(next) as (keyof T)[];
+  const same = keys.length === Object.keys(current).length
+    && keys.every((key) => Object.is(current[key], next[key]));
+  if (!same) previous.current = next;
+  return previous.current;
+}
+
+/** One identity per action, for the provider's whole lifetime, without asking every handler in the
+ *  controller to be a `useCallback` with a hand-maintained dependency list (which is how a send or an abort
+ *  ends up holding a stale session). Each wrapper reads the CURRENT render's implementation through a ref,
+ *  so the behaviour is always the newest one and the identity never changes.
+ *
+ *  The action set is fixed at first render — it is a literal in the controller's return, so there is no
+ *  such thing as a key appearing later. */
+function useStableActions<T extends Record<string, (...args: never[]) => unknown>>(impl: T): T {
+  const latest = useRef(impl);
+  latest.current = impl;
+  const [stable] = useState(() => Object.fromEntries(
+    Object.keys(impl).map((key) => [key, (...args: unknown[]) => (latest.current[key] as (...a: unknown[]) => unknown)(...args)]),
+  ) as unknown as T);
+  return stable;
+}
+
+/** Hold a projection's identity while its members are unchanged. `collectSubagents`/`collectWorkflows` fold
+ *  the whole transcript on every token and hand back the SAME state objects (the fold reuses the segments it
+ *  did not touch), so an element-wise compare turns "the same agents as a moment ago" into the same array —
+ *  and the telemetry rail stops re-rendering for prose arriving under a tool call. */
+function useStableList<T>(next: readonly T[]): T[] {
+  const previous = useRef(next as T[]);
+  const current = previous.current;
+  if (current !== next && (current.length !== next.length || !next.every((item, i) => Object.is(current[i], item)))) {
+    previous.current = next as T[];
+  }
+  return previous.current;
+}
+
 /** The controller: owns the whole network + transcript lifecycle for the tab's single chat. Mirrors the
  *  CLI's session binding (src/cli/chat/brainClient.ts) — a stable per-tab clientId, a monotonic generation
  *  bumped on every (re)connect / switch, the bound session threaded through every session-scoped call, and
  *  stale-generation discard on late responses so a superseded A/B switch can't clobber the live view. */
-function useBrainChatController(): BrainChatValue {
+function useBrainChatController(): BrainChatSlices {
   const { t } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
   const sessions = useBrainSessions();
-  const { data: commands = [] } = useBrainCommands();
+  // One frozen empty catalog rather than `= []`: a fresh literal per render would change the actions value
+  // on every token while the catalog is still loading.
+  const commands = useBrainCommands().data ?? NO_COMMANDS;
   const { data: config } = useConfig();
 
   // The transcript view-model + fold live in the shared `web/lib/transcript.ts` mirror (kept in lockstep
@@ -1151,9 +1251,10 @@ function useBrainChatController(): BrainChatValue {
   const visibleQueue = useMemo(() => (removingQueue.size ? queued.filter((x) => !removingQueue.has(x.id)) : queued), [queued, removingQueue]);
 
   // Both projections are pure folds of the transcript, so they survive a reconnect for free: history
-  // carries the same `sub`/`wf` attachments the live events wrote.
-  const subagents = useMemo(() => collectSubagents(turns), [turns]);
-  const workflows = useMemo(() => collectWorkflows(turns), [turns]);
+  // carries the same `sub`/`wf` attachments the live events wrote. Their IDENTITY is held across a token
+  // that changed neither, so reading them does not subscribe a consumer to the stream.
+  const subagents = useStableList(useMemo(() => collectSubagents(turns), [turns]));
+  const workflows = useStableList(useMemo(() => collectWorkflows(turns), [turns]));
   // The same fold, for a plugin surface that covers the transcript. Memoized here rather than in each
   // surface so a streaming reply recomputes ONE bounded string per view change, however many chat
   // surfaces (dock + /chat on a phone) are mounted on this one provider.
@@ -1477,28 +1578,59 @@ function useBrainChatController(): BrainChatValue {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => () => stream.stop(), []);
 
-  return {
-    turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen: openReasoning, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks,
-    helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
-    queued: visibleQueue, readOnly, childFocus, activeSessionId,
-    usage, telemetry, goal, subagents, workflows, lineCfg, draft, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
-    openReadOnly, focusSubagentSession, exitReadOnly, exitChildFocus, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
-    models, currentModel, provider, providerLabel, usageProvider, setModel: (m) => runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError, modelStatus, retryModel,
-    showThoughts: thoughts === 'show',
-    setShowThoughts: (v) => setThoughts(v ? 'show' : 'hide'),
-    workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,
-    renameOpen, closeRename: () => setRenameOpen(false), renameSession,
-    historyOpen, openHistory: () => setHistoryOpen(true), closeHistory: () => setHistoryOpen(false),
+  // ── THE THREE CONTEXT VALUES ───────────────────────────────────────────────────────────────────────
+  // Every handler the controller exposes, behind ONE identity apiece. Written as a single literal so the
+  // action set is visible in one place and cannot drift from the interface.
+  const actionHandlers = useStableActions({
+    registerSurface,
+    setAgentsOpen, setStatsOpen, setReasoningOpen: openReasoning, setSkillsOpen, setTasksOpen, syncSessionTasks,
+    setHelpOpen, setModelOpen, loadSkill,
+    setInput, addFiles, removeAttachment, submit, switchSession,
+    openReadOnly, focusSubagentSession, exitReadOnly, exitChildFocus, deleteSession, onQueueRemove, onAnswer,
+    abort, ensureAttached, loadOlder,
+    setModel: (m: BrainModelOption) => runModel(m),
+    loadModels: () => void loadModels(),
+    retryModel,
+    setShowThoughts: (v: boolean) => setThoughts(v ? 'show' : 'hide'),
+    setWorkMode: runMode, implementPlan, dismissPlan,
+    closeRename: () => setRenameOpen(false),
+    renameSession,
+    openHistory: () => setHistoryOpen(true),
+    closeHistory: () => setHistoryOpen(false),
     startNewConversation,
     selectProjectExecution,
-    projectChoiceOpen,
     // Whether a project was chosen or the dialog was simply dismissed, the fresh conversation is where the
     // person is going: reveal the chat and focus its composer, the same request the launcher raises.
     closeProjectChoice: () => { setProjectChoiceOpen(false); openBrainComposer(); },
-    commands, runSlash: (cmd, argument) => void runSlash(cmd, argument),
-    sessions,
-  };
+    runSlash: (cmd: SlashCommandDef, argument?: string) => void runSlash(cmd, argument),
+  });
+  // A React Query result is a new object every render; narrow it to the two fields consumers read so the
+  // conversation list cannot invalidate the actions value for a reason nobody can see.
+  const sessionsView = useMemo(
+    () => ({ data: sessions.data, isLoading: sessions.isLoading }),
+    [sessions.data, sessions.isLoading],
+  );
+
+  const actions = useShallowStable<BrainChatActions>({
+    ...actionHandlers,
+    agentsOpen, statsOpen, reasoningOpen, skillsOpen, tasksOpen, helpOpen, modelOpen,
+    activeSessionId, draft,
+    models, currentModel, provider, providerLabel, usageProvider, modelsLoading, modelsError, modelStatus,
+    showThoughts: thoughts === 'show',
+    workMode,
+    renameOpen, historyOpen, projectChoiceOpen,
+    commands,
+    sessions: sessionsView,
+  });
+  const status = useShallowStable<BrainChatStatus>({
+    busy, ready, reconnecting, hasSurface: surfaces > 0,
+    notice, ask, cards, artifacts, queued: visibleQueue, readOnly, childFocus,
+    usage, telemetry, goal, subagents, workflows, lineCfg, attachments,
+    hasMoreHistory, focusNonce, planDecision, planSubmitting,
+  });
+  const transcript = useShallowStable<BrainChatTranscript>({ turns, narration });
+
+  return { actions, status, transcript };
 }
 
 /** Mount ONCE (in ShellLayout, above the route content and the dock) so the single chat controller — SSE
@@ -1506,10 +1638,10 @@ function useBrainChatController(): BrainChatValue {
  *  route changes. It is inert until the first chat open (ensureAttached), so a page that never opens chat
  *  never starts the brain. */
 export function BrainChatProvider({ children }: { children: ReactNode }) {
-  const value = useBrainChatController();
-  // `value` is rebuilt each render — like today's single BrainChat component, whose consumers all re-render
-  // together on any state change. A useMemo over its identity was dead (the nested handlers/slash literal are
-  // fresh every render), so the value is passed straight through; single-mount + single-SSE is what matters.
+  const { actions, status, transcript } = useBrainChatController();
+  // Three values, three subscriptions: a consumer re-renders for the half it reads and for nothing else.
+  // `children` is the same element on every render of this provider, so the subtree below is reconciled
+  // only through these contexts — which is what makes the split worth anything at all.
   // The reconnect overlay lives HERE, not in BrainChatSurface: a phone with the dock open on /chat mounts
   // two surfaces sharing this one provider, and a per-surface fixed-fullscreen overlay would then render
   // twice (doubled backdrop, two aria-live "reconnecting" announcements). One provider → one overlay.
@@ -1517,10 +1649,14 @@ export function BrainChatProvider({ children }: { children: ReactNode }) {
   // otherwise a dropped stream blurred and froze the dashboard, tasks and settings, where there is no
   // chat to protect from acting on stale state.
   return (
-    <BrainChatContext.Provider value={value}>
-      {children}
-      {value.reconnecting && value.hasSurface ? <ReconnectOverlay /> : null}
-    </BrainChatContext.Provider>
+    <BrainChatActionsContext.Provider value={actions}>
+      <BrainChatStatusContext.Provider value={status}>
+        <BrainChatTranscriptContext.Provider value={transcript}>
+          {children}
+          {status.reconnecting && status.hasSurface ? <ReconnectOverlay /> : null}
+        </BrainChatTranscriptContext.Provider>
+      </BrainChatStatusContext.Provider>
+    </BrainChatActionsContext.Provider>
   );
 }
 

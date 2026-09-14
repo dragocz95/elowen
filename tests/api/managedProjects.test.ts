@@ -52,6 +52,25 @@ describe('managed project API', () => {
     expect((await app.request(`/users/${admin.id}/projects`, request(peerToken, 'POST', { projectId: p.id }))).status).toBe(403);
     expect((await app.request(`/projects/${p.id}`, request(peerToken, 'PATCH', { path: '/etc' }))).status).toBe(400);
   });
+  /** Shared memory puts every member's recollections into one pool, so it is a visibility decision about
+   *  other people's data rather than project metadata. The web panel already renders it for administrators
+   *  only; the route has to refuse it too, or a member pools everyone's memories with one direct call while
+   *  still being allowed to edit notes. */
+  it('keeps the shared-memory toggle an administrator decision while members edit metadata', async () => {
+    const { app, projects, adminToken, member, token } = setup();
+    const p = projects.ensureDefault(member.id);
+
+    expect((await app.request(`/projects/${p.id}`, request(token, 'PATCH', { memoryShared: true }))).status).toBe(403);
+    expect(projects.get(p.id)?.memoryShared).toBe(false);
+    // A refused patch applies NOTHING, not even the fields it was allowed to carry: a half-applied request
+    // would teach the caller that the boundary sits somewhere it does not.
+    expect((await app.request(`/projects/${p.id}`, request(token, 'PATCH', { notes: 'member note', memoryShared: true }))).status).toBe(403);
+    expect(projects.get(p.id)).toMatchObject({ notes: '', memoryShared: false });
+    expect((await app.request(`/projects/${p.id}`, request(token, 'PATCH', { notes: 'member note' }))).status).toBe(200);
+    expect(projects.get(p.id)).toMatchObject({ notes: 'member note', memoryShared: false });
+    expect((await app.request(`/projects/${p.id}`, request(adminToken, 'PATCH', { memoryShared: true }))).status).toBe(200);
+    expect(projects.get(p.id)).toMatchObject({ notes: 'member note', memoryShared: true });
+  });
   it('does not delete managed metadata when its cleanup provider is unavailable', async () => {
     const { app, projects, member, token } = setup(); const p = projects.ensureDefault(member.id);
     expect((await app.request(`/projects/${p.id}`, request(token, 'DELETE'))).status).toBe(503);

@@ -59,7 +59,8 @@ export const guestFileMigration = { version: 4, up(m) {
 } };
 export function validateUploadOperation(op) {
   const fields = { 'write-begin': ['expectedVersion', 'size'], 'write-chunk': ['uploadId', 'offset', 'base64'], 'write-commit': ['uploadId'], 'write-abort': ['uploadId'] };
-  if (!op || !Object.hasOwn(fields, op.kind) || Object.keys(op).some((key) => !['kind', 'path', ...fields[op.kind]].includes(key))) throw failure('invalid_operation', 'Invalid upload operation', 400);
+  if (!op || !Object.hasOwn(fields, op.kind) || Object.keys(op).some((key) => !['kind', 'path', 'root', ...fields[op.kind]].includes(key))) throw failure('invalid_operation', 'Invalid upload operation', 400);
+  if (op.root !== undefined && (typeof op.root !== 'string' || !op.root.startsWith('/') || op.root.includes('\0') || op.root.length > 4096)) throw failure('invalid_path', 'An absolute guest path is required', 400);
   if (typeof op.path !== 'string' || !op.path.startsWith('/') || op.path.includes('\0') || op.path.length > 4096) throw failure('invalid_path', 'An absolute guest path is required', 400);
   if (op.kind === 'write-begin') {
     if (!Object.hasOwn(op, 'expectedVersion') || !(op.expectedVersion === null || (typeof op.expectedVersion === 'string' && op.expectedVersion.length <= 256))) throw failure('version_required', 'A content version is required', 400);
@@ -78,7 +79,7 @@ export function createGuestFileTransport({ db, runGuest, runCleanup, helperSourc
   const get = (id) => db.prepare('SELECT * FROM p_sandbox_file_uploads WHERE id=?').get(id);
   const scope = (item) => ({ resourceKind: item.resource_kind, resourceId: item.resource_id, projectId: item.project_id, accountUserId: item.user_id, generation: item.generation });
   async function invoke(row, item, op, cleanup = false) {
-    const request = { ...op, uploadId: item.id, scope: scope(item), expectedVersion: item.expected_version, size: item.size,
+    const request = { ...op, root: op.root ?? row.spec?.input?.workspaceTarget, uploadId: item.id, scope: scope(item), expectedVersion: item.expected_version, size: item.size,
       ...(item.resolved_path ? { resolvedPath: item.resolved_path } : {}) };
     const result = await (cleanup ? runCleanup : runGuest)(row, item.user_id, ['/usr/bin/python3', '-c', helperSource], { input: JSON.stringify(request), timeoutMs: 120000, kind: 'files' });
     if (result.truncated) throw protocolFailure('Upload response exceeded its bound');

@@ -151,14 +151,25 @@ describe('install/systemdUnits.elowenSudoers', () => {
   it('pins the exact self-reinstall command for the service user', () => {
     expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/bin\/npm install -g elowen@latest --prefix \/usr$/m);
   });
-  it('allows refreshing and invoking only the fixed site gateway helper path', () => {
-    expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/bin\/install -o root -g root -m 0755 \/tmp\/elowen-site-gateway \/usr\/local\/libexec\/elowen-site-gateway$/m);
+  it('invokes the fixed site gateway helper with no arguments at all, and installs nothing', () => {
     expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/local\/libexec\/elowen-site-gateway ""$/m);
-    // No grant may install a file whose SOURCE the service user can write, beyond the helper itself,
-    // whose bytes are compared against the packaged copy first. Pinning the argv fixes the words, not the
-    // bytes behind them, and a grant binds to a user rather than to the code path it was written for: a
-    // grant for either root-owned record would let that user choose what the helper trusts.
+    // No grant installs anything, and in particular nothing whose SOURCE the service user can write.
+    // Pinning an `install` argv fixes the words, not the bytes behind them, and a grant binds to a user
+    // rather than to the code path it was written for — the helper source used to be staged under /tmp,
+    // so the account allowed to run that `install` chose what root installed. Both root-owned files the
+    // helper trusts are written by the installer (and by a root `elowen update`) while it is already root.
+    expect(s).not.toMatch(/NOPASSWD:[^\n]*\/usr\/bin\/install/);
+    expect(s).not.toContain('/tmp/elowen-site-gateway');
     expect(s).not.toContain('/etc/elowen/site-gateway.json');
     expect(s).not.toContain('/etc/elowen/machine-storage.json');
+    // Nothing else creeps in either: the drop-in is exactly these three grants, enumerated whole, so a
+    // fourth one cannot be added without this failing.
+    const grants = s.split('\n').filter((line) => line.includes('NOPASSWD'))
+      .map((line) => line.slice(line.indexOf('NOPASSWD:') + 'NOPASSWD:'.length).trim());
+    expect(grants).toEqual([
+      '/usr/bin/systemctl restart --no-block elowen-daemon elowen-web, /usr/bin/systemctl restart --no-block elowen-daemon, /usr/bin/systemctl restart --no-block elowen-web, /usr/bin/systemctl is-active elowen-daemon elowen-web',
+      '/usr/bin/npm install -g elowen@latest --prefix /usr',
+      '/usr/local/libexec/elowen-site-gateway ""',
+    ]);
   });
 });

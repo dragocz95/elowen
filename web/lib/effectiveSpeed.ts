@@ -2,29 +2,41 @@
  *  imports relative to the web root; see `tests/contract/codeDiffMirror.test.ts`). Edit the SOURCE
  *  first, then copy its body over this one; the contract test keeps them byte-identical.
  *
- *  Effective generation speed, as the CLIENT observed it.
+ *  Effective model-output speed.
  *
  *  The canonical measurement lives at the provider-request seam
- *  (`src/brain/session/providerRequestRecorder.ts`): a logical model call is timed with a MONOTONIC
- *  clock from its initiation — before the provider's response headers are awaited — to the stream's
- *  terminal event. PI-level auto-retries and their backoff belong to the SAME logical request and are
- *  included; tool execution between model calls is a different seam and is never included. A generation
- *  containing any `toolCall` block is ineligible because provider usage cannot split serialized tool-call
- *  arguments from model text. Tool-call-free generations use the provider-reported output tokens — this is
- *  an effective end-to-end rate, NOT a pure decode rate.
+ *  (`src/brain/session/providerRequestRecorder.ts`). Each successful provider response contributes its
+ *  canonical normalized output-token count and only the monotonic generation window from accepted response
+ *  headers to the terminal stream event. Prompt construction, provider queue/header wait, failed attempts,
+ *  retry backoff, tool execution and user/elicitation waits are outside that window. Provider output usage
+ *  already includes visible text, hidden reasoning and serialized tool-call output; tool results are input to
+ *  a later request and never enter this numerator.
+ *
+ *  A turn spanning text → tool → text is therefore Σ successful model output / Σ successful generation
+ *  seconds. Never average request rates and never divide by turn wall time.
  *
  *  This module is mirrored byte-for-byte into `web/lib/effectiveSpeed.ts` (the web cannot import
  *  `src/` — see `tests/contract/codeDiffMirror.test.ts` for why) — edit the source, then copy the
  *  mirror's body. Both sides must agree or the CLI and the stats page would average differently. */
 
-/** One timed generation: the provider-reported output tokens and the monotonic ms they were measured
- *  over. Missing usage is never invented: a sample with a non-positive side is unmeasurable. */
+/** One timed successful generation. Missing, non-finite or non-positive sides are unmeasurable. */
 export interface SpeedSample { output: number; elapsedMs: number }
 
-/** tokens/sec for one timed generation; null unless BOTH sides are positive. No clipping, no minimum —
- *  a slow or absurd figure is a real observation about that call, and consumers label it. */
+/** tokens/sec for one timed generation; null unless BOTH sides are finite and positive. No clipping, no
+ *  minimum: a slow figure is a real observation and consumers decide whether it is useful to render. */
 export function speedOf(output: number, elapsedMs: number): number | null {
-  return output > 0 && elapsedMs > 0 ? output / (elapsedMs / 1000) : null;
+  if (!Number.isFinite(output) || !Number.isFinite(elapsedMs) || output <= 0 || elapsedMs <= 0) return null;
+  const speed = output / (elapsedMs / 1000);
+  return Number.isFinite(speed) && speed > 0 ? speed : null;
+}
+
+/** Exact numerator and denominator accumulated across successful model requests in one turn/model identity. */
+export interface SpeedAggregate { output: number; elapsedMs: number }
+
+/** Add one valid sample exactly once. Invalid samples leave the previous aggregate untouched. */
+export function addSpeedSample(aggregate: SpeedAggregate, sample: SpeedSample): SpeedAggregate {
+  if (speedOf(sample.output, sample.elapsedMs) == null) return aggregate;
+  return { output: aggregate.output + sample.output, elapsedMs: aggregate.elapsedMs + sample.elapsedMs };
 }
 
 /** A rate plus the output slice it was measured over — the shape `/usage/by-model` and the rollup
@@ -41,10 +53,10 @@ export function weightedSpeedFromPairs(pairs: readonly SpeedPair[]): number | nu
   for (const pair of pairs) {
     const tps = pair.tps;
     const measured = pair.measuredOutput ?? 0;
-    if (tps != null && tps > 0 && measured > 0) {
+    if (tps != null && Number.isFinite(tps) && tps > 0 && Number.isFinite(measured) && measured > 0) {
       output += measured;
       seconds += measured / tps;
     }
   }
-  return seconds > 0 ? output / seconds : null;
+  return speedOf(output, seconds * 1000);
 }

@@ -487,7 +487,7 @@ export class BrainStatusService {
       // the conversation's stamped provider so a cold conversation still names who runs it.
       ...this.publicProvider(b?.providerId ?? row?.provider ?? ''),
       usageProvider: b?.provider ?? '',
-      usage: b ? sessionUsageSnapshot(b.session, this.d.store, b.sessionId) : null,
+      usage: b ? sessionUsageSnapshot(b.session, this.d.store, b.sessionId, `${b.provider}/${b.model}`) : null,
       thinkingLevel: (sess?.thinkingLevel as string) ?? b?.thinkingLevel ?? '',
       thinkingLevels: supports ? (sess?.getAvailableThinkingLevels?.() ?? []) : [],
       thinkingLevelLabels: b?.thinkingLabels ?? {},

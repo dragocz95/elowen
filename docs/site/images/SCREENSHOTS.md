@@ -18,7 +18,7 @@ The following existing PNGs are not referenced by the current numbered manual an
 | `brain-memory.png` | Memory with a record selected | Referenced by current manual | Memory workspace with a right-side memory detail drawer |
 | `brain-chat.png` | Chat with a technical conversation | Referenced by current manual | Elowen answering a question about a rounding bug in the web chat |
 | `getting-started-chat.png` | Chat with the introduction conversation | Referenced by current manual | Elowen introducing its capabilities in the web chat |
-| `projects-list.png` | Projects registry | Referenced by current manual | Project registry with paths, notes and read-only Git context |
+| `projects-list.png` | Projects registry | Referenced by current manual, STALE | Project registry in its former table form, with the Path column and the pre-card navigation |
 | `projects-editor.png` | Editor plugin with an open file | Referenced by current manual | Optional Project Editor plugin with the project file tree and an open source file |
 | `users-rbac.png` | Users directory | Referenced by current manual | User directory with roles, project boundaries and model permissions |
 | `settings-overview.png` | Settings → System | Referenced by current manual | Elowen System settings with the section rail and service diagnostics |
@@ -30,6 +30,14 @@ The following existing PNGs are not referenced by the current numbered manual an
 | `web-ui-kanban.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
 | `web-ui-escalations.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
 | `web-ui-sessions.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
+
+The two manual references to `projects-list.png` (`05-web-ui.md`, `16-projects-workflow.md`) point at a
+capture from before the register became a grid of cards: the file still shows the older table with a Path
+column and a navigation column the shell has since changed. It is kept rather than replaced because a
+truthful replacement has to come from the disposable demo stack described above, which this refresh did
+not run — a screenshot of some other build would be worse than an old one that is labelled as old. The
+text around those references describes what the pages do, not the register's layout, so nothing in the
+manual contradicts the card grid.
 
 ## CLI (`../../screenshots/cli`)
 

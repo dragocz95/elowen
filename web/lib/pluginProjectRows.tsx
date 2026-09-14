@@ -42,10 +42,12 @@ export interface PluginProjectRowStatus {
  *    environment has no disk quota, so its disk figure is a true number of bytes and nothing else.
  *    It reads as the figure alone. It used to be reported as `1.2 GiB / ?`, which put a denominator
  *    on screen that does not exist, and as a percentage it would have had to be invented outright.
- *  - `loading` is a sample on its way, `stopped` is a resource that is not running to be measured, and
- *    `unavailable` is a measurement that could not be taken. None of the three carries a figure, and
- *    none of them is zero. */
-type PluginProjectRowMetricState = 'ready' | 'absolute' | 'loading' | 'stopped' | 'unavailable';
+ *  - `unknown` is a resource nothing is known about YET — the first render of a register, a sample the
+ *    runtime is still taking, a machine that is booting. `stopped` is a resource that is not running to
+ *    be measured, and `unavailable` is a measurement that could not be taken. None of the three carries
+ *    a figure, and none of them is zero: the host draws the ring and leaves it empty, which is why the
+ *    strip is on screen in its final geometry before the first batch has answered. */
+type PluginProjectRowMetricState = 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable';
 
 export interface PluginProjectRowMetric {
   id: string;

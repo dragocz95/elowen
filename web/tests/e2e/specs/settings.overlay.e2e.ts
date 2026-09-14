@@ -65,13 +65,64 @@ test('Settings intercepts navigation over chat and keeps canonical history', asy
   await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
 });
 
-test('Settings refreshes as the canonical full page', async ({ page }, testInfo) => {
+/** THE SAME PRESENTATION ON EVERY ARRIVAL. Interception answers a client navigation and nothing else, so
+ *  a refresh used to fall through to a standalone page: the same address wearing a different product. */
+test('Settings refreshes as the same overlay', async ({ page }, testInfo) => {
   authedOnly(testInfo);
   await openFromChat(page);
   await page.reload();
-  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
-  await expect(page.locator('[data-module="settings"]')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
   await expect(page).toHaveURL(/\/settings\?cat=/);
+});
+
+/** THE FLASH. A client navigation used to have two route trees answering for one screen — the canonical
+ *  page and the interceptor — so the standalone deck could paint for a frame before the overlay replaced
+ *  it. The canonical page draws nothing now, so there is no frame of standalone content to catch: the
+ *  deck only ever exists INSIDE the dialog, sampled every frame from the click until the overlay is up. */
+test('a client navigation never paints a standalone Settings before the overlay', async ({ page }, testInfo) => {
+  authedOnly(testInfo);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/chat');
+  await expect(page.locator('[data-module="chat"]')).toBeVisible();
+  const menu = page.getByRole('button', { name: 'Toggle menu' });
+  if (await menu.isVisible()) await menu.click();
+  const sidebar = page.locator('[data-shell="sidebar"][data-open="true"], [data-shell="sidebar"]:not([data-mode="drawer"])').first();
+
+  await page.evaluate(() => {
+    const counter = window as unknown as { __strayDecks: number };
+    counter.__strayDecks = 0;
+    const sample = () => {
+      counter.__strayDecks += [...document.querySelectorAll('[data-testid="settings-deck-layout"]')]
+        .filter((deck) => !deck.closest('[data-elowen-modal]')).length;
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+
+  await sidebar.locator('a[href="/settings"]').click();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __strayDecks: number }).__strayDecks)).toBe(0);
+});
+
+test('a cold load opens the overlay, with no standalone page behind it', async ({ page }, testInfo) => {
+  authedOnly(testInfo);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/settings?cat=models');
+
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible();
+  await expect(page.locator('[data-module="settings"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="settings-deck-layout"]')).toHaveCount(1);
+
+  // Back and forward keep answering with the overlay rather than with a page.
+  await page.goto('/dash');
+  await expect(page.locator('[data-module="dashboard"]')).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
+  await expect(page.locator('[data-module="dashboard"]')).toBeVisible();
 });
 
 test('the phone overlay is one full-screen pane navigated by a persistent section strip', async ({ page }, testInfo) => {

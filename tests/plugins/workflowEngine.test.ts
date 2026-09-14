@@ -99,7 +99,7 @@ function harness(opts: {
   gate = null;
   const tools = new Map<string, Tool>();
   const controls = new Map<string, WorkflowControl>();
-  const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string; model?: string; thinkingLevel?: string }[] }[] = [];
+  const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string; model?: string; thinkingLevel?: string; effectiveTps?: number; effectiveTurnId?: string; effectiveModel?: string }[] }[] = [];
   const launched: string[] = [];
   /** The context chunks each node was actually handed, by task — what the child can see, not what we hoped. */
   const contexts = new Map<string, string[]>();
@@ -124,7 +124,7 @@ function harness(opts: {
     contexts.set(task, source.access?.context ?? []);
     if (!opts.lateSession) onEvent({ type: 'session', sessionId: `s-${task}` });
     onEvent({ type: 'tool', name: 'Read' });
-    onEvent({ type: 'idle', usage: { totalTokens: 100 } });
+    onEvent({ type: 'idle', usage: { totalTokens: 100, effectiveTps: 37.5, effectiveTurnId: `turn-${task}`, effectiveModel: 'p/m' } });
     if (gate && task === gate.task) {
       await gate.promise;
       if (opts.lateSession) onEvent({ type: 'session', sessionId: `s-${task}` });
@@ -876,6 +876,14 @@ describe('workflow engine', () => {
     await tools.get('WorkflowStart')!.execute('t-model', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     const node = snapshots.at(-1)!.nodes[0]!;
     expect(node.model).toBe('p/m'); // the parent's model, which the node inherited
+  });
+
+  it('carries the exact measured speed and identity into completed workflow-node snapshots', async () => {
+    const { tools, snapshots } = harness();
+    await tools.get('WorkflowStart')!.execute('t-speed', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    expect(snapshots.at(-1)!.nodes[0]).toMatchObject({
+      status: 'done', effectiveTps: 37.5, effectiveTurnId: 'turn-a', effectiveModel: 'p/m',
+    });
   });
 
   /** Per-node reasoning effort. A DAG mixes a mechanical node with one that has to design or debug, so the

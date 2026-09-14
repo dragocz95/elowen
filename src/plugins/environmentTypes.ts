@@ -38,7 +38,7 @@ export type GuestFileOperation =
   /** `metadata` asks for names, kinds, sizes and modification times without the content hash a version
    *  costs. Entries answered that way carry NO `version` and so cannot be written against. */
   | { kind: 'list'; path: string; limit: number; cursor?: string; metadata?: boolean }
-  | { kind: 'read'; path: string; maxBytes: number; offset?: number; length?: number }
+  | { kind: 'read'; path: string; maxBytes: number; offset?: number; length?: number; expectedVersion?: string }
   | { kind: 'write'; path: string; base64: string; expectedVersion: string | null }
   /** Upload handles are bound to the original account, Project, generation, target and version. */
   | { kind: 'write-begin'; path: string; expectedVersion: string | null; size: number }
@@ -79,7 +79,8 @@ export type GuestFileResult =
   | { kind: 'walk'; root: string; rootKind: 'file' | 'directory' | 'symlink' | 'other' | null;
       entries: { path: string; kind: 'file' | 'directory' | 'symlink'; size: number; mtime: number }[]; truncated: boolean }
   | { kind: 'search'; matches: { path: string; line: number; text: string }[]; truncated: boolean };
-export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string }
+export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string; state?: string }
+export interface ManagedProjectFileRoot { root: string; generation: number; state: ProjectEnvironment['state']; workspaceId: string | null }
 export type ManagedWorktreeAction = { kind: 'list' } | { kind: 'create'; label: string; baseRef: string } | { kind: 'remove'; workspaceId: string };
 
 export interface ProjectPreviewBinding {
@@ -100,7 +101,7 @@ export interface ProjectPublicationBinding {
 }
 
 export const ENVIRONMENT_CONTROL_METHODS = [
-  'environmentFor', 'requestEnvironment', 'environmentOperation', 'projectFiles', 'revokeProjectAccess',
+  'environmentFor', 'requestEnvironment', 'environmentOperation', 'projectFileRoot', 'projectFiles', 'revokeProjectAccess',
   'environmentSnapshots', 'environmentLogs', 'managedWorktrees', 'projectPreviewBinding',
   'projectPublicationBinding', 'projectPublicationRelease', 'releaseAdoptedWorkspace',
 ] as const;
@@ -109,11 +110,12 @@ export interface ProjectEnvironmentControl {
   /** Reuse requestId when retrying the same intent after a lost response. */
   requestEnvironment(input: { project: ManagedProjectRef; accountUserId: number; action: EnvironmentAction; expectedGeneration?: number; requestId?: string }): Promise<EnvironmentOperation>;
   environmentOperation(input: { operationId: string; accountUserId: number }): Promise<EnvironmentOperation | null>;
-  projectFiles(input: { project: ManagedProjectRef; accountUserId: number; operation: GuestFileOperation; expectedGeneration?: number }): Promise<GuestFileResult>;
+  projectFileRoot(input: { project: ManagedProjectRef; accountUserId: number; workspaceId?: string | null }): Promise<ManagedProjectFileRoot>;
+  projectFiles(input: { project: ManagedProjectRef; accountUserId: number; operation: GuestFileOperation; expectedGeneration?: number; root?: string; workspaceId?: string | null; startIfNeeded?: boolean }): Promise<GuestFileResult>;
   revokeProjectAccess(input: { projectId: number; accountUserId: number }): Promise<void>;
   environmentSnapshots(input: { project: ManagedProjectRef; accountUserId: number }): Promise<EnvironmentSnapshot[]>;
   environmentLogs(input: { project: ManagedProjectRef; accountUserId: number; lines?: number }): Promise<{ lifecycle: string; journal: string }>;
-  managedWorktrees(input: { project: ManagedProjectRef; accountUserId: number; action: ManagedWorktreeAction }): Promise<ManagedWorktree[]>;
+  managedWorktrees(input: { project: ManagedProjectRef; accountUserId: number; action: ManagedWorktreeAction; startIfNeeded?: boolean }): Promise<ManagedWorktree[]>;
   projectPreviewBinding(input: { project: ManagedProjectRef; accountUserId: number; port: number }): Promise<ProjectPreviewBinding>;
   /** Durable by design: the binding survives the caller, the account and a container restart, and is
    *  re-established by the runtime's own reconciliation rather than by anything holding a lease. */

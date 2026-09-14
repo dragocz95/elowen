@@ -21,7 +21,7 @@ import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import type { ProjectEnvironmentControl } from './environmentTypes.js';
 export type { ProjectExecutionRef, ManagedProjectRef } from '../shared/projectExecution.js';
 export { GUEST_FILE_CHUNK_BYTES } from './environmentTypes.js';
-export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
+export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedProjectFileRoot, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
 
@@ -42,7 +42,7 @@ export interface SubagentProgressEvent {
   detail?: string;
   sessionId?: string;
   status?: string;
-  usage?: { totalTokens?: number };
+  usage?: { totalTokens?: number; effectiveTps?: number | null; effectiveTurnId?: string; effectiveModel?: string };
 }
 
 /** How a sub-agent continuation ended. `reply` = the child was idle, ran the follow-up as its own turn
@@ -1427,12 +1427,41 @@ export interface PublishedSitesGatewayControl {
   status(): Promise<PublishedSitesGatewayStatus>;
 }
 
+export type PluginSkillCatalogSource = 'personal' | 'instance' | 'bundled' | 'plugin';
+export type PluginSkillUnavailableReason = 'plugin-unavailable' | 'disabled-for-account' | 'shadowed';
+
+/** Stable, source-aware projection of one registered skill contribution. `key` exists only for plugin-
+ * contributed skills and is opaque to callers: writes must return it unchanged to the host, which validates
+ * it against the live registry generation instead of parsing or trusting client-supplied names. */
+export interface PluginSkillCatalogEntry {
+  key: string | null;
+  skill: PluginSkill;
+  contributorPlugin: string;
+  source: PluginSkillCatalogSource;
+  ownerUserId: number | null;
+  enabledForAccount: boolean;
+  effective: boolean;
+  unavailableReason?: PluginSkillUnavailableReason;
+}
+
 /** Core-owned live view of the exact skills the current turn was told it may use. A loader plugin must
- *  resolve through this rather than rescan only its own files: skills contributed by sibling plugins,
- *  per-account ownership and user grants have already been applied by the merged registry. */
+ * resolve through this rather than rescan only its own files: skills contributed by sibling plugins,
+ * per-account ownership, user grants and account overrides have already been applied by the merged registry. */
 export interface SkillCatalogControl {
   visibleSkills(): readonly PluginSkill[];
+  visibleEntries(): readonly PluginSkillCatalogEntry[];
   canonicalBaseDir(skill: PluginSkill): string | null;
+}
+
+export type PluginSkillAvailabilityWriteResult =
+  | { ok: true }
+  | { ok: false; reason: 'forbidden' | 'unknown-user' | 'unknown-skill' | 'invalid-overrides' | 'refresh-failed' };
+
+/** Narrow management authority for the Skills plugin. Kept separate from the broadly readable catalog:
+ * listing another account's unavailable contributions and changing an override are administrator actions. */
+export interface SkillManagementControl {
+  catalogForAccount(userId: number): readonly PluginSkillCatalogEntry[];
+  setPluginSkillEnabled(input: { userId: number; key: string; enabled: boolean }): Promise<PluginSkillAvailabilityWriteResult>;
 }
 
 /** Turn a support-file path of a currently VISIBLE skill into a readable host path, so a session whose
@@ -1460,6 +1489,51 @@ export interface SkillResourcesControl {
   resolveResource(requestedPath: string): string | null;
 }
 
+/** One rendering of one page, for a caller that needs a PICTURE of something the host already serves.
+ *
+ *  The target is named by absolute URL because the owner cannot resolve one for the consumer: a published
+ *  site's address is the Sites plugin's own configuration, not the browser's. That makes the URL the
+ *  dangerous part of this contract, so it is constrained on both ends. The consumer is required to derive
+ *  it server-side and is the only plugin the registry will hand this control to, and the implementation
+ *  must refuse anything that is not an absolute `http(s)` URL and must confine the rendering browser's
+ *  name resolution to that one host — a capture is not a fetch primitive, and this control must never
+ *  become a way to reach an address the caller could otherwise not reach.
+ *
+ *  `headers` exists because the caller may have to prove to its OWN serving path that this request is
+ *  allowed to see the page. It travels with the navigation and nowhere else. Handing over a browser
+ *  profile, a cookie jar or an account credential is expressly not how that is done: the rendering
+ *  context carries no identity of its own, keeps nothing, and is discarded with the capture. */
+export interface BrowserCaptureRequest {
+  /** Absolute `http(s)` URL, derived by the consuming plugin. Never a value that reached it from a client. */
+  url: string;
+  /** Request headers for this navigation only, applied to the throwaway context. */
+  headers?: Readonly<Record<string, string>>;
+  viewport: { width: number; height: number; deviceScaleFactor?: number };
+  /** Whole-operation deadline covering navigation, settle and encode. */
+  timeoutMs?: number;
+  format?: 'png' | 'webp';
+  /** Refuse rather than return an image larger than this. */
+  maxBytes?: number;
+}
+
+export interface BrowserCaptureResult {
+  image: Uint8Array;
+  mimeType: 'image/png' | 'image/webp';
+  width: number;
+  height: number;
+}
+
+/** Render a host-derived URL in a throwaway browser context and return the picture.
+ *
+ *  `available()` answers whether a capture could be attempted at all, so a consumer can present the
+ *  feature honestly instead of discovering the missing dependency one failed capture at a time. It is a
+ *  cheap, synchronous statement about the environment, never a promise that any particular capture will
+ *  succeed. */
+export interface BrowserCaptureControl {
+  available(): boolean;
+  capture(request: BrowserCaptureRequest): Promise<BrowserCaptureResult>;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -1474,7 +1548,9 @@ export interface KnownControls {
   microsoftIdentity: MicrosoftIdentityControl;
   github: GitHubIdentityControl;
   publishedSitesGateway: PublishedSitesGatewayControl;
+  browserCapture: BrowserCaptureControl;
   skillCatalog: SkillCatalogControl;
+  skillManagement: SkillManagementControl;
   skillResources: SkillResourcesControl;
 }
 

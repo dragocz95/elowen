@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, statfsSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { dirname, join } from 'node:path';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
+import { PROJECT_ARTIFACT, ROOTFS_RECIPES } from './rootfsCatalog.mjs';
 import { GUEST_SYSTEM_BUS, OUTPUT_LIMIT, positive, serviceProcessEnv, SpawnExecutor, unitProperties, validateInput } from './runtimeProcess.mjs';
 
 /** The one privileged executable, shared with the published-sites gateway: two typed domains behind one
@@ -51,12 +53,28 @@ const HELPER_RESPONSE_LIMIT = 16 * 1024 * 1024;
 const GUEST_COMMAND_TIMEOUT_MS = 30_000;
 /** How long one readiness probe may take. Short, because a probe that cannot answer is the answer. */
 const PROBE_TIMEOUT_MS = 5_000;
+const PROJECT_ROOTFS_ENABLED_UNITS = ROOTFS_RECIPES[PROJECT_ARTIFACT].enabled;
+const GUEST_NETWORK_READINESS_PY = `import json, subprocess
+try:
+  carrier=open('/sys/class/net/host0/carrier', encoding='utf-8').read().strip() == '1'
+except OSError:
+  carrier=False
+addresses=[]
+try:
+  result=subprocess.run(['/usr/sbin/ip','-json','address','show','dev','host0'], capture_output=True, text=True, timeout=3)
+  if result.returncode == 0:
+    for link in json.loads(result.stdout):
+      for address in link.get('addr_info', []):
+        if address.get('scope') == 'global' and isinstance(address.get('local'), str): addresses.append(address['local'])
+except (OSError, subprocess.SubprocessError, ValueError):
+  pass
+print(json.dumps({'carrier':carrier,'addresses':addresses}))`;
 /** `provision` writes root-owned files, runs a package manager and touches the host's packet filter, so it
  *  is not something an ordinary request may cause. It is reachable only from the administrator-only
  *  control above it, and every other operation here still REPORTS an unready host rather than repairing
  *  it — `write-envelope` re-checks the same rows and refuses. That split is the whole point: serving a
  *  project never changes the host, and an operator asking to prepare the host does. */
-const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw',
+const HELPER_OPERATIONS = new Set(['status', 'provision', 'materialize', 'write-envelope', 'shift-ownership', 'normalize-rootfs', 'exec', 'start', 'stop', 'set-limits', 'freeze', 'thaw',
   'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sizes', 'tree-sync', 'tree-verify', 'destroy', 'release-uid-range', 'retire-legacy-site']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
@@ -408,6 +426,28 @@ export class NspawnClient {
     return inventory;
   }
 
+  /** The file-borne half of the ownership proof: the disk's identity record and the two envelope files,
+   *  held against the specification, and the envelope identity those very bytes hash to. It reads what is
+   *  on disk and makes no privileged call, which is what lets a sweep that already has liveness from the
+   *  machine inventory prove ownership too, without a `systemctl show` per environment per pass.
+   *
+   *  `inspect` appends these mismatches to the ones it collected from the live unit and registration, so
+   *  the two proofs are one comparison over one set of fields rather than two that can drift apart. */
+  #envelopeEvidence(spec, machine, envelope, rootfs) {
+    const identity = readIdentity(this.#diskDirectory(spec));
+    const expected = { namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id),
+      generation: spec.generation, diskId: spec.disk.id, machine, runtime: 'nspawn',
+      specHash: spec.labels['io.elowen.spec'] };
+    const mismatches = [];
+    for (const [key, value] of Object.entries(expected)) {
+      if (identity[key] !== value) mismatches.push(`identity.${key}`);
+    }
+    if (!Number.isSafeInteger(identity.uidBase) || identity.uidBase < 1 || identity.uidSize !== UID_RANGE_SIZE) mismatches.push('identity.uidRange');
+    const id = createHash('sha256').update(JSON.stringify([spec.namespace, machine, spec.disk.id, rootfs, envelope.nspawn, envelope.dropIn])).digest('hex');
+    if (spec.expectedId && spec.expectedId !== id) mismatches.push('expectedId');
+    return { id, mismatches };
+  }
+
   /** The three independent host-side facts an environment is identified by. All of them have to match or
    *  every destructive operation refuses. */
   async inspect(spec) {
@@ -444,18 +484,27 @@ export class NspawnClient {
       const registered = unitProperties(machineShown.stdout);
       if (machineShown.code !== 0 || registered.Unit !== unitFor(machine) || registered.RootDirectory !== rootfs) mismatches.push('machine');
     }
-    const identity = readIdentity(this.#diskDirectory(spec));
-    const expected = { namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id),
-      generation: spec.generation, diskId: spec.disk.id, machine, runtime: 'nspawn',
-      specHash: spec.labels['io.elowen.spec'] };
-    for (const [key, value] of Object.entries(expected)) {
-      if (identity[key] !== value) mismatches.push(`identity.${key}`);
-    }
-    if (!Number.isSafeInteger(identity.uidBase) || identity.uidBase < 1 || identity.uidSize !== UID_RANGE_SIZE) mismatches.push('identity.uidRange');
-    const id = createHash('sha256').update(JSON.stringify([spec.namespace, machine, spec.disk.id, rootfs, envelope.nspawn, envelope.dropIn])).digest('hex');
-    if (spec.expectedId && spec.expectedId !== id) mismatches.push('expectedId');
+    const evidence = this.#envelopeEvidence(spec, machine, envelope, rootfs);
+    mismatches.push(...evidence.mismatches);
     if (mismatches.length) throw new Error(`Machine ownership or runtime specification mismatch: ${mismatches.join(', ')}`);
-    return { id, state };
+    return { id: evidence.id, state };
+  }
+
+  /** The proof that needs no privileged call: what the two envelope files and the disk identity record say
+   *  this machine name belongs to, held against the specification, plus the identity those bytes hash to.
+   *  It refuses a name held by a machine built from another specification exactly as `inspect` does, so a
+   *  caller that already knows the name is UP — from the machine inventory — can still ask whether it is
+   *  OURS without paying for a `systemctl show` per environment per sweep.
+   *
+   *  It says nothing about whether that machine is running: liveness stays the inventory's answer. */
+  async proveOwnership(spec) {
+    const machine = this.#machine(spec);
+    if (!await this.containerExists(spec)) throw new Error('No machine envelope of this name exists on this host');
+    const envelope = readEnvelope(this.#envelopePaths(machine));
+    const rootfs = realpathSync(spec.disk.rootfsPath);
+    const { id, mismatches } = this.#envelopeEvidence(spec, machine, envelope, rootfs);
+    if (mismatches.length) throw new Error(`Machine ownership or runtime specification mismatch: ${mismatches.join(', ')}`);
+    return { id };
   }
 
   #cgroupValue(machine, name) {
@@ -758,6 +807,41 @@ export class NspawnClient {
     }
   }
 
+  /** A shared-network guest is usable only once nspawn's host0 link has carrier and DHCP supplied at least
+   *  one global address. Guest systemd can be fully running without either when a migrated root kept
+   *  systemd-networkd disabled, so process readiness alone is not a network readiness signal. */
+  async networkReadiness(spec) {
+    const probe = await this.#guest(spec, ['/usr/bin/python3', '-c', GUEST_NETWORK_READINESS_PY], { allowFailure: true, timeoutMs: PROBE_TIMEOUT_MS });
+    if (probe.code !== 0) throw new Error(`Guest network readiness probe failed: ${probe.stderr.trim() || `exit ${probe.code}`}`);
+    let value;
+    try { value = JSON.parse(probe.stdout); }
+    catch { throw new Error('Guest network readiness probe returned invalid JSON'); }
+    if (typeof value?.carrier !== 'boolean' || !Array.isArray(value?.addresses)
+      || value.addresses.some((address) => typeof address !== 'string' || isIP(address) === 0)) {
+      throw new Error('Guest network readiness probe returned an invalid result');
+    }
+    const addresses = [...new Set(value.addresses)];
+    const ready = value.carrier && addresses.length > 0;
+    if (ready) return { ready: true, carrier: true, addresses };
+    const detail = !value.carrier && !addresses.length
+      ? 'host0 has no carrier and no global address'
+      : !value.carrier ? 'host0 has no carrier' : 'host0 has no global address';
+    return { ready: false, carrier: value.carrier, addresses, detail };
+  }
+
+  /** Wait through ordinary DHCP convergence, but never turn a guest with no working link into a successful
+   *  start merely because its system bus came up. */
+  async waitForNetwork(spec, { timeoutMs = 120_000 } = {}) {
+    const deadline = Date.now() + positive(timeoutMs, 15 * 60_000, 'network timeout');
+    let readiness;
+    for (;;) {
+      readiness = await this.networkReadiness(spec);
+      if (readiness.ready) return readiness;
+      if (Date.now() >= deadline) throw new Error(`Guest shared network did not become ready within ${Math.round(timeoutMs / 1000)}s (${readiness.detail})`);
+      await new Promise((resolve) => { setTimeout(resolve, 250); });
+    }
+  }
+
   async systemRunning(spec, { timeoutMs = 120_000 } = {}) {
     await this.#owned(spec);
     const deadline = Date.now() + positive(timeoutMs, 15 * 60_000, 'system state timeout');
@@ -985,6 +1069,20 @@ export class NspawnClient {
     return publicationIds.filter((_id, index) => states[index] === 'active');
   }
 
+  /** Reconcile the required offline unit enablement on an existing persistent root and nothing else. */
+  async normalizeRootfs(spec) {
+    const machine = this.#machine(spec);
+    checkedHostPath(spec.disk.rootfsPath);
+    const receipt = await this.#helper('normalize-rootfs', { machine, namespace: spec.namespace, kind: spec.resource.kind,
+      resource: String(spec.resource.id), generation: spec.generation, diskId: spec.disk.id,
+      specHash: spec.labels['io.elowen.spec'] });
+    if (typeof receipt?.changed !== 'boolean'
+      || JSON.stringify(receipt.enabled) !== JSON.stringify(PROJECT_ROOTFS_ENABLED_UNITS)) {
+      throw new Error('Invalid root filesystem normalization receipt');
+    }
+    return { changed: receipt.changed, enabled: [...receipt.enabled] };
+  }
+
   /** The one-time ownership pass that puts an existing disk tree onto the machine's own fixed uid range.
    *  Nothing is copied, and the range is recorded in the disk identity so it happens once for the life of
    *  the disk. */
@@ -1066,6 +1164,13 @@ export class NspawnClient {
   async removeStorage(spec) {
     this.#assertScope(spec);
     if (await this.containerExists(spec)) throw new Error('Container still owns environment storage');
+    // The envelope FILES are not the machine. They can be gone while a machine of this name is still up
+    // with this storage mounted — a helper that removed them and then failed, a hand-edit, an interrupted
+    // destroy — and removing the tree under a live machine leaves it running on a deleted root filesystem.
+    // The machine inventory is the liveness this refuses on, and it is asked on the DESTRUCTIVE path only.
+    // Named back rather than reported generically: an envelope can be gone while a machine of this name is
+    // still registered, and the machine name is then the only handle an operator can act on.
+    if ((await this.containerInventory(spec.namespace)).has(spec.name)) throw new Error(`A running machine still owns environment storage: ${spec.name}`);
     try {
       checkedHostPath(spec.storageRoot);
       await this.removeDiskPath(spec.storageRoot);

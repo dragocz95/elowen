@@ -120,7 +120,6 @@ describe('settled turn metadata', () => {
             durationMs: 1_000,
             model: catalogModel.exec,
           }}
-          artifacts={[]}
           models={[catalogModel]}
           showThoughts
         />

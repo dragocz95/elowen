@@ -20,12 +20,12 @@ import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUpdateConfig, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { announceLocation } from '../../lib/sameDocumentNavigation';
 import { SECTION_ALIASES, SETTINGS_CATEGORY_VALUES, settingsSectionHref, settingsSections, type SettingsCategory } from '../../modules/settings/categories';
 import { isPluginSettingsSectionId, parsePluginSettingsSectionId } from '../../modules/settings/pluginSections';
 import { pluginSectionHref } from '../../lib/pluginNav';
 import { useToast } from '../../components/ui/Toast';
 import { apiErrorMessage } from '../../lib/elowenClient';
-import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
@@ -42,7 +42,7 @@ import { MotionReveal } from '../../components/ui/Motion';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
-import { ModuleShell } from '../../components/shell/ModuleShell';
+import { SectionDeck } from '../../components/ui/SectionDeck';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { rowAnchor } from '../../lib/rowAnchors';
 import { useRowAnchor } from '../../lib/useRowAnchor';
@@ -110,7 +110,7 @@ function SettingsPanel({ id, active, visited, children }: {
   );
 }
 
-export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay' }) {
+export function SettingsView() {
   const [navigationQuery, setNavigationQuery] = useState('');
   const config = useConfig();
   const update = useUpdateConfig();
@@ -167,7 +167,14 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     setCategoryState('system'); // never leave the deck remembering a category it can no longer render
     const parsed = parsePluginSettingsSectionId(category);
     const entry = parsed && pluginUi.data.find((p) => p.name === parsed.plugin);
-    if (parsed && entry?.settings.some((s) => s.id === parsed.settingId)) router.replace(pluginSectionHref(entry, parsed.settingId));
+    if (parsed && entry?.settings.some((s) => s.id === parsed.settingId)) {
+      router.replace(pluginSectionHref(entry, parsed.settingId));
+      return;
+    }
+    // …and with no such page to forward to, the reader is standing on System while the address still
+    // names a plugin section nothing can open. A shared or reloaded link would put them here again, so
+    // the address is rewritten to the section the deck is actually showing.
+    announceLocation(settingsSectionHref('system'));
   }, [pluginUi.data, category, setCategoryState, router]);
   // React to CLIENT-side URL changes — the sidebar's nested settings sub-items navigate to `?cat=x`
   // without remounting the page, and useSearchParams updates on those.
@@ -184,11 +191,15 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // A bare `/settings` — from the instance menu, a bookmark, a redirect — names none of the six sections,
-  // and the menu outside this page can only mark the section the address names. So the page writes the one
-  // it opened on, and ONLY into that silence: an address that already names a section is the reader's, and
-  // the effect above is what follows it. `replaceState` because this is the same place by another
-  // spelling, not a step in the reader's history.
+  // The address must name the section this deck is SHOWING, spelled the one way the registry spells it.
+  // Three addresses arrive stale and mean the same thing: a bare `/settings` — from the instance menu, a
+  // bookmark, a redirect — which names no section at all; a retired spelling the alias table carries to a
+  // successor (`?cat=memory`); and an id no section here answers to. Each is rewritten to the canonical
+  // href for the section on screen, because the reader who reloads or shares that address must land on
+  // the page they are looking at rather than on whatever the stale id resolves to next time.
+  //
+  // A plugin section id is deliberately NOT handled here: whether it still has a page is a question for
+  // the forward/retire effect above, which asks the listing, and it is the only place that knows.
   //
   // It waits one commit. Both of this page's own sources — the remembered category and the URL — arrive
   // from mount effects, so on the first render `category` is still the bare fallback; writing THAT into
@@ -197,23 +208,41 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
   const [addressReady, setAddressReady] = useState(false);
   useEffect(() => { setAddressReady(true); }, []);
   useEffect(() => {
-    if (!addressReady || isValidCat(new URLSearchParams(window.location.search).get('cat'))) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set('cat', category);
-    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  }, [addressReady, category]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!addressReady) return undefined;
+    // On the same events the deck reads its own address on: arrival, and every popstate — including the
+    // ones its own section switches announce. A stale address reached through HISTORY is exactly the case
+    // that has to be caught here, because nothing about the category changes when it arrives.
+    const write = () => {
+      const named = new URLSearchParams(window.location.search).get('cat');
+      if (named !== null) {
+        // A plugin section id is not this rule's to judge: the forward/retire effect above asks the
+        // listing, and it is the only place that knows whether the section still has a page.
+        if (named === category || isPluginSettingsSectionId(named)) return;
+        // A section this deck CAN render is the reader's address, even for the one render before the state
+        // catches up with it — a section switch announces its own href, and rewriting it back here would
+        // undo the very navigation that prompted the event.
+        if (isValidCat(named) && resolveSectionId(named) === named) return;
+      }
+      // Only `cat` is rewritten: the rest of the address is state within this page — the plugin detail
+      // `?plugin=` names, a fragment, a filter — and it belongs to the reader, not to this rule.
+      const url = new URL(window.location.href);
+      url.searchParams.set('cat', category);
+      announceLocation(`${url.pathname}${url.search}${url.hash}`);
+    };
+    write();
+    window.addEventListener('popstate', write);
+    return () => window.removeEventListener('popstate', write);
+  }, [addressReady, category]);
   // …and the row within it, when the link named one: `?row=<anchor>` scrolls that record into view and
   // blinks it once. It reads the same three sources this section state does and consumes the parameter.
   useRowAnchor();
   const navigateToSettings = (href: string, next: string) => {
     setCategoryState(next);
-    // Rewrite the canonical Settings URL directly (the Next router's replace() doesn't reliably update
-    // this statically optimized route), then fire popstate so the shell highlight and row-anchor listener
-    // follow the same navigation. Category changes replace the current overlay history entry, so Back
-    // returns to the surface that opened Settings.
-    window.history.replaceState(window.history.state, '', href);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    // The one announcement a same-page navigation makes: it rewrites the canonical Settings URL directly
+    // (the Next router's replace() doesn't reliably update this statically optimized route) and fires
+    // popstate so the shell highlight and row-anchor listener follow the same navigation. Category
+    // changes replace the current overlay history entry, so Back returns to the surface that opened it.
+    announceLocation(href);
   };
   const setCategory = (next: string) => navigateToSettings(settingsSectionHref(next), next);
 
@@ -338,10 +367,13 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     setOverride(setModelMaxTokens, key, limits.maxTokens);
   };
 
-  if (config.isLoading) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><LoadingState /></ModuleShell>;
-  if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
+  // The deck's own states, bare. The surface around them — the title, the icon, the close control — is
+  // the page overlay this deck is always presented in, so repeating a module header here would put the
+  // word "Settings" on screen twice while the deck is still loading.
+  if (config.isLoading) return <LoadingState />;
+  if (config.isError) return <ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} />;
   // Administration surface — admins only. A non-admin who deep-links here gets a clear stop.
-  if (me.data?.user && !me.data.user.is_admin) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></ModuleShell>;
+  if (me.data?.user && !me.data.user.is_admin) return <EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} />;
 
   // Model allow-list changes auto-persist immediately. The catalog itself is owned by configured brain
   // providers; retired worker presets and custom worker entries are not editable on this surface.
@@ -363,9 +395,9 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave, retentionSave),
   };
   const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
-  // The same list, in the same order, that the sidebar draws its Settings sub-items from. Plugins do not
-  // appear in it: each owns a world in the main navigation and its settings sections are pages of that
-  // world.
+  // The same list, in the same order, that the deck's own navigation draws. The sidebar holds one row for
+  // Settings and nothing under it, so nothing else lists these sections. Plugins do not appear in it: each
+  // owns a world in the main navigation and its settings sections are pages of that world.
   const deckSections = settingsSections(t, agentAiLabel);
   const diagnostics = system.data?.diagnostics;
   const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;
@@ -800,7 +832,7 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
         </SettingsPanel>
 
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}>
-          <PluginsSection historyMode={surface === 'overlay' ? 'replace' : 'push'} />
+          <PluginsSection />
         </SettingsPanel>
 
         <SettingsPanel id="data" active={category} visited={visitedCategories}>
@@ -868,9 +900,9 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
   // section the reader had just opened disappeared behind the way back to it and moving between two
   // sections cost four taps. The strip keeps both on screen and never hides the current section.
   //
-  // BOTH presentations carry it. The canonical page used to leave the sections to the sidebar's own
-  // sub-menu, which is gone: a deck that is one row of the menu has to be navigable once you are in it,
-  // and a hard-loaded `/settings?cat=security` with no way to anywhere else is a dead end.
+  // It is the deck's OWN navigation, on every arrival: the sidebar holds one row for Settings and nothing
+  // under it, so a deck reached by a deep link, a refresh or the menu has to be navigable once you are in
+  // it — `/settings?cat=security` with no way to anywhere else is a dead end.
   {
     const navigation = (layout: 'sidebar' | 'tabs', className?: string) => (
       <SettingsNavigation
@@ -888,27 +920,10 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
           : router.replace(href)}
       />
     );
-    const deck = (
-      <div data-testid="settings-deck-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[15rem_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
-          {navigation('sidebar')}
-        </aside>
-        <section
-          role="region"
-          aria-label={activeSection.label}
-          className="flex min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 md:px-6 md:pb-4 md:pt-3"
-        >
-          {navigation('tabs', 'md:hidden')}
-          {settingsWorkspace}
-        </section>
-      </div>
-    );
-    if (surface === 'overlay') return deck;
     return (
-      <ModuleShell moduleId="settings">
-        <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
-        {deck}
-      </ModuleShell>
+      <SectionDeck testId="settings-deck-layout" contentLabel={activeSection.label} navigation={navigation}>
+        {settingsWorkspace}
+      </SectionDeck>
     );
   }
 }

@@ -7,8 +7,9 @@ import {
   statSync, writeFileSync,
 } from 'node:fs';
 
-const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = constants;
-import { dirname, join, normalize } from 'node:path';
+const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY, O_TRUNC, O_WRONLY } = constants;
+import { isIP } from 'node:net';
+import { basename, dirname, join, normalize } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
 export const MACHINE_STORAGE_RECEIPT_PATH = '/etc/elowen/machine-storage.json';
@@ -379,11 +380,14 @@ export function commandErrorText(error, timeoutMs = COMMAND_TIMEOUT_MS) {
   return `the command printed nothing: ${String(error.message || 'no error message')}`.slice(0, 1_000);
 }
 
-export function commandOptionsFor(file, _args = [], timeoutMs = COMMAND_TIMEOUT_MS) {
+export function commandOptionsFor(file, _args = [], timeoutMs = COMMAND_TIMEOUT_MS, pins = []) {
   const apt = file === '/usr/bin/apt-get';
   return {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // A pinned object is handed over as a numeric `stdio` entry, which is the only way it survives the
+    // exec: Node opens its own descriptors close-on-exec, and naming one here is what carries it into the
+    // child, where it appears as fd 3, 4, … in the order given.
+    stdio: ['ignore', 'pipe', 'pipe', ...pins],
     timeout: apt ? APT_TIMEOUT_MS : timeoutMs,
     maxBuffer: 2 * 1024 * 1024,
     env: {
@@ -393,8 +397,8 @@ export function commandOptionsFor(file, _args = [], timeoutMs = COMMAND_TIMEOUT_
   };
 }
 
-export function defaultCommandRunner(file, args, { timeoutMs } = {}) {
-  const options = commandOptionsFor(file, args, timeoutMs);
+export function defaultCommandRunner(file, args, { timeoutMs, pins = [] } = {}) {
+  const options = commandOptionsFor(file, args, timeoutMs, pins);
   try {
     const stdout = execFileSync(file, args, options);
     return { ok: true, stdout: String(stdout) };
@@ -566,6 +570,10 @@ export function safeGuestMountTarget(value) {
 }
 
 export const NSPAWN_PACKAGE = 'systemd-container';
+/** Mirrored from the project-base rootfs recipe. The helper is installed as standalone root-owned ESM and
+ *  cannot import service-user-owned plugin code; the contract test holds this mirror byte-for-byte to the
+ *  recipe so the privileged migration seam never invents a second policy. */
+export const PROJECT_ROOTFS_ENABLED_UNITS = Object.freeze(['systemd-networkd.service', 'systemd-networkd.socket']);
 export const MACHINE_UNIT_PATH = '/etc/systemd/system/elowen-machine@.service';
 export const POLKIT_RULE_PATH = '/etc/polkit-1/rules.d/49-elowen-nspawn.rules';
 const NSPAWN_SETTINGS_ROOT = '/etc/systemd/nspawn';
@@ -684,24 +692,64 @@ const MACHINE_INTERFACE = 've-+';
  *
  *  Forwarding needs both directions named in the native FORWARD chain. The request leaves through `ve-+`
  *  and its reply returns to `ve-+`; either direction can otherwise fall through to a host DROP policy or
- *  a later framework-owned chain. Fixed positions 1 and 2 keep both accepts ahead of those rules on hosts
+ *  a later framework-owned chain. Fixed positions keep both accepts ahead of those rules on hosts
  *  with or without Docker. The return path is conntrack-scoped, so it admits no connection the machine did
  *  not establish. The DHCP exception and stateful native-DNAT return path still have to precede the INPUT
  *  guard.
  *
- *  IPv6 needs the same stateful return rule before its guard. Measured, this host carries no global IPv6
- *  address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets nothing but a link-local address on
- *  its side of the link. There is no v6 path off the box to keep open, while a future native IPv6 port map
- *  still needs its established replies admitted without opening a new guest-to-host connection. If the
- *  host ever gains IPv6 connectivity this needs measuring again, because a global address would put v6
- *  forwarding in play and the set above would no longer be complete. */
+ *  Two DROPs precede both forwarding accepts, because a machine routed through this host can otherwise
+ *  reach the cloud platform the host itself lives on. `169.254.0.0/16` is IPv4 link-local, which is both
+ *  where the instance-metadata service answers (169.254.169.254) and where nspawn already puts the host
+ *  side of the link; 168.63.129.16 is Azure's platform virtual IP, which serves WireServer, the health
+ *  probe and the host's own DNS. A machine on the host's own default route reaches both through FORWARD,
+ *  and what it can fetch there is credential material belonging to the host, not to the environment.
+ *  The blocks must stay ahead of the forwarding accepts. When the selected configured resolver is Azure's
+ *  platform address, the plan admits only TCP and UDP DNS to that exact destination before the broad DROP;
+ *  WireServer, metadata and every other port remain denied. Link-local traffic between a machine and its
+ *  own link is delivered into INPUT rather than forwarded.
+ *
+ *  IPv6 needs the same stateful return rule before its guard, and the same egress block. Measured, this
+ *  host carries no global IPv6 address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets
+ *  nothing but a link-local address on its side of the link. There is no v6 path off the box to keep
+ *  open, while a future native IPv6 port map still needs its established replies admitted without opening
+ *  a new guest-to-host connection. `fe80::/10` is IPv6 link-local, which is also where the platform's
+ *  IPv6 endpoints live, so one DROP covers both. If the host ever gains IPv6 connectivity this needs
+ *  measuring again, because a global address would put v6 forwarding in play and the set above would no
+ *  longer be complete. */
 export const NSPAWN_FIREWALL_RULES = Object.freeze([
+  Object.freeze({
+    id: 'firewall:egress-link-local',
+    label: 'Machine egress to link-local',
+    binary: '/usr/sbin/iptables',
+    chain: 'FORWARD',
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', '169.254.0.0/16', '-m', 'comment', '--comment', 'elowen-machine-egress-link-local', '-j', 'DROP']),
+    why: 'a machine on the host default route reaches the instance-metadata service at 169.254.169.254 through FORWARD, where the host instance credentials are served',
+  }),
+  Object.freeze({
+    id: 'firewall:egress-azure-platform',
+    label: 'Machine egress to the cloud platform',
+    binary: '/usr/sbin/iptables',
+    chain: 'FORWARD',
+    insertAt: 2,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', '168.63.129.16/32', '-m', 'comment', '--comment', 'elowen-machine-egress-azure-platform', '-j', 'DROP']),
+    why: 'the Azure platform virtual IP answers WireServer and the host health probe, so a forwarded machine could read the host platform credentials',
+  }),
+  Object.freeze({
+    id: 'firewall:egress-link-local6',
+    label: 'Machine egress to link-local (IPv6)',
+    binary: '/usr/sbin/ip6tables',
+    chain: 'FORWARD',
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', 'fe80::/10', '-m', 'comment', '--comment', 'elowen-machine-egress-link-local6', '-j', 'DROP']),
+    why: 'IPv6 link-local is where the platform answers over v6 as well, and the guest link carries a link-local address of its own',
+  }),
   Object.freeze({
     id: 'firewall:forward-out',
     label: 'Machine forwarding',
     binary: '/usr/sbin/iptables',
     chain: 'FORWARD',
-    insertAt: 1,
+    insertAt: 3,
     spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-forward-out', '-j', 'ACCEPT']),
     why: 'without the native forwarding rule a host policy or later framework chain can block every machine request',
   }),
@@ -710,7 +758,7 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine return path',
     binary: '/usr/sbin/iptables',
     chain: 'FORWARD',
-    insertAt: 2,
+    insertAt: 4,
     spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-forward-back', '-j', 'ACCEPT']),
     why: 'without the conntrack-scoped native return rule a machine can send traffic but never receive its replies',
   }),
@@ -761,6 +809,44 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
   }),
 ]);
 
+const AZURE_PLATFORM_RESOLVER = '168.63.129.16';
+
+function shiftedFirewallRule(rule, insertAt) {
+  return Object.freeze({ ...rule, insertAt });
+}
+
+/** The selected resolver and the firewall are one plan. Azure exposes DNS and privileged platform services
+ *  on the same address, so only the two DNS transports are inserted before the unchanged platform DROP. */
+export function nspawnFirewallRules(resolver = null) {
+  if (resolver?.address !== AZURE_PLATFORM_RESOLVER) return NSPAWN_FIREWALL_RULES;
+  const dnsRules = [
+    Object.freeze({
+      id: 'firewall:resolver-azure-dns-udp',
+      label: 'Machine DNS through the Azure platform resolver (UDP)',
+      binary: '/usr/sbin/iptables',
+      chain: 'FORWARD',
+      insertAt: 2,
+      spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', `${AZURE_PLATFORM_RESOLVER}/32`, '-p', 'udp', '-m', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'elowen-machine-resolver-azure-dns-udp', '-j', 'ACCEPT']),
+      why: 'the configured machine resolver is Azure platform DNS, so UDP port 53 to that exact address must precede the platform deny',
+    }),
+    Object.freeze({
+      id: 'firewall:resolver-azure-dns-tcp',
+      label: 'Machine DNS through the Azure platform resolver (TCP)',
+      binary: '/usr/sbin/iptables',
+      chain: 'FORWARD',
+      insertAt: 3,
+      spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', `${AZURE_PLATFORM_RESOLVER}/32`, '-p', 'tcp', '-m', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'elowen-machine-resolver-azure-dns-tcp', '-j', 'ACCEPT']),
+      why: 'the configured machine resolver is Azure platform DNS, so TCP port 53 to that exact address must precede the platform deny',
+    }),
+  ];
+  return Object.freeze(NSPAWN_FIREWALL_RULES.flatMap((rule) => {
+    if (rule.id === 'firewall:egress-azure-platform') return [...dnsRules, shiftedFirewallRule(rule, 4)];
+    if (rule.id === 'firewall:forward-out') return [shiftedFirewallRule(rule, 5)];
+    if (rule.id === 'firewall:forward-back') return [shiftedFirewallRule(rule, 6)];
+    return [rule];
+  }));
+}
+
 const RETIRED_NSPAWN_FIREWALL_RULES = Object.freeze([
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']) }),
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']) }),
@@ -800,7 +886,8 @@ export const MACHINE_FIREWALL_UNIT_PATH = `/etc/systemd/system/${MACHINE_FIREWAL
  *  them. Every run removes the exact retired and current rules, then inserts the current rules at their
  *  fixed positions. This repairs an older append-only guard and any later ordering drift. The condition
  *  keeps a host without a packet filter from failing the unit: readiness then reports the rules as missing. */
-export const MACHINE_FIREWALL_UNIT = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+export function renderMachineFirewallUnit(rules = NSPAWN_FIREWALL_RULES) {
+  return `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
 [Unit]
 Description=Elowen machine firewall rules
 Documentation=man:iptables(8)
@@ -811,11 +898,14 @@ Wants=network-online.target
 Type=oneshot
 ExecCondition=/usr/bin/test -x /usr/sbin/iptables -a -x /usr/sbin/ip6tables
 ${RETIRED_NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleRemovalCommand(rule)}'`).join('\n')}
-${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleResetCommand(rule)}'`).join('\n')}
+${rules.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleResetCommand(rule)}'`).join('\n')}
 
 [Install]
 WantedBy=multi-user.target docker.service
 `;
+}
+
+export const MACHINE_FIREWALL_UNIT = renderMachineFirewallUnit();
 
 /** Forwarding, recorded where it survives a reboot rather than only set live.
  *
@@ -1207,9 +1297,11 @@ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
 print(json.dumps({'entries':shifted}))`;
 
 /** The pass maps guest id g to base+g and consults no other mapping, so the spec carries the range and
- *  nothing about the host's accounts. */
-function shiftOwnership(runner, root, spec) {
-  const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root], { timeoutMs: DISK_TREE_TIMEOUT_MS });
+ *  nothing about the host's accounts. `root` is the pinned address of the tree, and `pins` is the stdio
+ *  handoff that addresses it: the pass walks the object this helper opened, not a name it resolves again
+ *  seconds later. */
+function shiftOwnership(runner, root, spec, pins = []) {
+  const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root], { timeoutMs: DISK_TREE_TIMEOUT_MS, pins });
   if (!result.ok) fail(`the machine ownership pass failed: ${String(result.stderr || '').slice(-400)}`);
   return JSON.parse(String(result.stdout || '{}'));
 }
@@ -1231,25 +1323,35 @@ function serviceGroupId(env) {
 function writeIdentity(paths, storage, fields, options) {
   const writeAtomic = options.writeAtomic ?? atomicWrite;
   // The disk directory belongs to the service user, so the directory root is about to write INTO is held
-  // against the trusted roots exactly like every other path here. Without it, `.elowen` planted as a
-  // symlink pointing out of the storage roots would have root create directories and a file at the other
-  // end of it — the atomic write creates missing parents.
+  // against the trusted roots exactly like every other path here, and then OPENED: `.elowen` is created
+  // and opened underneath THAT descriptor, and the record is written through the descriptor of the
+  // `.elowen` this helper opened. A name-based write would let the account that owns the disk directory
+  // swap an ancestor for a symlink after the check and have root create directories and a file at the
+  // other end of it — the atomic write creates missing parents, so the whole path would follow the link.
   const directory = trustedPath(storage, paths.directory);
   // The chown is skipped exactly where the write is faked: a test seam runs unprivileged and cannot give
   // a file away, and the two must not disagree about who owns the record.
   const privileged = options.writeAtomic === undefined;
   const gid = privileged ? serviceGroupId(options.env ?? process.env) : -1;
-  ensureIdentityDirectory(join(directory, '.elowen'), gid);
-  // Written whole, never merged over what is already there. The record is composed from fields this
-  // helper derived and validated itself, and a previous file is the service user's to replace: merging
-  // would carry whatever keys it planted into a root-owned record, and the day something reads a key it
-  // did not put there, that is where it came from.
-  const identity = { ...fields, updatedAt: new Date().toISOString() };
-  writeAtomic(paths.identity, Buffer.from(`${JSON.stringify(identity, null, 2)}\n`), 0o640);
-  // Safe by containment rather than by descriptor: `.elowen` is root-owned and not group-writable, so the
-  // account that owns the disk directory around it cannot unlink this file and put a link in its place.
-  if (privileged) chownSync(paths.identity, 0, gid);
-  return identity;
+  return withPinned([{ path: directory }], ([pinnedDirectory]) => {
+    const identityDirectory = ensureIdentityDirectory(pinnedEntry(pinnedDirectory, '.elowen'), gid);
+    try {
+      // Written whole, never merged over what is already there. The record is composed from fields this
+      // helper derived and validated itself, and a previous file is the service user's to replace: merging
+      // would carry whatever keys it planted into a root-owned record, and the day something reads a key
+      // it did not put there, that is where it came from.
+      const identity = { ...fields, updatedAt: new Date().toISOString() };
+      const record = `${pinnedPath(identityDirectory)}/${basename(paths.identity)}`;
+      writeAtomic(record, Buffer.from(`${JSON.stringify(identity, null, 2)}\n`), 0o640);
+      // Safe by containment rather than by descriptor: `.elowen` is root-owned and not group-writable, so
+      // the account that owns the disk directory around it cannot unlink this file and put a link in its
+      // place — and the path below is reached through the descriptor of that very directory.
+      if (privileged) chownSync(record, 0, gid);
+      return identity;
+    } finally {
+      closeSync(identityDirectory);
+    }
+  });
 }
 
 /** Create the identity directory explicitly rather than letting a recursive mkdir do it: an existing
@@ -1262,7 +1364,11 @@ function writeIdentity(paths, storage, fields, options) {
  *  the traverse and nothing else: the group still cannot create, remove or replace anything here.
  *
  *  An existing directory is converged rather than trusted, because the directories the earlier helper
- *  created are all root:root and would otherwise stay broken until their disk was rebuilt. */
+ *  created are all root:root and would otherwise stay broken until their disk was rebuilt.
+ *
+ *  The caller gets the descriptor, still open, because everything written here afterwards goes through
+ *  it. The path it is given is expressed under the caller's pinned address, so a missing `.elowen` is
+ *  created inside the directory this helper opened rather than under a name resolved again. */
 function ensureIdentityDirectory(path, gid) {
   // The disk directory around this one belongs to the service user, so both the existence check and the
   // repair happen through one descriptor rather than through the name twice. `O_DIRECTORY|O_NOFOLLOW`
@@ -1285,15 +1391,110 @@ function ensureIdentityDirectory(path, gid) {
     // Converged rather than trusted: every directory an earlier helper made is root:root, which left the
     // service group without the traverse permission the record inside it depends on.
     if (gid >= 0 && (stat.uid !== 0 || stat.gid !== gid)) fchownSync(fd, 0, gid);
-  } finally {
+  } catch (error) {
     closeSync(fd);
+    throw error;
   }
+  return fd;
 }
 
 /** A directory opened as itself: never a symlink, never a regular file, and the same object for every
  *  operation that follows on the descriptor. */
 function openDirectory(path) {
   return openSync(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+}
+
+/* Every tree operation below validates a path by NAME and then runs a privileged command over it. Those
+ * are not one atomic step: a tar extraction, a recursive removal or a python ownership pass runs for
+ * seconds afterwards, and every component of these paths belongs to the service user, who can replace an
+ * ancestor with a symlink inside that gap. A command that resolves the name again then reads, writes or
+ * deletes somewhere else entirely, as root.
+ *
+ * So the object is opened HERE — never through a symlink, never as the wrong kind — and the command is
+ * handed the DESCRIPTOR, addressed as `/proc/self/fd/N`. A numeric entry in a child's `stdio` is what
+ * carries it across exec (Node's own descriptors are close-on-exec), so the child's fd 3, 4, … is this
+ * process's descriptor for the validated object, and whatever happens to the name afterwards cannot
+ * steer the operation away from it. */
+
+/** Where a pinned object appears to the child that is handed it: `stdio` entry N is the child's fd N. */
+const PINNED_FD_BASE = 3;
+
+function pinnedPath(fd) {
+  return `/proc/self/fd/${fd}`;
+}
+
+/** A path inside a pinned object for work that happens HERE rather than in a child: the descriptor is
+ *  named by the number it actually has in this process. */
+function pinnedEntry(pin, name = '') {
+  return name === '' ? pinnedPath(pin.fd) : `${pinnedPath(pin.fd)}/${name}`;
+}
+
+/** Whether the descriptor holds the very object the validated path leads to, proved rather than assumed:
+ *  the path is descended from `/` one component at a time, each component opened through the one above
+ *  it, refusing a symlink at every step. A path whose ancestor became a symlink between the validation
+ *  and this open cannot be descended at all, and a path swapped for another real directory lands on a
+ *  different inode — either way the operation is abandoned instead of run somewhere else. */
+function descriptorMatchesPath(path, fd, flags) {
+  const parts = path.slice(1).split('/');
+  const leaf = parts.pop();
+  let current = -1;
+  try {
+    current = openSync('/', O_RDONLY | O_DIRECTORY);
+    for (const part of parts) {
+      const next = openSync(`${pinnedPath(current)}/${part}`, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+      closeSync(current);
+      current = next;
+    }
+    const reached = openSync(`${pinnedPath(current)}/${leaf}`, flags);
+    try {
+      const pinned = fstatSync(fd);
+      const walked = fstatSync(reached);
+      return pinned.dev === walked.dev && pinned.ino === walked.ino;
+    } finally {
+      closeSync(reached);
+    }
+  } catch {
+    return false;
+  } finally {
+    if (current >= 0) closeSync(current);
+  }
+}
+
+/** Open one validated path as the object it names, for a child at stdio `slot`.
+ *
+ *  The result carries two addresses for the same object, and they are NOT interchangeable. `fd` is the
+ *  descriptor's number in this process, for work done here; `childPath` is what the object is called
+ *  once the descriptor has been handed over as the child's stdio entry `slot`, because a child numbers
+ *  the descriptors it inherits from 3 up in the order they are given. */
+function pinObject(path, slot, { file = false } = {}) {
+  const flags = file ? O_RDONLY | O_NOFOLLOW : O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
+  const fd = openSync(path, flags);
+  if (!descriptorMatchesPath(path, fd, flags)) {
+    closeSync(fd);
+    fail('the requested path changed while it was being opened');
+  }
+  return { fd, childPath: pinnedPath(slot) };
+}
+
+/** Open every object for ONE privileged command and run `body` with them, closing every descriptor
+ *  afterwards whether the body threw or not. The array's order IS the child's fd numbering, so a body
+ *  always hands the same array to the command whose argv names those slots. */
+function withPinned(objects, body) {
+  const fds = [];
+  try {
+    return body(objects.map((object, index) => {
+      const pinned = pinObject(object.path, PINNED_FD_BASE + index, { file: object.file === true });
+      fds.push(pinned.fd);
+      return pinned;
+    }));
+  } finally {
+    for (const fd of fds) closeSync(fd);
+  }
+}
+
+/** The descriptors of one command's pinned objects, in the order that is also its stdio numbering. */
+function pinFds(pinned) {
+  return pinned.map((pin) => pin.fd);
 }
 
 /** The identity fields the runtime holds against its own specification, field by field, on every
@@ -1327,60 +1528,107 @@ function nspawnMachineName(value) {
 }
 
 /** Extract a captured export into a tree the machine's uid range owns. Both paths arrive whole and are
- *  re-validated against the trusted roots: the archive lives beside its receipt under the environment's
- *  own storage, and the target is the staging directory the daemon created and will rename into place. */
+ *  re-validated against the trusted roots — the archive lives beside its receipt under the environment's
+ *  own storage, and the target is the staging directory the daemon created and will rename into place —
+ *  and both are then opened and handed to `tar` as descriptors: the extraction runs for as long as a
+ *  multi-gigabyte unpack takes, which is far longer than the name it was validated under can be trusted
+ *  to mean the same thing. */
 function nspawnMaterialize(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
   const paths = nspawnDiskPaths(storage, request);
   const archive = trustedPath(storage, request.archivePath, { file: true });
   const target = trustedPath(storage, request.targetPath);
-  if (readdirSync(target).length > 0) fail('the extraction target is not empty');
-  const extracted = runner('/usr/bin/tar', [
-    '--extract', '--file', archive, '--directory', target, '--numeric-owner', '--preserve-permissions', '--same-owner',
-  ], { timeoutMs: DISK_TREE_TIMEOUT_MS });
-  if (!extracted.ok) fail(`the root filesystem could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
-  // The machine's `/` has to be traversable by every process in the guest, not only by its root, and this
-  // is the operation that establishes the tree, so this is where that is made true.
-  //
-  // Two things can leave it otherwise. The caller creates the directory and may create it narrow. And an
-  // archive that carries its own root member rewrites the mode of the directory it is extracted into:
-  // measured with exactly the flags above, an archive whose `./` entry is 0700 turns a 0755 target into
-  // 0700, while an archive without a root member leaves it alone. So a tree exported from a disk whose
-  // root was once narrow reproduces that mode here on every restore, for as long as the archive exists.
-  //
-  // What that costs inside the machine is worth stating, because nothing about it looks like a permission
-  // problem: root traverses anyway, so the boot gets far. dbus-daemon starts as root, opens its socket,
-  // drops to `messagebus`, and from then on cannot resolve a single path. Its readiness notification never
-  // arrives, the unit times out after 90 seconds with a live process and a live socket the whole time, and
-  // it restarts forever. Every image ships `/` at 0755 and nothing about a machine root wants less.
-  // Through a descriptor, and one that can only ever be this directory: the tree was just unpacked into a
-  // place the service user owns, so a chmod by name could be pointed at something else between the check
-  // and the call.
-  //
-  // The same directory also has to present as the GUEST's root before the ownership pass below, and for
-  // the same reason it does not already: the daemon created it, so it carries the service account's ids,
-  // and `tar` chowns what it unpacks rather than the directory it unpacks into. The pass runs in `offset`
-  // mode, where guest id g becomes base+g, so the service account's uid 33 lands on base+33 while `/etc`
-  // and everything else lands on base+0. The machine's own root would then own every file in its root
-  // filesystem except the root directory itself, which is exactly what `write-envelope` refuses.
-  const rootfsFd = openDirectory(target);
+  return withPinned([{ path: archive, file: true }, { path: target }], ([pinnedArchive, pinnedTarget]) => {
+    if (readdirSync(pinnedEntry(pinnedTarget)).length > 0) fail('the extraction target is not empty');
+    const extracted = runner('/usr/bin/tar', [
+      '--extract', '--file', pinnedArchive.childPath, '--directory', pinnedTarget.childPath, '--numeric-owner', '--preserve-permissions', '--same-owner',
+    ], { timeoutMs: DISK_TREE_TIMEOUT_MS, pins: pinFds([pinnedArchive, pinnedTarget]) });
+    if (!extracted.ok) fail(`the root filesystem could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
+    // The machine's `/` has to be traversable by every process in the guest, not only by its root, and this
+    // is the operation that establishes the tree, so this is where that is made true.
+    //
+    // Two things can leave it otherwise. The caller creates the directory and may create it narrow. And an
+    // archive that carries its own root member rewrites the mode of the directory it is extracted into:
+    // measured with exactly the flags above, an archive whose `./` entry is 0700 turns a 0755 target into
+    // 0700, while an archive without a root member leaves it alone. So a tree exported from a disk whose
+    // root was once narrow reproduces that mode here on every restore, for as long as the archive exists.
+    //
+    // What that costs inside the machine is worth stating, because nothing about it looks like a permission
+    // problem: root traverses anyway, so the boot gets far. dbus-daemon starts as root, opens its socket,
+    // drops to `messagebus`, and from then on cannot resolve a single path. Its readiness notification never
+    // arrives, the unit times out after 90 seconds with a live process and a live socket the whole time, and
+    // it restarts forever. Every image ships `/` at 0755 and nothing about a machine root wants less.
+    // Through a descriptor, and one that can only ever be this directory: the tree was just unpacked into a
+    // place the service user owns, so a chmod by name could be pointed at something else between the check
+    // and the call.
+    //
+    // The same directory also has to present as the GUEST's root before the ownership pass below, and for
+    // the same reason it does not already: the daemon created it, so it carries the service account's ids,
+    // and `tar` chowns what it unpacks rather than the directory it unpacks into. The pass runs in `offset`
+    // mode, where guest id g becomes base+g, so the service account's uid 33 lands on base+33 while `/etc`
+    // and everything else lands on base+0. The machine's own root would then own every file in its root
+    // filesystem except the root directory itself, which is exactly what `write-envelope` refuses.
+    fchmodSync(pinnedTarget.fd, 0o755);
+    (options.setOwner ?? defaultSetOwner)(pinnedTarget.fd, 0, 0);
+    truncateMachineId(pinnedEntry(pinnedTarget));
+    const pins = pinFds([pinnedArchive, pinnedTarget]);
+    const normalized = normalizeRootfsEnabledUnits(runner, pinnedTarget, pins);
+    const base = uidRangeFor(paths, options);
+    // The pass translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
+    // needs nothing from /etc/subuid and nothing about the service account.
+    const shifted = shiftOwnership(runner, pinnedTarget.childPath, { base, size: UID_RANGE_SIZE }, pins);
+    const identity = writeIdentity(paths, storage, identityFields(request, paths, base), options);
+    return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity, ...normalized };
+  });
+}
+
+/** Empty the template's machine id inside an extracted tree, so systemd generates a fresh one on first
+ *  boot instead of every machine built from that image presenting as the same host to systemd, journald
+ *  and D-Bus.
+ *
+ *  The archive is untrusted input, and `etc` inside it may be a symlink to somewhere else entirely, so
+ *  both the directory and the record are opened as themselves under the caller's pinned tree and a
+ *  symlink is refused rather than followed. `O_WRONLY|O_NOFOLLOW|O_TRUNC` on the record is the whole
+ *  edit — nothing is read — and a tree whose `etc` or machine-id is simply not there is left alone. */
+function truncateMachineId(rootPath) {
+  let etc;
   try {
-    fchmodSync(rootfsFd, 0o755);
-    (options.setOwner ?? defaultSetOwner)(rootfsFd, 0, 0);
-  } finally { closeSync(rootfsFd); }
-  // A machine id copied from the template would make every machine built from it the same host to
-  // systemd, journald and D-Bus. Truncated, systemd generates one on first boot.
-  const etc = join(target, 'etc');
-  if (existsSync(etc)) {
-    const machineIdPath = join(trustedPath(storage, etc), 'machine-id');
-    if (existsSync(machineIdPath)) writeFileSync(machineIdPath, '');
+    etc = openDirectory(`${rootPath}/etc`);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    if (error?.code === 'ELOOP' || error?.code === 'ENOTDIR') fail('the extracted machine etc directory is not a directory');
+    throw error;
   }
-  const base = uidRangeFor(paths, options);
-  // The pass translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
-  // needs nothing from /etc/subuid and nothing about the service account.
-  const shifted = shiftOwnership(runner, target, { base, size: UID_RANGE_SIZE });
-  const identity = writeIdentity(paths, storage, identityFields(request, paths, base), options);
-  return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity };
+  try {
+    let machineId;
+    try {
+      machineId = openSync(`${pinnedPath(etc)}/machine-id`, O_WRONLY | O_NOFOLLOW | O_TRUNC);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      if (error?.code === 'ELOOP') fail('the extracted machine id is a symlink');
+      throw error;
+    }
+    closeSync(machineId);
+  } finally {
+    closeSync(etc);
+  }
+}
+
+/** Apply the rootfs recipe's required enablement through systemd's own offline implementation. A probe
+ *  precedes the mutation so a root produced by the current artifact is byte-for-byte untouched, while a
+ *  migrated Podman-era root changes only the missing enablement links. The pinned descriptor keeps
+ *  `--root` on the tree this helper opened even if its service-user-owned path is renamed concurrently. */
+function normalizeRootfsEnabledUnits(runner, pinnedRoot, pins) {
+  const root = `--root=${pinnedRoot.childPath}`;
+  const missing = [];
+  for (const unit of PROJECT_ROOTFS_ENABLED_UNITS) {
+    const status = runner('/usr/bin/systemctl', [root, 'is-enabled', unit], { timeoutMs: 30_000, pins });
+    if (!status.ok || String(status.stdout || '').trim() !== 'enabled') missing.push(unit);
+  }
+  if (!missing.length) return { changed: false, enabled: [...PROJECT_ROOTFS_ENABLED_UNITS] };
+  const enabled = runner('/usr/bin/systemctl', [root, 'enable', ...missing], { timeoutMs: 30_000, pins });
+  if (!enabled.ok) fail(`the required root filesystem units could not be enabled: ${String(enabled.stderr || '').slice(-400)}`);
+  return { changed: true, enabled: [...PROJECT_ROOTFS_ENABLED_UNITS] };
 }
 
 /** The ownership pass over a disk that already exists, onto the range the registry holds for the
@@ -1391,15 +1639,41 @@ function nspawnShiftOwnership(request, storage, options) {
   const paths = nspawnDiskPaths(storage, request);
   const rootfs = trustedPath(storage, paths.rootfs);
   const base = uidRangeFor(paths, options);
-  const shifted = shiftOwnership(runner, rootfs, { base, size: UID_RANGE_SIZE });
-  writeIdentity(paths, storage, identityFields(request, paths, base), options);
-  return {
-    ok: true,
-    rootfsPath: rootfs,
-    uidBase: base,
-    uidSize: UID_RANGE_SIZE,
-    entries: shifted.entries,
-  };
+  return withPinned([{ path: rootfs }], (pinned) => {
+    const pins = pinFds(pinned);
+    const normalized = normalizeRootfsEnabledUnits(runner, pinned[0], pins);
+    const shifted = shiftOwnership(runner, pinned[0].childPath, { base, size: UID_RANGE_SIZE }, pins);
+    writeIdentity(paths, storage, identityFields(request, paths, base), options);
+    return {
+      ok: true,
+      rootfsPath: rootfs,
+      uidBase: base,
+      uidSize: UID_RANGE_SIZE,
+      entries: shifted.entries,
+      ...normalized,
+    };
+  });
+}
+
+/** Reconcile only the rootfs recipe on an already materialized disk. This is the bounded repair operation
+ *  used before an existing machine starts: no ownership pass, package change or persistent data copy. */
+function nspawnNormalizeRootfs(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const paths = nspawnDiskPaths(storage, request);
+  const identityPath = trustedPath(storage, paths.identity, { file: true });
+  const rootfs = trustedPath(storage, paths.rootfs);
+  return withPinned([{ path: identityPath, file: true }, { path: rootfs }], ([pinnedIdentity, pinnedRoot]) => {
+    let identity;
+    try { identity = JSON.parse(readFileSync(pinnedEntry(pinnedIdentity), 'utf8')); }
+    catch { fail('the machine disk identity is invalid'); }
+    if (!Number.isSafeInteger(identity?.uidBase) || identity.uidBase < UID_RANGE_BASE) fail('the machine disk identity is invalid');
+    const expected = identityFields(request, paths, identity.uidBase);
+    if (Object.entries(expected).some(([key, value]) => identity[key] !== value)) fail('the machine disk identity does not match the requested environment');
+    const owner = (options.readOwner ?? defaultReadOwner)(pinnedEntry(pinnedRoot));
+    if (owner !== identity.uidBase) fail('the root filesystem ownership does not match its identity');
+    return { ok: true, rootfsPath: rootfs,
+      ...normalizeRootfsEnabledUnits(runner, pinnedRoot, [pinnedIdentity.fd, pinnedRoot.fd]) };
+  });
 }
 
 function nspawnLimits(raw) {
@@ -1501,14 +1775,15 @@ function nspawnDropCapabilities(raw) {
   return [...new Set([...NSPAWN_DROP_CAPABILITIES, ...requested])];
 }
 
-function machineResolver(readText) {
+function configuredMachineResolver(readText) {
   for (const path of [MACHINE_UPLINK_RESOLVER, '/etc/resolv.conf']) {
     let content;
     try { content = readText(path); } catch (cause) { if (cause?.code === 'ENOENT') continue; throw cause; }
     const servers = String(content).split(/\r?\n/).map((line) => /^\s*nameserver\s+(\S+)/.exec(line)?.[1]).filter(Boolean);
-    if (servers.some((server) => !server.startsWith('127.') && server !== '::1')) return path;
+    const address = servers.find((server) => isIP(server) !== 0 && !server.startsWith('127.') && server !== '::1');
+    if (address) return Object.freeze({ path, address });
   }
-  fail('the host has no non-loopback DNS resolver for machine networking');
+  return null;
 }
 
 function nspawnEnvironmentEntries(value) {
@@ -1605,11 +1880,12 @@ function nspawnWriteEnvelope(request, storage, options) {
   if (request.privateNetwork && ports.length) fail('a loopback-only machine cannot publish inbound ports');
   // The envelope is what turns veth on, so this is where the gate belongs: a machine cannot be started
   // with a link the host is not ready to isolate, and no client can skip the check by not asking for it.
+  const resolver = request.privateNetwork ? null : configuredMachineResolver(readText);
   if (request.privateNetwork === false) {
-    const unmet = vethReadiness(runner, readText).filter((item) => !item.ok);
+    const unmet = vethReadiness(runner, readText, resolver).filter((item) => !item.ok);
     if (unmet.length > 0) fail(`the host is not ready for machine networking — ${unmet.map((item) => item.detail).join('; ')}`);
   }
-  const resolverPath = request.privateNetwork ? null : machineResolver(readText);
+  const resolverPath = resolver?.path ?? null;
   const limits = nspawnLimits(request.limits);
   const binds = nspawnBinds(storage, request.binds ?? []);
   ensureNestedMountPoints(binds, options.writeAtomic === undefined);
@@ -1767,11 +2043,16 @@ export const DISK_TREE_SCRIPTS = Object.freeze({
  *  disk budget rather than on the default command timeout. */
 function treeRunner(options) {
   const runner = options.runner ?? defaultCommandRunner;
-  return (file, args) => runner(file, args, { timeoutMs: DISK_TREE_TIMEOUT_MS });
+  return (file, args, pins = []) => runner(file, args, { timeoutMs: DISK_TREE_TIMEOUT_MS, pins });
 }
 
 /** Resource polling has a short budget and one `du` process for the complete visible batch. The paths are
- *  trusted storage descendants and `--one-file-system` keeps the read inside each environment disk. */
+ *  trusted storage descendants and `--one-file-system` keeps the read inside each environment disk.
+ *
+ *  The one tree operation left addressed by NAME, deliberately: `du` reports the operand it was given, so
+ *  a pinned address would have to be mapped back out of its own output, and the only thing a swapped
+ *  ancestor can buy here is a wrong byte count — this process reads, and its budget is bounded. The
+ *  operations that write, remove or re-own a tree are the ones bound to descriptors. */
 function nspawnTreeSizes(request, storage, options) {
   if (!Array.isArray(request.paths) || request.paths.length < 1 || request.paths.length > 1000) fail('the disk usage batch is invalid');
   const paths = request.paths.map((path) => trustedPath(storage, path));
@@ -1795,66 +2076,86 @@ function nspawnTreeCopy(request, storage, options) {
   // The destination exists already: the daemon creates it with the mode and ownership it then has to
   // read back, and a directory created by root at 0700 is one it could no longer traverse.
   const target = trustedPath(storage, request.targetPath);
-  const copied = treeRunner(options)('/bin/bash', ['-c', DISK_TREE_COPY_SH, 'elowen-copy-tree', source, target]);
-  if (!copied.ok) fail(`the disk tree copy failed: ${String(copied.stderr || '').slice(-400)}`);
-  return { ok: true, sourcePath: source, targetPath: target };
+  return withPinned([{ path: source }, { path: target }], (pinned) => {
+    const copied = treeRunner(options)('/bin/bash', ['-c', DISK_TREE_COPY_SH, 'elowen-copy-tree', pinned[0].childPath, pinned[1].childPath], pinFds(pinned));
+    if (!copied.ok) fail(`the disk tree copy failed: ${String(copied.stderr || '').slice(-400)}`);
+    return { ok: true, sourcePath: source, targetPath: target };
+  });
 }
 
 function nspawnTreeFingerprint(request, storage, options) {
   const path = trustedPath(storage, request.path);
-  const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_FINGERPRINT_PY, path]);
-  if (!result.ok) fail(`the disk tree fingerprint failed: ${String(result.stderr || '').slice(-400)}`);
-  const value = JSON.parse(String(result.stdout || '{}'));
-  if (!Number.isSafeInteger(value.logicalBytes) || !Number.isSafeInteger(value.allocatedBytes) || !SAFE_SHA256.test(String(value.digest))) {
-    fail('the disk tree fingerprint is invalid');
-  }
-  return { ok: true, path, ...value };
+  return withPinned([{ path }], (pinned) => {
+    const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_FINGERPRINT_PY, pinned[0].childPath], pinFds(pinned));
+    if (!result.ok) fail(`the disk tree fingerprint failed: ${String(result.stderr || '').slice(-400)}`);
+    const value = JSON.parse(String(result.stdout || '{}'));
+    if (!Number.isSafeInteger(value.logicalBytes) || !Number.isSafeInteger(value.allocatedBytes) || !SAFE_SHA256.test(String(value.digest))) {
+      fail('the disk tree fingerprint is invalid');
+    }
+    return { ok: true, path, ...value };
+  });
 }
 
 /** How much space a copy needs and whether the destination has it. Deliberately separate from the
  *  fingerprint: this answers a free-space question, and answering it by hashing gigabytes would cost the
- *  whole snapshot twice. */
+ *  whole snapshot twice. Every source is pinned as well as the destination: the walk is unbounded in time
+ *  even though it only reads. */
 function nspawnTreePreflight(request, storage, options) {
   const sources = request.sourcePaths;
   if (!Array.isArray(sources) || sources.length < 1 || sources.length > 32) fail('the disk copy preflight requires source trees');
   const paths = sources.map((path) => trustedPath(storage, path));
   const destination = trustedPath(storage, request.destinationPath);
-  const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, JSON.stringify(paths), destination]);
-  if (!result.ok) fail(`the disk copy preflight refused the copy: ${String(result.stderr || '').slice(-400)}`);
-  const value = JSON.parse(String(result.stdout || '{}'));
-  if (!Number.isSafeInteger(value.requiredBytes) || !Number.isSafeInteger(value.marginBytes) || !Number.isSafeInteger(value.freeBytes)) {
-    fail('the disk copy preflight is invalid');
-  }
-  return { ok: true, ...value };
+  return withPinned([...paths, destination].map((path) => ({ path })), (pinned) => {
+    const destinationPin = pinned[pinned.length - 1];
+    const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_PREFLIGHT_PY, JSON.stringify(pinned.slice(0, -1).map((pin) => pin.childPath)), destinationPin.childPath], pinFds(pinned));
+    if (!result.ok) fail(`the disk copy preflight refused the copy: ${String(result.stderr || '').slice(-400)}`);
+    const value = JSON.parse(String(result.stdout || '{}'));
+    if (!Number.isSafeInteger(value.requiredBytes) || !Number.isSafeInteger(value.marginBytes) || !Number.isSafeInteger(value.freeBytes)) {
+      fail('the disk copy preflight is invalid');
+    }
+    return { ok: true, ...value };
+  });
 }
 
 /** Hold an extracted tree against the archive's own member list, so an activation can only ever publish
  *  the bytes the export proved. Ownership is deliberately NOT compared: the tree has been shifted onto
  *  the machine's uid range since extraction, which is the one difference from the archive that is meant
- *  to be there. */
+ *  to be there. The archive is opened as a file and the tree as a directory, so neither name is resolved
+ *  again by the verification pass. */
 function nspawnTreeVerify(request, storage, options) {
   const archive = trustedPath(storage, request.archivePath, { file: true });
   const target = trustedPath(storage, request.targetPath);
-  const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_VERIFY_PY, archive, target]);
-  if (!result.ok) fail(`the extracted root filesystem could not be verified: ${String(result.stderr || '').slice(-400)}`);
-  const value = JSON.parse(String(result.stdout || '{}'));
-  if (!Number.isSafeInteger(value.members) || value.members < 1) fail('the migration export archive named no members');
-  return { ok: true, members: value.members };
+  return withPinned([{ path: archive, file: true }, { path: target }], (pinned) => {
+    const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_VERIFY_PY, pinned[0].childPath, pinned[1].childPath], pinFds(pinned));
+    if (!result.ok) fail(`the extracted root filesystem could not be verified: ${String(result.stderr || '').slice(-400)}`);
+    const value = JSON.parse(String(result.stdout || '{}'));
+    if (!Number.isSafeInteger(value.members) || value.members < 1) fail('the migration export archive named no members');
+    return { ok: true, members: value.members };
+  });
 }
 
 function nspawnTreeSync(request, storage, options) {
   const path = trustedPath(storage, request.path);
-  const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_SYNC_PY, path]);
-  if (!result.ok) fail(`the disk tree sync failed: ${String(result.stderr || '').slice(-400)}`);
-  return { ok: true, path };
+  return withPinned([{ path }], (pinned) => {
+    const result = treeRunner(options)(PYTHON, ['-c', DISK_TREE_SYNC_PY, pinned[0].childPath], pinFds(pinned));
+    if (!result.ok) fail(`the disk tree sync failed: ${String(result.stderr || '').slice(-400)}`);
+    return { ok: true, path };
+  });
 }
 
 /** Removal is the one tree operation whose target may already be gone: the runtime clears a staging
- *  directory before it recreates one, and asks for the removal without looking first. */
+ *  directory before it recreates one, and asks for the removal without looking first.
+ *
+ *  The target itself is never opened — it may be a symlink, a file or missing — so the PARENT is pinned
+ *  and the single validated name is removed through it. A recursive by-name removal of a path the service
+ *  user owns is otherwise the sharpest form of the race above: the tree it deletes is chosen by the
+ *  service user at the moment root resolves the name. */
 function nspawnTreeRemove(request, storage) {
   const path = trustedPath(storage, request.path, { allowMissing: true });
-  rmSync(path, { recursive: true, force: true });
-  return { ok: true, path };
+  return withPinned([{ path: dirname(path) }], ([pinnedParent]) => {
+    rmSync(pinnedEntry(pinnedParent, basename(path)), { recursive: true, force: true });
+    return { ok: true, path };
+  });
 }
 
 /** Parse the bounded `systemctl show` and `machinectl show` format used by the retirement proof. */
@@ -1994,9 +2295,9 @@ const UNIT_LOAD_PROBE = 'elowen-machine@elowen-project-readiness-probe-g0.servic
 /** Enabled, so it runs at the next boot, AND every rule actually in place, so a flushed chain is repaired
  *  rather than reported. Provisioning is the operator-invoked path and the only one that may act on the
  *  packet filter; serving a request still only ever reports it. */
-function firewallUnitApplied(runner) {
+function firewallUnitApplied(runner, rules) {
   if (!runner('/usr/bin/systemctl', ['is-enabled', MACHINE_FIREWALL_UNIT_NAME]).ok) return false;
-  return NSPAWN_FIREWALL_RULES.every((rule) => firewallRulePresent(runner, rule));
+  return rules.every((rule) => firewallRulePresent(runner, rule));
 }
 
 function unitTemplateLoaded(runner) {
@@ -2010,7 +2311,8 @@ function unitTemplateLoaded(runner) {
  *  hand-edited host restores exactly the artefact that drifted.
  *
  *  The unit template carries a reload because systemd reads unit files only when it is told to. */
-function nspawnArtefacts() {
+function nspawnArtefacts(readText, resolver = configuredMachineResolver(readText)) {
+  const firewallRules = nspawnFirewallRules(resolver);
   return [
     {
       id: 'unit:elowen-machine',
@@ -2030,12 +2332,12 @@ function nspawnArtefacts() {
       label: 'Machine firewall rules',
       path: MACHINE_FIREWALL_UNIT_PATH,
       mode: 0o644,
-      content: MACHINE_FIREWALL_UNIT,
+      content: renderMachineFirewallUnit(firewallRules),
       ready: 'installed, enabled and applied',
       effect: {
         // Applied is asked of the packet filter, not of the unit: a oneshot that has already run is
         // inactive either way, and a rule someone flushed by hand is exactly the state worth repairing.
-        loaded: firewallUnitApplied,
+        loaded: (runner) => firewallUnitApplied(runner, firewallRules),
         detail: `installed but the rules are not all in place — run: systemctl enable --now ${MACHINE_FIREWALL_UNIT_NAME}`,
         reload: [
           ['/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed'],
@@ -2090,7 +2392,7 @@ function artefactRow(artefact, runner, readText, readMode) {
  *  None of the firewall rules survive a reboot on their own. That is deliberate rather than unfortunate:
  *  the check runs before every envelope, so a rebooted host fails loudly and refuses veth instead of
  *  quietly running a machine with the guard gone. */
-function vethReadiness(runner, readText) {
+function vethReadiness(runner, readText, selectedResolver = configuredMachineResolver(readText)) {
   const items = [];
   // `ok` is the RUNNING kernel and nothing else, because that is what decides whether a machine routes,
   // and this row gates every veth envelope write. A host forwarding today because Docker enabled it, or
@@ -2122,15 +2424,13 @@ function vethReadiness(runner, readText) {
       ? 'active and enabled'
       : `it configures the host side of the link, leases the machine its address and masquerades the traffic — run: systemctl enable --now systemd-networkd${active ? ' (running, but it would not come back after a reboot)' : ''}`,
   });
-  let resolverPath = null;
-  try { resolverPath = machineResolver(readText); } catch { /* Report the fixed requirement below. */ }
   items.push({
     id: 'resolver:uplink',
     label: 'Machine DNS resolver',
-    ok: resolverPath !== null,
-    detail: resolverPath ? `using ${resolverPath}` : 'the host has no non-loopback nameserver a machine can use',
+    ok: selectedResolver !== null,
+    detail: selectedResolver ? `using ${selectedResolver.path} (${selectedResolver.address})` : 'the host has no non-loopback nameserver a machine can use',
   });
-  for (const rule of NSPAWN_FIREWALL_RULES) {
+  for (const rule of nspawnFirewallRules(selectedResolver)) {
     const ok = firewallRulePresent(runner, rule);
     items.push({
       id: rule.id,
@@ -2170,6 +2470,7 @@ function nspawnStatus(request, options = {}) {
   const user = machineServiceUser(runner, env, request);
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
   const installed = packageInstalled(runner, NSPAWN_PACKAGE);
+  const resolver = configuredMachineResolver(readText);
   const items = [
     { id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail },
     {
@@ -2180,9 +2481,9 @@ function nspawnStatus(request, options = {}) {
     },
     apparmorRow(readText),
     legacyPolkitRow(user, readText, readMode),
-    ...nspawnArtefacts().map((artefact) => artefactRow(artefact, runner, readText, readMode)),
+    ...nspawnArtefacts(readText, resolver).map((artefact) => artefactRow(artefact, runner, readText, readMode)),
   ];
-  if (request.veth === true) items.push(...vethReadiness(runner, readText));
+  if (request.veth === true) items.push(...vethReadiness(runner, readText, resolver));
   return { ok: true, ready: items.every((item) => item.ok), items };
 }
 
@@ -2232,10 +2533,11 @@ function nspawnProvision(request, options = {}) {
     runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');
   }
   retireLegacyPolkit(user, readText, readMode, removeFile);
+  const resolver = configuredMachineResolver(readText);
   // The uid ledger's own directory needs nothing here: `atomicWrite` creates the parent of whatever it
   // writes, so the first allocation in `uidRangeFor` establishes it. Reaching for it here would also
   // reach for `/var/lib/elowen`, which the Sites gateway already owns state in.
-  for (const artefact of nspawnArtefacts()) {
+  for (const artefact of nspawnArtefacts(readText, resolver)) {
     if (readText(artefact.path) !== artefact.content || readMode(artefact.path) !== artefact.mode) {
       writeAtomic(artefact.path, Buffer.from(artefact.content), artefact.mode);
     }
@@ -2262,6 +2564,7 @@ const NSPAWN_OPERATIONS = Object.freeze({
   materialize: nspawnMaterialize,
   'write-envelope': nspawnWriteEnvelope,
   'shift-ownership': nspawnShiftOwnership,
+  'normalize-rootfs': nspawnNormalizeRootfs,
   exec: (request, _storage, options) => nspawnExec(request, options),
   start: (request, _storage, options) => nspawnLifecycle(request, 'start', options),
   stop: (request, _storage, options) => nspawnLifecycle(request, 'stop', options),

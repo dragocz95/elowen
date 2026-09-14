@@ -92,8 +92,8 @@ export interface MarkdownAssetEditorProps<T extends MarkdownAsset, E> {
   extraValid?: (form: AssetForm<E>) => boolean;
   /** Read-only badges rendered after the source badge (e.g. tools mode, manual-only). */
   renderBadges?: (item: T) => ReactNode;
-  /** Extra per-row control for user entries (e.g. a toggle), rendered in the register's LEADING column.
-   *  Supplying it is what creates that column at all. */
+  /** Extra per-row control rendered in the register's LEADING column. The caller owns whether a read-only
+   * entry receives an enabled control, a disabled status switch or no control at all. */
   renderRowControl?: (item: T) => ReactNode;
   /** Ownership column + scope filter, for assets that can belong to one account. Omitted → the register
    *  looks exactly as it did before ownership existed (no extra column, one filter). */
@@ -300,7 +300,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                     <>
                       {renderRowControl ? (
                         <DataTableCell priority="wide" lines="auto" className="flex items-center justify-center">
-                          {editable ? renderRowControl(item) : null}
+                          {renderRowControl(item)}
                         </DataTableCell>
                       ) : null}
                       <DataTableCell lines={1} className="font-mono text-sm text-foreground">{item.name}</DataTableCell>

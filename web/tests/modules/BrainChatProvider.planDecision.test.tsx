@@ -33,7 +33,7 @@ vi.mock('../../lib/elowenClient', () => ({
   },
 }));
 
-import { BrainChatProvider, useBrainChat } from '../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatStatus, useBrainChatTranscript } from '../../modules/advisor/BrainChatProvider';
 
 /** A status payload that reports plan mode with a pending plan — what a reloaded page hydrates from. */
 const planStatus = (sessionId: string) => ({
@@ -42,7 +42,7 @@ const planStatus = (sessionId: string) => ({
 });
 
 function Harness() {
-  const c = useBrainChat();
+  const c = { ...useBrainChat(), ...useBrainChatStatus(), ...useBrainChatTranscript() };
   useEffect(() => { c.ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div>

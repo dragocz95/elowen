@@ -7,7 +7,7 @@ import { useMobileViewport } from '../../lib/useMobile';
 import { formatTokens } from '../../lib/format';
 import { DAG_NODE_W, layoutDag, stepDagSelection, workflowLabel, workflowProgress } from '../../lib/workflowDag';
 import type { DagDirection } from '../../lib/workflowDag';
-import { useBrainChat } from './BrainChatProvider';
+import { useBrainChatStatus } from './BrainChatProvider';
 import type { WorkflowState } from '../../lib/transcript';
 
 /** The navigable DAG view of a running workflow — the web counterpart of the CLI's workflow modal
@@ -39,7 +39,7 @@ const ARROW_KEYS: Record<string, DagDirection> = {
 
 export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onClose: () => void }) {
   const { t } = useTranslation();
-  const { workflows } = useBrainChat();
+  const { workflows } = useBrainChatStatus();
   const mobile = useMobileViewport();
   // Pin the selection by node id, not by index: nodes get appended mid-run (WorkflowAddNodes) and the
   // wave layout reorders as statuses change, so an index would drift onto a different node.
@@ -88,6 +88,8 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
   // task renders as the same prefix in every box. The line above already shows the live activity.
   const nodeVitals = (node: WorkflowNode): string => [
     node.tokens !== undefined ? `${formatTokens(node.tokens)} ${t.agents.tokens.toLowerCase()}` : '',
+    typeof node.effectiveTps === 'number' && node.effectiveTps >= 1
+      ? `${Math.round(node.effectiveTps)} ${t.brainChat.tokensPerSecond}` : '',
     node.seconds !== undefined ? `${node.seconds}s` : '',
   ].filter(Boolean).join(' · ');
 
@@ -222,6 +224,8 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
     selected.model ? `${t.agents.model}: ${selected.model}` : '',
     selected.thinkingLevel ? `${t.brainChat.reasoningLabel}: ${selected.thinkingLevel}` : '',
     selected.tokens !== undefined ? `${formatTokens(selected.tokens)} ${t.agents.tokens.toLowerCase()}` : '',
+    typeof selected.effectiveTps === 'number' && selected.effectiveTps >= 1
+      ? `${Math.round(selected.effectiveTps)} ${t.brainChat.tokensPerSecond}` : '',
     selected.seconds !== undefined ? `${selected.seconds}s` : '',
     `${t.workflowModal.deps}: ${selected.deps.join(', ') || t.workflowModal.depsNone}`,
   ].filter(Boolean) : [];

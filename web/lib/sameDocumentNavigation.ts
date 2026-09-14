@@ -1,10 +1,10 @@
 /** MOVING WITHIN THE PAGE THE READER IS ALREADY ON.
  *
- *  `/settings` and `/account` are presented as intercepted page overlays (see `app/@pageOverlay`): a
- *  CLIENT navigation to either route is answered by the overlay, whatever surface it was made from — the
- *  canonical page included. So a shell row that only changes `?cat=` while the reader is standing on a
- *  hard-loaded `/account` would not move the page in front of them; it would raise a second Account over
- *  it, with the canonical one still underneath.
+ *  `/settings` and `/account` are presented as page overlays (see `app/@pageOverlay`): a CLIENT
+ *  navigation to either route is answered by the overlay, whatever surface it was made from — including
+ *  the deck itself. So a row that only changes `?cat=` while the reader is already standing in the deck
+ *  would not move the page in front of them; it would route to the address they are already on and put a
+ *  fresh mount of the same deck there, losing the section state and the scroll they were reading.
  *
  *  The seam that does move it is the document's own address. A deck page reads `window.location` and
  *  follows `popstate` (modules/account/AccountView.tsx, modules/settings/SettingsView.tsx), the record

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 /** The digest the fixture's store reports; an artifact's identity is its content, not a local image id. */
 const ARTIFACT_DIGEST = `sha256:${'d'.repeat(64)}`;
 import { bindContainerIdentity, createContainerSpec, createEnvironmentDiskSpec, executionUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import { selectRuntimeClient } from '../../plugins/sandbox/lib/runtimeClient.mjs';
 import { DROPPED_CAPABILITIES, envelopePaths, HELPER_PATH, helperFrame, machineState, MACHINE_PATTERN,
   NspawnClient, timespanMicroseconds, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
@@ -77,6 +78,10 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
     CPUQuotaPerSecUSec: spec.limits.cpus === 1 ? '1s' : `${spec.limits.cpus * 1000}ms`, Slice: 'machine.slice',
   };
   const machine: Record<string, string> = { Unit: unitFor(spec.name), RootDirectory: rootfs };
+  /** Names the machine manager reports as REGISTERED, which `machinectl list` only ever does for running
+   *  machines. Mutable, because the interesting question for the destructive paths is what happens when a
+   *  name is still listed and its envelope files are not — a state a baked-in reply could never express. */
+  const machines = new Set([spec.name, 'other-project-1-g1']);
   const requests: any[] = [];
   const guestInput: Buffer[] = [];
   const calls: { file: string, args: string[] }[] = [];
@@ -90,7 +95,7 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
       calls.push({ file, args });
       if (file === '/usr/bin/systemctl' && args[0] === 'show') return { code: 0, stdout: render(unit), stderr: '' };
       if (file === '/usr/bin/machinectl' && args[0] === 'show') return { code: 0, stdout: render(machine), stderr: '' };
-      if (file === '/usr/bin/machinectl' && args[0] === 'list') return { code: 0, stdout: `${spec.name} container systemd-nspawn\nother-project-1-g1 container systemd-nspawn\n`, stderr: '' };
+      if (file === '/usr/bin/machinectl' && args[0] === 'list') return { code: 0, stdout: [...machines].map((name) => `${name} container systemd-nspawn\n`).join(''), stderr: '' };
       if (file === '/usr/bin/sudo') {
         const frame: Buffer = Buffer.isBuffer(runOptions.input) ? runOptions.input : Buffer.from(String(runOptions.input ?? ''));
         const length = Number(frame.subarray(0, 8).toString('latin1'));
@@ -126,7 +131,7 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
       usages: request.paths.map((path) => ({ path, allocatedBytes: sizes[path] ?? 0 })) });
   };
   return { root, configRoot, cgroupRoot, machineCgroup, writeCgroup, paths, spec, disk: spec.disk, diskDirectory, storageRoot, identityPath, identity, writeIdentity,
-    envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, sizeTrees, executor, artifacts, blob, client, rootfs };
+    envelope, writeEnvelope, unit, machine, machines, requests, guestInput, calls, helperReply, sizeTrees, executor, artifacts, blob, client, rootfs };
 }
 
 /** The shape the systemd guest protocol answers with; the tombstone reads exactly these four fields. */
@@ -258,6 +263,80 @@ describe('nspawn machine inventory', () => {
     const { client, spec } = fixture();
     const inventory = await client.containerInventory('elowen');
     expect([...inventory]).toEqual([[spec.name, 'running']]);
+  });
+});
+
+/** Disk cleanup is the destructive path of the same rule: the disk belongs to the MACHINE, not to the
+ *  envelope files that describe it, so a machine the host still reports as registered keeps its disk. */
+describe('nspawn disk cleanup', () => {
+  it('refuses to remove a disk a registered machine still owns, and converges once it is gone', async () => {
+    const state = fixture();
+    const storage = new ContainerStorage(state.client);
+    state.helperReply['tree-remove'] = (request: { path: string }) => { rmSync(request.path, { recursive: true, force: true }); return { ok: true }; };
+    const directory = dirname(state.spec.disk.rootfsPath);
+    // The envelope FILES are gone — a helper that failed halfway, a hand-edit, an interrupted destroy —
+    // while the machine manager still reports the machine. Reading those files alone would call this disk
+    // unowned and delete the tree out from under a machine that is running on it.
+    rmSync(state.envelope.nspawn, { force: true });
+    rmSync(state.envelope.dropIn, { force: true });
+
+    // The machine is named back: with the envelope gone, its name is the only handle an operator has.
+    await expect(storage.removeDisk(state.spec, [state.spec]))
+      .rejects.toThrow(`A running machine still owns environment disk: ${state.spec.name}`);
+    expect(existsSync(directory)).toBe(true);
+    expect(state.requests.some((request) => request.op === 'tree-remove')).toBe(false);
+
+    // What a completed envelope removal leaves behind: the machine is unregistered, so nothing is left that
+    // could be running on this disk.
+    state.machines.delete(state.spec.name);
+
+    await storage.removeDisk(state.spec, [state.spec]);
+
+    expect(existsSync(directory)).toBe(false);
+  });
+});
+
+/** The half of the ownership proof a sweep can afford on every pass: what the files this runtime owns say
+ *  about a name the machine inventory reported as up. It must reach the same verdict as `inspect` about
+ *  everything that lives in those files, and it must never invent liveness of its own. */
+describe('nspawn file-only ownership proof', () => {
+  it('proves the name belongs to this specification without a single privileged call', async () => {
+    const { client, spec, requests } = fixture();
+
+    const proved = await client.proveOwnership(spec);
+
+    expect(proved.id).toMatch(/^[a-f0-9]{64}$/);
+    // The same identity `inspect` computes from the same bytes, and no round trip: that is the whole point
+    // of the cheap half —
+    expect(proved.id).toBe((await client.inspect(spec))!.id);
+    expect(requests).toHaveLength(0);
+  });
+
+  it.each([
+    ['identity.specHash', (state: ReturnType<typeof fixture>) => state.writeIdentity({ ...state.identity, specHash: 'f'.repeat(64) })],
+    ['identity.diskId', (state: ReturnType<typeof fixture>) => state.writeIdentity({ ...state.identity, diskId: 'c'.repeat(32) })],
+    ['identity.machine', (state: ReturnType<typeof fixture>) => state.writeIdentity({ ...state.identity, machine: 'elowen-project-9-g2' })],
+  ])('refuses a name whose disk identity is not this environment\u2019s (%s)', async (name, breakIt) => {
+    const state = fixture();
+    breakIt(state);
+    await expect(state.client.proveOwnership(state.spec)).rejects.toThrow(new RegExp(`mismatch:.*${name.replace('.', '\\.')}`));
+  });
+
+  it('refuses a pinned identity that no longer names this envelope', async () => {
+    const { client, spec } = fixture();
+    await expect(client.proveOwnership(bindContainerIdentity(spec, 'e'.repeat(64)))).rejects.toThrow(/expectedId/);
+  });
+
+  it('refuses a name whose envelope is gone instead of reading it as unowned', async () => {
+    const { client, spec, envelope } = fixture();
+    rmSync(envelope.nspawn, { force: true });
+    await expect(client.proveOwnership(spec)).rejects.toThrow(/No machine envelope of this name exists on this host/);
+  });
+
+  it('refuses an envelope anyone but its owner can write', async () => {
+    const { client, spec, envelope } = fixture();
+    chmodSync(envelope.dropIn, 0o666);
+    await expect(client.proveOwnership(spec)).rejects.toThrow(/Untrusted machine envelope file/);
   });
 });
 
@@ -529,10 +608,45 @@ describe('nspawn privileged transport', () => {
     expect(artifacts.ensure).toHaveBeenCalledWith(spec.disk.sourceImage, { onProgress });
   });
 
+  it('normalizes an existing root through the bounded privileged operation', async () => {
+    const { client, spec, requests, helperReply } = fixture();
+    helperReply['normalize-rootfs'] = { ok: true, changed: true,
+      enabled: ['systemd-networkd.service', 'systemd-networkd.socket'] };
+    await client.normalizeRootfs(spec);
+    expect(requests.at(-1)).toMatchObject({ op: 'normalize-rootfs', machine: spec.name,
+      kind: 'project', resource: '7', diskId: spec.disk.id });
+  });
+
+  it('reports shared network readiness only with host0 carrier and a global address', async () => {
+    const { client, spec, helperReply } = fixture({ network: { mode: 'shared', inboundPorts: [] } });
+    helperReply.exec = { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
+      stdout: Buffer.from(JSON.stringify({ carrier: false, addresses: [] })).toString('base64'), stderr: '' };
+    await expect(client.networkReadiness(spec)).resolves.toEqual({ ready: false, carrier: false, addresses: [],
+      detail: 'host0 has no carrier and no global address' });
+
+    helperReply.exec.stdout = Buffer.from(JSON.stringify({ carrier: true, addresses: ['10.0.0.7'] })).toString('base64');
+    await expect(client.networkReadiness(spec)).resolves.toEqual({ ready: true, carrier: true, addresses: ['10.0.0.7'] });
+  });
+
+  it('waits through DHCP convergence before declaring the shared network ready', async () => {
+    const { client, spec, helperReply } = fixture({ network: { mode: 'shared', inboundPorts: [] } });
+    let probes = 0;
+    helperReply.exec = () => ({ ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
+      stdout: Buffer.from(JSON.stringify(++probes === 1
+        ? { carrier: true, addresses: [] } : { carrier: true, addresses: ['10.0.0.7'] })).toString('base64'), stderr: '' });
+
+    await expect(client.waitForNetwork(spec, { timeoutMs: 1000 })).resolves
+      .toEqual({ ready: true, carrier: true, addresses: ['10.0.0.7'] });
+    expect(probes).toBe(2);
+  });
+
   it('releases the uid reservation only after storage is verified absent, including retries', async () => {
-    const { client, spec, envelope, requests } = fixture();
+    const { client, spec, envelope, machines, requests } = fixture();
     rmSync(envelope.nspawn, { force: true });
     rmSync(envelope.dropIn, { force: true });
+    // The machine is unregistered as well, which is what a completed destroy leaves behind: this test is
+    // about storage verification and the retry, and `removeStorage` refuses a name that is still listed.
+    machines.delete(spec.name);
     rmSync(spec.storageRoot, { recursive: true, force: true });
 
     await client.removeStorage(spec);
@@ -542,6 +656,25 @@ describe('nspawn privileged transport', () => {
       { domain: 'nspawn', op: 'release-uid-range', namespace: 'elowen', kind: 'project', resource: '7' },
       { domain: 'nspawn', op: 'release-uid-range', namespace: 'elowen', kind: 'project', resource: '7' },
     ]);
+  });
+
+  /** The envelope files are not the machine. A name the machine manager still lists is a machine whose
+   *  root filesystem is mounted and in use, so its storage cannot go even when the two configuration files
+   *  that describe it are gone — the failure that motivated this is a machine running on a deleted root. */
+  it('refuses storage removal while a machine of that name is still registered, and converges once it is gone', async () => {
+    const { client, spec, envelope, machines, requests } = fixture();
+    rmSync(envelope.nspawn, { force: true });
+    rmSync(envelope.dropIn, { force: true });
+    rmSync(spec.storageRoot, { recursive: true, force: true });
+
+    // The machine is named back: with the envelope gone, its name is the only handle an operator has.
+    await expect(client.removeStorage(spec)).rejects.toThrow(`A running machine still owns environment storage: ${spec.name}`);
+    expect(requests.filter((request) => request.op === 'release-uid-range')).toHaveLength(0);
+
+    machines.delete(spec.name);
+    await client.removeStorage(spec);
+
+    expect(requests.filter((request) => request.op === 'release-uid-range')).toHaveLength(1);
   });
 
   it('reports what the host still owes the machine runtime, in the rows the privileged side named', async () => {

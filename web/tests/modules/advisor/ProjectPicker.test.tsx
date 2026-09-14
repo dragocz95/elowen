@@ -18,7 +18,7 @@ const chat = {
     return response;
   },
 };
-vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => chat }));
+vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => chat, useBrainChatStatus: () => chat }));
 const { ProjectPicker } = await import('../../../modules/advisor/ProjectPicker');
 const PROJECTS = [{ id: 1, slug: 'kolin', path: '/workspace', executionKind: 'managed' }, { id: 2, slug: 'elowen', path: '/workspace', executionKind: 'managed' }];
 const HOST_PROJECT = { id: 3, slug: 'server', path: '/host', executionKind: 'host' };

@@ -94,6 +94,9 @@ export interface BrainSubagentView {
   detail?: string;
   tools: number;
   tokens?: number;
+  effectiveTps?: number;
+  effectiveTurnId?: string;
+  effectiveModel?: string;
   seconds: number;
   model?: string;
   thinkingLevel?: string;
@@ -127,6 +130,9 @@ export interface BrainWorkflowView {
     sessionId?: string;
     detail?: string;
     tokens?: number;
+    effectiveTps?: number;
+    effectiveTurnId?: string;
+    effectiveModel?: string;
     seconds?: number;
     model?: string;
     /** Reasoning effort the node runs on (its own declaration, or the level inherited from the origin). */
@@ -785,14 +791,19 @@ export interface BrainUsage {
   /** Average output tokens/sec across the session's measured generations (post-header window);
    *  null when none measured yet. Legacy figure — the statusline shows `effectiveTps` instead. */
   outputTps?: number | null;
-  /** EFFECTIVE tokens/sec of the conversation's latest COMPLETED measured model call: provider-reported
-   *  output tokens over the whole logical request from initiation to complete response, with PI retries and
-   *  backoff included and tool execution excluded. Absent when the generation contains any toolCall block,
-   *  because provider usage does not split tool-call tokens from model text, or when nothing was measured. */
+  /** Turn/model aggregate speed: Σ canonical provider output tokens divided by Σ successful provider
+   *  generation seconds. Output includes hidden reasoning and serialized tool calls exactly once; prompt,
+   *  cache/input, tool results, provider queue/header wait, failed retries, tool execution and human waits are
+   *  excluded. Missing when the current turn has no valid measured request. */
   effectiveTps?: number | null;
-  /** Wait, in ms, from that call's initiation to its FIRST streamed content (thinking, text, or a tool
-   *  call). For a buffered delivery this spans the whole generation — it is what the client waited,
-   *  not a time-to-first-hidden-token. Present only on single-attempt calls. */
+  /** Exact aggregate pair behind `effectiveTps`, useful for lossless propagation and diagnostics. */
+  effectiveOutput?: number;
+  effectiveMs?: number;
+  /** Explicit identity boundary. A consumer may retain a missing speed only while BOTH values still match. */
+  effectiveTurnId?: string;
+  effectiveModel?: string;
+  /** Wait, in ms, from the latest single-attempt call's initiation to its FIRST streamed content (thinking,
+   *  text, or a tool call). This user-perceived latency is separate from the speed denominator. */
   firstContentMs?: number | null;
 }
 

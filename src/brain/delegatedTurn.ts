@@ -166,6 +166,7 @@ export type DelegatedProgressEvent =
   | { type: 'session'; sessionId: string }
   | { type: 'tool'; name: string; detail?: string }
   | { type: 'step'; step: number; maxSteps: number; usage?: BrainUsage }
+  | { type: 'idle'; usage?: BrainUsage; model?: string }
   | { type: 'subagent'; sessionId: string; status: 'running' | 'done' | 'error' }
   | { type: 'workflow'; id: string; toolCallId: string; status: 'running' | 'done' | 'error' | 'cancelled' };
 
@@ -174,6 +175,7 @@ export function toDelegatedProgress(e: BrainEvent): DelegatedProgressEvent | und
   if (e.type === 'session') return { type: 'session', sessionId: e.sessionId };
   if (e.type === 'tool') return { type: 'tool', name: e.name, ...(e.detail !== undefined ? { detail: e.detail } : {}) };
   if (e.type === 'step') return { type: 'step', step: e.step, maxSteps: e.maxSteps, ...(e.usage ? { usage: e.usage } : {}) };
+  if (e.type === 'idle') return { type: 'idle', ...(e.usage ? { usage: e.usage } : {}), ...(e.model ? { model: e.model } : {}) };
   if (e.type === 'subagent') return { type: 'subagent', sessionId: e.sessionId, status: e.status };
   if (e.type === 'workflow') return { type: 'workflow', id: e.id, toolCallId: e.toolCallId, status: e.status };
   return undefined;

@@ -14,6 +14,7 @@ import type {
   Memory,
   MemoryCategory,
   ProviderUsage,
+  TerminalSettings,
 } from '../../../lib/types.ts';
 
 /** The single admin account the fake daemon accepts. Global setup logs in with exactly these creds
@@ -58,6 +59,27 @@ export const targetUser: User = {
   granted_plugins: [],
   name: 'E2E Target',
   email: 'target@example.test',
+};
+
+/** The account's terminal appearance, as the daemon answers `/auth/me/terminal-settings`. Canned here
+ *  rather than left to the server's catch-all, which answers an unmodelled GET with `[]` — truthy, and
+ *  missing every field the Account terminal section seeds its form from. Typed, so a renamed or dropped
+ *  field fails this file's typecheck instead of drifting from what the UI reads. */
+export const terminalSettings: TerminalSettings = {
+  fontSize: 12,
+  fontFamily: 'system',
+  cursorStyle: 'block',
+  cursorBlink: true,
+  scrollback: 1000,
+  theme: 'auto',
+  palette: {
+    background: '#000000', foreground: '#f5f5f5', cursor: '#f5f5f5', cursorAccent: '#000000', selectionBackground: '#2c4870',
+    black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510', blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
+    brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#ffffff',
+  },
+  showThoughtsCli: true,
+  promptHistoryDepth: 100,
+  interruptConfirmMs: 1800,
 };
 
 export const config: ElowenConfig = {

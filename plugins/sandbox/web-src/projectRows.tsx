@@ -24,7 +24,7 @@ interface ProjectUsage {
   resources: { cpu: UsageMetric; memory: UsageMetric; disk: UsageMetric };
 }
 interface UsageBatch { sampledAt: string; projects: ProjectUsage[] }
-interface RowMetric { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'loading' | 'stopped' | 'unavailable' }
+interface RowMetric { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable' }
 /** The snapshot shape the host draws in BOTH the register row and the project drawer. The figures are
  *  always the last ones actually measured; `refreshing` and `stale` describe the read around them. */
 interface RowMetrics { label: string; items: RowMetric[]; refreshing?: boolean; stale?: boolean; staleLabel?: string; onRefresh?: () => void; refreshLabel?: string }
@@ -59,6 +59,12 @@ export const PROJECT_USAGE_QUERY_POLICY = Object.freeze({
   refetchOnWindowFocus: true,
 });
 const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
+/** What a resource with nothing measured behind it reads as. Deliberately a mark rather than a word: the
+ *  register used to print "Loading…" in all three slots of every managed card until the first batch came
+ *  back, and a page of that is unreadable at three cards across. The host draws the ring either way, so
+ *  the shape is on screen from the first commit and only the figure inside it changes. It is never a
+ *  zero — an environment whose sample has not arrived is not an environment using none of its share. */
+const UNKNOWN_VALUE = '—';
 const formatBytes = (bytes: number) => {
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   let value = Math.max(0, bytes);
@@ -67,28 +73,32 @@ const formatBytes = (bytes: number) => {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: value >= 10 || unit === 0 ? 0 : 1 }).format(value)} ${units[unit]}`;
 };
 
+const metricLabel = (kind: 'cpu' | 'memory' | 'disk', s: Record<string, string>): string =>
+  kind === 'cpu' ? s.usageCpu : kind === 'memory' ? s.usageRam : s.usageDisk;
+
 /** Only for a project nothing has been measured for YET. A project that HAS a sample keeps it through a
  *  failed or in-flight read, marked rather than replaced — a placeholder over real figures is how a
  *  populated environment briefly reported nothing every time the batch was re-read. */
-function placeholderMetrics(s: Record<string, string>, state: 'loading' | 'unavailable', value: string): RowMetrics {
+function placeholderMetrics(s: Record<string, string>, state: 'unknown' | 'unavailable', value: string): RowMetrics {
   return {
     label: s.resources,
-    items: [
-      { id: 'cpu', label: s.usageCpu, value, state },
-      { id: 'memory', label: s.usageRam, value, state },
-      { id: 'disk', label: s.usageDisk, value, state },
-    ],
+    items: (['cpu', 'memory', 'disk'] as const).map((kind) => ({ id: kind, label: metricLabel(kind, s), value, state })),
   };
 }
 
 function metricValue(metric: UsageMetric, kind: 'cpu' | 'memory' | 'disk', s: Record<string, string>): RowMetric {
-  const label = kind === 'cpu' ? s.usageCpu : kind === 'memory' ? s.usageRam : s.usageDisk;
-  if (metric.state === 'sampling') return { id: kind, label, value: s.usageSampling, state: 'loading' };
+  const label = metricLabel(kind, s);
+  // The runtime is taking the sample right now, which is a wait rather than a figure. It reads as the
+  // same honest unknown as a sample that has not been asked for yet: the ring is drawn, and nothing in
+  // it is claimed.
+  if (metric.state === 'sampling') return { id: kind, label, value: UNKNOWN_VALUE, state: 'unknown' };
   if (metric.state === 'stopped') return { id: kind, label, value: s.usageStopped, state: 'stopped' };
   if (metric.state !== 'ready') return { id: kind, label, value: s.usageUnavailable, state: 'unavailable' };
   if (kind === 'cpu') {
+    // Rendered from the CLAMPED figure, not the raw one: a reported 140 % is drawn as a full ring, and a
+    // figure beside it saying 140 would be the ring and the text disagreeing about the same reading.
     const percent = clampPercent(metric.percent ?? 0);
-    const value = `${Math.round(metric.percent ?? 0)}%`;
+    const value = `${Math.round(percent)}%`;
     return { id: kind, label, value, valueText: `${label}: ${value}`, percent, state: 'ready' };
   }
   const used = formatBytes(metric.usedBytes ?? 0);
@@ -128,6 +138,12 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
     queryFn: ({ signal }: { signal?: AbortSignal }) =>
       api('/plugins/sandbox/api/environments/usage', { ...jsonBody({ projectIds: managedIds }), signal }) as Promise<UsageBatch>,
     enabled: managedIds.length > 0,
+    // Registering or deleting a managed project changes the id list, and therefore the cache key, and a
+    // new key has no data of its own. Without this the whole register emptied back to unknown rings for
+    // the length of one batch because ONE project joined it. The last snapshot is carried across the
+    // change instead; it is not written under the new key, so it is replaced rather than remembered, and
+    // a project that is genuinely new to it simply has no entry and says so.
+    placeholderData: (previous: UsageBatch | undefined) => previous,
     ...PROJECT_USAGE_QUERY_POLICY,
     retry: false,
   });
@@ -151,29 +167,41 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
     void qc.invalidateQueries({ queryKey: USAGE_QUERY_PREFIX }, { cancelRefetch: false });
   }, [qc]);
 
-  // The last figure actually MEASURED for one resource of one project, keyed `<projectId>:<kind>`.
+  // The last figure actually MEASURED for one resource of one project, keyed
+  // `<projectId>:<generation>:<kind>`.
   //
   // A failed request is the rare case. The batch far more often answers `200` with one resource reporting
   // `unavailable` inside it — an unreadable cgroup file on a machine that is otherwise running, a disk tree
   // the helper could not walk — and replacing a real reading with the word "Unavailable" on that answer is
   // exactly the fault that replacing it on a failed request was. The measurement stays, the snapshot says
   // these are the last known figures, and "Unavailable" is shown only when there is nothing to keep.
+  //
+  // The GENERATION is part of the key because a recreated environment is a different machine with a
+  // different process tree. Keeping "the last known CPU" across that boundary would show one generation's
+  // figures for another's, which is a wrong reading rather than an old one.
   const measured = useRef(new Map<string, RowMetric>());
   const liveIds = new Set(managedIds);
+  const currentGeneration = new Map<number, number>();
+  for (const item of usageByProject.values()) currentGeneration.set(item.projectId, item.environment.generation);
   for (const key of [...measured.current.keys()]) {
-    if (!liveIds.has(Number(key.slice(0, key.indexOf(':'))))) measured.current.delete(key);
+    const [id, generation] = key.split(':');
+    const projectId = Number(id);
+    if (!liveIds.has(projectId)) { measured.current.delete(key); continue; }
+    const live = currentGeneration.get(projectId);
+    if (live !== undefined && String(live) !== generation) measured.current.delete(key);
   }
   // A refusal is not a gap to paper over: this account may no longer see these figures at all.
   if (refused) measured.current.clear();
-  const recall = (projectId: number, kind: 'cpu' | 'memory' | 'disk', metric: UsageMetric): { item: RowMetric; kept: boolean } => {
-    const key = `${projectId}:${kind}`;
+  const recall = (projectId: number, generation: number, kind: 'cpu' | 'memory' | 'disk', metric: UsageMetric): { item: RowMetric; kept: boolean } => {
+    const key = `${projectId}:${generation}:${kind}`;
     const fresh = metricValue(metric, kind, s);
     if (fresh.state === 'ready' || fresh.state === 'absolute') { measured.current.set(key, fresh); return { item: fresh, kept: false }; }
     // `stopped` is the truth about a resource that is not running to be measured, and it ENDS the life of
     // the figure before it — a reading from before the stop must not reappear when a later poll cannot read
     // the machine that was restarted since.
     if (fresh.state === 'stopped') { measured.current.delete(key); return { item: fresh, kept: false }; }
-    if (fresh.state !== 'unavailable') return { item: fresh, kept: false };
+    // `unknown` and `unavailable` are both "no figure right now" over a resource that may well have one.
+    if (fresh.state !== 'unavailable' && fresh.state !== 'unknown') return { item: fresh, kept: false };
     const kept = measured.current.get(key);
     return kept ? { item: kept, kept: true } : { item: fresh, kept: false };
   };
@@ -205,9 +233,10 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   const [pending, setPending] = useState<number | null>(null);
   const progress = hooks.useEnvironmentOperation(watched?.operationId ?? null, watched?.projectId);
 
-  const generations = useRef(new Map<number, number>());
-  generations.current.clear();
-  for (const item of usageByProject.values()) generations.current.set(item.projectId, item.environment.generation);
+  // The generation a lifecycle action is dispatched against is the one this frame was built from, so it
+  // is read from the same map the remembered figures are keyed by rather than from a second copy of it.
+  const generations = useRef(currentGeneration);
+  generations.current = currentGeneration;
   const accountRef = useRef<number | undefined>(accountId);
   accountRef.current = accountId;
 
@@ -240,11 +269,12 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
     const item = usageByProject.get(project.id);
     if (!item) {
       // Nothing has ever been measured for this project, so there is nothing to preserve. Which of the
-      // two placeholders applies is the difference between "the sample is coming" and "the read failed".
+      // two placeholders applies is the difference between "the sample is not known yet" and "the read
+      // failed" — and the first of those is a mark, not a word, so the card is readable while it waits.
       const failed = usage.isError && !usage.isLoading;
       metrics[project.id] = {
-        ...placeholderMetrics(s, failed ? 'unavailable' : 'loading',
-          failed ? (refusedStatus === 403 ? s.error_project_forbidden : s.usageUnavailable) : s.usageLoading),
+        ...placeholderMetrics(s, failed ? 'unavailable' : 'unknown',
+          failed ? (refusedStatus === 403 ? s.error_project_forbidden : s.usageUnavailable) : UNKNOWN_VALUE),
         ...(refreshing ? { refreshing: true } : {}),
         onRefresh: refresh,
         refreshLabel: s.usageRefresh,
@@ -263,14 +293,19 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
       tone: presentation.tone,
       ...(busy ? { busy: true } : {}),
     };
+    // A machine that is BOOTING has no process figures yet, and the ones from before the boot belong to a
+    // process that no longer exists — so they are forgotten here rather than kept as "last known". Disk
+    // is storage rather than process state and survives a restart, which is why it is recalled normally.
+    const booting = state === 'starting';
+    const processMetric = (kind: 'cpu' | 'memory'): { item: RowMetric; kept: boolean } => {
+      if (!booting) return recall(project.id, environment.generation, kind, item.resources[kind]);
+      measured.current.delete(`${project.id}:${environment.generation}:${kind}`);
+      return { item: { id: kind, label: metricLabel(kind, s), value: UNKNOWN_VALUE, state: 'unknown' }, kept: false };
+    };
     const readings = [
-      state === 'starting'
-        ? { item: { id: 'cpu', label: s.usageCpu, value: s.usageLoading, state: 'loading' } as RowMetric, kept: false }
-        : recall(project.id, 'cpu', item.resources.cpu),
-      state === 'starting'
-        ? { item: { id: 'memory', label: s.usageRam, value: s.usageLoading, state: 'loading' } as RowMetric, kept: false }
-        : recall(project.id, 'memory', item.resources.memory),
-      recall(project.id, 'disk', item.resources.disk),
+      processMetric('cpu'),
+      processMetric('memory'),
+      recall(project.id, environment.generation, 'disk', item.resources.disk),
     ];
     metrics[project.id] = snapshot(readings.map((reading) => reading.item), readings.some((reading) => reading.kept));
     actions[project.id] = ACTIONS.map((action) => ({

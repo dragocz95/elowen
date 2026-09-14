@@ -1,7 +1,7 @@
 'use client';
 import { MessagesSquare } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { useBrainChat } from '../advisor/BrainChatProvider';
+import { useBrainChat, useBrainChatStatus } from '../advisor/BrainChatProvider';
 import { formatTokens, formatCost } from '../../lib/format';
 import { brainModelLabel } from '../../lib/modelProvider';
 import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
@@ -21,7 +21,8 @@ import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
  *  (see chat.css), so the answer holds from the first paint instead of waiting for a measurement. */
 export function ChatDeckHero() {
   const { t } = useTranslation();
-  const { sessions, currentModel, usage } = useBrainChat();
+  const { sessions, currentModel } = useBrainChat();
+  const { usage } = useBrainChatStatus();
 
   const count = sessions.data?.length ?? 0;
   const active = sessions.data?.find((s) => s.active);

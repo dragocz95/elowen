@@ -5,6 +5,7 @@ import { sanitizePermissionSettings, mergePermissionSettings, type PermissionAct
 import { sanitizeNavSettings, mergeNavSettings, type NavSettings } from './navSettings.js';
 import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 import { PLATFORM_IDENTITIES, platformIdentity, type PlatformIdentityDescriptor, type PlatformLinkKey } from '../shared/platformIdentity.js';
+import { INVALID_PLUGIN_SKILL_OVERRIDES } from '../plugins/skillAvailability.js';
 
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
@@ -98,6 +99,33 @@ function projectModelPreferences(raw: string | null): Record<string, ProjectMode
   try { return cleanProjectModelMap(JSON.parse(raw)); } catch { return {}; }
 }
 
+const PLUGIN_SKILL_DISABLED_KEY = 'pluginSkillDisabled';
+const MAX_PLUGIN_SKILL_OVERRIDES = 2_000;
+const MAX_PLUGIN_SKILL_KEY_LENGTH = 512;
+
+/** Stored rows are untrusted durable input. Any malformed or oversized policy disables every plugin skill
+ * for that account until the row is repaired; silently dropping bad entries would re-enable capabilities. */
+function pluginSkillDisabled(raw: string | null): Set<string> {
+  if (!raw) return new Set();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > MAX_PLUGIN_SKILL_OVERRIDES) {
+      return new Set([INVALID_PLUGIN_SKILL_OVERRIDES]);
+    }
+    const disabled = new Set<string>();
+    for (const value of parsed) {
+      if (typeof value !== 'string' || value.length === 0 || value.length > MAX_PLUGIN_SKILL_KEY_LENGTH
+        || value === INVALID_PLUGIN_SKILL_OVERRIDES) {
+        return new Set([INVALID_PLUGIN_SKILL_OVERRIDES]);
+      }
+      disabled.add(value);
+    }
+    return disabled;
+  } catch {
+    return new Set([INVALID_PLUGIN_SKILL_OVERRIDES]);
+  }
+}
+
 /** Per-user key/value settings. A row exists only for a value the user has explicitly set — absence means
  *  "use the default". Keyed by (user_id, key). Generic, but ships a typed CLI-settings accessor. */
 export class UserSettingStore {
@@ -176,6 +204,28 @@ export class UserSettingStore {
        RETURNING value`
     ).get(userId) as { value: string } | undefined;
     return row?.value === 'true';
+  }
+
+  /** Opaque source-aware plugin skill keys explicitly disabled for this account. Absence means enabled. */
+  disabledPluginSkills(userId: number): ReadonlySet<string> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) return new Set();
+    return pluginSkillDisabled(this.get(userId, PLUGIN_SKILL_DISABLED_KEY));
+  }
+
+  setPluginSkillEnabled(userId: number, key: string, enabled: boolean): void {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('invalid user id');
+    if (!key || key.length > MAX_PLUGIN_SKILL_KEY_LENGTH || key === INVALID_PLUGIN_SKILL_OVERRIDES) {
+      throw new Error('invalid plugin skill key');
+    }
+    const disabled = new Set(this.disabledPluginSkills(userId));
+    if (disabled.has(INVALID_PLUGIN_SKILL_OVERRIDES)) throw new Error('invalid persisted plugin skill overrides');
+    if (enabled) disabled.delete(key);
+    else {
+      if (!disabled.has(key) && disabled.size >= MAX_PLUGIN_SKILL_OVERRIDES) throw new Error('too many plugin skill overrides');
+      disabled.add(key);
+    }
+    if (disabled.size === 0) this.remove(userId, PLUGIN_SKILL_DISABLED_KEY);
+    else this.set(userId, PLUGIN_SKILL_DISABLED_KEY, JSON.stringify([...disabled].sort()));
   }
 
   /** The user's CLI/brain settings, with defaults filled in. */

@@ -15,7 +15,7 @@
     },
     "showSpeed": {
       "label": "Rychlost",
-      "hint": "Zobrazí efektivní rychlost poslední dokončené generace v tokenech za sekundu — zahrnuje čekání na poskytovatele i reasoning, není to čisté dekódování."
+      "hint": "Zobrazí naměřenou rychlost výstupu modelu v aktuálním tahu: vygenerované tokeny včetně uvažování a volání nástrojů dělené dobou úspěšné generace poskytovatele. Čas nástrojů a čekání se nezapočítává."
     },
     "showCost": {
       "label": "Náklady",

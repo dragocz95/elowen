@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { controlCommandsFrom } from '../../packages/plugin-shared/chatCommands.mjs';
-import { PluginRegistry, projectScopedTools } from '../../src/plugins/registry.js';
+import { PluginRegistry, pluginSkillAvailabilityKey, projectScopedTools } from '../../src/plugins/registry.js';
+import { INVALID_PLUGIN_SKILL_OVERRIDES } from '../../src/plugins/skillAvailability.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import { assertPathAllowed } from '../../src/plugins/pathGuard.js';
 import type { Policy } from '../../src/plugins/policy.js';
@@ -199,13 +200,39 @@ describe('PluginRegistry', () => {
       expect(reg.skillsFor(4, accessUser()).map((s) => s.name)).toEqual([]);
     });
 
-    it('always shows grant-gated plugin skills to an admin', () => {
+    it('always shows grant-gated plugin skills to an admin unless their account explicitly disables one', () => {
       const reg = new PluginRegistry();
       reg.contextFor('cronjob', {}, noopLog).registerSkill(fakeSkill('cron-schedule'));
       reg.setUserGrantable('cronjob', true);
+      const key = pluginSkillAvailabilityKey('cronjob', 'cron-schedule');
 
       expect(reg.skillsFor(1, accessUser({ is_admin: true })).map((s) => s.name))
         .toEqual(['cron-schedule']);
+      expect(reg.skillsFor(1, accessUser({ is_admin: true }), new Set([key]))).toEqual([]);
+      expect(reg.skillCatalogFor(1, accessUser({ is_admin: true }), new Set([key]))[0]).toMatchObject({
+        key,
+        contributorPlugin: 'cronjob',
+        source: 'plugin',
+        enabledForAccount: false,
+        effective: false,
+        unavailableReason: 'disabled-for-account',
+      });
+      expect(reg.skillsFor(1, accessUser({ is_admin: true }), new Set([INVALID_PLUGIN_SKILL_OVERRIDES]))).toEqual([]);
+    });
+
+    it('keeps same-named plugin contributions on independent source keys', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('alpha', {}, noopLog).registerSkill(fakeSkill('shared-name'));
+      reg.contextFor('beta', {}, noopLog).registerSkill(fakeSkill('shared-name'));
+      const alphaKey = pluginSkillAvailabilityKey('alpha', 'shared-name');
+      const betaKey = pluginSkillAvailabilityKey('beta', 'shared-name');
+
+      expect(alphaKey).not.toBe(betaKey);
+      expect(reg.skillsFor(7, accessUser()).map((skill) => skill.name)).toEqual(['shared-name']);
+      const entries = reg.skillCatalogFor(7, accessUser(), new Set([alphaKey]));
+      expect(entries.find((entry) => entry.key === alphaKey)).toMatchObject({ effective: false, unavailableReason: 'disabled-for-account' });
+      expect(entries.find((entry) => entry.key === betaKey)).toMatchObject({ effective: true });
+      expect(reg.skillsFor(7, accessUser(), new Set([alphaKey]))[0]).toBe(reg.skills[1]);
     });
 
     it('leaves skills from plugins that are not userGrantable unaffected', () => {

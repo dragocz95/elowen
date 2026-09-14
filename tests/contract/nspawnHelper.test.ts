@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 // The installed root helper is standalone ESM — after sudo it cannot import service-user-owned package
@@ -22,8 +22,11 @@ import {
   MACHINE_SYSCTL_CONTENT,
   MACHINE_SYSCTL_PATH,
   MACHINE_UNIT_TEMPLATE,
+  PROJECT_ROOTFS_ENABLED_UNITS,
   firewallRuleCommand,
+  nspawnFirewallRules,
   NSPAWN_FIREWALL_RULES,
+  renderMachineFirewallUnit,
   POLKIT_RULE_PATH,
   applyNspawnRequest,
   applyRequest,
@@ -45,6 +48,7 @@ import {
 } from '../../scripts/elowen-site-gateway.mjs';
 // @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
 import { createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { PROJECT_ARTIFACT, ROOTFS_RECIPES } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 // @ts-expect-error the bundled machine runtime is plain ESM without declarations
 import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
 // @ts-expect-error the bundled Sandbox storage owner is plain ESM without declarations
@@ -88,6 +92,7 @@ function runnerFixture(options: {
   installed?: boolean; polkit?: string; polkitMode?: number; unit?: string; unitMode?: number;
   unitLoaded?: boolean; firewall?: boolean; dockerChain?: boolean; forwarding?: boolean; networkd?: boolean; deployment?: string;
   firewallUnit?: string; firewallEnabled?: boolean; sysctl?: string; networkdEnabled?: boolean;
+  resolver?: string;
 } = {}) {
   const calls: Call[] = [];
   const writes: { path: string; content: string; mode: number }[] = [];
@@ -110,6 +115,7 @@ function runnerFixture(options: {
     sysctl: options.sysctl ?? MACHINE_SYSCTL_CONTENT,
     networkd: options.networkd ?? true,
     networkdEnabled: options.networkdEnabled ?? options.networkd ?? true,
+    resolver: options.resolver ?? 'nameserver 192.0.2.53\n',
     deployment: options.deployment ?? JSON.stringify({ storage: { sandboxDataDir: '/srv/sandbox', sitesDataDir: '/srv/sites' } }),
   };
   const readText = (path: string) => {
@@ -119,7 +125,7 @@ function runnerFixture(options: {
     if (path === MACHINE_UNIT_PATH) return state.unit;
     if (path === MACHINE_FIREWALL_UNIT_PATH) return state.firewallUnit;
     if (path === '/proc/sys/net/ipv4/ip_forward') return state.forwarding ? '1\n' : '0\n';
-    if (path === '/run/systemd/resolve/resolv.conf') return 'nameserver 192.0.2.53\n';
+    if (path === '/run/systemd/resolve/resolv.conf') return state.resolver;
     if (path === MACHINE_SYSCTL_PATH) return state.sysctl;
     return '';
   };
@@ -156,7 +162,9 @@ function runnerFixture(options: {
         if (file === '/usr/sbin/iptables' && chain === 'DOCKER-USER' && !state.dockerChain) {
           return { ok: false, stderr: 'No chain/target/match by that name' };
         }
-        const stdout = NSPAWN_FIREWALL_RULES
+        const address = /^\s*nameserver\s+(\S+)/m.exec(state.resolver)?.[1];
+        const firewallRules = nspawnFirewallRules(address ? { path: '/run/systemd/resolve/resolv.conf', address } : null);
+        const stdout = firewallRules
           .filter((rule) => rule.binary === file && rule.chain === chain)
           .sort((left, right) => left.insertAt - right.insertAt)
           .map((rule) => `-A ${rule.chain} ${rule.spec.join(' ')}`)
@@ -598,7 +606,7 @@ describe('privileged helper: the four merge constraints', () => {
     for (const op of ['exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-sizes', 'tree-verify', 'status']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(false);
     }
-    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'retire-legacy-site',
+    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'normalize-rootfs', 'retire-legacy-site',
       'tree-copy', 'tree-sync', 'tree-remove', 'destroy', 'release-uid-range']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
     }
@@ -997,12 +1005,79 @@ describe('privileged helper: host artefacts and readiness', () => {
     // A request leaves through the machine link and its reply returns to it. Both rules live directly in
     // the native chain so a host does not need Docker's private chain, and fixed leading positions keep a
     // framework jump or host DROP rule from intercepting either direction first.
-    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'FORWARD');
+    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'FORWARD' && rule.spec.includes('ACCEPT'));
     expect(forwarding.map((rule: { id: string }) => rule.id)).toEqual(['firewall:forward-out', 'firewall:forward-back']);
-    expect(forwarding.map((rule) => rule.insertAt)).toEqual([1, 2]);
+    expect(forwarding.map((rule: { binary: string }) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/iptables']);
     expect(forwarding.map((rule) => firewallRuleCommand(rule)).every((command) => command.includes('--comment elowen-machine-'))).toBe(true);
     // The return path is conntrack-scoped, so it opens nothing a machine did not ask for first.
     expect(forwarding[1]!.spec).toContain('RELATED,ESTABLISHED');
+  });
+
+  it('blocks a machine egress path to the cloud platform the host itself lives on, IPv4 and IPv6', () => {
+    // A machine routed through this host reaches the instance-metadata service and the platform's own
+    // virtual IP through FORWARD, which is where the HOST's credentials are served from. The block has to
+    // be in the native chain ahead of both accepts, and ahead is a POSITION, not an ordering within an
+    // array: a host or framework accept that lands above it would let the whole thing through.
+    const egress = NSPAWN_FIREWALL_RULES.filter((rule) => rule.id.startsWith('firewall:egress-'));
+    expect(egress.map((rule) => rule.id)).toEqual([
+      'firewall:egress-link-local', 'firewall:egress-azure-platform', 'firewall:egress-link-local6',
+    ]);
+    expect(egress.every((rule) => rule.chain === 'FORWARD' && rule.spec.includes('-j') && rule.spec.includes('DROP'))).toBe(true);
+    expect(egress.map((rule) => rule.spec[rule.spec.indexOf('-d') + 1])).toEqual(['169.254.0.0/16', '168.63.129.16/32', 'fe80::/10']);
+
+    const accepts = NSPAWN_FIREWALL_RULES.filter((rule) => rule.chain === 'FORWARD' && rule.spec.includes('ACCEPT'));
+    const v4 = NSPAWN_FIREWALL_RULES.filter((rule) => rule.binary === '/usr/sbin/iptables' && rule.chain === 'FORWARD');
+    const v6 = NSPAWN_FIREWALL_RULES.filter((rule) => rule.binary === '/usr/sbin/ip6tables' && rule.chain === 'FORWARD');
+    expect(v4.map((rule) => rule.id)).toEqual([
+      'firewall:egress-link-local', 'firewall:egress-azure-platform', 'firewall:forward-out', 'firewall:forward-back',
+    ]);
+    expect(v4.map((rule) => rule.insertAt)).toEqual([1, 2, 3, 4]);
+    expect(v6.map((rule) => rule.id)).toEqual(['firewall:egress-link-local6']);
+    expect(v6[0]!.insertAt).toBe(1);
+    // No accept may sit at or above an egress block on the same chain, in either direction. This is the
+    // property that would silently fail open if somebody renumbered the list for readability.
+    for (const rule of accepts) {
+      const sameChainDrops = NSPAWN_FIREWALL_RULES.filter((candidate) => candidate.binary === rule.binary
+        && candidate.chain === rule.chain && candidate.spec.includes('DROP'));
+      for (const drop of sameChainDrops) {
+        expect(drop.insertAt, `${drop.id} must precede ${rule.id}`).toBeLessThan(rule.insertAt);
+      }
+    }
+  });
+
+  it('permits only DNS to the selected Azure platform resolver before denying the rest of that address', async () => {
+    const azure = runnerFixture({ firewall: false, resolver: 'nameserver 168.63.129.16\n' });
+    const reported = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, azure.options) as Readiness;
+
+    const udp = rowFor(reported, 'firewall:resolver-azure-dns-udp');
+    const tcp = rowFor(reported, 'firewall:resolver-azure-dns-tcp');
+    const platformDrop = rowFor(reported, 'firewall:egress-azure-platform');
+    const forwardOut = rowFor(reported, 'firewall:forward-out');
+    expect(udp.detail).toContain('/usr/sbin/iptables -I FORWARD 2');
+    expect(udp.detail).toContain('-i ve-+ -d 168.63.129.16/32 -p udp -m udp --dport 53');
+    expect(tcp.detail).toContain('/usr/sbin/iptables -I FORWARD 3');
+    expect(tcp.detail).toContain('-i ve-+ -d 168.63.129.16/32 -p tcp -m tcp --dport 53');
+    expect(platformDrop.detail).toContain('/usr/sbin/iptables -I FORWARD 4');
+    expect(platformDrop.detail).toContain('-d 168.63.129.16/32');
+    expect(forwardOut.detail).toContain('/usr/sbin/iptables -I FORWARD 5');
+    expect(reported.items.filter((item) => item.id.startsWith('firewall:resolver-azure-dns-'))).toHaveLength(2);
+    expect([udp.detail, tcp.detail].some((detail) => detail.includes('--dport 80'))).toBe(false);
+    expect(rowFor(reported, 'firewall:egress-link-local').detail).toContain('-d 169.254.0.0/16');
+
+    const applied = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, azure.options) as Readiness;
+    expect(applied.ready, applied.items.filter((item) => !item.ok).map((item) => `${item.id}: ${item.detail}`).join('; ')).toBe(true);
+    const azureRules = nspawnFirewallRules({ path: '/run/systemd/resolve/resolv.conf', address: '168.63.129.16' });
+    expect(azure.state.firewallUnit).toBe(renderMachineFirewallUnit(azureRules));
+    const forwardLines = azure.state.firewallUnit.split('\n').filter((line) => line.includes(' -I FORWARD '));
+    expect(forwardLines.map((line) => Number(/ -I FORWARD (\d+) /.exec(line)?.[1]))).toEqual([1, 2, 3, 4, 1, 5, 6]);
+    expect(forwardLines.filter((line) => line.includes('168.63.129.16/32') && line.includes(' -j ACCEPT'))).toHaveLength(2);
+    expect(forwardLines.some((line) => line.includes('168.63.129.16/32') && line.includes('--dport 80') && line.includes(' -j ACCEPT'))).toBe(false);
+
+    const ordinary = runnerFixture({ firewall: false, resolver: 'nameserver 192.0.2.53\n' });
+    const ordinaryReported = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, ordinary.options) as Readiness;
+    expect(ordinaryReported.items.some((item) => item.id.startsWith('firewall:resolver-azure-dns-'))).toBe(false);
+    expect(rowFor(ordinaryReported, 'firewall:egress-azure-platform').detail).toContain('/usr/sbin/iptables -I FORWARD 2');
+    expect(rowFor(ordinaryReported, 'firewall:forward-out').detail).toContain('/usr/sbin/iptables -I FORWARD 3');
   });
 
   it('puts the host guard where a machine-to-host packet actually arrives', () => {
@@ -1016,9 +1091,8 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(returns).toHaveLength(2);
     expect(returns.every((rule) => rule.chain === 'INPUT' && rule.spec.includes('RELATED,ESTABLISHED'))).toBe(true);
     expect(returns.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
-    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.spec.includes('DROP'));
+    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.chain === 'INPUT' && rule.spec.includes('DROP'));
     expect(guards).toHaveLength(2);
-    expect(guards.every((rule) => rule.chain === 'INPUT')).toBe(true);
     expect(guards.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
     // IPv4 DHCP is first, then the native-port return path and guard. IPv6 starts with return then guard.
     const lease = NSPAWN_FIREWALL_RULES.find((rule) => rule.id === 'firewall:machine-dhcp')!;
@@ -1159,6 +1233,9 @@ describe('privileged helper: the disk identity record', () => {
           if (path.startsWith(scratch)) {
             mkdirSync(dirname(path), { recursive: true });
             writeFileSync(path, content, { mode });
+          } else if (basename(path) === basename(paths.identity)) {
+            mkdirSync(dirname(paths.identity), { recursive: true });
+            writeFileSync(paths.identity, content, { mode });
           }
         },
         runner: (file: string, args: string[]) => {
@@ -1177,6 +1254,80 @@ describe('privileged helper: the disk identity record', () => {
       },
     };
   }
+
+  it('keeps the standalone helper required units identical to the rootfs recipe', () => {
+    expect(PROJECT_ROOTFS_ENABLED_UNITS).toEqual(ROOTFS_RECIPES[PROJECT_ARTIFACT].enabled);
+  });
+
+  it('enables recipe-required units offline before shifting a migrated root', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+
+    const systemctl = fixture.calls.filter((call) => call.file === '/usr/bin/systemctl');
+    expect(systemctl.slice(0, 2).map((call) => call.args)).toEqual(PROJECT_ROOTFS_ENABLED_UNITS.map((unit) => [
+      '--root=/proc/self/fd/3', 'is-enabled', unit,
+    ]));
+    expect(systemctl.at(-1)?.args).toEqual(['--root=/proc/self/fd/3', 'enable', ...PROJECT_ROOTFS_ENABLED_UNITS]);
+    expect(fixture.calls.findIndex((call) => call.file === '/usr/bin/systemctl' && call.args.includes('enable')))
+      .toBeLessThan(fixture.calls.findIndex((call) => call.file === '/usr/bin/python3'));
+  });
+
+  it('repairs only required unit enablement on an existing root', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+    fixture.calls.length = 0;
+    const receipt = await applyRequest({ domain: 'nspawn', op: 'normalize-rootfs', ...diskRef }, undefined, fixture.options) as {
+      changed: boolean; enabled: string[];
+    };
+
+    expect(receipt).toEqual({ ok: true, rootfsPath: fixture.paths.rootfs, changed: true,
+      enabled: [...PROJECT_ROOTFS_ENABLED_UNITS] });
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/python3')).toBe(false);
+  });
+
+  it('refuses to normalize a disk whose identity is not the requested environment', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+    const identity = JSON.parse(readFileSync(fixture.paths.identity, 'utf8'));
+    writeFileSync(fixture.paths.identity, JSON.stringify({ ...identity, specHash: 'e'.repeat(64) }));
+    fixture.calls.length = 0;
+
+    await expect(applyRequest({ domain: 'nspawn', op: 'normalize-rootfs', ...diskRef }, undefined, fixture.options))
+      .rejects.toThrow(/identity does not match/);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl')).toBe(false);
+  });
+
+  it('refuses to normalize a root filesystem whose owner disagrees with its identity', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+    fixture.calls.length = 0;
+    fixture.options.readOwner = () => UID_RANGE_BASE + 1;
+
+    await expect(applyRequest({ domain: 'nspawn', op: 'normalize-rootfs', ...diskRef }, undefined, fixture.options))
+      .rejects.toThrow(/ownership does not match/);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl')).toBe(false);
+  });
+
+  it('leaves a new root unchanged when the recipe-required units are already enabled', async () => {
+    const fixture = diskFixture();
+    const baseRunner = fixture.options.runner;
+    fixture.options.runner = (file: string, args: string[]) => {
+      if (file === '/usr/bin/systemctl' && args[1] === 'is-enabled') {
+        fixture.calls.push({ file, args });
+        return { ok: true, stdout: 'enabled\n' };
+      }
+      return baseRunner(file, args);
+    };
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+
+    await applyRequest({ domain: 'nspawn', op: 'materialize', ...diskRef,
+      archivePath: archive, targetPath: fixture.paths.rootfs }, undefined, fixture.options);
+
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args.includes('enable'))).toHaveLength(0);
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args[1] === 'is-enabled')).toHaveLength(2);
+    rmSync(archive, { force: true });
+  });
 
   it('leaves the machine root traversable, whatever mode the caller or the archive asked for', async () => {
     // Root traverses a 0700 directory it does not own, so a narrow machine root looks like a healthy boot
@@ -1208,6 +1359,63 @@ describe('privileged helper: the disk identity record', () => {
     const shift = fixture.calls.find((call) => call.file === '/usr/bin/python3');
     expect(shift?.args[1]).toContain('os.lchown');
     expect(shift?.args[1]).not.toContain('chmod');
+    rmSync(archive, { force: true });
+  });
+
+  it('empties the template machine id, so two machines from one image are not the same host', async () => {
+    // The tree arrives through the archive, so the fake extraction writes what a real one would: a
+    // machine-id inside `etc`, reached through the pinned `--directory` the helper handed to tar.
+    const fixture = diskFixture();
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+    fixture.options.runner = (file: string, args: string[]) => {
+      // What a real tar does with `--directory`: everything the archive carries lands inside that tree,
+      // which is the staging directory the helper pinned for it.
+      if (file === '/usr/bin/tar' && args.includes('--directory')) {
+        mkdirSync(join(fixture.paths.rootfs, 'etc'), { recursive: true });
+        writeFileSync(join(fixture.paths.rootfs, 'etc', 'machine-id'), '0123456789abcdef0123456789abcdef\n');
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    await applyRequest({
+      domain: 'nspawn',
+      op: 'materialize',
+      ...diskRef,
+      archivePath: archive,
+      targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options);
+
+    // Truncated, and only that: systemd generates a fresh id on first boot, while the id an image ships
+    // is one that would otherwise make every machine built from it the same host to journald and D-Bus.
+    expect(readFileSync(join(fixture.paths.rootfs, 'etc', 'machine-id'), 'utf8')).toBe('');
+    rmSync(join(fixture.paths.rootfs, 'etc'), { recursive: true, force: true });
+    rmSync(archive, { force: true });
+  });
+
+  it('refuses an archive whose etc is a symlink, instead of truncating whatever it points at', async () => {
+    // An export is untrusted input, and `etc` inside it may be a link to a host file. Following the link
+    // to empty the machine id would give that image a root-writable truncation of any file on the host.
+    const fixture = diskFixture();
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+    const victim = join(fixture.paths.directory, 'host-victim');
+    writeFileSync(victim, 'must survive');
+    fixture.options.runner = (file: string, args: string[]) => {
+      if (file === '/usr/bin/tar' && args.includes('--directory')) symlinkSync(victim, join(fixture.paths.rootfs, 'etc'));
+      return { ok: true, stdout: '' };
+    };
+
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'materialize',
+      ...diskRef,
+      archivePath: archive,
+      targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options)).rejects.toThrow(/machine etc directory is not a directory/);
+    expect(readFileSync(victim, 'utf8')).toBe('must survive');
+    rmSync(join(fixture.paths.rootfs, 'etc'), { force: true });
+    rmSync(victim, { force: true });
     rmSync(archive, { force: true });
   });
 
@@ -1346,7 +1554,13 @@ describe('privileged helper: the disk identity record', () => {
     }, undefined, fixture.options) as { unit: string; uidBase: number };
 
     expect(response.unit).toBe(`elowen-machine@${MACHINE}.service`);
-    const identityWrite = fixture.writes.find((write) => write.path === fixture.paths.identity);
+    // Written through the descriptor of the `.elowen` this helper opened, never through the disk path a
+    // second time: every component above it belongs to the service user, and the atomic write creates
+    // missing parents — so a name swapped between the check and the write would have root create a
+    // root-owned record somewhere else entirely.
+    const identityWrite = fixture.writes.find((write) => write.path.endsWith('/identity.json'));
+    expect(identityWrite?.path).toMatch(/^\/proc\/self\/fd\/\d+\/identity\.json$/);
+    expect(fixture.writes.some((write) => write.path === fixture.paths.identity)).toBe(false);
     // 0640 root:<service group>. The daemon READS this on the execution path — a privileged round trip
     // there would cost more than the state poll this runtime exists to make cheap — and only root writes
     // it. Its authority is its location, outside the root filesystem, where the guest cannot reach it.
@@ -1802,19 +2016,32 @@ describe('privileged helper: disk tree primitives', () => {
     mkdirSync(source, { recursive: true });
     mkdirSync(destination, { recursive: true });
     writeFileSync(join(source, 'file.txt'), 'content');
-    const calls: Call[] = [];
+    const calls: { file: string; args: string[]; pins: number[] }[] = [];
+    const handed: number[] = [];
     const result = await applyRequest({
       domain: 'nspawn', op: 'tree-copy', sourcePath: source, targetPath: destination,
     }, undefined, {
       storage,
-      runner: (file: string, args: string[]) => { calls.push({ file, args }); return { ok: true, stdout: '' }; },
+      runner: (file: string, args: string[], options?: { pins?: number[] }) => {
+        for (const pin of options?.pins ?? []) handed.push(fstatSync(pin).ino);
+        calls.push({ file, args, pins: options?.pins ?? [] });
+        return { ok: true, stdout: '' };
+      },
     }) as { sourcePath: string; targetPath: string };
     expect(result).toMatchObject({ sourcePath: source, targetPath: destination });
     // Exactly the copy, and nothing else: the free-space question is its own operation, and answering it
     // here would walk every tree twice per snapshot.
     expect(calls).toHaveLength(1);
     expect(calls[0].file).toBe('/bin/bash');
-    expect(calls[0].args.slice(2)).toEqual(['elowen-copy-tree', source, destination]);
+    // The names the copy is validated under are never handed to `cp`: the command is given DESCRIPTORS,
+    // addressed as the child's own fd 3 and fd 4, and those descriptors are the two directories this
+    // helper opened. Every component of both paths belongs to the service user, so a name resolved again
+    // by the copy — seconds later, over a tree of any size — is a name that user still controls.
+    expect(calls[0].args.slice(2)).toEqual(['elowen-copy-tree', '/proc/self/fd/3', '/proc/self/fd/4']);
+    expect(calls[0].pins).toHaveLength(2);
+    expect(handed).toEqual([statSync(source).ino, statSync(destination).ino]);
+    // And they are handed over, not held: nothing this helper opens outlives the command it was opened for.
+    for (const pin of calls[0].pins) expect(() => fstatSync(pin)).toThrow(/EBADF/);
   });
 
   it('answers the free-space question without hashing a byte', async () => {
@@ -1822,20 +2049,25 @@ describe('privileged helper: disk tree primitives', () => {
     const second = join(nspawnDiskPaths(storage, diskRef).directory, 'home');
     const destination = join(nspawnDiskPaths(storage, diskRef).storageRoot, 'snapshots');
     for (const path of [first, second, destination]) mkdirSync(path, { recursive: true });
-    const calls: Call[] = [];
+    const calls: { file: string; args: string[]; pins: number[] }[] = [];
+    const handed: number[] = [];
     const result = await applyRequest({
       domain: 'nspawn', op: 'tree-preflight', sourcePaths: [first, second], destinationPath: destination,
     }, undefined, {
       storage,
-      runner: (file: string, args: string[]) => {
-        calls.push({ file, args });
+      runner: (file: string, args: string[], options?: { pins?: number[] }) => {
+        for (const pin of options?.pins ?? []) handed.push(fstatSync(pin).ino);
+        calls.push({ file, args, pins: options?.pins ?? [] });
         return { ok: true, stdout: JSON.stringify({ requiredBytes: 7, marginBytes: 67_108_864, freeBytes: 1 << 30 }) };
       },
     });
     expect(result).toMatchObject({ ok: true, requiredBytes: 7, marginBytes: 67_108_864 });
     expect(calls[0].file).toBe('/usr/bin/python3');
-    expect(calls[0].args[2]).toBe(JSON.stringify([first, second]));
-    expect(calls[0].args[3]).toBe(destination);
+    // Sources and destination alike arrive as pinned descriptors, in the order given, so the walk and the
+    // `statvfs` both answer for the objects that were validated rather than for their names.
+    expect(calls[0].args[2]).toBe(JSON.stringify(['/proc/self/fd/3', '/proc/self/fd/4']));
+    expect(calls[0].args[3]).toBe('/proc/self/fd/5');
+    expect(handed).toEqual([statSync(first).ino, statSync(second).ino, statSync(destination).ino]);
     await expect(applyRequest({ domain: 'nspawn', op: 'tree-preflight', sourcePaths: [], destinationPath: destination }, undefined, { storage }))
       .rejects.toThrow(/requires source trees/);
   });
@@ -1937,6 +2169,53 @@ describe('privileged helper: disk tree primitives', () => {
     // A command that did say something still speaks for itself.
     expect(defaultCommandRunner('/bin/sh', ['-c', 'echo refused >&2; exit 1']))
       .toEqual({ ok: false, stderr: 'refused' });
+  });
+});
+
+describe('privileged helper: a pinned descriptor outlives the name it was validated under', () => {
+  it('runs the privileged command against the object this helper opened, not against the name', () => {
+    // The property the pinned protocol exists for, exercised end to end on the real filesystem. It is the
+    // SHAPE of the race rather than a simulated one: the name is replaced by a symlink pointing outside
+    // the tree the moment the command starts, which is exactly what a service user can do while a tar
+    // extraction or a recursive copy is running. Every one of these operations used to resolve the name
+    // again inside the privileged child, so the child followed the link — as root.
+    const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-pinned-'));
+    const staging = join(root, 'staging');
+    const elsewhere = join(root, 'elsewhere');
+    mkdirSync(staging);
+    mkdirSync(elsewhere);
+    writeFileSync(join(staging, 'validated.txt'), 'inside');
+    writeFileSync(join(elsewhere, 'planted.txt'), 'outside');
+
+    const fd = openSync(staging, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      const before = defaultCommandRunner('/bin/ls', ['/proc/self/fd/3'], { pins: [fd] });
+      expect(before.ok).toBe(true);
+      expect(before.stdout).toContain('validated.txt');
+
+      // The swap. The descriptor still holds the tree that was validated; the name no longer leads to it.
+      renameSync(staging, `${staging}.moved`);
+      symlinkSync(elsewhere, staging);
+
+      const after = defaultCommandRunner('/bin/ls', ['/proc/self/fd/3'], { pins: [fd] });
+      expect(after.ok).toBe(true);
+      expect(after.stdout).toContain('validated.txt');
+      expect(after.stdout).not.toContain('planted.txt');
+      // And the naive reading of the same path really does lead somewhere else, so this is not a test of
+      // a path nothing could have followed.
+      expect(defaultCommandRunner('/bin/ls', [staging]).stdout).toContain('planted.txt');
+    } finally {
+      closeSync(fd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('carries the descriptors in the child stdio array the command options build', () => {
+    // The mechanism, stated on its own: `stdio` entries 3 and up are descriptors, and the child sees them
+    // numbered from 3 regardless of the numbers this process holds them under.
+    const options = commandOptionsFor('/usr/bin/tar', [], undefined, [17, 21]);
+    expect(options.stdio).toEqual(['ignore', 'pipe', 'pipe', 17, 21]);
+    expect(commandOptionsFor('/usr/bin/tar', []).stdio).toEqual(['ignore', 'pipe', 'pipe']);
   });
 });
 

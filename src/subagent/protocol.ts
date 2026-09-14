@@ -507,6 +507,14 @@ function parseProgressEvent(raw: unknown): DelegatedProgressEvent | undefined {
       : {};
     return { type: 'step', step: v.step, maxSteps: v.maxSteps, ...carried };
   }
+  if (v.type === 'idle') {
+    const usage = v.usage;
+    return {
+      type: 'idle',
+      ...(usage && typeof usage === 'object' && !Array.isArray(usage) ? { usage: usage as BrainUsage } : {}),
+      ...(typeof v.model === 'string' ? { model: v.model } : {}),
+    };
+  }
   if (v.type === 'subagent') {
     const sessionId = str(v.sessionId);
     const status = v.status === 'running' || v.status === 'done' || v.status === 'error' ? v.status : undefined;

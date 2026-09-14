@@ -27,7 +27,7 @@ const FULL_ROWS = 5;           // 4 card rows + 1 spacing row
 
 /** A compact node only spends a second row when it has tokens/seconds to show — a column of pending
  *  nodes stays tight instead of sprawling over blank meta rows. */
-const hasCompactMeta = (node: WorkflowNode): boolean => node.tokens !== undefined || node.seconds !== undefined;
+const hasCompactMeta = (node: WorkflowNode): boolean => node.tokens !== undefined || node.seconds !== undefined || node.effectiveTps !== undefined;
 const compactRows = (node: WorkflowNode): number => (hasCompactMeta(node) ? 3 : 2);
 
 export const STATUS_GLYPH: Record<Exclude<WorkflowNode['status'], 'running'>, string> = { done: '✓', error: '✗', pending: '⏸' };
@@ -184,6 +184,7 @@ export function drawCircuit(placements: readonly Placement[], opts: CircuitOptio
     const secs = opts.seconds(node);
     const meta = [
       node.tokens !== undefined ? `${formatK(node.tokens)} tok` : '',
+      typeof node.effectiveTps === 'number' && node.effectiveTps >= 1 ? `${Math.round(node.effectiveTps)} t/s` : '',
       secs !== undefined ? formatDuration(secs) : '',
     ].filter(Boolean).join(' · ');
     if (p.full) {

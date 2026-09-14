@@ -41,6 +41,22 @@ describe('guestFiles helper parity', () => {
     expect(names[0]).toBe(join(dir, 'f-00000'));
   });
 
+  it('rejects paths and symlinks that escape the selected root', () => {
+    const dir = join(root, 'confined');
+    const outside = join(root, 'outside-secret.txt');
+    mkdirSync(dir);
+    writeFileSync(outside, 'secret');
+    symlinkSync(outside, join(dir, 'link'));
+
+    const direct = runHelper({ kind: 'stat', path: outside, root: dir });
+    expect(direct.ok).toBe(false);
+    if (!direct.ok) expect(direct.error.code).toBe('path_outside_project');
+
+    const throughLink = runHelper({ kind: 'stat', path: join(dir, 'link'), root: dir, followSymlinks: true });
+    expect(throughLink.ok).toBe(false);
+    if (!throughLink.ok) expect(throughLink.error.code).toBe('path_outside_project');
+  });
+
   it('rejects a malformed cursor', () => {
     const reply = runHelper({ kind: 'list', path: root, limit: 10, cursor: 5 });
     expect(reply.ok).toBe(false);

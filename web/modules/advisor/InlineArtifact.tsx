@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
-import type { PluginChatPendingInput, PluginUiRegistration } from 'elowen-plugin-ui-kit';
+import type { PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import type { BrainInlineArtifact, PluginUiListing } from '../../lib/types';
+import { useArtifactLive } from './chatArtifactScope';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginUi } from '../../lib/queries';
 import { loadPluginUi, PLUGIN_UI_API_VERSION } from '../../lib/pluginUi';
@@ -15,12 +16,13 @@ import { PluginErrorBoundary, PluginPlaceholder } from '../../components/plugin/
  * `pendingInput` says that the host is waiting on an answer, with the callback that brings its own
  * question card back into view. An artifact that expands over the dock hides both, so the contract hands
  * it one bounded string and one label-plus-callback — never the transcript, never a tool payload, never
- * hidden reasoning, and never the question's options or answer shape. */
-export function InlineArtifact({ artifact, narration, pendingInput }: {
-  artifact: BrainInlineArtifact;
-  narration?: string;
-  pendingInput?: PluginChatPendingInput | null;
-}) {
+ * hidden reasoning, and never the question's options or answer shape.
+ *
+ * Both are read from `ChatArtifactScope` rather than taken as props, and this component is where that
+ * subscription stops: narration changes on every streamed token, and a mounted artifact is the only thing
+ * in the transcript that has any use for it. */
+export function InlineArtifact({ artifact }: { artifact: BrainInlineArtifact }) {
+  const { narration, pendingInput } = useArtifactLive();
   const { locale } = useTranslation();
   const listing = usePluginUi(locale);
   const entry = listing.data?.find((candidate: PluginUiListing) => candidate.name === artifact.plugin);

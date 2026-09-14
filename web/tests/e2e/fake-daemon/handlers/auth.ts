@@ -5,7 +5,7 @@
 // which is undefined in setup mode (guard passes through with no user), and the gate opens the shell on
 // that 200 so the root page's fresh-install check can route to onboarding.
 import type { Hono } from 'hono';
-import { ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_TOKEN, TARGET_TOKEN, IMPERSONATION_RETURN_CODE, TOKEN_TTL_DAYS, adminUser, targetUser } from '../../seed/fixtures.ts';
+import { ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_TOKEN, TARGET_TOKEN, IMPERSONATION_RETURN_CODE, TOKEN_TTL_DAYS, adminUser, targetUser, terminalSettings } from '../../seed/fixtures.ts';
 import { needsSetup, addUser, listUsers } from '../setup.ts';
 import { getResponse } from '../overrides.ts';
 
@@ -27,6 +27,17 @@ export function registerAuthRoutes(app: Hono): void {
   app.post('/auth/logout', (c) => c.json({ ok: true }));
 
   app.get('/auth/me', (c) => c.json({ user: principal(c.req.header('authorization')) }));
+
+  // The account's terminal appearance, modelled rather than left to the catch-all. The catch-all answers
+  // an unmodelled GET with `[]`, which is truthy and has none of these fields — so the section seeded its
+  // form with `undefined` and crashed while rendering the scrollback figure. A section a spec opens on
+  // purpose gets a real payload; the write is a CAS echo, like the daemon's.
+  app.get('/auth/me/terminal-settings', (c) => c.json({ ...terminalSettings, revision: 1 }));
+  app.patch('/auth/me/terminal-settings', async (c) => {
+    const patch = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    delete patch.expectedRevision;
+    return c.json({ ...terminalSettings, ...patch, revision: 2 });
+  });
 
   app.post('/users/:id/impersonate', (c) => {
     if (principal(c.req.header('authorization'))?.id !== adminUser.id) return c.json({ error: 'forbidden' }, 403);

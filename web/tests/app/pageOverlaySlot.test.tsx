@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { render } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import PageOverlayCatchAll from '../../app/@pageOverlay/[...catchAll]/page';
 import PageOverlayDefault from '../../app/@pageOverlay/default';
+import InterceptedAccountPage from '../../app/@pageOverlay/(.)account/page';
+import InterceptedSettingsPage from '../../app/@pageOverlay/(.)settings/page';
+import AccountSlotPage from '../../app/@pageOverlay/account/page';
+import SettingsSlotPage from '../../app/@pageOverlay/settings/page';
+import AccountPage from '../../app/account/page';
+import SettingsPage from '../../app/settings/page';
 
 const WEB = resolve(process.cwd());
 const APP = join(WEB, 'app');
@@ -18,16 +25,36 @@ const SLOT = join(APP, '@pageOverlay');
  *     after navigating away;
  *   - an interceptor has to exist for each page presented this way, and for no other route. */
 describe('app/@pageOverlay slot', () => {
-  it('intercepts exactly the pages presented as overlays', () => {
+  it('intercepts exactly the pages presented as overlays, and answers a hard load for each', () => {
     const routes = readdirSync(SLOT, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
-    expect(routes).toEqual(['(.)account', '(.)settings', '[...catchAll]']);
+    // The interceptor answers a CLIENT navigation; the plain route beside it answers a hard load, where
+    // nothing is intercepted. Without the second one the slot is empty on arrival and the canonical page
+    // underneath is the whole screen — a different presentation of the same address.
+    expect(routes).toEqual(['(.)account', '(.)settings', '[...catchAll]', 'account', 'settings']);
     // Each interceptor names a canonical page that really exists underneath it.
     for (const route of ['account', 'settings']) {
       expect(readdirSync(join(APP, route))).toContain('page.tsx');
     }
+  });
+
+  /** ONE presentation, whichever way the reader arrived. The interceptor and the plain route are two
+   *  Next conventions for two arrivals at the same address, so they have to answer with the same
+   *  component — a second overlay component behind one of them is exactly the drift this pins. */
+  it('answers an intercepted navigation and a hard load with the same overlay', () => {
+    expect((SettingsSlotPage() as ReactElement).type).toBe((InterceptedSettingsPage() as ReactElement).type);
+    expect((AccountSlotPage() as ReactElement).type).toBe((InterceptedAccountPage() as ReactElement).type);
+  });
+
+  /** The canonical page owns the ADDRESS, not the presentation: the slot above is what draws Settings and
+   *  Account, so the page underneath contributes no content of its own. Rendering the deck here as well is
+   *  what put a standalone page on screen for a hard load, and let it win the first frame of a client
+   *  navigation before the intercepted overlay replaced it. */
+  it('leaves the presentation to the slot on both canonical pages', () => {
+    expect(render(<SettingsPage />).container).toBeEmptyDOMElement();
+    expect(render(<AccountPage />).container).toBeEmptyDOMElement();
   });
 
   it('is read by the root layout under the slot directory name', () => {

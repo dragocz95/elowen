@@ -29,6 +29,22 @@ def path(value):
     return os.path.normpath(value)
 
 
+def confined(name, root):
+    if root is None:
+        return name
+    root = path(root)
+    try:
+        if os.path.commonpath([root, name]) != root:
+            fail('path_outside_project', 'Path is outside the selected Project root')
+        probe = name if os.path.lexists(name) else os.path.dirname(name)
+        resolved = os.path.realpath(probe)
+        if os.path.commonpath([root, resolved]) != root:
+            fail('path_outside_project', 'Path resolves outside the selected Project root')
+    except ValueError:
+        fail('path_outside_project', 'Path is outside the selected Project root')
+    return name
+
+
 def bounded(value, low, high):
     if type(value) is not int or not low <= value <= high:
         fail('invalid_limit', 'Invalid guest operation bound')
@@ -284,7 +300,7 @@ def upload(op, name):
 
 def run(op):
     kind = op.get('kind')
-    name = path(op.get('path'))
+    name = confined(path(op.get('path')), op.get('root'))
     if kind in ['write-begin', 'write-chunk', 'write-commit', 'write-abort']:
         return upload(op, name)
     if kind == 'stat':
@@ -333,6 +349,8 @@ def run(op):
         if not stat.S_ISREG(os.stat(target).st_mode):
             fail('not_regular_file', 'Only regular files can be read')
         before = version(target)
+        if op.get('expectedVersion') is not None and op.get('expectedVersion') != before:
+            fail('version_conflict', 'Content version no longer matches')
         with open(target, 'rb') as stream:
             total = os.fstat(stream.fileno()).st_size
             stream.seek(offset)
@@ -385,7 +403,7 @@ def run(op):
         sync_directory(os.path.dirname(name))
         return {'kind': kind, 'removed': True}
     if kind == 'rename':
-        destination = path(op.get('destination'))
+        destination = confined(path(op.get('destination')), op.get('root'))
         expected(name, op.get('expectedVersion'))
         libc = ctypes.CDLL(None, use_errno=True)
         result = libc.renameat2(-100, os.fsencode(name), -100, os.fsencode(destination), 1)

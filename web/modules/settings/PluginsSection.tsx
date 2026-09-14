@@ -209,7 +209,7 @@ function pluginLocation(name: string | null): string {
  *  downloaded), each toggling enable live and opening a rich detail view; user plugins can be updated (when
  *  the registry has a newer version) or uninstalled. **Available** browses the curated GitHub registry for
  *  plugins not yet installed and installs them with one click. A search box + category pills narrow both. */
-export function PluginsSection({ historyMode = 'push' }: { historyMode?: 'push' | 'replace' }) {
+export function PluginsSection() {
   const { data, isLoading } = usePlugins();
   const marketplace = useMarketplace();
   // Enabling a plugin that claims power over stored state is refused by the daemon until the operator
@@ -270,9 +270,11 @@ export function PluginsSection({ historyMode = 'push' }: { historyMode?: 'push' 
     setDetail(null);
     setDetailFromUrl(false);
   }, [isLoading, urlDetailIsValid, urlReady]);
-  const writeDetailLocation = historyMode === 'replace'
-    ? window.history.replaceState.bind(window.history)
-    : window.history.pushState.bind(window.history);
+  // REPLACE, never push. Settings is a page presented as an overlay wherever it is opened from, and a
+  // plugin detail is a place INSIDE that one surface: pushing an entry per detail made Back walk through
+  // every plugin the reader had looked at before it finally left Settings. The section still reads the
+  // address on popstate, so a shared `?plugin=` link and browser history keep working.
+  const writeDetailLocation = window.history.replaceState.bind(window.history);
   const openDetail = (name: string) => {
     writeDetailLocation(null, '', pluginLocation(name));
     setDetailFromUrl(false);

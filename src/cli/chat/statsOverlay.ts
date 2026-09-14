@@ -176,10 +176,8 @@ class StatsOverlay implements Component, Focusable {
       }
     }
     body.push(kv('cost', color.bold(color.text(`$${u.cost.toFixed(2)}`))));
-    // The LATEST completed model call's effective rate: output tokens (reasoning and tool-call tokens
-    // included) over the whole logical request from initiation — header waits, prompt processing,
-    // retries and backoff included. The legacy post-header `outputTps` blends the whole session, so the
-    // conversation card shows the call the user just watched instead.
+    // Current-turn generated output (reasoning and tool calls included) over successful provider generation
+    // time. Queue/header wait, retries, tools and human waits are excluded.
     if (u.effectiveTps != null && u.effectiveTps > 0) {
       body.push(kv('speed', color.text(`${Math.round(u.effectiveTps)} tok/s`)));
     }

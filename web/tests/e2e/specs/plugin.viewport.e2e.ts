@@ -87,6 +87,48 @@ test('a plugin page draws exactly one page frame, the same one its sibling regis
   }
 });
 
+test('Skills separates Filip admin controls from Patricie effective read-only catalog at desktop and 390px', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  test.setTimeout(90_000);
+  const armed = await seed.realPlugins();
+  test.skip(!armed.includes('skills'), 'needs the registry Skills bundle');
+  await seed.response('users', [
+    { id: 1, username: 'admin', name: 'Filip', is_admin: true, granted_plugins: [] },
+    { id: 2, username: 'target', name: 'Patricie', is_admin: false, granted_plugins: ['skills'] },
+  ]);
+
+  await app.setViewportSize({ width: 1440, height: 900 });
+  await openPluginRegister(app, 'skills');
+  await expect(app.getByRole('combobox', { name: 'Account' })).toBeVisible();
+  await expect(app.getByText('salon-operations')).toBeVisible();
+  await expect(app.getByText('sarah-hair').first()).toBeVisible();
+  await app.getByRole('combobox', { name: 'Account' }).click();
+  await app.getByRole('option', { name: 'Patricie' }).click();
+
+  let availabilityWrite: unknown;
+  await app.route('**/api/plugins/skills/plugin-availability', async (route) => {
+    availabilityWrite = route.request().postDataJSON();
+    await route.fulfill({ json: { ok: true } });
+  }, { times: 1 });
+  await app.getByRole('switch', { name: 'Available for this account: salon-operations' }).click();
+  await expect.poll(() => availabilityWrite).toEqual({ userId: 2, key: 'v1:sarah-hair:salon-operations', enabled: false });
+
+  await app.setViewportSize({ width: 390, height: 844 });
+  expect(await app.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await app.setViewportSize({ width: 1440, height: 900 });
+  await app.getByRole('link', { name: /Users/ }).click();
+  await app.getByRole('button', { name: /^target:/ }).click();
+  await app.getByRole('menuitem', { name: 'Sign in as' }).click();
+  await app.waitForURL('**/dash');
+  await app.setViewportSize({ width: 390, height: 844 });
+  await app.goto('/p/skills');
+  await expect(app.getByRole('combobox', { name: 'Account' })).toHaveCount(0);
+  await expect(app.getByText('salon-operations')).toBeVisible();
+  await expect(app.getByRole('switch', { name: 'Available for this account: salon-operations' })).toHaveCount(0);
+  expect(await app.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test('the rows of a plugin register share one height', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   // /p/skills measured 27/41/59/59/49px against the 48px rhythm every other register holds, which is

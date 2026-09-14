@@ -17,6 +17,9 @@ interface BrainSubagentRunState {
   detail?: string;
   tools: number;
   tokens?: number;
+  effectiveTps?: number;
+  effectiveTurnId?: string;
+  effectiveModel?: string;
   seconds: number;
   model?: string;
   thinkingLevel?: string;
@@ -236,6 +239,9 @@ export interface BrainSubagentResult {
   error?: string;
   tools: number;
   tokens?: number;
+  effectiveTps?: number;
+  effectiveTurnId?: string;
+  effectiveModel?: string;
   seconds: number;
   model?: string;
   delivery: 'pending' | 'acknowledged';
@@ -297,6 +303,9 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
   if (o.thinkingLevel !== undefined && typeof o.thinkingLevel !== 'string') return undefined;
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
+  if (o.effectiveTps !== undefined && (typeof o.effectiveTps !== 'number' || !Number.isFinite(o.effectiveTps) || o.effectiveTps <= 0)) return undefined;
+  if (o.effectiveTurnId !== undefined && (typeof o.effectiveTurnId !== 'string' || !o.effectiveTurnId)) return undefined;
+  if (o.effectiveModel !== undefined && typeof o.effectiveModel !== 'string') return undefined;
   if (o.seconds !== undefined && (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0)) return undefined;
   if (o.startedAt !== undefined && (typeof o.startedAt !== 'number' || !Number.isSafeInteger(o.startedAt) || o.startedAt < 0)) return undefined;
   if (o.result !== undefined && typeof o.result !== 'string') return undefined;
@@ -309,6 +318,9 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
     ...(typeof o.sessionId === 'string' ? { sessionId: o.sessionId } : {}),
     ...(typeof o.detail === 'string' ? { detail: bounded(o.detail, MAX_WORKFLOW_DETAIL_CHARS) } : {}),
     ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
+    ...(typeof o.effectiveTps === 'number' ? { effectiveTps: o.effectiveTps } : {}),
+    ...(typeof o.effectiveTurnId === 'string' ? { effectiveTurnId: bounded(o.effectiveTurnId, 128) } : {}),
+    ...(typeof o.effectiveModel === 'string' ? { effectiveModel: bounded(o.effectiveModel, 512) } : {}),
     ...(typeof o.seconds === 'number' ? { seconds: o.seconds } : {}),
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
     ...(typeof o.thinkingLevel === 'string' ? { thinkingLevel: bounded(o.thinkingLevel, 64) } : {}),
@@ -362,6 +374,9 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   if (typeof o.tools !== 'number' || !Number.isSafeInteger(o.tools) || o.tools < 0) return undefined;
   if (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0) return undefined;
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
+  if (o.effectiveTps !== undefined && (typeof o.effectiveTps !== 'number' || !Number.isFinite(o.effectiveTps) || o.effectiveTps <= 0)) return undefined;
+  if (o.effectiveTurnId !== undefined && (typeof o.effectiveTurnId !== 'string' || !o.effectiveTurnId)) return undefined;
+  if (o.effectiveModel !== undefined && typeof o.effectiveModel !== 'string') return undefined;
   if (o.detail !== undefined && typeof o.detail !== 'string') return undefined;
   if (o.name !== undefined && typeof o.name !== 'string') return undefined;
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
@@ -380,6 +395,9 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
     ...(typeof o.detail === 'string' ? { detail: bounded(o.detail, 2_000) } : {}),
     tools: o.tools,
     ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
+    ...(typeof o.effectiveTps === 'number' ? { effectiveTps: o.effectiveTps } : {}),
+    ...(typeof o.effectiveTurnId === 'string' ? { effectiveTurnId: bounded(o.effectiveTurnId, 128) } : {}),
+    ...(typeof o.effectiveModel === 'string' ? { effectiveModel: bounded(o.effectiveModel, 512) } : {}),
     seconds: o.seconds,
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
     ...(typeof o.thinkingLevel === 'string' ? { thinkingLevel: bounded(o.thinkingLevel, 64) } : {}),
@@ -404,6 +422,9 @@ function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'paren
   if (typeof o.tools !== 'number' || !Number.isSafeInteger(o.tools) || o.tools < 0) return undefined;
   if (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0) return undefined;
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
+  if (o.effectiveTps !== undefined && (typeof o.effectiveTps !== 'number' || !Number.isFinite(o.effectiveTps) || o.effectiveTps <= 0)) return undefined;
+  if (o.effectiveTurnId !== undefined && (typeof o.effectiveTurnId !== 'string' || !o.effectiveTurnId)) return undefined;
+  if (o.effectiveModel !== undefined && typeof o.effectiveModel !== 'string') return undefined;
   if (o.result !== undefined && typeof o.result !== 'string') return undefined;
   if (o.error !== undefined && typeof o.error !== 'string') return undefined;
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
@@ -412,7 +433,11 @@ function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'paren
     task: bounded(o.task, 8_000),
     ...(typeof o.result === 'string' ? { result: boundedTail(o.result, 100_000) } : {}),
     ...(typeof o.error === 'string' ? { error: bounded(o.error, 100_000) } : {}),
-    tools: o.tools, ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}), seconds: o.seconds,
+    tools: o.tools, ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
+    ...(typeof o.effectiveTps === 'number' ? { effectiveTps: o.effectiveTps } : {}),
+    ...(typeof o.effectiveTurnId === 'string' ? { effectiveTurnId: bounded(o.effectiveTurnId, 128) } : {}),
+    ...(typeof o.effectiveModel === 'string' ? { effectiveModel: bounded(o.effectiveModel, 512) } : {}),
+    seconds: o.seconds,
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
   };
 }

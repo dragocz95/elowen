@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { BarChart3, ChevronLeft, ChevronRight, Database, DollarSign, Boxes, ArrowDownToLine, ArrowUpFromLine, Zap, Gauge } from 'lucide-react';
-import { useBrainChat } from './BrainChatProvider';
+import { useBrainChat, useBrainChatStatus } from './BrainChatProvider';
 import { useBrainContextUsage, useModelUsage } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { formatTokens, formatCost, formatSpeed } from '../../lib/format';
@@ -17,7 +17,8 @@ type Section = (typeof SECTIONS)[number];
 
 export function StatsModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
-  const { usage, currentModel, provider, providerLabel, activeSessionId } = useBrainChat();
+  const { currentModel, provider, providerLabel, activeSessionId } = useBrainChat();
+  const { usage } = useBrainChatStatus();
   const usageQuery = useModelUsage();
   const summary = buildUsageSummary(usageQuery.data);
 
@@ -162,9 +163,8 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                   <Gauge size={13} aria-hidden />
                   {t.stats.speed}
                 </span>
-                {/* The latest completed model call's effective rate — output tokens (reasoning and
-                    tool-call tokens included) over the whole logical request from initiation, header
-                    waits and retries included; not a pure decode figure. */}
+                {/* Current-turn generated output, including reasoning and tool calls, over successful
+                    provider generation time. Queue/header wait, retries and tools are excluded. */}
                 <span className="font-mono text-sm tabular-nums text-foreground">
                   {u ? formatSpeed(u.effectiveTps) : '—'}
                 </span>

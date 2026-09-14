@@ -11,7 +11,7 @@ import { formatDuration, formatTaskTime, formatTokens, parseTs } from '../../lib
 import { useMobileViewport } from '../../lib/useMobile';
 import type { SubagentState } from '../../lib/transcript';
 
-const COLUMNS = '5.5rem minmax(16rem,1.8fr) 9rem 5.5rem 4.5rem 6rem 8.5rem 8.5rem 8rem 1.25rem';
+const COLUMNS = '5.5rem minmax(16rem,1.8fr) 9rem 5.5rem 4.5rem 4.5rem 6rem 8.5rem 8.5rem 8rem 1.25rem';
 
 const STATUS_TONE = {
   running: 'accent',
@@ -111,6 +111,10 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
             <dd className="text-[11px] tabular-nums text-foreground">{agent.tokens != null ? formatTokens(agent.tokens) : '—'}</dd>
           </div>
           <div className="flex items-baseline justify-between gap-2">
+            <dt className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{t.brainChat.tokensPerSecond}</dt>
+            <dd className="text-[11px] tabular-nums text-foreground">{typeof agent.effectiveTps === 'number' && agent.effectiveTps >= 1 ? Math.round(agent.effectiveTps) : '—'}</dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-2">
             <dt className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{t.agents.tools}</dt>
             <dd className="text-[11px] tabular-nums text-foreground">{tally(agent, String(agent.tools))}</dd>
           </div>
@@ -180,6 +184,7 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
               <DataTableCell header lines={1}>{t.agents.task}</DataTableCell>
               <DataTableCell header lines={1}>{t.agents.model}</DataTableCell>
               <DataTableCell header lines={1} className="text-right">{t.agents.tokens}</DataTableCell>
+              <DataTableCell header lines={1} className="text-right">{t.brainChat.tokensPerSecond}</DataTableCell>
               <DataTableCell header lines={1} className="text-right">{t.agents.tools}</DataTableCell>
               <DataTableCell header lines={1} className="text-right">{t.agents.runtime}</DataTableCell>
               <DataTableCell header lines={1}>{t.agents.started}</DataTableCell>
@@ -241,6 +246,9 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                   </DataTableCell>
                   <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">
                     {agent.tokens != null ? formatTokens(agent.tokens) : '—'}
+                  </DataTableCell>
+                  <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">
+                    {typeof agent.effectiveTps === 'number' && agent.effectiveTps >= 1 ? Math.round(agent.effectiveTps) : '—'}
                   </DataTableCell>
                   <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">{tally(agent, String(agent.tools))}</DataTableCell>
                   <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">{tally(agent, runDuration(agent, now))}</DataTableCell>

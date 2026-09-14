@@ -17,10 +17,7 @@ import { ELOWEN_CLI_VERSION } from '../version.js';
 import { INSTALL_INFO_PATH, buildInstallInfo, serializeInstallInfo, type InstallArtifacts, type InstallUnit } from '../installInfo.js';
 import {
   MACHINE_STORAGE_RECEIPT_PATH,
-  SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE,
   SITE_GATEWAY_DEPLOYMENT_PATH,
-  SITE_GATEWAY_HELPER_INSTALL_ARGS,
-  SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_PATH,
   siteGatewayPluginDataDir,
 } from '../../shared/siteGateway.js';
@@ -207,20 +204,53 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
  * of the record is written only when there is a domain, and stays required only by the operations that
  * read it. Machine storage is a separate root-owned receipt, never a helper request field: the generic
  * installer records the passwd-HOME default, while a custom deployment can install its actual state root
- * through the same fixed receipt path during root provisioning. */
-const MACHINE_STORAGE_TEMP_TEMPLATE = '/etc/elowen/.machine-storage.XXXXXX';
-const SAFE_MACHINE_STORAGE_TEMP = /^\/etc\/elowen\/\.machine-storage\.[A-Za-z0-9]{6}$/;
+ * through the same fixed receipt path during root provisioning.
+ *
+ * All three files go in the same way. They used to be written to fixed paths under /tmp and installed
+ * from there, two of them behind a sudoers grant; a grant binds to a user rather than to the code path it
+ * was written for, so the service user could write the source first and choose what root installed. Each
+ * one is now staged inside the root-owned /etc/elowen and installed from that temp in the same run. */
 
-async function installMachineStorageReceipt(r: Runner, content: string): Promise<void> {
-  const created = await r.exec('mktemp', [MACHINE_STORAGE_TEMP_TEMPLATE]);
-  if (created.code !== 0) throw new Error(`mktemp ${MACHINE_STORAGE_TEMP_TEMPLATE} failed: ${(created.stderr || created.stdout).trim() || created.code}`);
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function stagingTemplate(purpose: string): string {
+  return `/etc/elowen/.${purpose}.XXXXXX`;
+}
+
+/** One root-owned file staged for installation, the same way every time.
+ *
+ *  The staging directory is created root-owned at 0755 first and `mktemp` runs inside it, so neither the
+ *  temp file nor the destination can be created or replaced by the service user. The exact shape `mktemp`
+ *  reported is checked against THIS purpose's template before anything is written to or removed, so a host
+ *  with a hostile TMPDIR cannot steer the write somewhere else, and one purpose can never be installed
+ *  out of another purpose's file. The temp is chowned to root and written at 0600, and installed to the
+ *  destination with the mode the destination requires. `validate` is the hook for content another
+ *  root-owned consumer parses: it runs on the staged temp, after the write and before the install, so a
+ *  malformed file is refused while it is still this purpose's temp and the destination is left as it was.
+ *  Nothing is ever staged at a path the service user can write: the SOURCE of a root-owned file must not
+ *  be a file that user can choose. */
+async function stageRootOwnedFile(r: Runner, { purpose, content, mode, destination, validate }: {
+  purpose: string;
+  content: string;
+  mode: string;
+  destination: string;
+  validate?: (temp: string) => Promise<void>;
+}): Promise<void> {
+  const template = stagingTemplate(purpose);
+  // The staging directory belongs to the stager rather than to whichever caller ran first: every purpose
+  // is stageable on its own, so no caller depends on another step having created the directory already.
+  await must(r, 'install', ['-d', '-o', 'root', '-g', 'root', '-m', '0755', dirname(template)]);
+  const created = await r.exec('mktemp', [template]);
+  if (created.code !== 0) throw new Error(`mktemp ${template} failed: ${(created.stderr || created.stdout).trim() || created.code}`);
   const temp = created.stdout.trim();
-  if (!SAFE_MACHINE_STORAGE_TEMP.test(temp)) throw new Error('mktemp returned an invalid machine storage receipt path');
+  const pattern = new RegExp(`^${escapeRegex(template.slice(0, -'XXXXXX'.length))}[A-Za-z0-9]{6}$`);
+  if (!pattern.test(temp)) throw new Error(`mktemp returned an invalid ${purpose} staging path`);
   try {
     await must(r, 'chown', ['root:root', temp]);
     await must(r, 'chmod', ['0600', temp]);
     await r.writeFile(temp, content);
-    await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', temp, MACHINE_STORAGE_RECEIPT_PATH]);
+    await validate?.(temp);
+    await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', mode, temp, destination]);
   } finally {
     await r.exec('rm', ['-f', '--', temp]);
   }
@@ -228,36 +258,46 @@ async function installMachineStorageReceipt(r: Runner, content: string): Promise
 
 export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment, home: string): Promise<boolean> {
   const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
-  await r.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
-  await r.writeFile(SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, `${JSON.stringify({
+  const record = `${JSON.stringify({
     ...(deploy.mode === 'domain' && deploy.domain ? { appHost: deploy.domain.toLowerCase() } : {}),
     daemonPort: DAEMON_PORT,
-  }, null, 2)}\n`);
+  }, null, 2)}\n`;
   await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH)]);
-  await must(r, 'install', ['-d', '-o', 'root', '-g', 'root', '-m', '0755', dirname(MACHINE_STORAGE_RECEIPT_PATH)]);
-  await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
-  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_PATH]);
-  await installMachineStorageReceipt(r, `${JSON.stringify({ pluginDataDir: siteGatewayPluginDataDir(home) }, null, 2)}\n`);
-  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE]);
+  // Each file below is staged by stageRootOwnedFile, which creates the root-owned staging directory before
+  // staging anything in it.
+  await stageRootOwnedFile(r, { purpose: 'elowen-site-gateway', content: source, mode: '0755', destination: SITE_GATEWAY_HELPER_PATH });
+  await stageRootOwnedFile(r, { purpose: 'elowen-site-gateway-json', content: record, mode: '0644', destination: SITE_GATEWAY_DEPLOYMENT_PATH });
+  await stageRootOwnedFile(r, {
+    purpose: 'machine-storage',
+    content: `${JSON.stringify({ pluginDataDir: siteGatewayPluginDataDir(home) }, null, 2)}\n`,
+    mode: '0644',
+    destination: MACHINE_STORAGE_RECEIPT_PATH,
+  });
   return true;
 }
 
 
 /** Grant the service user passwordless systemctl for its own units, so the auto-update timer (and a
- *  manual `elowen update`) can take a freshly-installed binary live. Validated in a temp file with
- *  `visudo -cf` and only then atomically installed at 0440 — a malformed drop-in would break sudo for
- *  the whole box, so it's never written unchecked. */
-async function provisionSudoers(r: Runner, user: string): Promise<void> {
-  const tmp = '/tmp/elowen.sudoers';
+ *  manual `elowen update`) can take a freshly-installed binary live. The drop-in decides who may become
+ *  root, so it is staged like every other root-owned file this installer writes — inside the root-owned
+ *  /etc/elowen, never at a fixed path the service user could own — and validated with `visudo -cf` while
+ *  it is still that temp, before it is installed at 0440. A malformed drop-in would break sudo for the
+ *  whole box, so it is never written unchecked, and it never reaches the destination unvalidated. */
+export async function provisionSudoers(r: Runner, user: string): Promise<void> {
   // Pin the literal self-reinstall command so `elowen update` (run as the service user) can sudo it.
   // Absolute npm path so sudo matches it; same prefix `elowen update` computes, so the two stay in lockstep.
   const npm = (await r.which('npm')) ?? '/usr/bin/npm';
   const reinstallCmd = [npm, ...reinstallNpmArgs(selfPrefix())].join(' ');
-  await r.writeFile(tmp, elowenSudoers(user, reinstallCmd));
-  const chk = await r.exec('visudo', ['-cf', tmp]);
-  if (chk.code !== 0) { await r.exec('rm', ['-f', tmp]); throw new Error(`visudo rejected the drop-in: ${(chk.stderr || chk.stdout).trim()}`); }
-  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0440', tmp, '/etc/sudoers.d/elowen']);
-  await r.exec('rm', ['-f', tmp]);
+  await stageRootOwnedFile(r, {
+    purpose: 'elowen-sudoers',
+    content: elowenSudoers(user, reinstallCmd),
+    mode: '0440',
+    destination: '/etc/sudoers.d/elowen',
+    validate: async (temp) => {
+      const chk = await r.exec('visudo', ['-cf', temp]);
+      if (chk.code !== 0) throw new Error(`visudo rejected the drop-in: ${(chk.stderr || chk.stdout).trim()}`);
+    },
+  });
 }
 
 /** Create the first admin from the plan (only when the daemon has no users yet) and prove login. */

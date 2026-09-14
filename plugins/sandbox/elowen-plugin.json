@@ -229,8 +229,6 @@
       "usageCpu": "CPU",
       "usageRam": "RAM",
       "usageDisk": "Disk",
-      "usageLoading": "Loading…",
-      "usageSampling": "Sampling…",
       "usageUnavailable": "Unavailable",
       "usageStopped": "Stopped",
       "usageLimitUnknown": "No disk ceiling could be read for this environment.",

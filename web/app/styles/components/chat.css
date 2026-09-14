@@ -78,23 +78,34 @@
   .chat-statusline [data-stat='context'] { display: none; }
 }
 
-/* The sticky composer dock. `position: relative` keeps `bottom` (the visual-viewport offset below)
-   meaningful and anchors what is positioned inside it. The safe-area inset is what keeps the composer
-   clear of a phone's home indicator: the dock sits at `bottom: 0`, so with no bottom padding the send
-   button lands underneath it. */
+/* The sticky composer dock, and the ONE place the dock's position is declared — the element carries no
+   position utility of its own, so there is nothing for this to silently win against.
+
+   `sticky` is load-bearing, not decoration. `bottom` is the visual-viewport inset below: on a browser
+   whose soft keyboard resizes the layout viewport it is 0 and this is an ordinary bottom-stuck dock,
+   while on iOS — which keeps the layout viewport tall and shrinks only `visualViewport` — it is how far
+   the dock must come to rest ABOVE the layout viewport's (hidden) bottom edge. A sticky element resolves
+   that against the scrollport, so the figure lands exactly once. Give it `position: relative` instead and
+   the same `bottom` becomes a TRANSLATION applied on top of the surface tail below, which offsets the
+   dock by the inset a second time and leaves a keyboard-sized black band under the composer.
+
+   The safe-area inset keeps the composer clear of a phone's home indicator; while the keyboard is open
+   the visible band already ends above it, so the rule below takes it back off. */
 .chat-composer-dock {
-  position: relative;
+  position: sticky;
   bottom: var(--chat-visual-bottom-offset, 0px);
   padding-bottom: var(--safe-bottom);
 }
 .chat-surface-full[data-chat-keyboard-open='true'] .chat-composer-dock { padding-bottom: 0; }
+/* The other half of the same figure, and deliberately under NO width query: a tail of page below the last
+   turn, so the reader can scroll it clear of the risen dock instead of leaving it under the keyboard. The
+   tail is page LENGTH, never a position — the dock's resting place is the sticky `bottom` above, and these
+   two rules are the only ones allowed to read the inset (tests/styles/chatComposerDock.test.ts).
+   A soft keyboard is not a phone-only event: iPadOS runs the same visual-viewport policy well above the
+   48rem breakpoint, and with no keyboard the inset is 0 and this rule is a no-op everywhere. */
+.chat-surface-full { padding-bottom: var(--chat-visual-bottom-offset, 0px); }
 .chat-composer-slot { padding-block: 0.25rem 1rem; }
 
-/* On a phone the sticky dock deliberately overlaps a measured reserve at the end of the transcript. The
-   last turn therefore clears the WHOLE live footer (status, queue, attachments and a growing textarea),
-   while the footer remains one visual layer rather than contributing its height twice. When iOS shrinks
-   only visualViewport, the extra surface tail lives under the keyboard and gives the page enough scroll
-   range to keep that reserve above the shifted dock. Chromium's resized layout reports an offset of zero. */
 /* A plugin live view — today the browser monitor — docks above the composer as a floating layer and
    publishes its measured height here as `--chat-dock-height`. Being a layer it takes no room in the flow,
    so the tail of a long conversation runs underneath it, and scrolling never frees those lines:
@@ -133,8 +144,11 @@
   shape-outside: inset(0);
 }
 
+/* On a phone the sticky dock deliberately overlaps a measured reserve at the end of the transcript. The
+   last turn therefore clears the WHOLE live footer (status, queue, attachments and a growing textarea),
+   while the footer remains one visual layer rather than contributing its height twice. The keyboard's own
+   scroll range is NOT part of this: that tail is unconditional, above. */
 @media (width < 48rem) {
-  .chat-surface-full { padding-bottom: var(--chat-visual-bottom-offset, 0px); }
   .chat-surface-full .chat-transcript {
     padding-bottom: calc(var(--chat-transcript-pad-bottom) + var(--chat-composer-height, 0px) + 0.375rem);
   }

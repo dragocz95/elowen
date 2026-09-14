@@ -11,7 +11,7 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('../../lib/monaco/monacoLoader', () => ({ MonacoEditor: () => null, MonacoDiffEditor: () => null }));
 
-import AccountPage from '../../app/account/page';
+import { AccountView } from '../../modules/account/AccountView';
 import { ToastProvider } from '../../components/ui/Toast';
 import { UiScaleProvider } from '../../lib/useUiScale';
 import { EffectsProvider } from '../../lib/useEffects';
@@ -37,24 +37,24 @@ afterAll(() => server.close());
 const renderPage = () => {
   const { wrapper: Wrapper } = createWrapper();
   return render(
-    <Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountPage /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>,
+    <Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>,
   );
 };
 
-/** A hard load, an external link and a refresh of `/account` all reach THIS page: the intercepting route
- *  under `app/@pageOverlay` is only mounted on a client navigation. So the canonical surface has to keep
- *  being the whole page — no dialog, no overlay layout, and no second navigation inside it. */
-describe('AccountPage (canonical)', () => {
-  it('renders the full page with no overlay frame of its own', async () => {
+/** THE DECK ITSELF, which is what every arrival at `/account` renders: the `@pageOverlay` slot mounts it
+ *  for an intercepted navigation and for a hard load alike, and the canonical page under `app/` draws
+ *  nothing (pinned in `tests/app/pageOverlaySlot.test.tsx`). What is asserted here is therefore the deck's
+ *  own contract — its navigation and its address — rather than which route module produced it. */
+describe('Account deck', () => {
+  it('carries its own section navigation in both shapes, and no frame of its own', async () => {
     const { container } = renderPage();
     expect(await screen.findByRole('heading', { level: 1, name: en.account.tabProfile })).toBeInTheDocument();
 
-    expect(container.querySelector('[data-module="account"]')).not.toBeNull();
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(document.querySelector('[data-elowen-modal]')).toBeNull();
-    // The deck layout is the SAME here as in the overlay: the menu holds one row for Account, so the way
-    // between its sections has to be in the deck itself on every surface that draws it.
+    // The frame is the page overlay's; the deck contributes the layout and nothing around it.
+    expect(container.querySelector('[data-module="account"]')).toBeNull();
     expect(container.querySelector('[data-testid="account-deck-layout"]')).not.toBeNull();
+    // The menu holds one row for Account, so the way between its sections is inside the deck: a column
+    // where there is width for it, a strip on a phone. Both are in the DOM; the stylesheet shows one.
     expect(screen.queryByTestId('account-navigation-sidebar')).not.toBeNull();
     expect(screen.queryByTestId('account-navigation-tabs')).not.toBeNull();
   });

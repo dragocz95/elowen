@@ -1,15 +1,14 @@
 /** WHAT THE ACCOUNT PAGE IS MADE OF, named once.
  *
  *  The account page is a set of sections addressed as `/account?cat=<id>`. Two surfaces have to agree on
- *  that set: the sidebar, which draws one sub-item per section, and the page itself, which mounts the
- *  matching panel and titles its hero. They used to be the same surface — the page carried its own
- *  section rail — so the list could live inside the view. The rail is gone and the menu is the only way
- *  between sections, which makes a second copy of this order a menu that offers a section the page
- *  cannot open.
+ *  that set: the deck's own navigation, which draws one row per section, and the page itself, which
+ *  mounts the matching panel and titles its hero. They used to be split — the sidebar drew the sections
+ *  as its sub-items while the page carried a rail of its own — and the sidebar holds one row for the deck
+ *  now, so the list lives inside the view and both shapes of the navigation are drawn from it.
  *
  *  Plugin-contributed sections are handed IN rather than resolved here: they come from two live queries
  *  and belong to whoever already holds them. What this module owns is the core sections, their labels,
- *  and the one order both surfaces draw. */
+ *  and the one order every surface draws. */
 import { Bell, Boxes, Brain, KeyRound, Settings2, Sparkles, SquareTerminal, UserCog, type LucideIcon } from 'lucide-react';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { PluginUiListing, UserPluginConfigDetail } from '../../lib/types';

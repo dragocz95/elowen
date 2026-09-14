@@ -1,6 +1,6 @@
 /** Pure renderers for the two systemd unit files `elowen install` writes. Kept string-only and
  *  side-effect-free so they're unit-tested without touching /etc; the wizard writes + enables them. */
-import { SITE_GATEWAY_HELPER_INSTALL_ARGS, SITE_GATEWAY_HELPER_PATH } from '../../shared/siteGateway.js';
+import { SITE_GATEWAY_HELPER_PATH } from '../../shared/siteGateway.js';
 import { SERVICES } from '../systemd.js';
 
 export interface UnitParams {
@@ -126,15 +126,17 @@ WantedBy=timers.target
 }
 
 /** sudoers drop-in letting the unprivileged service user run — without a password — only the
- *  privileged operations Elowen owns: restart its units, reinstall itself, refresh the root-owned
- *  published-sites gateway helper, and invoke that helper with NO arguments (its bounded JSON request
- *  arrives on stdin). The helper grant is not a shell and accepts no path or command. Every command is
- *  pinned literally and the completed file is validated with `visudo -c` before it is trusted.
+ *  privileged operations Elowen owns: restart its units, reinstall itself, and invoke the root-owned
+ *  published-sites gateway helper with NO arguments (its bounded JSON request arrives on stdin). The
+ *  helper grant is not a shell and accepts no path or command. Every command is pinned literally and the
+ *  completed file is validated with `visudo -c` before it is trusted.
  *
- *  Nothing here grants an install whose SOURCE the service user can write. Pinning the argv fixes the
+ *  Nothing here installs a file whose SOURCE the service user can write. Pinning the argv fixes the
  *  words, not the bytes behind them, and a grant binds to a user rather than to the code path it was
- *  written for: the helper source is compared against the packaged copy before it is installed, and the
- *  deployment record is written by the installer while it is already root. */
+ *  written for: a pinned `install` from a path the service user owns is that user choosing root-trusted
+ *  contents. Both files the helper trusts are therefore written by `elowen install`, and by a root
+ *  `elowen update`, while the process is already root — staged through a root-owned temp file inside
+ *  /etc/elowen rather than at a fixed path under /tmp. */
 export function elowenSudoers(user: string, reinstallCmd: string): string {
   // Built from SERVICES so the pinned restart commands can't drift from restartServices() (sudo matches
   // arguments positionally). The combined form serves update/`restart all`; the individual forms serve
@@ -143,7 +145,6 @@ export function elowenSudoers(user: string, reinstallCmd: string): string {
   return `# Managed by elowen install — lets the ${user} service user restart its own units and self-update in place (auto-update + manual update).
 ${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${units}, /usr/bin/systemctl restart --no-block ${SERVICES[0]}, /usr/bin/systemctl restart --no-block ${SERVICES[1]}, /usr/bin/systemctl is-active ${units}
 ${user} ALL=(root) NOPASSWD: ${reinstallCmd}
-${user} ALL=(root) NOPASSWD: /usr/bin/install ${SITE_GATEWAY_HELPER_INSTALL_ARGS.join(' ')}
 ${user} ALL=(root) NOPASSWD: ${SITE_GATEWAY_HELPER_PATH} ""
 `;
 }

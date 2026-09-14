@@ -1,6 +1,6 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain } from 'lucide-react';
+import { Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
@@ -18,7 +18,6 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
-import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -37,6 +36,7 @@ import { MotionReveal } from '../../components/ui/Motion';
 import { useSearchParams } from 'next/navigation';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { AccountNavigation } from './AccountNavigation';
+import { SectionDeck } from '../../components/ui/SectionDeck';
 import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
@@ -74,7 +74,7 @@ function AccountPanel({ id, active, visited, children }: {
   );
 }
 
-export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay' }) {
+export function AccountView() {
   const me = useMe();
   const cli = useMyCliSettings();
   const brainModels = useBrainModels();
@@ -91,6 +91,9 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
   const fileRef = useRef<HTMLInputElement>(null);
   const prefPct = Math.round(preference * 100);
   const [section, setSection] = usePersistentState<AccountSection>('elowen.account.section', 'profile', isAccountSection);
+  // The deck navigation's filter. Local to the page, like the settings deck's: it narrows a list of
+  // places, it is not part of the address, and nothing outside this view reads it.
+  const [navigationQuery, setNavigationQuery] = useState('');
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
   // Deep link: `/account?cat=<section>` opens that section, the same form `/settings?cat=` uses (and the
   // site search's account entries point at). Two sources, exactly as on Settings: `useSearchParams`
@@ -170,6 +173,52 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
     const userConfigId = parsePluginUserConfigSectionId(section);
     if (userConfigId && !userConfigSections.some((item) => item.id === section)) setSection('profile');
   }, [deckPluginSections, pluginUi.data, section, setSection, userConfigSections]);
+
+  /** The address must name the section this page is SHOWING, spelled the one way the registry spells it.
+   *
+   *  A stale section URL is the same fault wherever it comes from: an id no section answers to (a link
+   *  from an older build, a hand-typed address) or a plugin section that is gone, disabled, or has moved
+   *  into the Linked accounts drawer. The page already falls back to Profile for those; leaving the
+   *  address naming the vanished section is what makes the fallback LOOK like the page ignoring the
+   *  reader — reload it, share it, and the same dead id comes back.
+   *
+   *  A plugin id is judged only once BOTH listings have arrived: before that nothing has had a chance to
+   *  claim it, and an unclaimed id must not be declared dead. An id a listing DOES claim is left alone
+   *  even if the page has not caught up yet — the effects above are what move the section to it. */
+  const listingsReady = pluginUi.data !== undefined && userPluginConfigs.data !== undefined;
+  useEffect(() => {
+    if (!addressReady) return undefined;
+    // On the same events this page reads its own address on: arrival, and every popstate — including the
+    // ones its own section switches announce. A stale address reached through HISTORY is the case that
+    // has to be caught here, because nothing about the section changes when it arrives.
+    const write = () => {
+      const named = new URLSearchParams(window.location.search).get('cat');
+      if (named === null || named === section) return;
+      // Only `cat` is rewritten: `?row=` and the fragment are state within this page and belong to the
+      // reader. `replaceState`, because this is the same place by another spelling.
+      const canonicalize = () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('cat', section);
+        announceLocation(`${url.pathname}${url.search}${url.hash}`);
+      };
+      const pluginShaped = parsePluginAccountSectionId(named) !== null || parsePluginUserConfigSectionId(named) !== null;
+      if (!pluginShaped) {
+        // A core id this page CAN render is the reader's address, even for the one render before the
+        // state catches up with it — a section switch announces its own href, and rewriting it back here
+        // would undo the very navigation that prompted the event. A core id it cannot render is the same
+        // answer to every listing, so none of them is needed to judge it.
+        if (isAccountSection(named)) return;
+        canonicalize();
+        return;
+      }
+      if (!listingsReady) return;
+      if (deckPluginSections.some((item) => item.id === named) || userConfigSections.some((item) => item.id === named)) return;
+      canonicalize();
+    };
+    write();
+    window.addEventListener('popstate', write);
+    return () => window.removeEventListener('popstate', write);
+  }, [addressReady, listingsReady, section, deckPluginSections, userConfigSections]);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -296,12 +345,10 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
     }
   };
 
-  if (me.isError) {
-    return <div className="flex w-full min-w-0 flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => me.refetch()} /></div>;
-  }
-  if (me.isLoading || !me.data?.user) {
-    return <div className="flex w-full min-w-0 flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><LoadingState /></div>;
-  }
+  // Bare, like the settings deck's: the page overlay around them already carries the title and the way
+  // out, so a module header here would name the page a second time while it is still loading.
+  if (me.isError) return <ErrorState message={t.common.daemonUnreachable} onRetry={() => me.refetch()} />;
+  if (me.isLoading || !me.data?.user) return <LoadingState />;
 
   const u = me.data.user;
   const restricted = u.allowed_execs.length > 0;
@@ -331,8 +378,8 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
-  // The same list, in the same order, that the sidebar draws its sub-items from — the menu is now the
-  // only way between sections, so a second copy here would offer a section this page cannot open.
+  // The deck's sections, in the one order both shapes of its own navigation draw. The sidebar holds one
+  // row for Account and nothing under it, so this list is the only place that order is stated.
   const spatialSections = accountSections(t, [
     ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     ...userConfigSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
@@ -623,49 +670,29 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
       </WorkspaceShell>
   );
 
-  // THE DECK'S OWN WAY BETWEEN ITS SECTIONS: a secondary column where there is width for it, one line of
-  // tabs above the content on a phone.
+  // THE DECK'S OWN WAY BETWEEN ITS SECTIONS, in the shared frame `/settings` is read in too: a searchable
+  // secondary column where there is width for it, one line of tabs above the content on a phone.
   //
-  // BOTH presentations carry it. It used to belong to the overlay alone, because the sidebar's Account
-  // sub-menu was the way between sections on the canonical page. That sub-menu is gone — the column
-  // holds one row for the deck — so a hard-loaded `/account?cat=security` would otherwise have no way to
-  // any other section at all.
+  // It is carried on every arrival. The shell's menu holds one row for the whole deck, so a
+  // `/account?cat=security` opened from a link or a refresh would otherwise have no way to any other
+  // section at all.
   {
-    const deck = (
-      <div data-testid="account-deck-layout" className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 flex-col border-border md:flex md:border-r">
-          <AccountNavigation
-            label={t.account.title}
-            sections={spatialSections}
-            active={section}
-            layout="sidebar"
-            onNavigate={navigateToAccount}
-          />
-        </aside>
-        <section
-          role="region"
-          aria-label={activeSection.label}
-          className="flex min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 md:p-5"
-        >
-          <AccountNavigation
-            label={t.account.title}
-            sections={spatialSections}
-            active={section}
-            layout="tabs"
-            onNavigate={navigateToAccount}
-            className="md:hidden"
-          />
-          {accountWorkspace}
-        </section>
-      </div>
+    const navigation = (layout: 'sidebar' | 'tabs', className?: string) => (
+      <AccountNavigation
+        t={t}
+        sections={spatialSections}
+        active={section}
+        query={navigationQuery}
+        layout={layout}
+        className={className}
+        onQueryChange={setNavigationQuery}
+        onNavigate={navigateToAccount}
+      />
     );
-    if (surface === 'overlay') return deck;
     return (
-      /* Match the settings workspace width so account controls have the same calm, useful measure. */
-      <div className="flex w-full min-w-0 flex-col">
-        <ModuleHeader title={t.account.title} icon={UserCog} />
-        {deck}
-      </div>
+      <SectionDeck testId="account-deck-layout" contentLabel={activeSection.label} navigation={navigation}>
+        {accountWorkspace}
+      </SectionDeck>
     );
   }
 }

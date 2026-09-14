@@ -155,6 +155,7 @@ External writes are separate from local file access and must not be inferred fro
 - GitHub publishing, pull-request creation, reviews, and merges require interactive confirmation in a verified conversation. Delegated, scheduled, and unattended contexts cannot publish or approve these actions.
 - Merge checks include the exact expected head SHA, an open non-draft PR, successful checks, no current changes-requested review, and a repository-supported merge method.
 - The published-sites gateway is a core-owned privileged boundary. The plugin supplies only validated site identifiers and gateway credentials; it cannot supply shell commands, system paths, upstreams, nginx fragments, certificates, or certbot arguments. Applications are reached only through Sandbox-managed Project publication bindings.
+- Core exposes the Browser plugin's process-launching `browserCapture` control only to Sites. The requested URL is server-derived. Browser resolves its hostname once, rejects literal, loopback, private, link-local and metadata targets, pins the approved address behind an authenticated process-wide proxy, and permits only the exact HTTPS origin for documents, redirects, subresources, fetches, sockets and workers. The throwaway profile carries no account state and is removed with the browser process after success, failure, timeout or plugin disposal.
 
 ## Web Push
 

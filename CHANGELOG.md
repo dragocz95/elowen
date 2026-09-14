@@ -9,6 +9,66 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ## [Unreleased]
 
+## [0.28.46] - 2026-09-14
+
+### Added
+
+- Projects now use a responsive card register with branch, team sample, location and a shared CPU, memory and disk
+  snapshot. The card and detail drawer reuse one bounded resource read and preserve the last complete sample while a
+  partial refresh is still loading.
+- Account now opens as an intercepted page overlay, matching Settings without losing the page underneath it.
+- Core now exposes a validated `browserCapture` plugin control only to Sites. The control contract is fail-closed and
+  lets the Browser plugin render a server-derived publication URL without exposing a general process-launch control.
+
+### Changed
+
+- Settings and Account each occupy one shell navigation row. Settings uses a persistent section strip on phones, an
+  opt-in reading width on larger screens and consistent overlay, drawer and help-target geometry.
+- Managed Project cards and drawers derive identity, branch, members and measured resources from shared projections
+  instead of parallel page-specific reads.
+- Repository work now uses native Git worktrees. The retired account-owned Sandbox workspace subsystem, its CLI and
+  web pickers, plugin plumbing, metadata signals and delegated parity fixtures have been removed.
+- Managed Project disk reporting measures every live component tree, and valid legacy worktree metadata is cleared
+  only after account removal proves it is safe to retire.
+
+### Fixed
+
+- Background delegates and their descendants survive prompt refreshes, while nested drill-in transcript reads and
+  relationship cleanup follow one caller-relative path.
+- Effective generation speed rejects malformed samples and excludes tool-call generations whose provider usage
+  cannot separate model text from serialized tool arguments.
+- Site publication recovery now fails closed on unproven environment ownership, readiness and liveness, serializes
+  reconciliation against deletes and rebinds, drains active publication work before shutdown and gates environment
+  thaw until the recovered publication state is safe.
+- The shared Project memory toggle remains an administrator decision instead of becoming editable by ordinary
+  Project members.
+- Project cards keep stable keys, honest zero-valued meters, canonical detail URLs and bounded wheel and zoom input.
+
+### Security
+
+- The privileged machine helper now stages root-owned files outside the service user's control and performs validated
+  tree operations through the file descriptors it opened, preventing path replacement between validation and use.
+- Machine storage receipts are validated as root-provisioned authority before a custom environment storage root is
+  trusted, including legacy Site retirement paths.
+- Managed machines are denied access to link-local metadata and the host cloud platform before forwarding rules are
+  applied. When the selected resolver is Azure platform DNS, only TCP and UDP port 53 to exactly `168.63.129.16` is
+  admitted before the broad platform deny; HTTP, metadata and every other port remain blocked.
+- Persistent nspawn roots now reconcile the rootfs recipe's required `systemd-networkd` units through offline
+  `systemctl --root` before startup. Shared-network startup and EnvironmentStatus also require `host0` carrier and a
+  global address, so a migrated root with disabled networking is reported as failed instead of ready.
+
+### Removed
+
+- Removed dead workspace scope checks, lease waiters, host-filesystem registration flags, account deletion branches,
+  contribution-user bridges and metadata notifications that no remaining producer or consumer could reach.
+
+### Compatibility
+
+- The core version is `0.28.46`. Plugin UI API remains 16, shared-helper API remains 4, and the minimum Node.js
+  version remains 22.12.0.
+- Browser 0.4.0 requires core 0.28.46 for the Sites-only capture control. Sites 0.14.0 keeps core 0.28.45 as its base
+  requirement and uses Browser 0.4.0 when page pictures are available.
+
 ## [0.28.45] - 2026-09-13
 
 ### Added

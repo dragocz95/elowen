@@ -8,13 +8,15 @@ group: Plugin reference
 
 # Browser
 
-The registry plugin `browser`, version 0.3.11, requires Elowen 0.28.35 or newer. It gives an account a managed Chrome session the model drives through browser tools: open pages, navigate, click and fill by accessibility refs, capture screenshots, and inspect console, network, and performance. Every session is drawn on a private virtual display, so a person can watch the same page live and take over control. The plugin is optional and user-grantable, and its settings configure the runtime that personal sessions share.
+The registry plugin `browser`, version 0.4.0, requires Elowen 0.28.46 or newer. It gives an account a managed Chrome session the model drives through browser tools: open pages, navigate, click and fill by accessibility refs, capture screenshots, and inspect console, network, and performance. Every session is drawn on a private virtual display, so a person can watch the same page live and take over control. The plugin is optional and user-grantable, and its settings configure the runtime that personal sessions share.
 
 ## Browser sessions
 
 A browser session is one tab session inside one Chrome process. Each account owns a persistent profile and its own Chrome process, so cookies, sign-ins, and site data survive between sessions and no two accounts share a browser. Closing a session never erases the profile; clearing stored browser data is a separate, confirmed action on the account's Browser page.
 
-The plugin has one mode: the linked account's own browser. It requires a linked Elowen account in a private conversation and behaves the same way in a chat that executes in a managed project. Chrome runs on the host under the account, the live view card appears in the chat, and the session is listed on the account's Browser page.
+The user-facing tools have one mode: the linked account's own browser. They require a linked Elowen account in a private conversation and behave the same way in a chat that executes in a managed Project. Chrome runs on the host under the account, the live view card appears in the chat, and the session is listed on the account's Browser page.
+
+The plugin also provides one internal control to Sites. `browserCapture` is not an account session or a general URL tool: core exposes it only to the Sites plugin, which supplies a publication URL derived on the server.
 
 ## Web interface
 
@@ -74,6 +76,14 @@ Interactive steps have their own bounds. A wait for text resolves within a timeo
 | `BrowserAudit` | Summarizes console errors, failed requests, performance counters, and optionally a screenshot in one call. |
 | `BrowserClose` | Closes the tab session and its streams; the stored profile remains. |
 
+## Site page capture
+
+The internal `browserCapture` control renders one server-derived published Site URL. It starts a fresh headless Chrome process with a new throwaway profile, no account cookies, no saved credentials, no downloads and no persistence. Only one capture runs at a time.
+
+Before Chrome starts, the plugin accepts only a hostname-based HTTPS URL, resolves it once through the same network policy used by account browsers, rejects loopback, private, link-local and metadata destinations, and pins the approved address. A process-wide authenticated proxy then permits only that exact HTTPS origin while preserving its hostname for HTTP Host and TLS SNI. Redirects, documents, images, scripts, fetch or XHR, WebSockets and worker traffic cannot switch to another origin or a newly resolved address. Chrome's loopback proxy bypass is disabled, so a literal local address inside a page does not escape the check.
+
+A redirect or network refusal fails the capture; an error page is never stored as a successful picture. A timeout or plugin stop aborts the attempt but retains ownership until a late browser launch is closed and the throwaway profile is removed. Plugin shutdown disposes the capture before the rest of the browser runtime stops.
+
 ## Granting access
 
 The plugin is user-grantable, so a non-admin account cannot use its tools, routes, or account page until an administrator grants it:
@@ -124,6 +134,8 @@ All Chrome traffic must pass through a per-account loopback proxy. The proxy aut
 Destinations are validated before any connection. Only http and https URLs without embedded credentials are allowed. A fixed list of ports is always blocked, covering remote login and mail relay as well as database, container, and cache services: 22, 25, 111, 135, 137, 138, 139, 445, 2375, 2376, 3306, 5432, 6379, 9200, and 11211. The hostname localhost and cloud metadata hostnames are blocked, as are loopback, private, link-local, and the corresponding IPv6 ranges and metadata addresses. The private network allowlist lifts exactly these blocks, hostname by hostname or CIDR by CIDR, for local development.
 
 The proxy resolves each destination hostname itself, checks every resolved address against the same policy, and pins DNS per request, so Chrome can only reach a host the policy resolved and cannot be talked into a different address mid-session. Chrome renders every proxy refusal as a bare tunnel failure with images silently missing; the real reason, whether policy, rate limit, or concurrency, is recorded in the daemon log at most once per reason per minute per account.
+
+Site capture uses the same pinned proxy implementation with a stricter rule: its private-network allowlist is always empty, the initial public address is reused for the entire attempt, and only the exact published HTTPS origin is accepted.
 
 ## Limits
 

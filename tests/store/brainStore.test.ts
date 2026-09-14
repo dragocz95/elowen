@@ -137,7 +137,8 @@ describe('BrainStore', () => {
 
     expect(store.upsertSubagentRun('root', {
       id: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+      detail: 'Read src/a.ts', tools: 2, tokens: 1234, effectiveTps: 37.5,
+      effectiveTurnId: 'turn-1', effectiveModel: 'provider/m', seconds: 2, model: 'm',
       thinkingLevel: 'high', thinkingLabel: 'High', background: true,
     })).toBe(true);
     // The DTO reads both timestamps from the existing tables; neither lives in the JSON state.
@@ -145,7 +146,8 @@ describe('BrainStore', () => {
     db.prepare("UPDATE brain_subagent_runs SET updated_at = '2026-08-30 05:00:07' WHERE tool_call_id = 'delegate-1'").run();
     expect(store.getSubagentRuns('root')).toEqual([{
       toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+      detail: 'Read src/a.ts', tools: 2, tokens: 1234, effectiveTps: 37.5,
+      effectiveTurnId: 'turn-1', effectiveModel: 'provider/m', seconds: 2, model: 'm',
       thinkingLevel: 'high', thinkingLabel: 'High', background: true,
       startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07', rowid: 1,
     }]);
@@ -157,6 +159,10 @@ describe('BrainStore', () => {
     })).toBe(false);
     expect(store.upsertSubagentRun('root', {
       id: 'bad', sessionId: 'child', status: 'running', task: 'x', tools: -1, seconds: 0,
+    })).toBe(false);
+    expect(store.upsertSubagentRun('root', {
+      id: 'bad-speed', sessionId: 'child', status: 'running', task: 'x', tools: 0, seconds: 0,
+      effectiveTps: Number.POSITIVE_INFINITY,
     })).toBe(false);
     // A call id cannot later be rebound to a different child.
     store.createSession({ id: 'child-2', userId: 1, model: 'm', parentSessionId: 'root' });
@@ -1045,7 +1051,7 @@ describe('BrainStore', () => {
           role: 'assistant',
           ...(model == null ? {} : { model }),
           ...(durationMs == null ? {} : { durationMs }),
-          ...(effectiveMs == null ? {} : { effectiveMs }),
+          ...(effectiveMs == null ? {} : { effectiveTimingVersion: 3, effectiveMs }),
           ...(stopReason == null ? {} : { stopReason }),
           content,
           usage: {
@@ -1088,7 +1094,7 @@ describe('BrainStore', () => {
       // must never leak into the effective figure.
       usageMsg('brain-a', 'legacy1', { output: 100, totalTokens: 200 }, Date.now(), undefined, 1000);
       usageMsg('brain-a', 'legacy2', { output: 50, totalTokens: 100 }, Date.now(), undefined, 4000);
-      // One end-to-end sample: 100 output over the whole logical request (2 s).
+      // One v3 sample: 100 output over 2 s of successful provider generation.
       usageMsg('brain-a', 'eff1', { output: 100, totalTokens: 200 }, Date.now(), undefined, 100, 2000);
       const [row] = store.usageByModel(1);
       expect(row!.usage.outputTps).toBeCloseTo(49.02, 1); // (100+50+100) / (1+4+0.1) s — legacy window over ALL stamps
@@ -1096,15 +1102,15 @@ describe('BrainStore', () => {
       expect(row!.usage.effectiveTps).toBeCloseTo(50);   // 100 / 2 s — ONLY the effective sample
     });
 
-    it('excludes tool-call generations from effective speed while retaining billed totals', () => {
+    it('includes tool-call generations in effective speed exactly once', () => {
       store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
       usageMsg('brain-a', 'tool', { output: 100, totalTokens: 150 }, Date.now(), undefined, undefined, 1000, 'stop', [
         { type: 'thinking', thinking: 'plan' }, { type: 'toolCall', name: 'Read', arguments: {} },
       ]);
       const usage = store.usageByModel(1)[0]!.usage;
       expect(usage.output).toBe(100);
-      expect(usage.effectiveMeasuredOutput).toBe(0);
-      expect(usage.effectiveTps).toBeNull();
+      expect(usage.effectiveMeasuredOutput).toBe(100);
+      expect(usage.effectiveTps).toBeCloseTo(100);
     });
 
     it('keeps an effective stamp without usable output out of the effective figure', () => {
@@ -1119,15 +1125,15 @@ describe('BrainStore', () => {
 
     it('excludes failed retry attempts with partial output from the effective aggregate', () => {
       store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
-      // The failed prefix is persisted for usage accounting, but the successful terminal message already
-      // carries the whole logical request window including that attempt and the retry backoff.
+      // The failed prefix is persisted for billing, but contributes no speed sample. The successful response
+      // carries only its own provider-generation window.
       usageMsg('brain-a', 'failed', { output: 20, totalTokens: 30 }, Date.now(), undefined, undefined, 2000, 'error');
       usageMsg('brain-a', 'recovered', { output: 100, totalTokens: 150 }, Date.now(), undefined, undefined, 5000, 'stop');
 
       const projected = store.usageByModel(1)[0]!.usage;
       expect(projected.output).toBe(120); // billing totals still include both provider-reported attempts
       expect(projected.effectiveMeasuredOutput).toBe(100);
-      expect(projected.effectiveTps).toBeCloseTo(20); // delivered 100 / whole logical request 5 s
+      expect(projected.effectiveTps).toBeCloseTo(20); // delivered 100 / 5 s successful generation
 
       // An upgraded database serves the legacy message reader until its explicit projection backfill.
       db.prepare('UPDATE brain_usage_rollup_state SET ready = 0 WHERE id = 1').run();
@@ -2085,7 +2091,8 @@ describe('BrainStore', () => {
   describe('workflow runs', () => {
     const wf = (over: Record<string, unknown> = {}) => ({
       id: 'wf-1', toolCallId: 'call-1', title: 'Ship it', status: 'running',
-      nodes: [{ id: 'gather', task: 'gather facts', status: 'done', deps: [], sessionId: 'child', tokens: 120, seconds: 4 }],
+      nodes: [{ id: 'gather', task: 'gather facts', status: 'done', deps: [], sessionId: 'child', tokens: 120,
+        effectiveTps: 40.25, effectiveTurnId: 'turn-1', effectiveModel: 'provider/m', seconds: 4 }],
       ...over,
     });
 

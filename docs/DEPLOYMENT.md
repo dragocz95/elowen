@@ -155,6 +155,20 @@ curl -fsS http://127.0.0.1:4500/
 
 On macOS, use the LaunchAgents created by `elowen install`; the service logs remain under `~/.config/elowen/logs/`.
 
+## Repair migrated managed Project networking
+
+A persistent Project root created before the systemd-nspawn rootfs artifact may retain a disabled `systemd-networkd` state from its earlier container image. The current release detects that condition because a shared-network environment is not ready until guest `host0` has carrier and at least one global address.
+
+Repair affected Projects one at a time after the new privileged helper and daemon have been deployed from the same release:
+
+1. Read EnvironmentStatus and record its Project id and generation. Affected running environments report a shared-network readiness error instead of `running`.
+2. Stop that Project with EnvironmentStop and wait for the operation to succeed.
+3. Start it with EnvironmentStart. Before boot, the runtime runs offline `systemctl --root` against the persistent root and enables only the units required by the rootfs recipe. Installed packages, `/etc` customizations, workspace, HOME and data volumes are preserved.
+4. Read EnvironmentStatus again, then verify the guest reports `systemd-networkd` active and enabled, `host0` with carrier and a global address, and the required external endpoint reachable.
+5. Continue to the next recorded Project only after the current one passes. If a start fails, leave the root in place, inspect EnvironmentLogs, and stop the batch rather than recreating or deleting storage.
+
+New roots already carry the required enablement. The offline probe is idempotent and does not rewrite an already compliant root.
+
 ## Reverse proxy
 
 When a reverse proxy fronts the web UI, route browser traffic to the web process and plugin webhooks directly to the daemon:
@@ -164,8 +178,22 @@ server {
     listen 443 ssl;
     server_name elowen.example.com;
 
-    # Browser image attachments are base64 JSON and may be up to 5 MB.
+    # Ordinary API requests carry JSON. Keep a bounded ceiling while leaving enough room for images.
     client_max_body_size 25m;
+
+    # A conversation upload is a raw stream written into the selected Project. The web BFF streams it to
+    # the daemon, so this exact route must neither inherit the ordinary body cap nor spool the file first.
+    location = /api/brain/uploads {
+        client_max_body_size 0;
+        proxy_pass http://127.0.0.1:4500;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:4500;

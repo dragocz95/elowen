@@ -709,9 +709,21 @@ export class ConversationLifecycle {
    *  reload, personality change) deliberately leaves the pin alone: reloading a plugin is no reason to
    *  move a conversation off the model its user picked. */
   async restart(userId: number, opts: { reapplyModelPreference?: boolean } = {}): Promise<void> {
-    const b = this.activeLive(userId);
-    if (!b) return;
-    const sessionId = b.sessionId;
+    const live = this.activeLive(userId);
+    if (live) await this.restartLive(userId, live, opts);
+  }
+
+  /** Restart every live owner-chat conversation for one account, including bound non-active CLI sessions.
+   * Channel sessions live in a separate registry bucket and are deliberately untouched. */
+  async restartAll(userId: number): Promise<void> {
+    const targets = this.d.sessions.liveEntries()
+      .map(([, live]) => live)
+      .filter((live) => live.ownerUserId === userId);
+    await Promise.all(targets.map((live) => this.restartLive(userId, live)));
+  }
+
+  private async restartLive(userId: number, live: LiveBrain, opts: { reapplyModelPreference?: boolean } = {}): Promise<void> {
+    const sessionId = live.sessionId;
     // Release a parked AskUserQuestion first, else `settled` waits out its full timeout.
     this.d.elicitation.cancelForSession(sessionId, 'session restarted');
     await this.d.sessions.settled(sessionId); // let an in-flight turn settle before disposing the session
@@ -721,13 +733,13 @@ export class ConversationLifecycle {
     // through activeLive() or stop() (both would answer against whatever is active/live NOW, which is how
     // a restart could tear down an unrelated conversation — see the sol review finding 1). A session that
     // moved on is not this restart's problem to finish; whatever replaced it owns its own lifecycle.
-    if (this.d.sessions.get(sessionId) !== b) return;
-    const prevWorkDir = b.workDir; // the restart must not move the session cwd
+    if (this.d.sessions.get(sessionId) !== live) return;
+    const prevWorkDir = live.workDir; // the restart must not move the session cwd
     // In-place respawn (same id) — see InPlaceRespawnState. Even a settings reload rebuilds PI from durable
     // history, which strips ephemeral orientation and mode framing; only the conversation's last mode fact
     // survives. Listener ownership lives in ClientAttachments; the spawner restores every attached
     // transport on its own.
-    const prevState = captureInPlaceRespawnState(b);
+    const prevState = captureInPlaceRespawnState(live);
     this.d.goals.cancelGoalContinuation(sessionId);
     this.d.sessions.dispose(sessionId);
     try {

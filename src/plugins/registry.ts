@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ENVIRONMENT_CONTROL_METHODS } from './environmentTypes.js';
+import { INVALID_PLUGIN_SKILL_OVERRIDES, pluginSkillAvailabilityKey } from './skillAvailability.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginImages, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginImages, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginSkillCatalogEntry, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import { webSocketTickets } from './wsTickets.js';
 import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -133,7 +134,9 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   publishedSitesGateway: [
     'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
   ],
-  skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
+  browserCapture: ['available', 'capture'],
+  skillCatalog: ['visibleSkills', 'visibleEntries', 'canonicalBaseDir'],
+  skillManagement: ['catalogForAccount', 'setPluginSkillEnabled'],
   skillResources: ['resolveResource'],
 };
 
@@ -153,6 +156,14 @@ const PICKER_SURFACES: readonly SlashSurface[] = ['cli', 'web'];
 const CONTROL_CONSUMERS: Partial<Record<keyof KnownControls, readonly string[]>> = {
   github: ['sandbox'],
   publishedSitesGateway: ['sites'],
+  // Launches a browser process and navigates it to a URL the CALLER chose. That is process-launch
+  // authority plus an outbound request, so it is allowlisted to the one plugin that derives its targets
+  // from its own server-side configuration. Anything else wanting a picture of a page has BrowserScreenshot,
+  // which runs inside an account's own session and is governed by that session's ownership.
+  browserCapture: ['sites'],
+  // Account-wide catalog inspection and override writes are Skills-plugin management authority, not a
+  // capability any loader should gain merely by declaring control reads.
+  skillManagement: ['skills'],
   // Returns a host path core then reads on the caller's behalf, for a guest that cannot read it itself.
   // Only the plugin that owns the managed read path needs it. `skillCatalog` stays off this list: listing
   // the skills a turn may use is not the same authority and several loaders legitimately read it.
@@ -171,6 +182,9 @@ const MANAGED_PROJECT_FILE_READERS: readonly string[] = ['subagent'];
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers
  *  must not learn grant-gated skills. The predicate remains the single owner of the grant decision. */
 const UNGRANTED_PLUGIN_USER: PluginAccessUser = { is_admin: false, granted_plugins: [] };
+const SKILLS_PLUGIN = 'skills';
+export { pluginSkillAvailabilityKey } from './skillAvailability.js';
+
 const DESTINATION_PROVIDER_TIMEOUT_MS = 5_000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -778,48 +792,79 @@ export class PluginRegistry {
     return out;
   }
 
-  /** The skills ONE session may see: every permitted instance-wide skill, plus permitted skills owned by
-   *  `userId`. Pass null for a session that serves nobody in particular (a shared channel, a task worker) —
-   *  it then sees only instance-wide skills from non-grantable plugins. A missing account fails closed for
-   *  grant-gated plugins; it is not the predicate's open mode because these callers run inside a user-backed
-   *  daemon.
-   *
-   *  The returned catalog has one definition per name. A personal definition shadows an instance one for
-   *  its owner; otherwise the first registered definition wins, matching every other flat plugin namespace.
-   *  Keeping that decision HERE means the prompt, PI's `/skill:` expansion and SkillLoad all consume the
-   *  exact same object. Return the original array when nothing was removed so unchanged prompts remain
-   *  byte-identical. */
-  skillsFor(userId: number | null | undefined, user?: Partial<PluginAccessUser> | null): PluginSkill[] {
+  private skillCatalogSource(index: number): PluginSkillCatalogEntry['source'] {
+    const ownerUserId = this.skillOwnerUsers[index] ?? null;
+    const plugin = this.skillOwners[index]!;
+    const skill = this.skills[index]!;
+    if (ownerUserId !== null) return 'personal';
+    if (plugin !== SKILLS_PLUGIN) return 'plugin';
+    return skill.sourceInfo?.source === 'elowen-user:skills' ? 'instance' : 'bundled';
+  }
+
+  /** Full live contribution projection for one account. Entries whose plugin grant, account override or
+   * name precedence withholds them remain present with a reason, allowing an administrator to distinguish
+   * "disabled for this account" from "the contributor is unavailable" without inventing a second registry. */
+  skillCatalogFor(
+    userId: number | null | undefined,
+    user?: Partial<PluginAccessUser> | null,
+    disabledPluginSkills: ReadonlySet<string> = new Set(),
+  ): PluginSkillCatalogEntry[] {
     const accessUser: PluginAccessUser = user
       ? { is_admin: user.is_admin === true, granted_plugins: user.granted_plugins ?? [] }
       : UNGRANTED_PLUGIN_USER;
-    const selected: PluginSkill[] = [];
-    const selectedOwners: (number | null)[] = [];
-    const byName = new Map<string, number>();
-    let changed = false;
+    const entries: PluginSkillCatalogEntry[] = [];
+    const selectedByName = new Map<string, number>();
+    const overridesValid = !disabledPluginSkills.has(INVALID_PLUGIN_SKILL_OVERRIDES);
     for (let i = 0; i < this.skills.length; i++) {
       const skill = this.skills[i]!;
       const ownerUserId = this.skillOwnerUsers[i] ?? null;
-      if (ownerUserId !== null && (userId == null || ownerUserId !== userId)) { changed = true; continue; }
-      const plugin = this.skillOwners[i]!;
-      if (!isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) })) {
-        changed = true;
-        continue;
-      }
-      const prior = byName.get(skill.name);
+      if (ownerUserId !== null && (userId == null || ownerUserId !== userId)) continue;
+      const contributorPlugin = this.skillOwners[i]!;
+      const source = this.skillCatalogSource(i);
+      const key = source === 'plugin' ? pluginSkillAvailabilityKey(contributorPlugin, skill.name) : null;
+      const pluginAvailable = isPluginAllowedForUser(accessUser, {
+        name: contributorPlugin,
+        userGrantable: this.userGrantable.has(contributorPlugin),
+      });
+      const enabledForAccount = key === null || (overridesValid && !disabledPluginSkills.has(key));
+      const entry: PluginSkillCatalogEntry = {
+        key, skill, contributorPlugin, source, ownerUserId, enabledForAccount, effective: false,
+        ...(!pluginAvailable ? { unavailableReason: 'plugin-unavailable' as const }
+          : !enabledForAccount ? { unavailableReason: 'disabled-for-account' as const }
+            : {}),
+      };
+      const entryIndex = entries.push(entry) - 1;
+      if (!pluginAvailable || !enabledForAccount) continue;
+      const prior = selectedByName.get(skill.name);
       if (prior === undefined) {
-        byName.set(skill.name, selected.length);
-        selected.push(skill);
-        selectedOwners.push(ownerUserId);
+        selectedByName.set(skill.name, entryIndex);
+        entry.effective = true;
         continue;
       }
-      changed = true;
-      if (ownerUserId !== null && selectedOwners[prior] === null) {
-        selected[prior] = skill;
-        selectedOwners[prior] = ownerUserId;
+      const previous = entries[prior]!;
+      if (ownerUserId !== null && previous.ownerUserId === null) {
+        previous.effective = false;
+        previous.unavailableReason = 'shadowed';
+        selectedByName.set(skill.name, entryIndex);
+        entry.effective = true;
+      } else {
+        entry.unavailableReason = 'shadowed';
       }
     }
-    return !changed && selected.length === this.skills.length ? this.skills : selected;
+    return entries;
+  }
+
+  /** The skills ONE session may see: the effective rows from {@link skillCatalogFor}. Account overrides
+   * narrow plugin-contributed skills only; instance, bundled and personal file skills are unaffected. */
+  skillsFor(
+    userId: number | null | undefined,
+    user?: Partial<PluginAccessUser> | null,
+    disabledPluginSkills: ReadonlySet<string> = new Set(),
+  ): PluginSkill[] {
+    const selected = this.skillCatalogFor(userId, user, disabledPluginSkills)
+      .filter((entry) => entry.effective)
+      .map((entry) => entry.skill);
+    return disabledPluginSkills.size === 0 && selected.length === this.skills.length ? this.skills : selected;
   }
 
   /** Canonical skill directory captured at registration, or null when the advertised root was already
