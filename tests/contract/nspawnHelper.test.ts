@@ -23,7 +23,9 @@ import {
   MACHINE_SYSCTL_PATH,
   MACHINE_UNIT_TEMPLATE,
   firewallRuleCommand,
+  nspawnFirewallRules,
   NSPAWN_FIREWALL_RULES,
+  renderMachineFirewallUnit,
   POLKIT_RULE_PATH,
   applyNspawnRequest,
   applyRequest,
@@ -88,6 +90,7 @@ function runnerFixture(options: {
   installed?: boolean; polkit?: string; polkitMode?: number; unit?: string; unitMode?: number;
   unitLoaded?: boolean; firewall?: boolean; dockerChain?: boolean; forwarding?: boolean; networkd?: boolean; deployment?: string;
   firewallUnit?: string; firewallEnabled?: boolean; sysctl?: string; networkdEnabled?: boolean;
+  resolver?: string;
 } = {}) {
   const calls: Call[] = [];
   const writes: { path: string; content: string; mode: number }[] = [];
@@ -110,6 +113,7 @@ function runnerFixture(options: {
     sysctl: options.sysctl ?? MACHINE_SYSCTL_CONTENT,
     networkd: options.networkd ?? true,
     networkdEnabled: options.networkdEnabled ?? options.networkd ?? true,
+    resolver: options.resolver ?? 'nameserver 192.0.2.53\n',
     deployment: options.deployment ?? JSON.stringify({ storage: { sandboxDataDir: '/srv/sandbox', sitesDataDir: '/srv/sites' } }),
   };
   const readText = (path: string) => {
@@ -119,7 +123,7 @@ function runnerFixture(options: {
     if (path === MACHINE_UNIT_PATH) return state.unit;
     if (path === MACHINE_FIREWALL_UNIT_PATH) return state.firewallUnit;
     if (path === '/proc/sys/net/ipv4/ip_forward') return state.forwarding ? '1\n' : '0\n';
-    if (path === '/run/systemd/resolve/resolv.conf') return 'nameserver 192.0.2.53\n';
+    if (path === '/run/systemd/resolve/resolv.conf') return state.resolver;
     if (path === MACHINE_SYSCTL_PATH) return state.sysctl;
     return '';
   };
@@ -156,7 +160,9 @@ function runnerFixture(options: {
         if (file === '/usr/sbin/iptables' && chain === 'DOCKER-USER' && !state.dockerChain) {
           return { ok: false, stderr: 'No chain/target/match by that name' };
         }
-        const stdout = NSPAWN_FIREWALL_RULES
+        const address = /^\s*nameserver\s+(\S+)/m.exec(state.resolver)?.[1];
+        const firewallRules = nspawnFirewallRules(address ? { path: '/run/systemd/resolve/resolv.conf', address } : null);
+        const stdout = firewallRules
           .filter((rule) => rule.binary === file && rule.chain === chain)
           .sort((left, right) => left.insertAt - right.insertAt)
           .map((rule) => `-A ${rule.chain} ${rule.spec.join(' ')}`)
@@ -1035,6 +1041,41 @@ describe('privileged helper: host artefacts and readiness', () => {
         expect(drop.insertAt, `${drop.id} must precede ${rule.id}`).toBeLessThan(rule.insertAt);
       }
     }
+  });
+
+  it('permits only DNS to the selected Azure platform resolver before denying the rest of that address', async () => {
+    const azure = runnerFixture({ firewall: false, resolver: 'nameserver 168.63.129.16\n' });
+    const reported = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, azure.options) as Readiness;
+
+    const udp = rowFor(reported, 'firewall:resolver-azure-dns-udp');
+    const tcp = rowFor(reported, 'firewall:resolver-azure-dns-tcp');
+    const platformDrop = rowFor(reported, 'firewall:egress-azure-platform');
+    const forwardOut = rowFor(reported, 'firewall:forward-out');
+    expect(udp.detail).toContain('/usr/sbin/iptables -I FORWARD 2');
+    expect(udp.detail).toContain('-i ve-+ -d 168.63.129.16/32 -p udp -m udp --dport 53');
+    expect(tcp.detail).toContain('/usr/sbin/iptables -I FORWARD 3');
+    expect(tcp.detail).toContain('-i ve-+ -d 168.63.129.16/32 -p tcp -m tcp --dport 53');
+    expect(platformDrop.detail).toContain('/usr/sbin/iptables -I FORWARD 4');
+    expect(platformDrop.detail).toContain('-d 168.63.129.16/32');
+    expect(forwardOut.detail).toContain('/usr/sbin/iptables -I FORWARD 5');
+    expect(reported.items.filter((item) => item.id.startsWith('firewall:resolver-azure-dns-'))).toHaveLength(2);
+    expect([udp.detail, tcp.detail].some((detail) => detail.includes('--dport 80'))).toBe(false);
+    expect(rowFor(reported, 'firewall:egress-link-local').detail).toContain('-d 169.254.0.0/16');
+
+    const applied = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, azure.options) as Readiness;
+    expect(applied.ready, applied.items.filter((item) => !item.ok).map((item) => `${item.id}: ${item.detail}`).join('; ')).toBe(true);
+    const azureRules = nspawnFirewallRules({ path: '/run/systemd/resolve/resolv.conf', address: '168.63.129.16' });
+    expect(azure.state.firewallUnit).toBe(renderMachineFirewallUnit(azureRules));
+    const forwardLines = azure.state.firewallUnit.split('\n').filter((line) => line.includes(' -I FORWARD '));
+    expect(forwardLines.map((line) => Number(/ -I FORWARD (\d+) /.exec(line)?.[1]))).toEqual([1, 2, 3, 4, 1, 5, 6]);
+    expect(forwardLines.filter((line) => line.includes('168.63.129.16/32') && line.includes(' -j ACCEPT'))).toHaveLength(2);
+    expect(forwardLines.some((line) => line.includes('168.63.129.16/32') && line.includes('--dport 80') && line.includes(' -j ACCEPT'))).toBe(false);
+
+    const ordinary = runnerFixture({ firewall: false, resolver: 'nameserver 192.0.2.53\n' });
+    const ordinaryReported = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, ordinary.options) as Readiness;
+    expect(ordinaryReported.items.some((item) => item.id.startsWith('firewall:resolver-azure-dns-'))).toBe(false);
+    expect(rowFor(ordinaryReported, 'firewall:egress-azure-platform').detail).toContain('/usr/sbin/iptables -I FORWARD 2');
+    expect(rowFor(ordinaryReported, 'firewall:forward-out').detail).toContain('/usr/sbin/iptables -I FORWARD 3');
   });
 
   it('puts the host guard where a machine-to-host packet actually arrives', () => {

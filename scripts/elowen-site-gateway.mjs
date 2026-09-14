@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 
 const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY, O_TRUNC, O_WRONLY } = constants;
+import { isIP } from 'node:net';
 import { basename, dirname, join, normalize } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
@@ -698,10 +699,10 @@ const MACHINE_INTERFACE = 've-+';
  *  side of the link; 168.63.129.16 is Azure's platform virtual IP, which serves WireServer, the health
  *  probe and the host's own DNS. A machine on the host's own default route reaches both through FORWARD,
  *  and what it can fetch there is credential material belonging to the host, not to the environment.
- *  Positions 1 and 2 are what keep them ahead of the accepts. Nothing legitimate crosses them: the
- *  resolver a machine is given is the host's UPLINK server, which `machineResolver` refuses unless it is
- *  a real off-box address, and link-local traffic between a machine and its own link is delivered into
- *  INPUT rather than forwarded.
+ *  The blocks must stay ahead of the forwarding accepts. When the selected configured resolver is Azure's
+ *  platform address, the plan admits only TCP and UDP DNS to that exact destination before the broad DROP;
+ *  WireServer, metadata and every other port remain denied. Link-local traffic between a machine and its
+ *  own link is delivered into INPUT rather than forwarded.
  *
  *  IPv6 needs the same stateful return rule before its guard, and the same egress block. Measured, this
  *  host carries no global IPv6 address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets
@@ -804,6 +805,44 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
   }),
 ]);
 
+const AZURE_PLATFORM_RESOLVER = '168.63.129.16';
+
+function shiftedFirewallRule(rule, insertAt) {
+  return Object.freeze({ ...rule, insertAt });
+}
+
+/** The selected resolver and the firewall are one plan. Azure exposes DNS and privileged platform services
+ *  on the same address, so only the two DNS transports are inserted before the unchanged platform DROP. */
+export function nspawnFirewallRules(resolver = null) {
+  if (resolver?.address !== AZURE_PLATFORM_RESOLVER) return NSPAWN_FIREWALL_RULES;
+  const dnsRules = [
+    Object.freeze({
+      id: 'firewall:resolver-azure-dns-udp',
+      label: 'Machine DNS through the Azure platform resolver (UDP)',
+      binary: '/usr/sbin/iptables',
+      chain: 'FORWARD',
+      insertAt: 2,
+      spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', `${AZURE_PLATFORM_RESOLVER}/32`, '-p', 'udp', '-m', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'elowen-machine-resolver-azure-dns-udp', '-j', 'ACCEPT']),
+      why: 'the configured machine resolver is Azure platform DNS, so UDP port 53 to that exact address must precede the platform deny',
+    }),
+    Object.freeze({
+      id: 'firewall:resolver-azure-dns-tcp',
+      label: 'Machine DNS through the Azure platform resolver (TCP)',
+      binary: '/usr/sbin/iptables',
+      chain: 'FORWARD',
+      insertAt: 3,
+      spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', `${AZURE_PLATFORM_RESOLVER}/32`, '-p', 'tcp', '-m', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'elowen-machine-resolver-azure-dns-tcp', '-j', 'ACCEPT']),
+      why: 'the configured machine resolver is Azure platform DNS, so TCP port 53 to that exact address must precede the platform deny',
+    }),
+  ];
+  return Object.freeze(NSPAWN_FIREWALL_RULES.flatMap((rule) => {
+    if (rule.id === 'firewall:egress-azure-platform') return [...dnsRules, shiftedFirewallRule(rule, 4)];
+    if (rule.id === 'firewall:forward-out') return [shiftedFirewallRule(rule, 5)];
+    if (rule.id === 'firewall:forward-back') return [shiftedFirewallRule(rule, 6)];
+    return [rule];
+  }));
+}
+
 const RETIRED_NSPAWN_FIREWALL_RULES = Object.freeze([
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']) }),
   Object.freeze({ binary: '/usr/sbin/iptables', chain: 'DOCKER-USER', spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']) }),
@@ -843,7 +882,8 @@ export const MACHINE_FIREWALL_UNIT_PATH = `/etc/systemd/system/${MACHINE_FIREWAL
  *  them. Every run removes the exact retired and current rules, then inserts the current rules at their
  *  fixed positions. This repairs an older append-only guard and any later ordering drift. The condition
  *  keeps a host without a packet filter from failing the unit: readiness then reports the rules as missing. */
-export const MACHINE_FIREWALL_UNIT = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+export function renderMachineFirewallUnit(rules = NSPAWN_FIREWALL_RULES) {
+  return `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
 [Unit]
 Description=Elowen machine firewall rules
 Documentation=man:iptables(8)
@@ -854,11 +894,14 @@ Wants=network-online.target
 Type=oneshot
 ExecCondition=/usr/bin/test -x /usr/sbin/iptables -a -x /usr/sbin/ip6tables
 ${RETIRED_NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleRemovalCommand(rule)}'`).join('\n')}
-${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleResetCommand(rule)}'`).join('\n')}
+${rules.map((rule) => `ExecStart=/bin/sh -c '${firewallRuleResetCommand(rule)}'`).join('\n')}
 
 [Install]
 WantedBy=multi-user.target docker.service
 `;
+}
+
+export const MACHINE_FIREWALL_UNIT = renderMachineFirewallUnit();
 
 /** Forwarding, recorded where it survives a reboot rather than only set live.
  *
@@ -1685,14 +1728,15 @@ function nspawnDropCapabilities(raw) {
   return [...new Set([...NSPAWN_DROP_CAPABILITIES, ...requested])];
 }
 
-function machineResolver(readText) {
+function configuredMachineResolver(readText) {
   for (const path of [MACHINE_UPLINK_RESOLVER, '/etc/resolv.conf']) {
     let content;
     try { content = readText(path); } catch (cause) { if (cause?.code === 'ENOENT') continue; throw cause; }
     const servers = String(content).split(/\r?\n/).map((line) => /^\s*nameserver\s+(\S+)/.exec(line)?.[1]).filter(Boolean);
-    if (servers.some((server) => !server.startsWith('127.') && server !== '::1')) return path;
+    const address = servers.find((server) => isIP(server) !== 0 && !server.startsWith('127.') && server !== '::1');
+    if (address) return Object.freeze({ path, address });
   }
-  fail('the host has no non-loopback DNS resolver for machine networking');
+  return null;
 }
 
 function nspawnEnvironmentEntries(value) {
@@ -1789,11 +1833,12 @@ function nspawnWriteEnvelope(request, storage, options) {
   if (request.privateNetwork && ports.length) fail('a loopback-only machine cannot publish inbound ports');
   // The envelope is what turns veth on, so this is where the gate belongs: a machine cannot be started
   // with a link the host is not ready to isolate, and no client can skip the check by not asking for it.
+  const resolver = request.privateNetwork ? null : configuredMachineResolver(readText);
   if (request.privateNetwork === false) {
-    const unmet = vethReadiness(runner, readText).filter((item) => !item.ok);
+    const unmet = vethReadiness(runner, readText, resolver).filter((item) => !item.ok);
     if (unmet.length > 0) fail(`the host is not ready for machine networking — ${unmet.map((item) => item.detail).join('; ')}`);
   }
-  const resolverPath = request.privateNetwork ? null : machineResolver(readText);
+  const resolverPath = resolver?.path ?? null;
   const limits = nspawnLimits(request.limits);
   const binds = nspawnBinds(storage, request.binds ?? []);
   ensureNestedMountPoints(binds, options.writeAtomic === undefined);
@@ -2203,9 +2248,9 @@ const UNIT_LOAD_PROBE = 'elowen-machine@elowen-project-readiness-probe-g0.servic
 /** Enabled, so it runs at the next boot, AND every rule actually in place, so a flushed chain is repaired
  *  rather than reported. Provisioning is the operator-invoked path and the only one that may act on the
  *  packet filter; serving a request still only ever reports it. */
-function firewallUnitApplied(runner) {
+function firewallUnitApplied(runner, rules) {
   if (!runner('/usr/bin/systemctl', ['is-enabled', MACHINE_FIREWALL_UNIT_NAME]).ok) return false;
-  return NSPAWN_FIREWALL_RULES.every((rule) => firewallRulePresent(runner, rule));
+  return rules.every((rule) => firewallRulePresent(runner, rule));
 }
 
 function unitTemplateLoaded(runner) {
@@ -2219,7 +2264,8 @@ function unitTemplateLoaded(runner) {
  *  hand-edited host restores exactly the artefact that drifted.
  *
  *  The unit template carries a reload because systemd reads unit files only when it is told to. */
-function nspawnArtefacts() {
+function nspawnArtefacts(readText, resolver = configuredMachineResolver(readText)) {
+  const firewallRules = nspawnFirewallRules(resolver);
   return [
     {
       id: 'unit:elowen-machine',
@@ -2239,12 +2285,12 @@ function nspawnArtefacts() {
       label: 'Machine firewall rules',
       path: MACHINE_FIREWALL_UNIT_PATH,
       mode: 0o644,
-      content: MACHINE_FIREWALL_UNIT,
+      content: renderMachineFirewallUnit(firewallRules),
       ready: 'installed, enabled and applied',
       effect: {
         // Applied is asked of the packet filter, not of the unit: a oneshot that has already run is
         // inactive either way, and a rule someone flushed by hand is exactly the state worth repairing.
-        loaded: firewallUnitApplied,
+        loaded: (runner) => firewallUnitApplied(runner, firewallRules),
         detail: `installed but the rules are not all in place — run: systemctl enable --now ${MACHINE_FIREWALL_UNIT_NAME}`,
         reload: [
           ['/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed'],
@@ -2299,7 +2345,7 @@ function artefactRow(artefact, runner, readText, readMode) {
  *  None of the firewall rules survive a reboot on their own. That is deliberate rather than unfortunate:
  *  the check runs before every envelope, so a rebooted host fails loudly and refuses veth instead of
  *  quietly running a machine with the guard gone. */
-function vethReadiness(runner, readText) {
+function vethReadiness(runner, readText, selectedResolver = configuredMachineResolver(readText)) {
   const items = [];
   // `ok` is the RUNNING kernel and nothing else, because that is what decides whether a machine routes,
   // and this row gates every veth envelope write. A host forwarding today because Docker enabled it, or
@@ -2331,15 +2377,13 @@ function vethReadiness(runner, readText) {
       ? 'active and enabled'
       : `it configures the host side of the link, leases the machine its address and masquerades the traffic — run: systemctl enable --now systemd-networkd${active ? ' (running, but it would not come back after a reboot)' : ''}`,
   });
-  let resolverPath = null;
-  try { resolverPath = machineResolver(readText); } catch { /* Report the fixed requirement below. */ }
   items.push({
     id: 'resolver:uplink',
     label: 'Machine DNS resolver',
-    ok: resolverPath !== null,
-    detail: resolverPath ? `using ${resolverPath}` : 'the host has no non-loopback nameserver a machine can use',
+    ok: selectedResolver !== null,
+    detail: selectedResolver ? `using ${selectedResolver.path} (${selectedResolver.address})` : 'the host has no non-loopback nameserver a machine can use',
   });
-  for (const rule of NSPAWN_FIREWALL_RULES) {
+  for (const rule of nspawnFirewallRules(selectedResolver)) {
     const ok = firewallRulePresent(runner, rule);
     items.push({
       id: rule.id,
@@ -2379,6 +2423,7 @@ function nspawnStatus(request, options = {}) {
   const user = machineServiceUser(runner, env, request);
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
   const installed = packageInstalled(runner, NSPAWN_PACKAGE);
+  const resolver = configuredMachineResolver(readText);
   const items = [
     { id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail },
     {
@@ -2389,9 +2434,9 @@ function nspawnStatus(request, options = {}) {
     },
     apparmorRow(readText),
     legacyPolkitRow(user, readText, readMode),
-    ...nspawnArtefacts().map((artefact) => artefactRow(artefact, runner, readText, readMode)),
+    ...nspawnArtefacts(readText, resolver).map((artefact) => artefactRow(artefact, runner, readText, readMode)),
   ];
-  if (request.veth === true) items.push(...vethReadiness(runner, readText));
+  if (request.veth === true) items.push(...vethReadiness(runner, readText, resolver));
   return { ok: true, ready: items.every((item) => item.ok), items };
 }
 
@@ -2441,10 +2486,11 @@ function nspawnProvision(request, options = {}) {
     runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');
   }
   retireLegacyPolkit(user, readText, readMode, removeFile);
+  const resolver = configuredMachineResolver(readText);
   // The uid ledger's own directory needs nothing here: `atomicWrite` creates the parent of whatever it
   // writes, so the first allocation in `uidRangeFor` establishes it. Reaching for it here would also
   // reach for `/var/lib/elowen`, which the Sites gateway already owns state in.
-  for (const artefact of nspawnArtefacts()) {
+  for (const artefact of nspawnArtefacts(readText, resolver)) {
     if (readText(artefact.path) !== artefact.content || readMode(artefact.path) !== artefact.mode) {
       writeAtomic(artefact.path, Buffer.from(artefact.content), artefact.mode);
     }
