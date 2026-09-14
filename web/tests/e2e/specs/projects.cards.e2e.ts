@@ -149,7 +149,7 @@ test.describe('the Project register card grid', () => {
       return {
         cardWidth: Math.round(cards[0]!.getBoundingClientRect().width),
         // Every always-visible identity line: the slug, the runtime pill, the branch.
-        clipped: cards.flatMap((card) => [...card.querySelectorAll<HTMLElement>('[data-project-runtime], [data-metric] > span:first-child')]
+        clipped: cards.flatMap((card) => [...card.querySelectorAll<HTMLElement>('[data-project-runtime], [data-metric-label]')]
           .filter((node) => node.scrollWidth > node.clientWidth + 1)
           .map((node) => `${node.textContent} ${node.scrollWidth}>${node.clientWidth}`)),
       };
@@ -239,41 +239,58 @@ test.describe('the Project register card grid', () => {
     await expect(card.locator('[data-project-team="strip"] [data-slot="avatar"]').first()).toBeVisible();
     await expect(card.locator('[data-project-team="detail"]')).toBeVisible();
 
-    // Measurement: three labelled resources, each with an exact figure and ONE meter grammar. Disk used
-    // to be the exception with no ceiling to divide by; the runtime now measures it against the volume it
-    // is stored on, so all three are proportions of something real and all three are drawn the same way.
+    // Measurement: three labelled resources in ONE strip, each a ring against a ceiling that exists. Disk
+    // used to be the exception with nothing to divide by; the runtime now measures it against the volume
+    // it is stored on, so all three are proportions of something real and all three are drawn the same.
     const metrics = card.locator('[data-project-row-metrics]');
     await expect(metrics).toHaveCount(1);
-    await expect(metrics).toHaveAttribute('data-metrics-layout', 'rows');
     await expect(card.locator('[data-metric]')).toHaveCount(3);
     await expect(card.locator('[data-metric="cpu"][data-metric-state="ready"]')).toContainText('42');
     await expect(card.locator('[data-metric="memory"][data-metric-state="ready"]')).toContainText('640 MiB / 1 GiB');
     await expect(card.locator('[data-metric="disk"][data-metric-state="ready"]')).toContainText('512 MiB / 200 GiB');
     await expect(card.locator('[data-metric] [role="progressbar"]')).toHaveCount(3);
-    await expect(card.locator('[data-metric-track="none"]'), 'nothing is left without a ceiling').toHaveCount(0);
+    await expect(card.locator('[data-metric] .metric-donut-track'), 'every ring keeps its remaining track').toHaveCount(3);
 
-    // THE MEASUREMENT THE UNIT TESTS CANNOT MAKE: a chart has no size under jsdom, so whether the bar is
-    // a fraction of a fixed 0..100 domain or of its own datum is only visible in a real browser. Three
-    // readings this far apart would otherwise render as three identical full bars.
-    const filled = await card.locator('[data-metric] [role="progressbar"] svg').evaluateAll((charts) => charts.map((chart) => {
-      // Both are paths of the same plot area: the track is the ceiling, the other one is the reading.
-      const track = chart.querySelector('.recharts-bar-background-rectangle');
-      const bar = chart.querySelector('.recharts-bar-rectangle path');
-      if (!track || !bar) return -1;
-      const width = track.getBoundingClientRect().width;
-      return width > 0 ? Math.round(bar.getBoundingClientRect().width / width * 100) : -1;
+    // THREE ABREST, MEASURED: the strip is one calm row, not a stack and not three tiles. Only a laid-out
+    // document can say whether the three rings actually share a line and are the same size.
+    const strip = await metrics.evaluate((node) => {
+      const cells = [...node.querySelectorAll<HTMLElement>('[data-metric]')].map((cell) => cell.getBoundingClientRect());
+      const rings = [...node.querySelectorAll<HTMLElement>('[data-metric-donut]')].map((ring) => ring.getBoundingClientRect());
+      // Plain arrays: a Set does not survive the serialization out of the page.
+      return {
+        rows: [...new Set(cells.map((box) => Math.round(box.top)))],
+        widths: [...new Set(cells.map((box) => Math.round(box.width)))],
+        ringSizes: [...new Set(rings.map((box) => `${Math.round(box.width)}x${Math.round(box.height)}`))],
+      };
+    });
+    expect(strip.rows, 'the three resources share one row').toHaveLength(1);
+    expect(strip.widths, 'the three columns are equal').toHaveLength(1);
+    expect(strip.ringSizes, 'the three rings are one size').toEqual(['52x52']);
+
+    // THE MEASUREMENT THE UNIT TESTS CANNOT MAKE: how much of a real circle each arc actually sweeps.
+    // Three readings this far apart would otherwise be indistinguishable from three full rings.
+    const swept = await card.locator('[data-metric] [role="progressbar"] svg').evaluateAll((charts) => charts.map((chart) => {
+      // Recharts puts the Cell's className on the sector PATH itself, not on a wrapper.
+      const arc = chart.querySelector('path.metric-donut-arc');
+      const track = chart.querySelector('path.metric-donut-track');
+      if (!arc) return -1;
+      // Every ring is drawn from the same two sectors, so the arc's share of the whole circle is its
+      // length against the two together — geometry the browser computes and jsdom cannot.
+      const arcLength = (arc as SVGPathElement).getTotalLength();
+      const trackLength = track ? (track as SVGPathElement).getTotalLength() : 0;
+      return trackLength + arcLength > 0 ? Math.round(arcLength / (arcLength + trackLength) * 100) : -1;
     }));
-    expect(filled).toHaveLength(3);
-    // Against the ceiling, not against itself: normalizing each datum to its own peak would put all three
-    // at 100. The tolerance is the bar's own end caps, not slack in the measurement.
-    expect(filled[0], 'CPU at 42 % of its share').toBeGreaterThan(38);
-    expect(filled[0]).toBeLessThan(46);
-    expect(filled[1], 'memory at 640 MiB of 1 GiB').toBeGreaterThan(59);
-    expect(filled[1]).toBeLessThan(67);
+    expect(swept).toHaveLength(3);
+    // Each arc against its own ceiling. The path length includes the two radial edges every sector has,
+    // which is a fixed cost per arc rather than slack in the measurement, so the bands are generous but
+    // still far enough apart that three identical rings could not pass all three.
+    expect(swept[0], 'CPU sweeps about 42 % of its ring').toBeGreaterThan(30);
+    expect(swept[0]).toBeLessThan(55);
+    expect(swept[1], 'memory sweeps more than CPU does').toBeGreaterThan(swept[0]!);
     // Half a gigabyte of a 200 GB volume is a sliver, and it stays a visible sliver rather than being
     // rounded away to nothing or inflated to look like the others.
-    expect(filled[2], 'disk is a true fraction of the volume').toBeGreaterThan(0);
-    expect(filled[2]).toBeLessThan(10);
+    expect(swept[2], 'disk is a true fraction of the volume').toBeGreaterThan(0);
+    expect(swept[2]).toBeLessThan(swept[0]!);
     // No host-state block: this project HAS a measured runtime, so nothing stands in for it.
     await expect(card.locator('[data-project-host-state]')).toHaveCount(0);
 
@@ -294,6 +311,55 @@ test.describe('the Project register card grid', () => {
     await expect(phone.locator('[data-project-card-open]')).toBeVisible();
     await phone.screenshot({ path: `${SHOTS}/card-managed-390-light.png` });
     await app.screenshot({ path: `${SHOTS}/cards-managed-390-light.png`, fullPage: true });
+  });
+
+  /** THE ARRIVAL ORDER, in a real browser. The card comes from the core Project list; CPU, RAM and disk
+   *  come from the sandbox bundle's own batch, which has to be imported first and then waits out a real
+   *  measurement of the host. The register used to fill that window with "Načítání…" in all three slots of
+   *  every managed card. It now holds the FINAL geometry from the first paint and only the figure inside
+   *  the ring changes, which is the one thing a laid-out document can prove and jsdom cannot: that nothing
+   *  moves when the sample lands. */
+  test('has its resource strip on screen before the measurement, and does not move when it arrives', async ({ app, seed }) => {
+    test.skip(test.info().project.name !== 'authed', 'needs the authenticated shell');
+    const armed = await prepare(app, seed, 'studio-light');
+    test.skip(!armed, 'needs the sandbox bundle');
+    await app.setViewportSize({ width: 1440, height: 900 });
+
+    // Hold the measurement open, exactly as a cold cgroup read and a disk walk do.
+    let release: (() => void) | undefined;
+    const measured = new Promise<void>((resolve) => { release = resolve; });
+    await app.route('**/plugins/sandbox/api/environments/usage', async (route) => {
+      await measured;
+      await route.continue();
+    });
+
+    await app.goto('/projects');
+    const card = app.locator('[data-project-card]', { hasText: 'atelier' }).first();
+    await expect(card).toBeVisible();
+
+    // Three rings, in their final places, saying they do not know yet — and nowhere the word.
+    await expect(card.locator('[data-metric]')).toHaveCount(3);
+    await expect(card.locator('[data-metric][data-metric-state="unknown"]')).toHaveCount(3);
+    await expect(card.locator('[data-metric] .metric-donut-track')).toHaveCount(3);
+    await expect(card.locator('[data-metric] .metric-donut-arc'), 'a reading was invented before it was measured').toHaveCount(0);
+    await expect(card.locator('[data-project-row-metrics]')).not.toContainText(/načítání|loading|měření/i);
+    await expect(app.locator('[role="status"]')).toHaveCount(0);
+    await card.screenshot({ path: `${SHOTS}/card-managed-1440-unknown.png` });
+
+    const before = await card.locator('[data-project-row-metrics]').evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return { height: Math.round(box.height), rings: [...node.querySelectorAll('[data-metric-donut]')].map((ring) => Math.round(ring.getBoundingClientRect().left)) };
+    });
+
+    release?.();
+    await expect(card.locator('[data-metric="cpu"][data-metric-state="ready"]')).toContainText('42');
+
+    const after = await card.locator('[data-project-row-metrics]').evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return { height: Math.round(box.height), rings: [...node.querySelectorAll('[data-metric-donut]')].map((ring) => Math.round(ring.getBoundingClientRect().left)) };
+    });
+    expect(after.height, 'the strip changed height when the sample landed').toBe(before.height);
+    expect(after.rings, 'the rings moved when the sample landed').toEqual(before.rings);
   });
 
   test('carries the same geometry on the dark skin', async ({ app, seed }) => {

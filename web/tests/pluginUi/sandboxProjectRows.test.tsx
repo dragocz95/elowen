@@ -166,6 +166,36 @@ describe('sandbox contribution to the Project register cards', () => {
    *  fraction of. The runtime now reports the volume the environment is stored on, which is a ceiling it
    *  genuinely cannot grow past, so the card draws all three with the same meter — and says in the
    *  accessible text which ceiling it is, because a volume is not a Project quota. */
+  /** Half a gigabyte of a 200 GB volume is a real reading that rounds away. The ring lifts it to a visible
+   *  floor so a barely-used resource never looks untouched, and the figure beside it has to agree: an arc
+   *  on screen next to `0%` reads as a drawing error rather than as a small number. */
+  it('says a fraction below one per cent is under one, not zero', async () => {
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds.map((projectId) => {
+        const item = usageOf(projectId, projectId === 3 ? 'running' : 'stopped') as any;
+        if (projectId === 3) {
+          Object.assign(item.resources.disk, { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: 200 * 1024 * 1024 * 1024 });
+          item.resources.cpu.percent = 0;
+        }
+        return item;
+      }) });
+    }));
+    mount();
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    const disk = await waitFor(() => {
+      const found = card.querySelector('[data-metric="disk"]') as HTMLElement | null;
+      expect(found).toHaveAttribute('data-metric-state', 'ready');
+      return found!;
+    });
+    expect(within(disk).getByText('<1%')).toBeInTheDocument();
+    expect(disk.querySelector('.metric-donut-arc'), 'a real reading was rounded away to nothing').not.toBeNull();
+    // An exact zero is the one reading with no arc, and it keeps saying zero.
+    const cpu = card.querySelector('[data-metric="cpu"]') as HTMLElement;
+    expect(within(cpu).getByText('0%')).toBeInTheDocument();
+    expect(cpu.querySelector('.metric-donut-arc'), 'an idle resource was drawn as if it were in use').toBeNull();
+  });
+
   it('gives disk the same meter as RAM once the runtime reports the volume it sits on', async () => {
     server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
       const { projectIds } = await request.json() as { projectIds: number[] };
@@ -184,7 +214,8 @@ describe('sandbox contribution to the Project register cards', () => {
     });
     // The exact figures, both of them measured: nothing here is normalized against another project.
     expect(within(disk).getByText('512 MiB / 200 GiB')).toBeInTheDocument();
-    expect(disk.querySelector('[data-metric-track="none"]')).toBeNull();
+    // A ceiling that exists means an arc against it, where an absolute figure leaves the ring empty.
+    expect(disk.querySelector('.metric-donut-arc')).not.toBeNull();
     const meter = within(disk).getByRole('progressbar', { name: strings.usageDisk });
     expect(meter).toHaveAttribute('aria-valuenow', '0');
     expect(meter).toHaveAttribute('aria-valuetext', expect.stringContaining(strings.usageDiskVolume!));
@@ -416,40 +447,52 @@ describe('sandbox contribution to the Project register cards', () => {
     expect(disk).toHaveAttribute('data-metric-state', 'absolute');
     expect(within(disk).getByText('512 MiB')).toBeInTheDocument();
     expect(card.textContent).not.toContain('/ ?');
-    // No meter at all: a bar would claim a proportion of a ceiling that does not exist.
+    // The ring keeps its shape, and the arc that would claim a proportion of a ceiling that does not
+    // exist is simply not drawn. The sentence saying WHY is what a screen reader gets for the ring's name.
     expect(within(disk).queryByRole('progressbar')).toBeNull();
-    expect(disk.querySelector('[data-metric-track="none"]')).not.toBeNull();
+    expect(disk.querySelector('.metric-donut-track')).not.toBeNull();
+    expect(disk.querySelector('.metric-donut-arc')).toBeNull();
+    expect(within(disk).getByRole('img').getAttribute('aria-label')).toContain(strings.usageLimitUnknown);
     expect(disk.getAttribute('title')).toContain(strings.usageLimitUnknown);
   });
 
-  // The card draws the snapshot ONCE, stacked, and the drawer draws the same one three abreast. The
-  // arrangement is the difference: at three cards across, a label and an exact figure on one line put
-  // `256 MiB / 1 GiB` and `RAM` in the same 250px, and whichever gives way is the one the reader came
-  // for. Stacking gives the figure the card's whole width, so nothing is clipped to fit.
-  it('stacks one snapshot per card and keeps the drawer three abreast', async () => {
+  /** ONE strip, one arrangement, in the card and in the drawer alike.
+   *
+   *  The card used to stack the three meters and the drawer used to set them three abreast, because a
+   *  horizontal bar needs a track as wide as it can get and a stack was the only way to give each one the
+   *  card's whole width. A ring needs a square instead, so the two surfaces stopped needing different
+   *  answers: three equal donuts in one row read as a single instrument rather than a list to work
+   *  through, which is what a reader scanning a register is actually doing. */
+  it('draws one three-abreast strip per snapshot, in the card and in the drawer alike', async () => {
     mount();
     const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
     await waitFor(() => expect(card.querySelectorAll('[data-project-row-metrics]')).toHaveLength(1));
     const inCard = card.querySelector('[data-project-row-metrics]') as HTMLElement;
 
-    expect(inCard).toHaveAttribute('data-metrics-layout', 'rows');
-    expect(inCard.className).toContain('flex-col');
+    expect(inCard.className).toContain('grid-cols-3');
     expect(inCard.className).toContain('min-w-0');
-    // Every reading clipped inside its own track rather than pushing the card wider.
+    // A calm strip, not three dashboard tiles: no border, no surface, no shadow of its own.
+    expect(inCard.className).not.toMatch(/\bborder|\bshadow|\brounded|\bbg-/);
+    // Every reading clipped inside its own column rather than pushing the card wider.
     for (const metric of inCard.querySelectorAll('[data-metric]')) {
       expect(metric.className).toContain('min-w-0');
       expect(metric.querySelector('.truncate')).not.toBeNull();
     }
-    // All three resources are labelled and carry an exact figure, not just a bar.
     expect([...inCard.querySelectorAll('[data-metric]')].map((metric) => metric.getAttribute('data-metric'))).toEqual(['cpu', 'memory', 'disk']);
     for (const label of [strings.usageCpu, strings.usageRam, strings.usageDisk]) {
       expect(within(inCard).getByText(label!)).toBeInTheDocument();
     }
+    // CPU's own reading IS the percentage in the hole, so it is not also printed underneath; RAM's exact
+    // pair says more than its percentage does and is.
+    expect(within(inCard).getByText('50%')).toBeInTheDocument();
+    expect(within(inCard).getAllByText('50%')).toHaveLength(1);
+    expect(within(inCard).getByText('256 MiB / 1 GiB')).toBeInTheDocument();
+    expect(within(inCard).getByText('25%'), 'RAM states its proportion in the hole').toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
     const panel = document.querySelector('[data-project-resource-panel] [data-project-row-metrics]') as HTMLElement;
-    expect(panel).toHaveAttribute('data-metrics-layout', 'grid');
     expect(panel.className).toContain('grid-cols-3');
+    expect(panel.querySelectorAll('[data-metric]')).toHaveLength(3);
   });
 
   // The register is a grid of cards whose column count follows its CONTAINER, not the viewport: the same
@@ -476,6 +519,127 @@ describe('sandbox contribution to the Project register cards', () => {
       expect(item.className).toContain('min-w-0');
       expect(item.querySelector('[data-project-card]')).not.toBeNull();
     }
+  });
+
+  /** THE ARRIVAL ORDER. A card is drawn from the core Project list; CPU, RAM and disk come from this
+   *  plugin's own batch, which cannot even start until the bundle has been imported and then has to wait
+   *  out a real measurement of the host. So there is a window in which the card is on screen and the
+   *  figures are not, and the register used to fill it with the word "Loading" in all three slots.
+   *
+   *  A register is read by scanning it for the project that is misbehaving, and three cards each saying
+   *  "Loading" three times is the opposite of that. The strip is therefore drawn in its FINAL geometry
+   *  from the first commit, saying it does not know yet — and the measurement replaces the unknown value
+   *  inside the very same elements when it lands, so nothing moves under the reader. */
+  it('draws the strip in its final geometry, with no loading prose, before the first sample', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      usageRequests.push(projectIds);
+      await gate;
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds
+        .map((projectId) => usageOf(projectId, projectId === 3 ? 'running' : 'stopped')) });
+    }));
+    mount();
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(card.querySelectorAll('[data-metric]')).toHaveLength(3));
+
+    // Never a wait in words, in any slot of any card, and never a live region announcing one either.
+    // Matched against the document rather than a string key, because the point is that no such wording
+    // exists to be reintroduced — the strings themselves were removed with the placeholder.
+    expect(document.body.textContent).not.toMatch(/loading|načítání|sampling|měření/i);
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    // The geometry is already the final one: three donuts, each with its quiet remaining track drawn and
+    // no used arc, because nothing has been measured to draw one from.
+    const held: Record<string, Element> = {};
+    for (const kind of ['cpu', 'memory', 'disk']) {
+      const cell = card.querySelector(`[data-metric="${kind}"]`) as HTMLElement;
+      expect(cell, kind).toHaveAttribute('data-metric-state', 'unknown');
+      expect(cell.querySelector('.metric-donut-track'), `${kind} has no track`).not.toBeNull();
+      expect(cell.querySelector('.metric-donut-arc'), `${kind} invented a reading`).toBeNull();
+      // ONE honest mark, in the ring. Repeating it on the line below would be two ways of saying nothing.
+      expect(within(cell).getAllByText('—'), `${kind} says it twice`).toHaveLength(1);
+      held[kind] = cell;
+    }
+
+    release?.();
+    await waitFor(() => expect(card.querySelector('[data-metric="cpu"]')).toHaveAttribute('data-metric-state', 'ready'));
+    // Replaced IN PLACE. A remount here is what makes a register of cards flicker every poll.
+    for (const kind of ['cpu', 'memory', 'disk']) {
+      expect(card.querySelector(`[data-metric="${kind}"]`), `${kind} remounted`).toBe(held[kind]);
+    }
+    expect(within(card).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
+  });
+
+  /** Registering or deleting a managed project changes the batch's cache key, and a new key has no data of
+   *  its own. Without carrying the last snapshot across that change, the whole register emptied back to
+   *  unknown rings for the length of one measurement because ONE project joined it. */
+  it('carries the last snapshot across a change of the observed project set', async () => {
+    const client = mount();
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(within(card).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50'));
+    expect(usageRequests).toEqual([[3, 5]]);
+
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([...projects, { id: 9, slug: 'nove', path: '', notes: '', icon: '', executionKind: 'managed' }])),
+      http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+        const { projectIds } = await request.json() as { projectIds: number[] };
+        usageRequests.push(projectIds);
+        await gate;
+        return HttpResponse.json({ sampledAt: '2026-01-01T00:00:01.000Z', projects: projectIds
+          .map((projectId) => usageOf(projectId, projectId === 3 ? 'running' : 'stopped')) });
+      }),
+    );
+    await client.invalidateQueries({ queryKey: ['projects'] });
+
+    // The batch for the new set is in flight, and the measured CPU of the project that was already on
+    // screen is still on screen rather than blanked back to an unknown ring.
+    await waitFor(() => expect(usageRequests).toEqual([[3, 5], [3, 5, 9]]));
+    expect(within(card).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
+    expect(card.querySelector('[data-project-row-metrics]')).toHaveAttribute('data-refreshing', 'true');
+    // The project nothing has ever been measured for says exactly that, in the same geometry.
+    const fresh = await waitFor(() => {
+      const found = (screen.getByRole('button', { name: 'Open project nove' }).closest('[data-project-card]') as HTMLElement)
+        .querySelector('[data-metric="cpu"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(fresh).toHaveAttribute('data-metric-state', 'unknown');
+    release?.();
+    await waitFor(() => expect(fresh).toHaveAttribute('data-metric-state', 'stopped'));
+  });
+
+  /** A container that is being recreated is a NEW process with a new generation, and the CPU and memory of
+   *  the one before it are not its figures. Disk is storage rather than process state and survives. */
+  it('never shows another generation of the environment its process figures', async () => {
+    mount();
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+    await waitFor(() => expect(within(card).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50'));
+
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      usageRequests.push(projectIds);
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:02.000Z', projects: projectIds.map((projectId) => {
+        const item = usageOf(projectId, projectId === 3 ? 'running' : 'stopped') as any;
+        if (projectId === 3) {
+          item.environment.generation = 3;
+          item.resources.cpu = { state: 'unavailable', usedCpus: null, percent: null };
+          item.resources.memory = { state: 'unavailable', usedBytes: null, limitBytes: null };
+        }
+        return item;
+      }) });
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open project analysis' }));
+    const panel = document.querySelector('[data-project-resource-panel]') as HTMLElement;
+    fireEvent.click(within(panel).getByRole('button', { name: strings.usageRefresh }));
+
+    await waitFor(() => expect(usageRequests).toHaveLength(2));
+    await waitFor(() => expect(panel.querySelector('[data-metric="cpu"]')).toHaveAttribute('data-metric-state', 'unavailable'));
+    // The figure of generation 2 is gone rather than carried over as "last known".
+    expect(within(panel).queryByRole('progressbar', { name: strings.usageCpu })).toBeNull();
+    expect(within(panel).getAllByText(strings.usageUnavailable!).length).toBeGreaterThan(0);
   });
 
   it('uses a calm foreground-only polling policy', () => {
