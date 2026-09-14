@@ -80,6 +80,8 @@ export interface BrainDeps {
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
    *  toggle and its user-tunable threshold percentage. */
   userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean; fastMode?: boolean };
+  /** Opaque plugin-skill keys explicitly disabled for an account. Read live per turn and resource access. */
+  disabledPluginSkills?: (userId: number) => ReadonlySet<string>;
   /** Durable account Fast mode, sampled for every provider request. Unknown identities resolve false. */
   fastMode?: (userId: number) => boolean;
   /** Atomic explicit set/toggle used by slash commands and platform controls. */

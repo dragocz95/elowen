@@ -44,6 +44,41 @@ describe('turnSkillsBlock', () => {
     expect(await blockFor(registry, ['skills', 'raynet'], { allow: new Set(['SkillLoad']) })).toContain('raynet-crm');
   });
 
+  it('removes an account-disabled contribution from prompt, ToolSearch and explicit invocation on the next resolution', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'elowen-disabled-skill-'));
+    try {
+      const filePath = join(root, 'SKILL.md');
+      writeFileSync(filePath, '---\nname: salon-operations\ndescription: Run salon operations.\n---\n\nSALON BODY\n');
+      const registry = new PluginRegistry();
+      registry.contextFor('skills', {}, noopLog).registerTool(fakeTool('SkillLoad'));
+      registry.contextFor('sarah-hair', {}, noopLog).registerSkill({
+        ...fakeSkill('salon-operations'), filePath, baseDir: root,
+      });
+      const disabled = new Set<string>();
+      const deps = {
+        plugins: async () => registry,
+        users: { get: () => ({ is_admin: true, granted_plugins: [] }) },
+        disabledPluginSkills: () => disabled,
+      };
+
+      expect(await turnSkillsBlock({ ...deps, contributionUserId: 1 })).toContain('salon-operations');
+      expect(await searchableSkills(deps, 1)).toEqual([{ name: 'salon-operations', description: 'Use salon-operations.' }]);
+      expect(await expandTurnSkillCommand('/skill:salon-operations', deps, 1)).toContain('SALON BODY');
+
+      disabled.add('v1:sarah-hair:salon-operations');
+      const prompt = await turnSkillsBlock({ ...deps, contributionUserId: 1 });
+      expect(prompt).not.toContain('salon-operations');
+      expect(prompt).not.toContain('Use salon-operations.');
+      expect(await searchableSkills(deps, 1)).toEqual([]);
+      expect(await expandTurnSkillCommand('/skill:salon-operations', deps, 1)).toContain('<skill-unavailable');
+
+      disabled.clear();
+      expect(await turnSkillsBlock({ ...deps, contributionUserId: 1 })).toContain('salon-operations');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not advertise an open sibling skill to an unlinked writer when SkillLoad is grant-gated', async () => {
     const registry = new PluginRegistry();
     registry.contextFor('files', {}, noopLog).registerSkill(fakeSkill('file-workflow'));

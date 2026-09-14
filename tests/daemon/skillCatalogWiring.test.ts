@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildBrainCore } from '../../src/daemon/brainCore.js';
-import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { runWithIdentity, runWithPolicy } from '../../src/plugins/policyContext.js';
 import { resolvePolicy } from '../../src/plugins/policy.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 
@@ -12,11 +12,31 @@ type Core = Awaited<ReturnType<typeof buildBrainCore>>;
 /** The scope a real turn establishes — the account's own policy plus its contribution owner, which is what
  *  `runWithPolicy` supplies to every plugin control — so a probe reads the catalog as THAT account. */
 function asAccount<T>(core: Core, id: number, fn: () => T): T {
-  return runWithPolicy(resolvePolicy({ userProjects: core.userProjects, projects: core.projects }, id), fn, { contributionUserId: id });
+  const user = core.users.get(id);
+  return runWithPolicy(resolvePolicy({ userProjects: core.userProjects, projects: core.projects }, id), fn, {
+    contributionUserId: id,
+    identity: {
+      platform: 'elowen', userId: String(id), elowenUserId: id,
+      admin: user?.is_admin === true, owner: id === core.users.ownerId(), conversation: 'own',
+    },
+  });
+}
+
+function asApiAccount<T>(core: Core, id: number, fn: () => T): T {
+  const user = core.users.get(id);
+  return runWithIdentity({
+    platform: 'elowen', userId: String(id), elowenUserId: id,
+    admin: user?.is_admin === true, owner: id === core.users.ownerId(), conversation: 'own',
+  }, fn);
 }
 
 interface SkillCatalogProbe {
   (): string[] | null;
+}
+
+interface SkillManagementProbe {
+  catalog(userId: number): { key: string | null; name: string; effective: boolean; enabledForAccount: boolean; unavailableReason?: string }[] | null;
+  set(userId: number, key: string, enabled: boolean): Promise<{ ok: boolean; reason?: string }> | null;
 }
 
 interface ResourceProbe {
@@ -33,6 +53,7 @@ describe('brainCore skill catalog control', () => {
 
   afterEach(() => {
     delete (globalThis as { __skillCatalogProbe?: unknown }).__skillCatalogProbe;
+    delete (globalThis as { __skillManagementProbe?: unknown }).__skillManagementProbe;
     delete (globalThis as { __filesResourceProbe?: unknown }).__filesResourceProbe;
     delete (globalThis as { __readerResourceProbe?: unknown }).__readerResourceProbe;
     delete (globalThis as { __flatResourceProbe?: unknown }).__flatResourceProbe;
@@ -43,22 +64,40 @@ describe('brainCore skill catalog control', () => {
   it('returns the same grant- and owner-filtered plugin skills advertised to the current turn', async () => {
     dir = mkdtempSync(join(tmpdir(), 'elowen-skill-catalog-'));
     const pluginsDir = join(dir, 'plugins');
-    const readerDir = join(pluginsDir, 'catalog-reader');
+    const readerDir = join(pluginsDir, 'skills');
+    const filesDir = join(pluginsDir, 'files');
     const raynetDir = join(pluginsDir, 'raynet');
     mkdirSync(readerDir, { recursive: true });
-    mkdirSync(raynetDir, { recursive: true });
+    mkdirSync(filesDir, { recursive: true });
+    mkdirSync(join(raynetDir, 'refs'), { recursive: true });
 
     writeFileSync(join(readerDir, 'elowen-plugin.json'), JSON.stringify({
-      name: 'catalog-reader', version: '0.1.0', apiVersion: '1', description: 'catalog reader',
+      name: 'skills', version: '0.1.0', apiVersion: '1', description: 'catalog reader',
       entry: 'index.mjs', capabilities: { reads: ['controls'] },
     }));
     writeFileSync(join(readerDir, 'index.mjs'), `export function register(ctx) {
       globalThis.__skillCatalogProbe = () => ctx.control('skillCatalog')?.visibleSkills().map((skill) => skill.name) ?? null;
+      globalThis.__skillManagementProbe = {
+        catalog: (userId) => ctx.control('skillManagement')?.catalogForAccount(userId).map((entry) => ({
+          key: entry.key, name: entry.skill.name, effective: entry.effective,
+          enabledForAccount: entry.enabledForAccount, unavailableReason: entry.unavailableReason,
+        })) ?? null,
+        set: (userId, key, enabled) => ctx.control('skillManagement')?.setPluginSkillEnabled({ userId, key, enabled }) ?? null,
+      };
+    }`);
+    writeFileSync(join(filesDir, 'elowen-plugin.json'), JSON.stringify({
+      name: 'files', version: '0.1.0', apiVersion: '1', description: 'files',
+      entry: 'index.mjs', capabilities: { reads: ['controls'] },
+    }));
+    writeFileSync(join(filesDir, 'index.mjs'), `export function register(ctx) {
+      globalThis.__filesResourceProbe = (path) => ctx.control('skillResources')?.resolveResource(path) ?? null;
     }`);
 
-    const sharedFile = join(raynetDir, 'raynet-crm.md');
+    const sharedFile = join(raynetDir, 'SKILL.md');
+    const supportFile = join(raynetDir, 'refs', 'reference.md');
     const personalFile = join(raynetDir, 'private-raynet.md');
     writeFileSync(sharedFile, '# Raynet CRM\n');
+    writeFileSync(supportFile, 'Raynet reference\n');
     writeFileSync(personalFile, '# Private Raynet\n');
     writeFileSync(join(raynetDir, 'elowen-plugin.json'), JSON.stringify({
       name: 'raynet', version: '0.1.0', apiVersion: '1', description: 'raynet', entry: 'index.mjs',
@@ -86,7 +125,7 @@ describe('brainCore skill catalog control', () => {
     });
     try {
       const member = core.users.create('member', 'pw-for-test-only');
-      core.config.update({ plugins: { enabled: ['catalog-reader', 'raynet'] } });
+      core.config.update({ plugins: { enabled: ['skills', 'files', 'raynet'] } });
       await core.pluginProvider.get();
       const probe = (globalThis as { __skillCatalogProbe?: SkillCatalogProbe }).__skillCatalogProbe;
       if (!probe) throw new Error('catalog reader never captured the control');
@@ -97,6 +136,36 @@ describe('brainCore skill catalog control', () => {
 
       core.users.setGrantedPlugins(member.id, ['raynet']);
       expect(asAccount(core, member.id, probe)).toEqual(['raynet-crm', 'private-raynet']);
+
+      const management = (globalThis as { __skillManagementProbe?: SkillManagementProbe }).__skillManagementProbe;
+      if (!management) throw new Error('skills plugin never captured the management control');
+      const key = 'v1:raynet:raynet-crm';
+      const resource = (globalThis as { __filesResourceProbe?: (path: string) => string | null }).__filesResourceProbe;
+      if (!resource) throw new Error('files plugin never captured the resource control');
+      expect(asAccount(core, 1, () => resource(supportFile))).toBe(supportFile);
+      expect(await asApiAccount(core, 1, () => management.set(1, key, false))).toEqual({ ok: true });
+      expect(asAccount(core, 1, probe)).toEqual([]);
+      expect(asAccount(core, 1, () => resource(supportFile))).toBeNull();
+      expect(asAccount(core, member.id, probe)).toEqual(['raynet-crm', 'private-raynet']);
+      expect(() => asAccount(core, 1, () => management.catalog(1))).toThrow('forbidden');
+      expect(asApiAccount(core, 1, () => management.catalog(1))).toContainEqual(expect.objectContaining({
+        key, name: 'raynet-crm', effective: false, enabledForAccount: false,
+        unavailableReason: 'disabled-for-account',
+      }));
+      expect(await asApiAccount(core, member.id, () => management.set(1, key, true))).toEqual({ ok: false, reason: 'forbidden' });
+      const roleIdentity = {
+        platform: 'discord', userId: 'role-admin', elowenUserId: member.id,
+        admin: true, owner: false, conversation: 'own' as const,
+      };
+      expect(() => runWithIdentity(roleIdentity, () => management.catalog(1))).toThrow('forbidden');
+      expect(await runWithIdentity(roleIdentity, () => management.set(1, key, true)))
+        .toEqual({ ok: false, reason: 'forbidden' });
+      expect(await asAccount(core, 1, () => management.set(1, key, true)))
+        .toEqual({ ok: false, reason: 'forbidden' });
+      expect(await asApiAccount(core, 1, () => management.set(1, 'v1:raynet:fabricated', false)))
+        .toEqual({ ok: false, reason: 'unknown-skill' });
+      expect(await asApiAccount(core, 1, () => management.set(1, key, true))).toEqual({ ok: true });
+      expect(asAccount(core, 1, probe)).toEqual(['raynet-crm']);
     } finally {
       core.db.close();
     }

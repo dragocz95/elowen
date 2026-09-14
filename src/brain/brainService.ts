@@ -13,7 +13,7 @@ import { logger } from '../shared/logger.js';
 import { BrainSessionFactory, resolveAutoCompactPct } from './session/factory.js';
 import { IdentityResolver } from './identity.js';
 import { LiveSessionRegistry, type PendingAbort } from './session/liveRegistry.js';
-import type { LiveBrain, QueuedMsg } from './session/liveBrain.js';
+import type { LiveBrain, QueuedMsg, SpawnOpts } from './session/liveBrain.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from './session/liveBrain.js';
 import { enqueueMirrored } from './session/queueMirror.js';
 import { ChannelSessionService } from './channels.js';
@@ -201,6 +201,9 @@ export class BrainService {
   private goals: GoalLoopService;
   /** Composes one live conversation (config + plugins + persona + tools) — the single spawn source. */
   private spawner: LiveSessionSpawner;
+  /** Per-account generation fence: a session composed across an availability write is discarded before it
+   * can enter the live registry, then rebuilt from the new effective catalog. */
+  private readonly pluginSkillGenerations = new Map<number, number>();
   /** Latched by {@link beginDrain} on shutdown; gates new turns so the drain can converge. */
   private draining = false;
   /** Reversible admission gate while a hot plugin reload waits for existing work to finish. Unlike shutdown
@@ -310,6 +313,7 @@ export class BrainService {
       get cwd() { return d.cwd; },
       get projectPath() { return d.projectPath; },
       get userSettings() { return d.userSettings; },
+      get disabledPluginSkills() { return d.disabledPluginSkills; },
       get fastMode() { return d.fastMode; },
       get activeUserInstructions() { return d.activeUserInstructions; },
       toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
@@ -334,7 +338,7 @@ export class BrainService {
     this.lifecycle = new ConversationLifecycle({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
       elicitation: this.elicitation, goals: this.goals, cards: this.cards, artifacts: this.artifacts,
-      spawn: (o) => this.spawner.spawn(o),
+      spawn: (o) => this.spawnWithPluginSkillFence(o),
       get projects() { return d.projects; },
       get policy() { return d.policy; },
       get userSettings() { return d.userSettings; },
@@ -421,9 +425,10 @@ export class BrainService {
       get projectPath() { return d.projectPath; },
       sandbox: () => d.plugins?.peek()?.control('sandbox'),
       maxChannels: () => this.limits().channelSessionCap,
-      spawn: (o) => this.spawner.spawn(o), // composition stays in the spawner — single source
+      spawn: (o) => this.spawnWithPluginSkillFence(o), // composition stays in the spawner — single source
       // Verified channel senders get memory too, keyed on their linked account and their own toggles.
       memoryService: d.memoryService, memoryCategoryStore: d.memoryCategoryStore, curator: this.curator, userSettings: d.userSettings,
+      disabledPluginSkills: d.disabledPluginSkills,
       elicitation: this.elicitation, // one registry so Discord interactions resolve channel questions
       titler: this.titler, // name a brand-new channel conversation, same as owner chat
       permissions: d.permissions, // deny rules apply to channel turns too (asks follow unattendedAsks there)
@@ -1432,6 +1437,17 @@ export class BrainService {
   /** One-turn connectivity probe on a throwaway session — see BrainStatusService.smokeTest. */
   async smokeTest(sel?: { providerId?: string; model?: string }): Promise<{ ok: boolean; model?: string; reply?: string; error?: string }> {
     return this.statusView.smokeTest(sel);
+  }
+
+  /** Compose under a per-account generation fence. If an availability write lands while a session is
+   * spawning, that session never enters the registry with the old cached catalog: dispose it and rebuild. */
+  private async spawnWithPluginSkillFence(opts: SpawnOpts): Promise<LiveBrain> {
+    for (;;) {
+      const generation = this.pluginSkillGenerations.get(opts.ownerUserId) ?? 0;
+      const live = await this.spawner.spawn(opts);
+      if ((this.pluginSkillGenerations.get(opts.ownerUserId) ?? 0) === generation) return live;
+      live.session.dispose();
+    }
   }
 
   /** The daemon-wide plugin registry (undefined when plugins aren't wired at all). */
@@ -2502,6 +2518,14 @@ export class BrainService {
   /** Restart a user's live session so changed settings apply — see ConversationLifecycle.restart. */
   async restart(userId: number, opts: { reapplyModelPreference?: boolean } = {}): Promise<void> {
     return this.lifecycle.restart(userId, opts);
+  }
+
+  /** Apply a per-account plugin-skill override without cycling the global plugin runtime. Owner-chat skill
+   * names live in that account's cached system prefix, so all of its live owner sessions must respawn. Channel
+   * and delegated execution resolve the effective catalog per turn and need no registry or service restart. */
+  async applyPluginSkillAvailabilityChange(userId: number): Promise<void> {
+    this.pluginSkillGenerations.set(userId, (this.pluginSkillGenerations.get(userId) ?? 0) + 1);
+    await this.serial(`plugin-skill-availability-${userId}`, async () => this.lifecycle.restartAll(userId));
   }
 
   /** A user saved their auto-compact settings: re-apply the threshold to every conversation of theirs that

@@ -580,15 +580,15 @@ describe('personal-contribution ownership is decided in exactly one place', () =
     expect(offenders, 'ownership belongs to PluginRegistry — ask it, do not re-derive it').toEqual([]);
   });
 
-  /** Every caller of skillsFor/toolsFor must name the contribution owner the ONE resolver produced, or
+  /** Every caller of skillCatalogFor/skillsFor/toolsFor must name the contribution owner the ONE resolver produced, or
    *  name the instance set literally. Derived from the source: a new surface passing its own id — a room's
    *  opener, a session row's user_id — is reported here rather than shipping as a leak. */
-  it('every skillsFor / toolsFor caller passes the resolved owner or a literal null', () => {
+  it('every skillCatalogFor / skillsFor / toolsFor caller passes the resolved owner or a literal null', () => {
     const callers = modules()
       .filter(({ path }) => path !== 'plugins/registry.ts')
       .map(({ path, code }) => ({
         path, code,
-        args: [...code.matchAll(/\b(?:skillsFor|toolsFor)\(\s*([^,)]+)/g)].map((m) => m[1]!.trim()),
+        args: [...code.matchAll(/\b(?:skillCatalogFor|skillsFor|toolsFor)\(\s*([^,)]+)/g)].map((m) => m[1]!.trim()),
       }))
       .filter(({ args }) => args.length > 0);
     // Derived, not remembered: whoever composes contributions is in this list by construction, so a new

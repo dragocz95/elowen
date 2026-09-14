@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { UserSettingStore, PlatformLinkConflictError } from '../../src/store/userSettingStore.js';
 import { PLATFORM_IDENTITIES } from '../../src/shared/platformIdentity.js';
+import { INVALID_PLUGIN_SKILL_OVERRIDES } from '../../src/plugins/skillAvailability.js';
 
 describe('UserSettingStore', () => {
   it('defaults CLI settings when nothing is stored', () => {
@@ -101,6 +102,35 @@ describe('UserSettingStore', () => {
     const rehydrated = new UserSettingStore(db);
     expect(rehydrated.fastMode(1)).toBe(false);
     expect(rehydrated.fastMode(2)).toBe(true);
+  });
+
+  it('stores source-aware plugin skill disables per account and removes them with the account', () => {
+    const db = openDb(':memory:');
+    const settings = new UserSettingStore(db);
+    const salon = 'v1:salon:salon-operations';
+    const cron = 'v1:cronjob:elowen-scheduling';
+
+    expect([...settings.disabledPluginSkills(1)]).toEqual([]);
+    settings.setPluginSkillEnabled(1, salon, false);
+    settings.setPluginSkillEnabled(1, cron, false);
+    expect([...settings.disabledPluginSkills(1)].sort()).toEqual([cron, salon]);
+    expect([...settings.disabledPluginSkills(2)]).toEqual([]);
+
+    settings.setPluginSkillEnabled(1, salon, true);
+    expect([...settings.disabledPluginSkills(1)]).toEqual([cron]);
+    settings.removeForUser(1);
+    expect([...settings.disabledPluginSkills(1)]).toEqual([]);
+  });
+
+  it('fails closed on corrupt plugin skill overrides and refuses to overwrite the damaged policy', () => {
+    const settings = new UserSettingStore(openDb(':memory:'));
+    settings.set(1, 'pluginSkillDisabled', '{not json');
+    expect([...settings.disabledPluginSkills(1)]).toEqual([INVALID_PLUGIN_SKILL_OVERRIDES]);
+    expect(() => settings.setPluginSkillEnabled(1, 'v1:salon:salon-operations', true))
+      .toThrow('invalid persisted plugin skill overrides');
+
+    settings.set(2, 'pluginSkillDisabled', JSON.stringify(Array.from({ length: 2_001 }, (_, index) => `v1:p:s-${index}`)));
+    expect([...settings.disabledPluginSkills(2)]).toEqual([INVALID_PLUGIN_SKILL_OVERRIDES]);
   });
 
   it('round-trips project model preferences per user and ignores a corrupt map', () => {

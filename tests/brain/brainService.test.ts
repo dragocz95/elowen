@@ -786,6 +786,31 @@ describe('BrainService', () => {
     expect(skillsBlocks).toEqual([formatSkillsForPrompt(expected)]);
   });
 
+  it('omits an account-disabled plugin skill name and description from the provider system prompt', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    reg.contextFor('skills', {}, { info() {}, warn() {}, error() {} })
+      .registerTool({ name: 'SkillLoad', label: 'SkillLoad', description: 'load skills' } as never);
+    reg.contextFor('sarah-hair', {}, { info() {}, warn() {}, error() {} }).registerSkill({
+      name: 'salon-operations', description: 'Manage confidential salon operations.',
+      filePath: '/plugins/sarah-hair/skills/salon-operations/SKILL.md',
+      baseDir: '/plugins/sarah-hair/skills/salon-operations',
+      sourceInfo: { path: '/plugins/sarah-hair/skills/salon-operations/SKILL.md', source: 'elowen-plugin:sarah-hair', scope: 'user', origin: 'package' },
+      disableModelInvocation: false,
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    (d as unknown as { disabledPluginSkills: (userId: number) => ReadonlySet<string> }).disabledPluginSkills =
+      () => new Set(['v1:sarah-hair:salon-operations']);
+    let seenAppend: string[] | undefined;
+    d.resourceLoaderFactory = (options: { appendSystemPrompt?: string[] }) => { seenAppend = options.appendSystemPrompt; return undefined; };
+
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const providerPrompt = (seenAppend ?? []).join('\n');
+    expect(providerPrompt).not.toContain('salon-operations');
+    expect(providerPrompt).not.toContain('Manage confidential salon operations.');
+  });
+
   // A personal skill is a briefing only its owner asked for. Owner awareness is cached from that account;
   // a shared channel resolves the writer per turn. Neither path gives PI a native snapshot that can outlive
   // a later grant change.
@@ -4398,6 +4423,47 @@ describe('BrainService user-instruction layering', () => {
     expect(userFilter(7)).toBe(true);
     expect(userFilter(8)).toBe(false);
     expect(reset).toHaveBeenNthCalledWith(2, 'brand changed', { intent: 'prompt_refresh' });
+  });
+
+  it('applyPluginSkillAvailabilityChange refreshes only the target owner session', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const registry = (svc as unknown as { sessions: { channelGet(id: string): unknown } }).sessions;
+    await svc.start(1, { fresh: true });
+    await svc.start(1, { fresh: true });
+    await svc.start(2);
+    await svc.channelSend({ channelId: 'disc-skills', ownerUserId: 1, policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] } }, 'ahoj');
+    const before = d.createSession.mock.calls.length;
+
+    await svc.applyPluginSkillAvailabilityChange(1);
+
+    expect(d.createSession.mock.calls.length).toBe(before + 2);
+    expect(registry.channelGet('disc-skills')).toBeDefined();
+  });
+
+  it('discards a session composed across a plugin-skill availability write before it becomes live', async () => {
+    const d = fakeDeps();
+    const originalCreate = d.createSession.getMockImplementation();
+    if (!originalCreate) throw new Error('fake createSession has no implementation');
+    let entered!: () => void;
+    let release!: () => void;
+    const composing = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    d.createSession.mockImplementationOnce(async (options) => {
+      entered();
+      await gate;
+      return originalCreate(options);
+    });
+    const svc = new BrainService(d as never);
+
+    const starting = svc.start(1, { fresh: true });
+    await composing;
+    await svc.applyPluginSkillAvailabilityChange(1);
+    release();
+    await starting;
+
+    expect(d.createSession).toHaveBeenCalledTimes(2);
+    expect(d.session.dispose).toHaveBeenCalledTimes(1);
   });
 
   it('applyUserInstructionsChange restarts the owner session AND disposes channel sessions', async () => {

@@ -1427,12 +1427,41 @@ export interface PublishedSitesGatewayControl {
   status(): Promise<PublishedSitesGatewayStatus>;
 }
 
+export type PluginSkillCatalogSource = 'personal' | 'instance' | 'bundled' | 'plugin';
+export type PluginSkillUnavailableReason = 'plugin-unavailable' | 'disabled-for-account' | 'shadowed';
+
+/** Stable, source-aware projection of one registered skill contribution. `key` exists only for plugin-
+ * contributed skills and is opaque to callers: writes must return it unchanged to the host, which validates
+ * it against the live registry generation instead of parsing or trusting client-supplied names. */
+export interface PluginSkillCatalogEntry {
+  key: string | null;
+  skill: PluginSkill;
+  contributorPlugin: string;
+  source: PluginSkillCatalogSource;
+  ownerUserId: number | null;
+  enabledForAccount: boolean;
+  effective: boolean;
+  unavailableReason?: PluginSkillUnavailableReason;
+}
+
 /** Core-owned live view of the exact skills the current turn was told it may use. A loader plugin must
- *  resolve through this rather than rescan only its own files: skills contributed by sibling plugins,
- *  per-account ownership and user grants have already been applied by the merged registry. */
+ * resolve through this rather than rescan only its own files: skills contributed by sibling plugins,
+ * per-account ownership, user grants and account overrides have already been applied by the merged registry. */
 export interface SkillCatalogControl {
   visibleSkills(): readonly PluginSkill[];
+  visibleEntries(): readonly PluginSkillCatalogEntry[];
   canonicalBaseDir(skill: PluginSkill): string | null;
+}
+
+export type PluginSkillAvailabilityWriteResult =
+  | { ok: true }
+  | { ok: false; reason: 'forbidden' | 'unknown-user' | 'unknown-skill' | 'invalid-overrides' | 'refresh-failed' };
+
+/** Narrow management authority for the Skills plugin. Kept separate from the broadly readable catalog:
+ * listing another account's unavailable contributions and changing an override are administrator actions. */
+export interface SkillManagementControl {
+  catalogForAccount(userId: number): readonly PluginSkillCatalogEntry[];
+  setPluginSkillEnabled(input: { userId: number; key: string; enabled: boolean }): Promise<PluginSkillAvailabilityWriteResult>;
 }
 
 /** Turn a support-file path of a currently VISIBLE skill into a readable host path, so a session whose
@@ -1521,6 +1550,7 @@ export interface KnownControls {
   publishedSitesGateway: PublishedSitesGatewayControl;
   browserCapture: BrowserCaptureControl;
   skillCatalog: SkillCatalogControl;
+  skillManagement: SkillManagementControl;
   skillResources: SkillResourcesControl;
 }
 

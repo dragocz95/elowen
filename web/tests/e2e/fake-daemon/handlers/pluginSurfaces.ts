@@ -49,17 +49,38 @@ export function registerPluginSurfaceRoutes(app: Hono): void {
 
   // --- skills: mixed rows on purpose. A one-word description next to a wrapping one is exactly the
   // shape that used to produce 27/41/59/59/49px rows against a 48px rhythm.
-  app.get('/plugins/skills/list', (c) => c.json(rows(23, (i) => ({
-    name: `skill-${String(i).padStart(2, '0')}`,
-    description: i % 3 === 0
-      ? 'Short.'
-      : 'A considerably longer description that has every chance of wrapping onto a second line inside a narrow register column.',
-    source: i % 4 === 0 ? 'bundled' : 'user',
-    owner: i % 4 === 0 ? null : 1,
-    canDelete: i % 4 !== 0,
-    disableModelInvocation: i % 5 === 0,
-    version: i % 4 === 0 ? 1 : null,
-  }))));
+  app.get('/plugins/skills/accounts', (c) => c.json([
+    { id: 1, username: 'admin', name: 'Filip' },
+    { id: 2, username: 'target', name: 'Patricie' },
+  ]));
+  app.get('/plugins/skills/list', (c) => {
+    const selected = Number(c.req.query('account') ?? 1);
+    return c.json(rows(23, (i) => {
+      const plugin = i % 4 === 0;
+      const bundled = !plugin && i % 5 === 0;
+      const name = i === 0 ? 'salon-operations' : i === 4 ? 'salon-provider-management' : i === 8 ? 'elowen-scheduling' : `skill-${String(i).padStart(2, '0')}`;
+      const contributorPlugin = i === 8 ? 'cronjob' : plugin ? 'sarah-hair' : 'skills';
+      return {
+        name,
+        description: i % 3 === 0
+          ? 'Short.'
+          : 'A considerably longer description that has every chance of wrapping onto a second line inside a narrow register column.',
+        source: plugin ? `plugin:${contributorPlugin}` : bundled ? 'bundled' : 'user',
+        catalogSource: plugin ? 'plugin' : bundled ? 'bundled' : 'personal',
+        contributorPlugin,
+        pluginKey: plugin ? `v1:${contributorPlugin}:${name}` : null,
+        owner: plugin || bundled ? null : selected,
+        canDelete: !plugin && !bundled,
+        disableModelInvocation: i % 6 === 0,
+        enabledForAccount: true,
+        effective: true,
+        unavailableReason: null,
+        version: bundled ? 1 : null,
+        ...(!plugin && !bundled ? { content: `Body of ${name}.` } : {}),
+      };
+    }));
+  });
+  app.patch('/plugins/skills/plugin-availability', (c) => c.json({ ok: true }));
 
   // --- subagent: the agents register. ---------------------------------------------------------------
   app.get('/plugins/agents/list', (c) => c.json(rows(8, (i) => ({

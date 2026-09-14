@@ -109,6 +109,17 @@ describe('MarkdownAssetEditor register', () => {
     expect(table.style.getPropertyValue('--data-table-columns').trim().startsWith('2.75rem')).toBe(true);
   });
 
+  it('lets the caller render a disabled status control for a read-only contribution', () => {
+    const { container } = renderEditor(assets, {
+      renderRowControl: (item: TestAsset) => (
+        <button type="button" aria-label={`Availability ${item.name}`} disabled={item.source !== 'user'}>toggle</button>
+      ),
+    });
+    const bundled = bodyRows(container)[1];
+    expect(within(bundled).getByRole('button', { name: 'Availability bundled-skill' })).toBeDisabled();
+    expect(bundled.querySelector('.data-table-row-open')).toBeNull();
+  });
+
   it('grows no leading track when the caller supplies no row control', () => {
     const { container } = renderEditor();
     const table = container.querySelector<HTMLElement>('[role="table"]')!;

@@ -53,6 +53,7 @@ interface SpawnerDeps {
   cwd?: string;
   projectPath?: () => string | undefined;
   userSettings?: BrainDeps['userSettings'];
+  disabledPluginSkills?: BrainDeps['disabledPluginSkills'];
   fastMode?: BrainDeps['fastMode'];
   activeUserInstructions?: BrainDeps['activeUserInstructions'];
   /** The single account tool-authority resolver used by every turn surface. */
@@ -463,7 +464,7 @@ export class LiveSessionSpawner {
         toolSearchHandle = createToolSearchHandle(deferred, pluginToolNames, personalToolOwners, {
           semantic: this.d.toolSearchIndex,
           skills: async () => searchableSkills(
-            { plugins: this.d.plugins, users: this.d.users },
+            { plugins: this.d.plugins, users: this.d.users, disabledPluginSkills: this.d.disabledPluginSkills },
             currentContributionUserId(),
             currentToolPolicy(),
           ),
@@ -523,7 +524,11 @@ export class LiveSessionSpawner {
       promptSkillToolPolicy,
     );
     const staticSkillLoadVisible = ownerChatShape && skillLoadAdvertised;
-    const skills = plugins?.skillsFor(contributionOwnerUserId, contributionOwnerUser) ?? [];
+    const skills = plugins?.skillsFor(
+      contributionOwnerUserId,
+      contributionOwnerUser,
+      contributionOwnerUserId == null ? new Set() : this.d.disabledPluginSkills?.(contributionOwnerUserId),
+    ) ?? [];
     // Plugin prompt-command macros → PI PromptTemplate[]: PI exposes them as `/name` slash commands and
     // expands their arguments natively in prompt()/steer()/followUp(). Every surface just sends the raw
     // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).
@@ -685,7 +690,11 @@ export class LiveSessionSpawner {
       // already follow the live authority.
       skills: [], promptTemplates,
       ...(plugins ? {
-        skillCommandExtension: liveSkillCommandExtension({ plugins: async () => plugins, users: this.d.users }),
+        skillCommandExtension: liveSkillCommandExtension({
+          plugins: async () => plugins,
+          users: this.d.users,
+          disabledPluginSkills: this.d.disabledPluginSkills,
+        }),
       } : {}),
       tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,
       thinkingLevel: opts.thinkingLevel, requestProfile,

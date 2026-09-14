@@ -487,6 +487,8 @@ export interface ChannelServiceDeps {
    *  deliberately absent here — the channel names the writer via SpawnOpts.settingsUserId and the spawner
    *  reads them, so this surface cannot hold a second opinion about any of them. */
   userSettings?: (userId: number) => { autoRecall?: boolean; autoSave?: boolean };
+  /** Opaque plugin-skill keys explicitly disabled for the verified writer. */
+  disabledPluginSkills?: (userId: number) => ReadonlySet<string>;
   /** Parked AskUserQuestion registry (shared with BrainService) — lets a channel turn's `ctx.askUser`
    *  emit an `ask` event to the channel's clients and await the answer (settled by a Discord interaction). */
   elicitation?: ElicitationRegistry;
@@ -1186,6 +1188,7 @@ export class ChannelSessionService {
                 rendered: forkChild ? '' : await turnSkillsBlock({
                   ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
                   users: this.d.users,
+                  disabledPluginSkills: this.d.disabledPluginSkills,
                   contributionUserId: turnContributionUserId,
                   toolPolicy: effectiveToolPolicy,
                 }),

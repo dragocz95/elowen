@@ -15,6 +15,7 @@ import {
 interface TurnSkillDeps {
   plugins?: () => Promise<PluginRegistry | undefined>;
   users: { get(userId: number): Partial<PluginAccessUser> | null | undefined };
+  disabledPluginSkills?: (userId: number) => ReadonlySet<string>;
 }
 
 /** The plugin that owns SkillLoad — a reserved cross-plugin contract (see RESERVED_TOOL_OWNERS), named here
@@ -86,7 +87,8 @@ export async function resolvedTurnSkills(
     toolPolicy,
   );
   if (!visible) return null;
-  return { plugins, skills: plugins.skillsFor(contributionUserId, user) };
+  const disabled = contributionUserId == null ? new Set<string>() : deps.disabledPluginSkills?.(contributionUserId);
+  return { plugins, skills: plugins.skillsFor(contributionUserId, user, disabled) };
 }
 
 /** The `<available_skills>` announcement for ONE turn, built from the same grant-, owner- and policy-filtered
