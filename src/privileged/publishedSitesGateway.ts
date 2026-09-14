@@ -1,8 +1,7 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { promisify } from 'node:util';
+import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import type {
   PublishedSitesEnvironmentItem,
@@ -11,14 +10,11 @@ import type {
 } from '../plugins/api.js';
 import {
   encodeHelperRequest,
-  SITE_GATEWAY_HELPER_INSTALL_ARGS,
-  SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_ARGV,
   SITE_GATEWAY_HELPER_PATH,
+  siteGatewayHelperInstallHint,
 } from '../shared/siteGateway.js';
-const execFileAsync = promisify(execFile);
 const SITE_GATEWAY_HELPER_SOURCE = fileURLToPath(new URL('../../scripts/elowen-site-gateway.mjs', import.meta.url));
-const SITE_GATEWAY_HELPER_INSTALL_COMMAND = `sudo -n /usr/bin/install ${SITE_GATEWAY_HELPER_INSTALL_ARGS.join(' ')}`;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const HELPER_TIMEOUT_MS = 30_000;
 /** Issuance talks to a certificate authority over the network, so it gets its own budget. */
@@ -52,16 +48,21 @@ export type SiteGatewayHelperInvoker = (request: SiteGatewayHelperRequest) => Pr
 
 export interface SiteGatewayHelperInstallIO {
   readFile(path: string): Promise<Buffer>;
-  writeFile(path: string, data: Buffer): Promise<void>;
-  exec(command: string, args: string[]): Promise<void>;
-  remove(path: string): Promise<void>;
+  /** Replace the installed helper with these bytes. Only root can write /usr/local/libexec. */
+  install(path: string, data: Buffer): Promise<void>;
 }
 
 const defaultHelperInstallIO: SiteGatewayHelperInstallIO = {
   readFile: async (path) => await readFile(path),
-  writeFile: async (path, data) => { await writeFile(path, data, { mode: 0o600 }); },
-  exec: async (command, args) => { await execFileAsync(command, args); },
-  remove: async (path) => { await rm(path, { force: true }); },
+  // Written beside the target and renamed over it, so the helper is never half-replaced: the daemon may
+  // be invoking the installed copy at this moment. `writeFile`'s mode is subject to the umask, so the
+  // mode is set again explicitly — a helper that is not executable is one sudo refuses to run.
+  install: async (path, data) => {
+    const staged = `${path}.staged-${process.pid}`;
+    await writeFile(staged, data, { mode: 0o755, flag: 'wx' });
+    await chmod(staged, 0o755);
+    await rename(staged, path);
+  },
 };
 
 function digest(content: Buffer): string {
@@ -81,28 +82,31 @@ export async function siteGatewayHelperStatus(io: SiteGatewayHelperInstallIO = d
       ok,
       detail: ok
         ? 'installed helper matches this Elowen release'
-        : `installed helper differs from this Elowen release. Run: ${SITE_GATEWAY_HELPER_INSTALL_COMMAND}`,
+        : `installed helper differs from this Elowen release. Run: ${siteGatewayHelperInstallHint(SITE_GATEWAY_HELPER_SOURCE)}`,
     };
   } catch (cause) {
     return {
       id: 'helper:site-gateway',
       label: 'Published-sites gateway helper',
       ok: false,
-      detail: `helper cannot be verified: ${cause instanceof Error ? cause.message : String(cause)}. Run: ${SITE_GATEWAY_HELPER_INSTALL_COMMAND}`,
+      detail: `helper cannot be verified: ${cause instanceof Error ? cause.message : String(cause)}. Run: ${siteGatewayHelperInstallHint(SITE_GATEWAY_HELPER_SOURCE)}`,
     };
   }
 }
 
+/** Refresh the installed helper from this release. Idempotent: a helper whose bytes already match the
+ *  packaged copy is left alone, so a converged host reports false and nothing is written.
+ *
+ *  Root-only, and deliberately so. Replacing /usr/local/libexec/elowen-site-gateway is not granted in
+ *  sudoers: a grant binds to a user rather than to the code path it was written for, so a pinned
+ *  `install` whose SOURCE the service user can write would let that user choose root-trusted contents.
+ *  The hourly auto-update timer runs as the service user, so it can only report drift; the caller decides
+ *  what to say about that, and the release it was run for still lands. */
 export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = defaultHelperInstallIO): Promise<boolean> {
   const status = await siteGatewayHelperStatus(io);
   if (status.ok) return false;
-  const source = await io.readFile(SITE_GATEWAY_HELPER_SOURCE);
-  await io.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
-  try {
-    await io.exec('sudo', ['-n', '/usr/bin/install', ...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
-  } finally {
-    await io.remove(SITE_GATEWAY_HELPER_INSTALL_SOURCE);
-  }
+  if (process.getuid?.() !== 0) return false;
+  await io.install(SITE_GATEWAY_HELPER_PATH, await io.readFile(SITE_GATEWAY_HELPER_SOURCE));
   return true;
 }
 

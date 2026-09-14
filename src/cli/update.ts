@@ -7,7 +7,7 @@ import { dirname, basename, join } from 'node:path';
 import { isNewer } from './version.js';
 import { start, stop, isAlive } from './launcher.js';
 import { readInstallInfo } from './installInfo.js';
-import { installSiteGatewayHelper, provisionMachineRuntime } from '../privileged/publishedSitesGateway.js';
+import { installSiteGatewayHelper, provisionMachineRuntime, siteGatewayHelperStatus } from '../privileged/publishedSitesGateway.js';
 import { restartServices } from './systemd.js';
 import { launchdRestart } from './launchd.js';
 import { dataDir } from '../shared/paths.js';
@@ -145,6 +145,15 @@ async function refreshSiteGatewayHelper(): Promise<boolean> {
   const info = readInstallInfo();
   if (process.platform !== 'linux' || info === null) return false;
   const installed = await installSiteGatewayHelper();
+  // Replacing the installed helper needs root, and the hourly timer runs as the service user. Drift it
+  // cannot repair is reported rather than swallowed: the readiness row already names the command, and an
+  // operator who ran `sudo elowen update` — the documented path — never reaches this branch, because the
+  // install succeeded. Non-fatal on purpose: an update that cannot replace one root-owned file must still
+  // land the release it was run for and restart onto it.
+  if (!installed && process.getuid?.() !== 0) {
+    const status = await siteGatewayHelperStatus();
+    if (!status.ok) process.stderr.write(`the root-owned published-sites gateway helper was not refreshed: ${status.detail}\n`);
+  }
   // The machine runtime's host artefacts come forward with the executable, because an instance that
   // upgrades into this runtime has never had them and nothing else installs them. Provisioning converges,
   // so this is a no-op on a host that already carries them. Reported and not fatal: an update that cannot

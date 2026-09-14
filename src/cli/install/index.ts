@@ -17,10 +17,7 @@ import { ELOWEN_CLI_VERSION } from '../version.js';
 import { INSTALL_INFO_PATH, buildInstallInfo, serializeInstallInfo, type InstallArtifacts, type InstallUnit } from '../installInfo.js';
 import {
   MACHINE_STORAGE_RECEIPT_PATH,
-  SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE,
   SITE_GATEWAY_DEPLOYMENT_PATH,
-  SITE_GATEWAY_HELPER_INSTALL_ARGS,
-  SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_PATH,
   siteGatewayPluginDataDir,
 } from '../../shared/siteGateway.js';
@@ -207,20 +204,45 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
  * of the record is written only when there is a domain, and stays required only by the operations that
  * read it. Machine storage is a separate root-owned receipt, never a helper request field: the generic
  * installer records the passwd-HOME default, while a custom deployment can install its actual state root
- * through the same fixed receipt path during root provisioning. */
-const MACHINE_STORAGE_TEMP_TEMPLATE = '/etc/elowen/.machine-storage.XXXXXX';
-const SAFE_MACHINE_STORAGE_TEMP = /^\/etc\/elowen\/\.machine-storage\.[A-Za-z0-9]{6}$/;
+ * through the same fixed receipt path during root provisioning.
+ *
+ * All three files go in the same way. They used to be written to fixed paths under /tmp and installed
+ * from there, two of them behind a sudoers grant; a grant binds to a user rather than to the code path it
+ * was written for, so the service user could write the source first and choose what root installed. Each
+ * one is now staged inside the root-owned /etc/elowen and installed from that temp in the same run. */
 
-async function installMachineStorageReceipt(r: Runner, content: string): Promise<void> {
-  const created = await r.exec('mktemp', [MACHINE_STORAGE_TEMP_TEMPLATE]);
-  if (created.code !== 0) throw new Error(`mktemp ${MACHINE_STORAGE_TEMP_TEMPLATE} failed: ${(created.stderr || created.stdout).trim() || created.code}`);
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** One root-owned file staged for installation, the same way every time.
+ *
+ *  `mktemp` runs inside /etc/elowen — a directory this installer already created root-owned at 0755, so
+ *  neither the temp file nor the destination can be created or replaced by the service user. The exact
+ *  shape `mktemp` reported is checked against THIS purpose's template before anything is written to or
+ *  removed, so a host with a hostile TMPDIR cannot steer the write somewhere else, and one purpose can
+ *  never be installed out of another purpose's file. The temp is chowned to root and written at 0600, and
+ *  installed to the destination with the mode the destination requires. Nothing is ever staged at a path
+ *  the service user can write: the SOURCE of a root-owned file must not be a file that user can choose. */
+function stagingTemplate(purpose: string): string {
+  return `/etc/elowen/.${purpose}.XXXXXX`;
+}
+
+async function stageRootOwnedFile(r: Runner, { purpose, content, mode, destination }: {
+  purpose: string;
+  content: string;
+  mode: string;
+  destination: string;
+}): Promise<void> {
+  const template = stagingTemplate(purpose);
+  const created = await r.exec('mktemp', [template]);
+  if (created.code !== 0) throw new Error(`mktemp ${template} failed: ${(created.stderr || created.stdout).trim() || created.code}`);
   const temp = created.stdout.trim();
-  if (!SAFE_MACHINE_STORAGE_TEMP.test(temp)) throw new Error('mktemp returned an invalid machine storage receipt path');
+  const pattern = new RegExp(`^${escapeRegex(template.slice(0, -'XXXXXX'.length))}[A-Za-z0-9]{6}$`);
+  if (!pattern.test(temp)) throw new Error(`mktemp returned an invalid ${purpose} staging path`);
   try {
     await must(r, 'chown', ['root:root', temp]);
     await must(r, 'chmod', ['0600', temp]);
     await r.writeFile(temp, content);
-    await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', temp, MACHINE_STORAGE_RECEIPT_PATH]);
+    await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', mode, temp, destination]);
   } finally {
     await r.exec('rm', ['-f', '--', temp]);
   }
@@ -228,17 +250,22 @@ async function installMachineStorageReceipt(r: Runner, content: string): Promise
 
 export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment, home: string): Promise<boolean> {
   const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
-  await r.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
-  await r.writeFile(SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, `${JSON.stringify({
+  const record = `${JSON.stringify({
     ...(deploy.mode === 'domain' && deploy.domain ? { appHost: deploy.domain.toLowerCase() } : {}),
     daemonPort: DAEMON_PORT,
-  }, null, 2)}\n`);
+  }, null, 2)}\n`;
   await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH)]);
+  // The staging directory first: both files below are created inside it, and it must be root-owned and
+  // not writable by anyone else before anything is staged there.
   await must(r, 'install', ['-d', '-o', 'root', '-g', 'root', '-m', '0755', dirname(MACHINE_STORAGE_RECEIPT_PATH)]);
-  await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
-  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_PATH]);
-  await installMachineStorageReceipt(r, `${JSON.stringify({ pluginDataDir: siteGatewayPluginDataDir(home) }, null, 2)}\n`);
-  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE]);
+  await stageRootOwnedFile(r, { purpose: 'elowen-site-gateway', content: source, mode: '0755', destination: SITE_GATEWAY_HELPER_PATH });
+  await stageRootOwnedFile(r, { purpose: 'elowen-site-gateway-json', content: record, mode: '0644', destination: SITE_GATEWAY_DEPLOYMENT_PATH });
+  await stageRootOwnedFile(r, {
+    purpose: 'machine-storage',
+    content: `${JSON.stringify({ pluginDataDir: siteGatewayPluginDataDir(home) }, null, 2)}\n`,
+    mode: '0644',
+    destination: MACHINE_STORAGE_RECEIPT_PATH,
+  });
   return true;
 }
 

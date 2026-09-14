@@ -1,8 +1,4 @@
 export const SITE_GATEWAY_HELPER_PATH = '/usr/local/libexec/elowen-site-gateway';
-export const SITE_GATEWAY_HELPER_INSTALL_SOURCE = '/tmp/elowen-site-gateway';
-export const SITE_GATEWAY_HELPER_INSTALL_ARGS = [
-  '-o', 'root', '-g', 'root', '-m', '0755', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_HELPER_PATH,
-] as const;
 /** Exactly the argv the sudoers drop-in pins as `<helper> ""`, in the form sudo is handed it. The empty
  *  final argument is part of the pin: the helper is left no argv of its own to be steered by, and the
  *  operation arrives on stdin instead. The bundled machine runtime hardcodes the same argv, because a
@@ -10,12 +6,20 @@ export const SITE_GATEWAY_HELPER_INSTALL_ARGS = [
  *  sudoers renderer, this constant and the plugin against each other. */
 export const SITE_GATEWAY_HELPER_ARGV = ['-n', SITE_GATEWAY_HELPER_PATH, ''] as const;
 export const SITE_GATEWAY_DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
-/** Staged under fixed paths and installed by the INSTALLER while it is already root, never through a
- *  sudoers grant. A grant binds to a user, not to a code path, so a pinned install command whose source
- *  the service user can write is a way for that user to choose root-trusted contents. */
-export const SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE = '/tmp/elowen-site-gateway.json';
 export const MACHINE_STORAGE_RECEIPT_PATH = '/etc/elowen/machine-storage.json';
-export const SITE_GATEWAY_SUDOERS_PATH = '/etc/sudoers.d/elowen-site-gateway';
+
+/** The command an operator runs to bring a root-owned helper forward by hand, naming the packaged copy
+ *  the operator has to supply themselves.
+ *
+ *  Nothing else replaces the installed bytes. Both files the helper trusts are written by `elowen
+ *  install`, and by a root `elowen update`, while that process is already root: the source is staged
+ *  through a root-owned temp file inside /etc/elowen and installed from there. Staging at a fixed /tmp
+ *  path behind a pinned `install` grant is what this replaced — a grant binds to a user, not to a code
+ *  path, so any account allowed to run it could write the source first and choose root-trusted contents.
+ *  A caller that cannot replace the file reports drift with this line instead. */
+export function siteGatewayHelperInstallHint(source: string): string {
+  return `sudo install -o root -g root -m 0755 ${source} ${SITE_GATEWAY_HELPER_PATH}`;
+}
 
 /** The default plugin-data root for a service user. The installer records this one root in a root-owned
  *  receipt; the standalone helper derives its isolated `sandbox` and `sites` children from it. */
