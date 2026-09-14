@@ -35,10 +35,10 @@ export interface ProviderRequestRecorderOptions {
 
 /** Canonical speed timing persisted on successful terminal assistant messages.
  *
- *  `effectiveMs` is this request's successful provider-generation window from accepted response headers
- *  to terminal stream completion. It excludes request queue/header wait, failed attempts, retry backoff,
- *  tool execution and all between-request waiting. `effectiveTimingVersion: 3` distinguishes this contract
- *  from older rows whose effectiveMs included queue/retry time and excluded tool-call responses.
+ *  `effectiveMs` is this request's successful provider-generation window from the accepted response stream
+ *  start to terminal stream completion. It excludes request queue/connect wait, failed attempts, retry
+ *  backoff, tool execution and all between-request waiting. `effectiveTimingVersion: 3` distinguishes this
+ *  contract from older rows whose effectiveMs included queue/retry time and excluded tool-call responses.
  *
  *  The turn fields are the exact cumulative pair across every valid successful request in the current
  *  agent run and model identity. They are repeated on later successful messages so a status snapshot keeps
@@ -105,9 +105,10 @@ function eventError(event: AssistantMessageEvent): AssistantMessage | undefined 
  * post-transform body while compaction no longer disappears from the log.
  *
  * The same wrapper is the canonical effective-speed seam: every successful request is timed with a
- * monotonic clock from accepted response headers to its terminal event, then folded into the current
+ * monotonic clock from the `start` stream event to its terminal event, then folded into the current
  * turn/model aggregate and stamped as {@link EffectiveRequestTiming}. It works for every transport
- * (HTTP and the Codex WebSocket) because it never depends on transport-specific hooks.
+ * (HTTP and the Codex WebSocket) because stream events, unlike the `onResponse` HTTP-header callback,
+ * are emitted by every PI dialect.
  */
 export class ProviderRequestRecorder {
   readonly observe: (event: AgentSessionEvent) => void;
@@ -302,10 +303,8 @@ export class ProviderRequestRecorder {
       },
       onResponse: async (response: Parameters<NonNullable<typeof originalResponse>>[0], responseModel: Model<Api>) => {
         await originalResponse?.(response, responseModel);
-        // Accepted response headers are the closest transport-independent start of provider generation
-        // available to every PI dialect. Queue/header wait is deliberately excluded; a non-success status
-        // cannot start a sample even if the body later emits an error message.
-        if (!isCompaction && response.status >= 200 && response.status < 300) this.attemptResponseMono = this.mono();
+        // HTTP response headers are capture metadata only. The speed window opens on the dialect's `start`
+        // stream event (see timeStreamEvent), which is the one signal every transport emits.
         // The kill switch is sampled at onPayload for this exact provider call. A response for an
         // uncaptured request remains uncaptured even if the operator enabled capture while it was running.
         if (!capturedRequestId) return;
@@ -363,6 +362,16 @@ export class ProviderRequestRecorder {
    *  wait-to-first-content; a terminal stamps the timing onto the terminal message — the very object
    *  the agent loop replays as `message_end`, so the projector persists it with the message. */
   private timeStreamEvent(event: AssistantMessageEvent): void {
+    if (event.type === 'start') {
+      // `start` is PI's contractual "the provider accepted this request and its response stream has
+      // begun": no update and no terminal may precede it. Every HTTP dialect pushes it in the same tick
+      // as the accepted response headers, so the measured window is unchanged for them. The Codex
+      // WebSocket transport has no HTTP response at all — it emits `start` on the first frame of the
+      // response — so the previous onResponse-only window never opened and every ChatGPT generation went
+      // unmeasured. Opening the window here keeps ONE rule for all transports instead of an HTTP-only one.
+      this.attemptResponseMono = this.mono();
+      return;
+    }
     if (event.type === 'text_start' || event.type === 'thinking_start' || event.type === 'toolcall_start') {
       if (this.attemptFirstContentMs == null) this.attemptFirstContentMs = Math.max(0, this.mono() - this.attemptStartMono);
       return;
