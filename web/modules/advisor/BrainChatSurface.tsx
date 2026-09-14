@@ -11,7 +11,7 @@ import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
-import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainModelOption, BrainWorkMode, SlashCommandDef, StatuslineConfig } from '../../lib/types';
+import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainModelOption, BrainSubagentView, BrainWorkMode, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -436,6 +436,63 @@ export const CardBlock = memo(function CardBlock({ card, live }: { card: BrainCa
   return cardTasksAddressable(rows)
     ? <TodoCard card={card} rows={rows} live={live} />
     : <StaticCard card={card} live={live} />;
+});
+
+/** Persistent conversation controls that are not part of the answer currently streaming.
+ *
+ * While idle they close the transcript as before. During a live turn they sit immediately BEFORE that
+ * turn instead: keeping a tall checklist and an agents row after the growing node makes every token move
+ * that whole block, and bottom-follow then pins the controls above the composer instead of the answer.
+ * The controls stay in the transcript and retain their state; only their owning position changes at the
+ * live boundary. Memoizing the group also keeps a text delta from reconciling controls whose data did not
+ * change. */
+const TranscriptAmbientExtras = memo(function TranscriptAmbientExtras({
+  variant,
+  cards,
+  live,
+  subagents,
+  railOwnsLiveWork,
+  visible,
+  beforeLiveTail,
+  onOpenAgents,
+}: {
+  variant: 'full' | 'compact';
+  cards: readonly BrainCard[];
+  live: boolean;
+  subagents: readonly BrainSubagentView[];
+  railOwnsLiveWork: boolean;
+  visible: boolean;
+  beforeLiveTail: boolean;
+  onOpenAgents: () => void;
+}) {
+  const { t } = useTranslation();
+  const showAgents = subagents.length > 0 && !railOwnsLiveWork;
+  if (!visible || (cards.length === 0 && !showAgents)) return null;
+  const runningAgents = subagents.filter((agent) => agent.status === 'running').length;
+  return (
+    <div
+      data-testid="chat-ambient-extras"
+      className={`font-mono ${variant === 'full'
+        ? `${beforeLiveTail ? 'my-4' : 'mt-4'} flex flex-col gap-3 text-[0.6875rem]`
+        : 'contents text-tiny'}`}
+    >
+      {cards.map((card) => <CardBlock key={card.id} card={card} live={live} />)}
+      {showAgents ? (
+        <button
+          type="button"
+          data-testid="chat-agents-open"
+          onClick={onOpenAgents}
+          className="flex items-center gap-1.5 self-start leading-relaxed text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Users size={11} aria-hidden />
+          <span>{runningAgents > 0
+            ? `${runningAgents} ${plural(t.agents.link, runningAgents)}`
+            : `${subagents.length} ${plural(t.agents.linkDone, subagents.length)}`}</span>
+          <ChevronRight size={12} aria-hidden />
+        </button>
+      ) : null}
+    </div>
+  );
 });
 
 /** The assistant's tool calls, rendered as tight monospace log rows stacked directly under each other —
@@ -1800,12 +1857,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   // freeform `body` still belongs here, because the rail has nowhere to put that body. Only the TODO card
   // is ever handed over — another plugin's card is not task-shaped and the rail never lists it. A phone
   // (no docked rail, `telemetryShown` undefined) and a collapsed rail both keep the card exactly as before.
-  const todoCards = cards.filter((cd) => {
+  const todoCards = useMemo(() => cards.filter((cd) => {
     if (isBackgroundProcessCardId(cd.id)) return false;
     const items = cd.items ?? [];
     if (railShowsTasks && cd.id === TODO_CARD_ID && items.length > 0 && !cd.body) return false;
     return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
-  });
+  }), [cards, railShowsTasks]);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRootRef = useRef<HTMLDivElement>(null);
@@ -1884,10 +1941,10 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   triggerOlderRef.current = triggerOlder;
 
   const active = sessions.data?.find((s) => s.active);
-  const runningAgents = subagents.filter((agent) => agent.status === 'running').length;
   // Index of the first live (id-less) turn — the boundary between stored history and the live streaming tail
   // used to key the tail stably across a lazy-load prepend (see the transcript map below).
   const firstLiveTurn = turns.findIndex((turn) => !turn.id);
+  const openAgents = useCallback(() => setAgentsOpen(true), [setAgentsOpen]);
 
 
   // First mount of ANY chat surface (dock opened in chat mode) lazily boots the controller. Idempotent —
@@ -2300,6 +2357,38 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     };
   }, [variant, pinToNewest]);
 
+  // Keep the stable controls at the live boundary. The Message rows retain their existing keys and memo
+  // boundaries; only this keyed group moves when a live tail starts or settles.
+  const turnNodes: ReactNode[] = turns.map((turn, i) => {
+    const key = turn.id ?? `live:${i - firstLiveTurn}`;
+    return (
+      <Message
+        key={key}
+        tk={key}
+        turn={turn}
+        models={models ?? undefined}
+        full={variant === 'full'}
+        showRole={i === 0 || turns[i - 1].role !== turn.role}
+        showThoughts={showThoughts}
+      />
+    );
+  });
+  const liveTailActive = busy && firstLiveTurn >= 0;
+  const ambientIndex = liveTailActive ? firstLiveTurn : turnNodes.length;
+  turnNodes.splice(ambientIndex, 0, (
+    <TranscriptAmbientExtras
+      key="ambient-extras"
+      variant={variant}
+      cards={todoCards}
+      live={busy}
+      subagents={subagents}
+      railOwnsLiveWork={railOwnsLiveWork}
+      visible={transcriptExtras}
+      beforeLiveTail={liveTailActive}
+      onOpenAgents={openAgents}
+    />
+  ));
+
   return (
     <div
       ref={surfaceRootRef}
@@ -2339,51 +2428,13 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         ) : null}
         {/* Stable keys: history turns key by their store id, so a prepend never re-keys the existing turns;
             the live streaming tail (no id) keys by its offset within the live suffix, which is invariant
-            under a prepend (older turns only ever go in front) — so a prepend mid-turn never remounts it. */}
-        {turns.map((turn, i) => {
-          const key = turn.id ?? `live:${i - firstLiveTurn}`;
-          return (
-            <Message
-              key={key}
-              tk={key}
-              turn={turn}
-              models={models ?? undefined}
-              full={variant === 'full'}
-              showRole={i === 0 || turns[i - 1].role !== turn.role}
-              showThoughts={showThoughts}
-            />
-          );
-        })}
-        {/* Out-of-band extras (cards, processes, agents, questions). In the full page they get their own
-            spacing group under the flush transcript; in the dock `contents` keeps them in the parent's
-            gap flow exactly as before. `empty:hidden` drops the group when everything in it is null.
-            The monospace type is set ONCE here and inherited by every extra, so the todo card and the
-            agents chip end up the exact size the statusline and the tool rows use for the same variant
-            instead of each hardcoding `text-tiny` and reading smaller than the column they sit in.
-            `display:contents` keeps inheriting, it only removes the box.
-            Background processes are deliberately NOT here: the telemetry panel is their single home, so
-            a long-running command reports in one place instead of also crowding the composer. */}
+            under a prepend. The keyed ambient-controls group is inserted at that boundary too, so the live
+            answer rather than a tall unchanged control block closes an active transcript. */}
+        {turnNodes}
+        {/* Input and modal extras stay after every turn: unlike ambient task/agent controls, these represent
+            a decision the current turn is waiting for. In the dock `contents` keeps them in the parent's gap
+            flow; `empty:hidden` drops the full-page spacing group when every modal is portalled or closed. */}
         <div className={`font-mono ${variant === 'full' ? 'mt-4 flex flex-col gap-3 text-[0.6875rem] empty:hidden' : 'contents text-tiny'}`}>
-        {transcriptExtras ? todoCards.map((card) => <CardBlock key={card.id} card={card} live={busy} />) : null}
-        {/* Workflow view: a clickable link that opens the table of delegated agents (drill-in / back). The
-            table itself stays mounted below whatever the rail does — `agentsOpen` lives in the provider, so
-            the rail's own agent row opens THIS instance. Only the chip is redundant beside an open rail. */}
-        {subagents.length > 0 && !railOwnsLiveWork && transcriptExtras ? (
-          <button
-            type="button"
-            data-testid="chat-agents-open"
-            onClick={() => setAgentsOpen(true)}
-            className="flex items-center gap-1.5 self-start leading-relaxed text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <Users size={11} aria-hidden />
-            {/* Never fall back to the transcript's total when nothing runs: that is what let a finished
-                agent be announced as a running one. No runner left → the chip names the finished work. */}
-            <span>{runningAgents > 0
-              ? `${runningAgents} ${plural(t.agents.link, runningAgents)}`
-              : `${subagents.length} ${plural(t.agents.linkDone, subagents.length)}`}</span>
-            <ChevronRight size={12} aria-hidden />
-          </button>
-        ) : null}
         {agentsOpen ? (
           <AgentsTable
             agents={subagents}

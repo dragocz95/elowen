@@ -312,6 +312,40 @@ describe('a long, still-working conversation', () => {
     await waitFor(() => expect(counts(p).modelPicker, 'a model switch did not reach the picker').toBeGreaterThan(0));
   });
 
+  it('keeps unchanged ambient controls before the growing live tail', async () => {
+    const { stream } = await openBusyChat(120);
+    const cardBefore = screen.getByTestId('chat-card');
+    const fold = cardBefore.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+    fireEvent.click(fold);
+    expect(fold).toHaveAttribute('aria-expanded', 'false');
+
+    stream.emit('text', { delta: 'first token ' });
+
+    const card = screen.getByTestId('chat-card');
+    const agents = screen.getByTestId('chat-agents-open');
+    expect(card, 'moving the controls to the live boundary remounted the task card').toBe(cardBefore);
+    expect(fold, 'moving the controls lost the reader’s collapsed state').toHaveAttribute('aria-expanded', 'false');
+    const liveTurn = document.querySelector<HTMLElement>('[data-tk^="live:"]');
+    expect(liveTurn, 'the stream did not create a live turn').not.toBeNull();
+    expect(card.compareDocumentPosition(liveTurn!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the task card stayed after the live turn, where every token moves it above the composer')
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(agents.compareDocumentPosition(liveTurn!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the agents row stayed after the live turn, where every token moves it above the composer')
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    for (let i = 0; i < 20; i++) stream.emit('text', { delta: 'token ' });
+    expect(screen.getByTestId('chat-card'), 'streaming replaced the unchanged task controls').toBe(card);
+    expect(screen.getByTestId('chat-agents-open'), 'streaming replaced the unchanged agents control').toBe(agents);
+
+    stream.emit('idle', { type: 'idle' });
+    expect(liveTurn!.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'settling the turn did not restore the controls to the transcript tail')
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.getByTestId('chat-card')).toBe(cardBefore);
+    expect(fold).toHaveAttribute('aria-expanded', 'false');
+  });
+
   it('reconciles only the live turn when a token streams in', async () => {
     const { stream, commits } = await openBusyChat(120);
     const p = probes();

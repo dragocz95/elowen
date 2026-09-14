@@ -122,6 +122,16 @@ const seedTurns = Array.from({ length: 60 }, (_, i) => (i % 2 === 0
   ? { id: `m${i}`, role: 'user' as const, text: `Msg ${i} (you)` }
   : { id: `m${i}`, role: 'assistant' as const, text: '', segments: [{ kind: 'text' as const, text: `Msg ${i} (elowen) with enough prose to wrap onto a second line on a phone.` }] }));
 
+const MOBILE_TASK_CARD = {
+  id: 'todo',
+  title: 'Tasks',
+  items: Array.from({ length: 8 }, (_, i) => ({
+    id: `task-${i}`,
+    text: `Mobile task ${i}`,
+    status: i < 2 ? 'completed' as const : 'pending' as const,
+  })),
+};
+
 for (const profile of PROFILES) {
   test(`composer rests on the visual viewport with an iOS keyboard — ${profile.name}`, async ({ app, seed }) => {
     test.setTimeout(120_000);
@@ -207,6 +217,7 @@ test('typing with the keyboard up survives high-frequency stream updates', async
   const cdp = await app.context().newCDPSession(app);
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await seed.messages(seedTurns);
+  await seed.brainStatus({ running: true, cards: [MOBILE_TASK_CARD] });
 
   const chat = new ChatPage(app);
   await chat.goto();
@@ -215,16 +226,47 @@ test('typing with the keyboard up survives high-frequency stream updates', async
   await app.evaluate(() => (window as unknown as { __ios: { open(h: number): Promise<void> } }).__ios.open(336));
   await expect.poll(async () => (await geometry(app)).keyboardOpen).toBe('true');
 
-  // A live turn underneath, a running tool reporting progress, and the reader typing on top of it.
+  // A live turn underneath, a settled agent, a running tool reporting progress, and the reader typing on top.
   await sse.user('A question that is being answered while the reader types the next one');
+  await sse.tool({ name: 'Delegate', id: 'delegate-finished', detail: 'Finished mobile helper' });
+  expect(await sse.emit({
+    type: 'subagent', id: 'delegate-finished', sessionId: 'child-finished', status: 'done',
+    task: 'Finished mobile helper', name: 'Finished mobile helper', tools: 3, tokens: 900, seconds: 12,
+  })).toBeGreaterThan(0);
+  await expect(app.getByTestId('chat-agents-open')).toBeVisible();
   await sse.tool({ name: 'Bash', id: 'live-tool', detail: 'npm test' });
+  const ambientLayout = () => app.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('main')!;
+    const surface = main.querySelector<HTMLElement>('[data-variant="full"]')!;
+    const ambient = surface.querySelector<HTMLElement>('[data-testid="chat-ambient-extras"]')!;
+    const live = surface.querySelector<HTMLElement>('[data-tk^="live:"]')!;
+    const ambientRect = ambient.getBoundingClientRect();
+    return {
+      topInScrollContent: ambientRect.top + main.scrollTop,
+      ambientBottom: ambientRect.bottom,
+      liveTop: live.getBoundingClientRect().top,
+      beforeLive: Boolean(ambient.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING),
+    };
+  });
+  const ambientBefore = await ambientLayout();
+  expect(ambientBefore.beforeLive, 'task and agent controls must precede the growing live turn').toBe(true);
+
   const typed = 'Ahoj, tohle píšu zatímco běží odpověď.';
   for (const chunk of typed.match(/.{1,6}/g) ?? []) {
     await sse.toolProgress('live-tool', `progress ${chunk}`);
-    await sse.text(`${chunk} `);
+    await sse.text(`${chunk} ${'live answer keeps growing '.repeat(8)}`);
     await chat.composer.pressSequentially(chunk);
   }
   await expect(chat.composer).toHaveValue(typed);
+
+  const ambientAfter = await ambientLayout();
+  expect(ambientAfter.beforeLive).toBe(true);
+  expect(ambientAfter.topInScrollContent,
+    'streamed text moved the unchanged task/agent block through the document')
+    .toBeCloseTo(ambientBefore.topInScrollContent, 0);
+  expect(ambientAfter.ambientBottom,
+    'ambient controls still occupied the tail below the live answer')
+    .toBeLessThanOrEqual(ambientAfter.liveTop);
 
   const busy = await geometry(app);
   expect(busy.keyboardOpen).toBe('true');
