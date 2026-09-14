@@ -1460,6 +1460,51 @@ export interface SkillResourcesControl {
   resolveResource(requestedPath: string): string | null;
 }
 
+/** One rendering of one page, for a caller that needs a PICTURE of something the host already serves.
+ *
+ *  The target is named by absolute URL because the owner cannot resolve one for the consumer: a published
+ *  site's address is the Sites plugin's own configuration, not the browser's. That makes the URL the
+ *  dangerous part of this contract, so it is constrained on both ends. The consumer is required to derive
+ *  it server-side and is the only plugin the registry will hand this control to, and the implementation
+ *  must refuse anything that is not an absolute `http(s)` URL and must confine the rendering browser's
+ *  name resolution to that one host — a capture is not a fetch primitive, and this control must never
+ *  become a way to reach an address the caller could otherwise not reach.
+ *
+ *  `headers` exists because the caller may have to prove to its OWN serving path that this request is
+ *  allowed to see the page. It travels with the navigation and nowhere else. Handing over a browser
+ *  profile, a cookie jar or an account credential is expressly not how that is done: the rendering
+ *  context carries no identity of its own, keeps nothing, and is discarded with the capture. */
+export interface BrowserCaptureRequest {
+  /** Absolute `http(s)` URL, derived by the consuming plugin. Never a value that reached it from a client. */
+  url: string;
+  /** Request headers for this navigation only, applied to the throwaway context. */
+  headers?: Readonly<Record<string, string>>;
+  viewport: { width: number; height: number; deviceScaleFactor?: number };
+  /** Whole-operation deadline covering navigation, settle and encode. */
+  timeoutMs?: number;
+  format?: 'png' | 'webp';
+  /** Refuse rather than return an image larger than this. */
+  maxBytes?: number;
+}
+
+export interface BrowserCaptureResult {
+  image: Uint8Array;
+  mimeType: 'image/png' | 'image/webp';
+  width: number;
+  height: number;
+}
+
+/** Render a host-derived URL in a throwaway browser context and return the picture.
+ *
+ *  `available()` answers whether a capture could be attempted at all, so a consumer can present the
+ *  feature honestly instead of discovering the missing dependency one failed capture at a time. It is a
+ *  cheap, synchronous statement about the environment, never a promise that any particular capture will
+ *  succeed. */
+export interface BrowserCaptureControl {
+  available(): boolean;
+  capture(request: BrowserCaptureRequest): Promise<BrowserCaptureResult>;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -1474,6 +1519,7 @@ export interface KnownControls {
   microsoftIdentity: MicrosoftIdentityControl;
   github: GitHubIdentityControl;
   publishedSitesGateway: PublishedSitesGatewayControl;
+  browserCapture: BrowserCaptureControl;
   skillCatalog: SkillCatalogControl;
   skillResources: SkillResourcesControl;
 }
