@@ -141,10 +141,12 @@ function command(input, synchronous = false) {
 }
 function fileOperation(op) {
   if (UPLOAD_KINDS.includes(op?.kind)) return validateUploadOperation(op);
-  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
+  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length', 'expectedVersion'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
   if (op?.followSymlinks !== undefined && typeof op.followSymlinks !== 'boolean') throw error('invalid_operation', 'followSymlinks must be boolean', 400);
-  if (!op || !Object.hasOwn(keys, op.kind) || Object.keys(op).some((key) => !['kind', 'path', ...keys[op.kind]].includes(key))) throw error('invalid_operation', 'Invalid guest file operation', 400);
+  if (!op || !Object.hasOwn(keys, op.kind) || Object.keys(op).some((key) => !['kind', 'path', 'root', ...keys[op.kind]].includes(key))) throw error('invalid_operation', 'Invalid guest file operation', 400);
   guestPath(op.path);
+  if (op.root !== undefined) guestPath(op.root);
+  if (op.expectedVersion !== undefined && (typeof op.expectedVersion !== 'string' || op.expectedVersion.length > 256)) throw error('invalid_operation', 'Invalid expected file version', 400);
   if (op.kind === 'rename') guestPath(op.destination);
   if (['write', 'remove', 'rename'].includes(op.kind) && !Object.hasOwn(op, 'expectedVersion')) throw error('version_required', 'A content version is required', 400);
   if (Buffer.byteLength(JSON.stringify(op)) > 1024 * 1024) throw error('input_limit', 'Guest input exceeds its bound', 400);
@@ -594,9 +596,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  nothing it would not observe a moment later and cost two runtime invocations to say it. The durable
    *  record checks above still run either way, so a stopped or pending environment is still refused here,
    *  cheaply and without ever reaching the container. */
-  async function ready(id, userId, verifyRuntime = true) {
+  async function ready(id, userId, verifyRuntime = true, startIfNeeded = true) {
     let row = await rowFor(id, userId);
-    if (row.state === 'unprovisioned') {
+    if (row.state === 'unprovisioned' && startIfNeeded) {
       await request(id, { accountUserId: userId, action: { kind: 'start' } });
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
@@ -774,22 +776,43 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } catch (cause) { await handle.release(); throw cause; }
   }
 
+  async function projectFileRoot(input) {
+    const id = projectId(input.project);
+    account(input.accountUserId);
+    const project = await authorize(id, input.accountUserId);
+    const row = store.get('project', id);
+    const workspaceId = input.workspaceId ?? null;
+    if (workspaceId !== null && (typeof workspaceId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(workspaceId))) throw error('invalid_workspace', 'Invalid managed workspace identity', 400);
+    if (workspaceId !== null) {
+      const workspace = db.prepare("SELECT path FROM p_sandbox_managed_worktrees WHERE id=? AND project_id=? AND state='active'").get(workspaceId, id);
+      if (!workspace) throw error('workspace_not_found', 'Managed workspace is not active', 404);
+      return { root: workspace.path, generation: row?.generation ?? 1, state: row?.state ?? 'unprovisioned', workspaceId };
+    }
+    return { root: row ? rootOf(row) : managedGuestRoot(project.slug, id), generation: row?.generation ?? 1, state: row?.state ?? 'unprovisioned', workspaceId: null };
+  }
+
   async function projectFiles(input) {
     const id = projectId(input.project);
     const op = fileOperation(input.operation);
     account(input.accountUserId, MUTATING_FILE_KINDS.has(op.kind));
     // An upload keeps the readiness probe: its transport does its own staging before any guest command,
     // so the execution's ownership check is not the very next thing to run.
-    const row = await ready(id, input.accountUserId, UPLOAD_KINDS.includes(op.kind));
+    const row = await ready(id, input.accountUserId, UPLOAD_KINDS.includes(op.kind), input.startIfNeeded !== false);
     assertGeneration(row, input.expectedGeneration);
+    const authoritativeRoot = input.workspaceId
+      ? db.prepare("SELECT path FROM p_sandbox_managed_worktrees WHERE id=? AND project_id=? AND state='active'").get(input.workspaceId, id)?.path
+      : rootOf(row);
+    if (typeof authoritativeRoot !== 'string') throw error('workspace_not_found', 'Managed workspace is not active', 404);
+    if (input.root !== undefined && input.root !== authoritativeRoot) throw error('path_outside_project', 'Path is outside the selected Project root', 403);
+    const scopedOp = { ...op, root: authoritativeRoot };
     const perform = async () => {
-      if (UPLOAD_KINDS.includes(op.kind)) return await transfers.perform({ row, accountUserId: input.accountUserId, operation: op });
-      const result = await runGuest(row, input.accountUserId, ['/usr/bin/python3', '-c', FILE_HELPER], { input: JSON.stringify(op), timeoutMs: 120000 });
+      if (UPLOAD_KINDS.includes(scopedOp.kind)) return await transfers.perform({ row, accountUserId: input.accountUserId, operation: scopedOp });
+      const result = await runGuest(row, input.accountUserId, ['/usr/bin/python3', '-c', FILE_HELPER], { input: JSON.stringify(scopedOp), timeoutMs: 120000 });
       if (result.truncated) throw error('output_limit', 'Guest file output exceeded its bound');
       let reply;
       try { reply = JSON.parse(result.stdout); } catch { throw protocolError('Invalid guest file response'); }
       if (!reply?.ok || result.code !== 0) throw error(reply?.error?.code ?? 'guest_file_error', reply?.error?.message ?? 'Guest file operation failed');
-      if (reply.result?.kind !== op.kind) throw protocolError('Guest response kind differs from the requested operation');
+      if (reply.result?.kind !== scopedOp.kind) throw protocolError('Guest response kind differs from the requested operation');
       return reply.result;
     };
     // Only the operations that CHANGE the tree serialize against each other. Holding one exclusive
@@ -1535,6 +1558,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function managedWorktrees(input) {
     const id = projectId(input.project);
     account(input.accountUserId, input.action?.kind !== 'list');
+    if (input.action?.kind === 'list' && input.startIfNeeded === false) {
+      await authorize(id, input.accountUserId);
+      return db.prepare("SELECT id,project_id AS projectId,created_by AS createdBy,path,branch,base_ref AS baseRef,label,state FROM p_sandbox_managed_worktrees WHERE project_id=? AND state='active' ORDER BY id").all(id);
+    }
     const row = await ready(id, input.accountUserId);
     return await manageWorktrees({ db, runGuest, row, userId: input.accountUserId, action: input.action, root: rootOf(row) });
   }
@@ -1812,7 +1839,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       return await machineReadiness();
     },
     provisionMachineRuntime,
-    environmentOperation: getOperation, projectFiles, revokeProjectAccess,
+    environmentOperation: getOperation, projectFileRoot, projectFiles, revokeProjectAccess,
     environmentSnapshots: (input) => snapshots(projectId(input.project), input.accountUserId),
     environmentLogs: (input) => logs(projectId(input.project), input.accountUserId, input.lines), managedWorktrees,
   };

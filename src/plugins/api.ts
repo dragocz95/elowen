@@ -21,7 +21,7 @@ import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import type { ProjectEnvironmentControl } from './environmentTypes.js';
 export type { ProjectExecutionRef, ManagedProjectRef } from '../shared/projectExecution.js';
 export { GUEST_FILE_CHUNK_BYTES } from './environmentTypes.js';
-export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
+export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedProjectFileRoot, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
 
