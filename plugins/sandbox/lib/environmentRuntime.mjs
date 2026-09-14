@@ -1157,10 +1157,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const spec = specFor(row.spec);
       const snapshots = store.snapshots(row.kind, row.resource_id);
       const recipes = new Map([[spec.name, row.spec]]);
-      for (const saved of snapshots) { const recipe = JSON.parse(saved.spec_json); recipes.set(specFor(recipe).name, recipe); }
+      // Completed migration history still carries the retired runtime's specifications as audit receipts.
+      // They no longer own an envelope this release can drive; the final environment-storage removal below
+      // clears their shared snapshot directories after every nspawn generation and disk has been released.
+      const keepNspawnRecipe = (recipe) => {
+        const owned = specFor(recipe);
+        if (usesNspawnRuntime(owned)) recipes.set(owned.name, recipe);
+      };
+      for (const saved of snapshots) keepNspawnRecipe(JSON.parse(saved.spec_json));
       for (const entry of db.prepare('SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?').all(row.kind, row.resource_id)) {
         const previous = JSON.parse(entry.checkpoint_json);
-        for (const key of ['oldSpec', 'newSpec']) if (previous[key]) recipes.set(specFor(previous[key]).name, previous[key]);
+        for (const key of ['oldSpec', 'newSpec']) if (previous[key]) keepNspawnRecipe(previous[key]);
       }
       recipes.set(spec.name, row.spec);
       step(op, 'containers');
@@ -1175,7 +1182,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       step(op, 'storage');
       for (const saved of snapshots) {
         const owned = specFor(JSON.parse(saved.spec_json));
-        await runtimeFor(owned).removeSnapshotStorage(owned, JSON.parse(saved.manifest_json).snapshotId);
+        if (usesNspawnRuntime(owned)) await runtimeFor(owned).removeSnapshotStorage(owned, JSON.parse(saved.manifest_json).snapshotId);
       }
       const ownedSpecs = [...recipes.values()].map((recipe) => specFor(recipe));
       const disks = new Map(ownedSpecs.filter((owned) => owned.disk).map((owned) => [owned.disk.id, owned]));
