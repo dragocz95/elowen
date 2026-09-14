@@ -2,11 +2,11 @@
  *
  *  The canonical measurement lives at the provider-request seam
  *  (`src/brain/session/providerRequestRecorder.ts`). Each successful provider response contributes its
- *  canonical normalized output-token count and only the monotonic generation window from accepted response
- *  headers to the terminal stream event. Prompt construction, provider queue/header wait, failed attempts,
- *  retry backoff, tool execution and user/elicitation waits are outside that window. Provider output usage
- *  already includes visible text, hidden reasoning and serialized tool-call output; tool results are input to
- *  a later request and never enter this numerator.
+ *  canonical normalized output-token count and only the monotonic generation window from the accepted
+ *  response stream start to the terminal stream event. Prompt construction, provider queue/connect wait,
+ *  failed attempts, retry backoff, tool execution and user/elicitation waits are outside that window.
+ *  Provider output usage already includes visible text, hidden reasoning and serialized tool-call output;
+ *  tool results are input to a later request and never enter this numerator.
  *
  *  A turn spanning text → tool → text is therefore Σ successful model output / Σ successful generation
  *  seconds. Never average request rates and never divide by turn wall time.

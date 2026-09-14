@@ -86,6 +86,10 @@ async function fixture(options: {
   /** Runs before the synthetic response headers arrive, modelling provider queue/header wait that speed
    *  must exclude. */
   beforeResponse?: (call: number, status: number) => void | Promise<void>;
+  /** Model a transport with no HTTP response to report. The Codex/ChatGPT `openai-codex-responses`
+   *  dialect defaults to its WebSocket transport, which never invokes `onResponse`; it announces the
+   *  accepted response only through the `start` stream event. */
+  omitResponseCallback?: boolean;
   /** Runs while the probe tool executes — the seam between two model calls, which effective speed must
    *  EXCLUDE from every window. */
   onToolExecute?: () => void;
@@ -120,7 +124,7 @@ async function fixture(options: {
       await request.onPayload?.(initial, model);
       const status = call === 1 ? (options.firstStatus ?? (options.run.name === 'retryRun' ? 429 : 200)) : 200;
       await options.beforeResponse?.(call, status);
-      await request.onResponse?.({ status, headers: {} } as never, model);
+      if (!options.omitResponseCallback) await request.onResponse?.({ status, headers: {} } as never, model);
       await options.repeatPayload?.(request, model, initial);
       return options.run(model, context, request, call);
     },
@@ -635,6 +639,90 @@ describe('ProviderRequestRecorder — effective-speed timing', () => {
     const [only] = assistants(f.session);
     expect(only.effectiveMs).toBe(4300); // 300 to first content + 4000 streamed generation
     expect(only.firstContentMs).toBe(420); // initiation still includes the 120 ms user-perceived queue wait
+  });
+
+  /** The reported ChatGPT gap. `openai-codex-responses` defaults to its WebSocket transport, where there
+   *  is no HTTP response and PI therefore never calls `onResponse` — production rows show a NULL
+   *  `response_at` for most successful Codex requests while `output_tokens` is populated, so provider
+   *  usage (reasoning accounting included) was never the problem. Only the window was never opened. */
+  describe('Codex WebSocket transport — no HTTP response callback', () => {
+    const codex = { provider: 'openai-codex', api: 'openai-codex-responses' as Api, modelId: 'gpt-5.6-sol', omitResponseCallback: true };
+    const snapshot = (session: Parameters<typeof sessionUsageSnapshot>[0]) =>
+      sessionUsageSnapshot(session, { descendantUsage: () => ({ totalTokens: 0, cost: 0 }) }, 's1');
+
+    it('measures a text-only generation announced only by the start event', async () => {
+      const clock = monoClock();
+      const f = await fixture({ ...codex, monoNow: clock.now, beforeResponse: () => clock.advance(120), run: timedRun(clock) });
+
+      await f.session.prompt('timed');
+
+      const [only] = assistants(f.session);
+      expect(only.effectiveMs).toBe(4300); // identical to the HTTP dialects: the 120 ms connect wait stays out
+      expect(only.firstContentMs).toBe(420);
+      expect(snapshot(f.session).effectiveTps).toBeCloseTo(2 / 4.3);
+    });
+
+    it('aggregates hidden reasoning and tool-call arguments across the tool transition', async () => {
+      const clock = monoClock();
+      const f = await fixture({
+        ...codex,
+        monoNow: clock.now,
+        onToolExecute: () => clock.advance(9000),
+        run: async (model, _context, _request, call) => {
+          const out = createAssistantMessageEventStream();
+          void (async () => {
+            out.push({ type: 'start', partial: message(model, []) });
+            await clock.advanceAsync(call === 1 ? 1000 : 2000);
+            const done = call === 1
+              ? message(model, [
+                { type: 'thinking', thinking: 'reasoning the provider keeps encrypted' },
+                { type: 'toolCall', id: 'probe-1', name: 'probe', arguments: {} },
+              ], 'toolUse')
+              : message(model, [{ type: 'text', text: 'done' }]);
+            done.usage = { ...done.usage, output: call === 1 ? 120 : 80, reasoning: call === 1 ? 100 : 10 };
+            out.push({ type: 'done', reason: call === 1 ? 'toolUse' : 'stop', message: done });
+            out.end();
+          })();
+          return out;
+        },
+      });
+
+      await f.session.prompt('reasoning and tools');
+
+      const settled = snapshot(f.session);
+      expect(settled.effectiveOutput).toBe(200); // canonical output: visible text, reasoning and tool-call arguments
+      expect(settled.effectiveMs).toBe(3000); // the 9 s tool run is excluded
+      expect(settled.effectiveTps).toBeCloseTo(200 / 3);
+    });
+
+    it('leaves a failed WebSocket generation unmeasured', async () => {
+      const clock = monoClock();
+      const f = await fixture({
+        ...codex,
+        monoNow: clock.now,
+        project: true,
+        run: async (model) => {
+          const out = createAssistantMessageEventStream();
+          void (async () => {
+            out.push({ type: 'start', partial: message(model, []) });
+            await clock.advanceAsync(2000);
+            out.push({ type: 'error', reason: 'error', error: message(model, [], 'error', 'websocket stream failed') });
+            out.end();
+          })();
+          return out;
+        },
+      });
+
+      await f.session.prompt('failing');
+
+      const failed = f.brain.getMessages('s1')
+        .filter((entry) => entry.role === 'assistant')
+        .map((entry) => JSON.parse(entry.content) as AssistantMessage & EffectiveRequestTiming)
+        .find((m) => m.stopReason === 'error');
+      expect(failed).toBeDefined();
+      expect(failed?.effectiveMs).toBeUndefined();
+      expect(snapshot(f.session).effectiveTps).toBeUndefined();
+    });
   });
 
   it('measures a fully buffered response as the whole wait, not the burst transfer', async () => {
