@@ -1490,3 +1490,177 @@ describe('a new environment on a machine host', () => {
     expect(decided.runtime).toEqual({ name: 'nspawn', pending: false, readiness: null });
   });
 });
+
+/** What two overlapping callers do to one shared piece of state. Each of these is a real interleaving:
+ *  a browser polling the overview while a start asks for itself, a publication binding that validated the
+ *  environment an operation has since changed, and a plugin reload whose sweep is still touching the host
+ *  when the next generation begins. */
+describe('environment concurrency boundaries', () => {
+  const startProject = async (runtime: any, requestId: string) => {
+    await runtime.requestEnvironment({ ...input, requestId, action: { kind: 'start' } });
+    await runtime.reconcile();
+  };
+  const messagesOf = (db: any) => db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id")
+    .all().map((entry: any) => entry.message as string);
+
+  // The answer is privileged and TTL-cached, and two callers ask at once in normal operation: the overview
+  // polls, and a start takes a fresh probe of its own. Ordering them by when the probe STARTED is what
+  // keeps the slower one from deciding what every later reader sees.
+  it('keeps the newer host probe answer when the older probe finishes last', async () => {
+    const { runtime, nspawn } = setup();
+    // The fixture's own answer, which a prepared host gives: what the two probes below answer with.
+    const ready = await nspawn.hostReadiness();
+    const answers: Array<(value: any) => void> = [];
+    nspawn.hostReadiness.mockImplementation(() => new Promise<any>((resolve) => { answers.push(resolve); }));
+    nspawn.hostReadiness.mockClear();
+
+    const older = runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    await vi.waitFor(() => expect(nspawn.hostReadiness).toHaveBeenCalledTimes(1));
+    const newer = runtime.machineRuntimeReadiness({ accountUserId: 3 });
+    await vi.waitFor(() => expect(nspawn.hostReadiness).toHaveBeenCalledTimes(2));
+
+    // The probe that started LAST answers first, and it is the one the cache holds.
+    answers[1]!(ready);
+    expect((await newer).ready).toBe(true);
+
+    // The probe that started FIRST answers last with what was true before the host was prepared. Its own
+    // caller still gets its own answer, and nothing later may see it.
+    answers[0]!({ ready: false, items: [{ id: 'package:systemd-container', label: 'systemd container tools', ok: false, detail: 'not installed' }] });
+    expect((await older).ready).toBe(false);
+
+    nspawn.hostReadiness.mockClear();
+    expect((await runtime.machineRuntimeReadiness({ accountUserId: 3 })).ready).toBe(true);
+    expect(nspawn.hostReadiness).not.toHaveBeenCalled();
+  });
+
+  it('does not let a start-time probe rewrite the answer the overview polls', async () => {
+    const { runtime, nspawn, containers } = setup({ defaultNetworkMode: 'shared' });
+    nspawn.hostReadiness.mockClear();
+    // The overview records a host that can start a networked environment...
+    expect((await runtime.machineRuntimeReadiness({ accountUserId: 3 })).ready).toBe(true);
+    // ...and the host loses its firewall rows before the start asks for itself.
+    nspawn.hostReadiness.mockResolvedValue({ ready: false, items: [{ id: 'firewall:forwarding', label: 'IPv4 forwarding', ok: false, detail: 'not enabled' }] });
+
+    await runtime.requestEnvironment({ ...input, requestId: 'fresh-probe-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    expect(containers.size).toBe(1);
+    // The envelope is built before the link is turned on, so the refusal lands with the machine created
+    // and never started: no virtual ethernet is carried on a host that cannot isolate it.
+    expect(nspawn.start).not.toHaveBeenCalled();
+    expect((await runtime.environmentFor(input)).lastError).toContain('IPv4 forwarding');
+    // The probe taken for the start is the start's alone: the polled answer it did not come from is
+    // untouched, so the next reader still costs no round trip and still sees what the overview recorded.
+    nspawn.hostReadiness.mockClear();
+    expect((await runtime.machineRuntimeReadiness({ accountUserId: 3 })).ready).toBe(true);
+    expect(nspawn.hostReadiness).not.toHaveBeenCalled();
+  });
+
+  /** Hold the ownership inspection `ready` makes, so a lifecycle change can land between the validation and
+   *  the write that follows it. `release` returns the inspection to its own implementation. */
+  const holdReadyInspection = (nspawn: any) => {
+    const inspect = nspawn.inspect.getMockImplementation()!;
+    nspawn.inspect.mockClear();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let first = true;
+    nspawn.inspect.mockImplementation(async (spec: any) => {
+      if (first) { first = false; await gate; }
+      return await inspect(spec);
+    });
+    return { release, entered: () => vi.waitFor(() => expect(nspawn.inspect).toHaveBeenCalledTimes(1)) };
+  };
+
+  it('re-reads the Project before it records a publication the validated state no longer covers', async () => {
+    const { runtime, nspawn, sql } = setup();
+    await startProject(runtime, 'binding-fence-start');
+    const hold = holdReadyInspection(nspawn);
+
+    const binding = runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    await hold.entered();
+    // The environment stops while the binding is suspended in the inspection that was meant to validate it.
+    sql.prepare("UPDATE p_sandbox_runtimes SET state='stopped' WHERE kind='project' AND resource_id='7'").run();
+    hold.release();
+
+    await expect(binding).rejects.toMatchObject({ code: 'environment_busy', status: 409 });
+    // No record and no forwarder: a publication must never be bound to a generation the environment left.
+    expect((sql.prepare("SELECT COUNT(*) AS total FROM p_sandbox_runtimes WHERE kind='publication'").get() as any).total).toBe(0);
+    expect(nspawn.startPublication).not.toHaveBeenCalled();
+  });
+
+  it('refuses a publication binding whose environment a lifecycle operation has taken over', async () => {
+    const { runtime, nspawn, sql } = setup();
+    await startProject(runtime, 'binding-busy-start');
+    const hold = holdReadyInspection(nspawn);
+
+    const binding = runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    await hold.entered();
+    // A stop is queued while the binding is suspended; the row still says running, so only the operation
+    // itself says the environment is no longer the caller's to bind.
+    await runtime.requestEnvironment({ ...input, requestId: 'binding-busy-stop', action: { kind: 'stop' } });
+    hold.release();
+
+    await expect(binding).rejects.toMatchObject({ code: 'environment_busy', status: 409 });
+    expect((sql.prepare("SELECT COUNT(*) AS total FROM p_sandbox_runtimes WHERE kind='publication'").get() as any).total).toBe(0);
+  });
+
+  // A plugin reload disposes one generation and registers the next over the same rows and the same host. A
+  // sweep caught mid-flight must therefore be waited for: its `disposed` check stops it at the next unit of
+  // work, and the operation that was in flight when the detach arrived is the last thing it touches.
+  it('detaches only after the sweep it interrupted has stopped', async () => {
+    const { runtime, nspawn, sql, containers } = setup();
+    await startProject(runtime, 'detach-start');
+    expect(containers.size).toBe(1);
+
+    const inventory = nspawn.containerInventory.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    nspawn.containerInventory.mockImplementationOnce(async () => { await gate; return await inventory(); });
+
+    const sweep = runtime.reconcile();
+    await vi.waitFor(() => expect(nspawn.containerInventory).toHaveBeenCalled());
+    // Work is queued between two units of the sweep, and the generation is detached with the sweep still
+    // inside its inventory round trip.
+    const stop = await runtime.requestEnvironment({ ...input, requestId: 'detach-stop', action: { kind: 'stop' } });
+    let detached = false;
+    const disposal = runtime.dispose().then(() => { detached = true; });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(detached).toBe(false);
+
+    release();
+    await disposal;
+    await sweep;
+    // The queued stop was never claimed, because the sweep ended instead of starting another unit of work.
+    expect((sql.prepare('SELECT status FROM p_sandbox_runtime_operations WHERE id=?').get(stop.id) as any).status).toBe('pending');
+    expect(nspawn.stop).not.toHaveBeenCalled();
+  });
+
+  // The map that suppresses a repeated publication-recovery line is keyed by project and only ever reports a
+  // STANDING condition. A project that stopped while that condition stood has nothing left to reconcile, so
+  // the entry goes with the condition rather than surviving to be reported as a resumption later on.
+  it('forgets the recovery condition of a project that stopped while it stood', async () => {
+    // The exhausted wording `queueAutomaticRecovery` itself writes, which is what makes the condition
+    // terminal and therefore stable across sweeps without queueing another attempt.
+    const terminal = 'Automatic recovery failed after 4 attempts; the container is still not running';
+    const { runtime, nspawn, sql, containers, db } = setup();
+    await startProject(runtime, 'condition-start');
+    await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    sql.prepare("UPDATE p_sandbox_runtimes SET state='failed', error=? WHERE kind='project' AND resource_id='7'").run(terminal);
+    containers.values().next().value.state = 'created';
+
+    await runtime.reconcile();
+    expect(messagesOf(db).filter((message) => message.includes('Publication reconciliation skipped'))).toHaveLength(1);
+
+    // The project stops between two sweeps, which is what a completed stop leaves behind in the row.
+    sql.prepare("UPDATE p_sandbox_runtimes SET state='stopped' WHERE kind='project' AND resource_id='7'").run();
+    await runtime.reconcile();
+    // ...and it runs again, with its machine up, so the condition it had is genuinely gone.
+    sql.prepare("UPDATE p_sandbox_runtimes SET state='running' WHERE kind='project' AND resource_id='7'").run();
+    containers.values().next().value.state = 'running';
+    await runtime.reconcile();
+    await runtime.reconcile();
+
+    expect(messagesOf(db).filter((message) => message.includes('Publication reconciliation resumed'))).toHaveLength(0);
+    expect(nspawn.startPublication).toHaveBeenCalledTimes(1);
+  });
+});
