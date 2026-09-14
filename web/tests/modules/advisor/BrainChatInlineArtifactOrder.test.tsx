@@ -4,6 +4,7 @@ import type { BrainInlineArtifact } from '../../../lib/types';
 import type { ChatTurn } from '../../../lib/transcript';
 import { createWrapper } from '../../test-utils';
 import { Message } from '../../../modules/advisor/BrainChatSurface';
+import { ChatArtifactScope } from '../../../modules/advisor/chatArtifactScope';
 
 vi.mock('../../../modules/advisor/InlineArtifact', () => ({
   InlineArtifact: ({ artifact }: { artifact: BrainInlineArtifact }) => (
@@ -40,7 +41,9 @@ describe('inline artifact transcript placement', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(
       <Wrapper>
-        <Message turn={turn} artifacts={[artifact]} showThoughts />
+        <ChatArtifactScope artifacts={[artifact]}>
+          <Message turn={turn} showThoughts />
+        </ChatArtifactScope>
       </Wrapper>,
     );
 

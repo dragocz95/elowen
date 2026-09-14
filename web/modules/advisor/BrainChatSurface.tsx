@@ -11,7 +11,7 @@ import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
-import type { BrainCard, BrainInlineArtifact, BrainMessageFile, BrainMessageImage, BrainModelOption, BrainWorkMode, SlashCommandDef } from '../../lib/types';
+import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainModelOption, BrainWorkMode, SlashCommandDef } from '../../lib/types';
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -59,6 +59,7 @@ import { useSessionTasks } from '../../lib/queries';
 import { useUpdateSessionTask } from '../../lib/mutations';
 import type { PluginChatPendingInput } from 'elowen-plugin-ui-kit';
 import { InlineArtifact } from './InlineArtifact';
+import { ChatArtifactScope, useSegmentArtifacts } from './chatArtifactScope';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 
@@ -425,13 +426,17 @@ function TodoCard({ card, rows, live }: { card: BrainCard; rows: readonly RailTa
  *  Which of the two renderings a card gets is decided by the SAME pair the rail's Tasks section uses, and
  *  not by a second opinion of its own: `cardTasks` answers for the todo card and nothing else (it matches
  *  on `TODO_CARD_ID`), and `cardTasksAddressable` refuses a half-addressable list, so a card older than
- *  task ids falls back to the read-only rendering instead of offering controls that work on some rows. */
-export function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
+ *  task ids falls back to the read-only rendering instead of offering controls that work on some rows.
+ *
+ *  Memoized on the card itself. The surface around it re-renders on every streamed token (it carries the
+ *  live statusline), and a thirty-item checklist has no business being rebuilt tens of times a second for
+ *  a card the daemon has not touched. Card state arrives as its own event, which is what changes `card`. */
+export const CardBlock = memo(function CardBlock({ card, live }: { card: BrainCard; live: boolean }) {
   const rows = useMemo(() => cardTasks([card]), [card]);
   return cardTasksAddressable(rows)
     ? <TodoCard card={card} rows={rows} live={live} />
     : <StaticCard card={card} live={live} />;
-}
+});
 
 /** The assistant's tool calls, rendered as tight monospace log rows stacked directly under each other —
  *  no pills, no chrome. A tool that produced a diff, a command output or a live progress tail is a
@@ -853,25 +858,26 @@ function ToolAuthoringHint({ turn, locale }: {
   );
 }
 
-type MessageProps = { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; pendingInput?: PluginChatPendingInput | null; models?: readonly BrainModelOption[]; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string };
+type MessageProps = { turn: ChatTurn; models?: readonly BrainModelOption[]; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string };
 
-const NO_ARTIFACTS: BrainInlineArtifact[] = [];
-
-/** Only artifact-bearing turns consume live narration and pending-input changes. Keep those updates
- *  from invalidating every settled message, while still delivering them to every mounted artifact. */
-export function Message({ artifacts, narration, pendingInput, ...props }: MessageProps) {
-  const { turn } = props;
-  const attached = useMemo(() => artifacts.filter((artifact) => turn.role === 'elowen'
-    && turn.segments.some((segment) => segment.kind === 'tools'
-      && segment.items.some((tool) => tool.id === artifact.toolCallId))), [turn, artifacts]);
-  return <MessageBody {...props} artifacts={attached.length ? attached : NO_ARTIFACTS}
-    narration={attached.length ? narration : undefined}
-    pendingInput={attached.length ? pendingInput : undefined} />;
+/** The inline plugin artifacts belonging to one tool group. A slot rather than a prop: the artifacts and
+ *  the live narration reach it through `ChatArtifactScope`, so opening one — or streaming a token into the
+ *  narration an open one shows — never touches the turn it hangs under, let alone the settled turns above
+ *  it. Renders nothing, and subscribes to nothing live, while no artifact is attached. */
+function SegmentArtifacts({ items }: { items: ToolItem[] }) {
+  const attached = useSegmentArtifacts(items.map((tool) => tool.id));
+  if (attached.length === 0) return null;
+  return <>{attached.map((artifact) => <InlineArtifact key={`${artifact.plugin}:${artifact.id}`} artifact={artifact} />)}</>;
 }
 
-/** Stored turns retain their identity across stream updates. Keep their mounted, interactive history
- *  out of the live render path rather than hiding or removing it. */
-const MessageBody = memo(function MessageBody({ turn, artifacts, narration, pendingInput, models, full, showRole, showThoughts, tk }: MessageProps) {
+/** One transcript turn.
+ *
+ *  Memoized, and that memo is load-bearing: a streaming answer replaces the transcript view on every token,
+ *  so without it every settled turn in the conversation is reconciled tens of times a second — the work
+ *  that leaves a keystroke waiting on a phone. What made the memo impossible before was the live state
+ *  threaded through every row (`narration`, `pendingInput`, the artifact list); that now reaches the only
+ *  component that reads it through `ChatArtifactScope`, and a settled turn's props are its own content. */
+export const Message = memo(function Message({ turn, models, full, showRole, showThoughts, tk }: MessageProps) {
   const { t, locale } = useTranslation();
   const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
@@ -895,9 +901,7 @@ const MessageBody = memo(function MessageBody({ turn, artifacts, narration, pend
         ? <SharedFile key={i} file={seg.file} caption={seg.caption} full={full} />
         : <Fragment key={i}>
             <ToolPills tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />
-            {artifacts
-              .filter((artifact) => seg.items.some((tool) => tool.id === artifact.toolCallId))
-              .map((artifact) => <InlineArtifact key={`${artifact.plugin}:${artifact.id}`} artifact={artifact} narration={narration} pendingInput={pendingInput} />)}
+            <SegmentArtifacts items={seg.items} />
           </Fragment>))}
         {turn.composing ? <ToolAuthoringHint turn={turn} locale={locale as ComposeLocale} /> : null}
       </>;
@@ -2094,6 +2098,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
           turns stack with NO container gap — each segment carries its own margin, so tool rows keep one
           uniform rhythm across turn boundaries and only a speaker change opens a block break. The compact
           dock keeps its own internal scroll and per-turn gap. */}
+      <ChatArtifactScope artifacts={artifacts} narration={narration} pendingInput={pendingInput}>
       <div ref={scrollRef} data-testid="chat-transcript" className={`flex flex-1 flex-col ${variant === 'full' ? 'chat-gutter chat-transcript' : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
         {turns.length === 0 && ready ? (
           variant === 'full' ? (
@@ -2122,9 +2127,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
               key={key}
               tk={key}
               turn={turn}
-              artifacts={artifacts}
-              narration={narration}
-              pendingInput={pendingInput}
               models={c.models ?? undefined}
               full={variant === 'full'}
               showRole={i === 0 || turns[i - 1].role !== turn.role}
@@ -2213,6 +2215,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         ) : null}
         </div>
       </div>
+      </ChatArtifactScope>
 
       {/* Composer footer (statusline + staged attachments + queue + composer). In the full page it sticks
           to the bottom of the visible band — the page scrolls behind it, and while a soft keyboard is up

@@ -10,6 +10,7 @@ import { BrainChat } from '../../../modules/advisor/BrainChat';
 import { BrainChatSurface, Message } from '../../../modules/advisor/BrainChatSurface';
 import type { BrainInlineArtifact } from '../../../lib/types';
 import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
+import { ChatArtifactScope } from '../../../modules/advisor/chatArtifactScope';
 import * as transcript from '../../../lib/transcript';
 import { useState } from 'react';
 
@@ -74,7 +75,9 @@ describe('BrainChatSurface renders the daemon-parity rows without crashing', () 
     function Harness() {
       const [artifacts, setArtifacts] = useState<BrainInlineArtifact[]>([]);
       return <><button onClick={() => setArtifacts([artifact])}>Update artifact</button>
-        <Message turn={turn} artifacts={artifacts} narration={artifacts.length ? 'new narration' : undefined} showThoughts /></>;
+        <ChatArtifactScope artifacts={artifacts} narration={artifacts.length ? 'new narration' : undefined}>
+          <Message turn={turn} showThoughts />
+        </ChatArtifactScope></>;
     }
     const group = vi.spyOn(transcript, 'groupToolItems');
     try {
