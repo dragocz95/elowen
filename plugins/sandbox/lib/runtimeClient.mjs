@@ -38,6 +38,8 @@
  * @property {(spec: object) => Promise<void>} pause
  * @property {(spec: object) => Promise<void>} unpause
  * @property {(spec: object, options?: { timeoutMs?: number }) => Promise<void>} waitForSystemBus
+ * @property {(spec: object) => Promise<{ ready: boolean, carrier: boolean, addresses: string[], detail?: string }>} [networkReadiness]
+ * @property {(spec: object, options?: { timeoutMs?: number }) => Promise<{ ready: true, carrier: true, addresses: string[] }>} [waitForNetwork]
  * @property {(spec: object, options?: { timeoutMs?: number }) => Promise<string>} systemRunning
  * @property {(spec: object, limits: object) => Promise<object>} update Applies limits live and returns
  *   the specification that records them.
@@ -54,6 +56,7 @@
  *
  * Disk trees. Every path is host-derived and re-validated by the client against the trusted roots.
  * @property {(spec: object, pendingPath: string, options?: object) => Promise<string>} materializeRootfs
+ * @property {(spec: object) => Promise<{ changed: boolean, enabled: string[] }>} [normalizeRootfs]
  * @property {(spec: object) => Promise<{ uidBase: number, uidSize: number, entries: number }>} shiftOwnership
  *   Re-stamps the disk's identity record from the specification and puts the tree on the machine's uid
  *   range. Idempotent: a tree already in range is left alone, byte for byte.

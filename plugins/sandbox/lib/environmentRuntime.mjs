@@ -437,6 +437,23 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
 
   const view = (row) => ({ projectId: Number(row.resource_id), generation: row.generation, state: row.state,
     desiredState: row.desired_state, lastError: row.error ?? null, limits: effectiveLimits(row.limits), network: effectiveNetwork(row.spec) });
+  /** EnvironmentStatus is a readiness report, not only a process-liveness report. A migrated guest can
+   *  keep systemd running while host0 is DOWN because networkd stayed disabled, so surface that standing
+   *  defect without rewriting durable lifecycle state from a read. */
+  async function environmentView(row) {
+    const result = view(row);
+    if (result.state !== 'running' || result.network.mode === 'isolated' || !usesNspawnRuntime(row.spec.input)) return result;
+    try {
+      const spec = specFor(row.spec);
+      const runtime = runtimeFor(spec);
+      if (typeof runtime.networkReadiness !== 'function') return result;
+      const network = await runtime.networkReadiness(spec);
+      if (network.ready) return result;
+      return { ...result, state: 'failed', lastError: `The guest shared network is not ready — ${network.detail ?? 'host0 has no carrier or address'}` };
+    } catch (cause) {
+      return { ...result, state: 'failed', lastError: `The guest shared network could not be verified — ${sanitize(cause.message ?? cause)}` };
+    }
+  }
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
 
   /** The one place an operation's live state leaves this process. Everything a watcher needs travels in
@@ -871,7 +888,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       });
       step(op, 'storage');
       await adoptHostWorkspace(row);
-    } else step(op, 'storage');
+    } else {
+      const spec = specFor(row.spec);
+      const runtime = runtimeFor(spec);
+      if (typeof runtime.normalizeRootfs === 'function') await runtime.normalizeRootfs(spec);
+      step(op, 'storage');
+    }
     step(op, 'container');
     const current = await ensureInitialContainer(row, op);
     const spec = specFor(row.spec);
@@ -897,6 +919,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // finishes is then reported as exactly that instead of a dbus error from the initialize command.
     step(op, 'ready', null);
     await runtimeFor(spec).waitForSystemBus(spec);
+    if (effectiveNetwork(row.spec).mode !== 'isolated') {
+      const runtime = runtimeFor(spec);
+      if (typeof runtime.waitForNetwork === 'function') await runtime.waitForNetwork(spec);
+      else if (typeof runtime.networkReadiness === 'function') {
+        const network = await runtime.networkReadiness(spec);
+        if (!network.ready) throw error('guest_network_not_ready', `The guest shared network is not ready — ${network.detail ?? 'host0 has no carrier or address'}`);
+      }
+    }
     step(op, 'initialize');
     if (!op.checkpoint.initialized) {
       const result = await runtimeFor(spec).exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: `set -eu\nif [ ! -e ${root}/.git ]; then\n git init -b main ${root}\n git -C ${root} -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n`, timeoutMs: 30000, persistent: true });
@@ -1765,7 +1795,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const row = store.get('project', id);
       // An unprovisioned project has no stored limits yet, so it reports the defaults it WOULD be
       // created with rather than the built-in figures the administrator may have moved away from.
-      return row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
+      return row ? await environmentView(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
         limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) };
     },
     async projectOverview(input) {

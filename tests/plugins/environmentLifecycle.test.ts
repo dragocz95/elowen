@@ -116,6 +116,9 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
     // A start waits for the guest system bus before anything runs through `systemd-run`.
     waitForSystemBus: vi.fn(async () => {}),
     systemRunning: vi.fn(async () => 'running'),
+    normalizeRootfs: vi.fn(async () => ({ changed: false, enabled: ['systemd-networkd.service', 'systemd-networkd.socket'] })),
+    networkReadiness: vi.fn(async () => ({ ready: true, carrier: true, addresses: ['10.0.0.7'] })),
+    waitForNetwork: vi.fn(async () => ({ ready: true, carrier: true, addresses: ['10.0.0.7'] })),
     pause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'paused'; }),
     unpause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(), startPreview: vi.fn(),
@@ -450,6 +453,31 @@ describe('durable managed environment lifecycle', () => {
     // The name is up and unprovable again: the same standing condition, reported as a new one.
     await runtime.reconcile();
     expect(reports()).toBe(2);
+  });
+
+  it('normalizes a migrated persistent root before restarting its existing machine', async () => {
+    const { runtime, nspawn } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    nspawn.normalizeRootfs.mockClear();
+    nspawn.start.mockClear();
+
+    await runtime.requestEnvironment({ ...input, requestId: 'normalize-existing-root', action: { kind: 'restart' } });
+    await runtime.reconcile();
+
+    expect(nspawn.normalizeRootfs).toHaveBeenCalledOnce();
+    expect(nspawn.normalizeRootfs.mock.invocationCallOrder[0]).toBeLessThan(nspawn.start.mock.invocationCallOrder[0]);
+  });
+
+  it('does not report a running shared-network guest as ready without host0 carrier and an address', async () => {
+    const { runtime, nspawn, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    nspawn.networkReadiness.mockResolvedValue({ ready: false, carrier: false, addresses: [],
+      detail: 'host0 has no carrier and no global address' });
+
+    const environment = await runtime.environmentFor(input);
+    expect(environment.state).toBe('failed');
+    expect(environment.lastError).toContain('host0 has no carrier and no global address');
+    expect(db.prepare("SELECT state FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toEqual({ state: 'running' });
   });
 
   /** A networked machine is only isolated while the host's forwarding and firewall rows are in place, and

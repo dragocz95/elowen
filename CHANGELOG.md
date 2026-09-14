@@ -53,6 +53,9 @@ This file is the full technical log. The notes users read in the app are the cur
 - Managed machines are denied access to link-local metadata and the host cloud platform before forwarding rules are
   applied. When the selected resolver is Azure platform DNS, only TCP and UDP port 53 to exactly `168.63.129.16` is
   admitted before the broad platform deny; HTTP, metadata and every other port remain blocked.
+- Persistent nspawn roots now reconcile the rootfs recipe's required `systemd-networkd` units through offline
+  `systemctl --root` before startup. Shared-network startup and EnvironmentStatus also require `host0` carrier and a
+  global address, so a migrated root with disabled networking is reported as failed instead of ready.
 
 ### Removed
 

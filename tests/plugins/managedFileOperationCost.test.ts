@@ -102,6 +102,9 @@ function setup() {
     if (request.op === 'status') {
       return { ok: true, ready: true, items: [{ id: 'unit:elowen-machine', label: 'Machine unit template', ok: true, detail: 'installed and loaded' }] };
     }
+    if (request.op === 'normalize-rootfs') {
+      return { ok: true, changed: false, enabled: ['systemd-networkd.service', 'systemd-networkd.socket'] };
+    }
     if (request.op === 'write-envelope') {
       const envelope = envelopePaths(request.machine, configRoot);
       for (const path of Object.values(envelope)) mkdirSync(dirname(path), { recursive: true });
@@ -143,6 +146,9 @@ function setup() {
     if (request.op === 'exec') {
       const argv: string[] = request.argv;
       if (argv[0] === '/usr/bin/python3') {
+        if (argv[2]?.includes('/sys/class/net/host0/carrier')) {
+          return verdict(JSON.stringify({ carrier: true, addresses: ['10.0.0.7'] }));
+        }
         // The hook runs INSIDE the guest execution, while the lease that operation holds is held.
         const body = input === undefined ? '{}' : input.toString('utf8');
         if (hook) await hook(JSON.parse(body));

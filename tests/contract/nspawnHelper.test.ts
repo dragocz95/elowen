@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 // The installed root helper is standalone ESM — after sudo it cannot import service-user-owned package
@@ -22,6 +22,7 @@ import {
   MACHINE_SYSCTL_CONTENT,
   MACHINE_SYSCTL_PATH,
   MACHINE_UNIT_TEMPLATE,
+  PROJECT_ROOTFS_ENABLED_UNITS,
   firewallRuleCommand,
   nspawnFirewallRules,
   NSPAWN_FIREWALL_RULES,
@@ -47,6 +48,7 @@ import {
 } from '../../scripts/elowen-site-gateway.mjs';
 // @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
 import { createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { PROJECT_ARTIFACT, ROOTFS_RECIPES } from '../../plugins/sandbox/lib/rootfsCatalog.mjs';
 // @ts-expect-error the bundled machine runtime is plain ESM without declarations
 import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
 // @ts-expect-error the bundled Sandbox storage owner is plain ESM without declarations
@@ -604,7 +606,7 @@ describe('privileged helper: the four merge constraints', () => {
     for (const op of ['exec', 'freeze', 'thaw', 'tree-fingerprint', 'tree-preflight', 'tree-sizes', 'tree-verify', 'status']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(false);
     }
-    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'retire-legacy-site',
+    for (const op of ['provision', 'materialize', 'write-envelope', 'shift-ownership', 'normalize-rootfs', 'retire-legacy-site',
       'tree-copy', 'tree-sync', 'tree-remove', 'destroy', 'release-uid-range']) {
       expect(helperRequestNeedsMutationLock({ domain: 'nspawn', op })).toBe(true);
     }
@@ -1231,6 +1233,9 @@ describe('privileged helper: the disk identity record', () => {
           if (path.startsWith(scratch)) {
             mkdirSync(dirname(path), { recursive: true });
             writeFileSync(path, content, { mode });
+          } else if (basename(path) === basename(paths.identity)) {
+            mkdirSync(dirname(paths.identity), { recursive: true });
+            writeFileSync(paths.identity, content, { mode });
           }
         },
         runner: (file: string, args: string[]) => {
@@ -1249,6 +1254,80 @@ describe('privileged helper: the disk identity record', () => {
       },
     };
   }
+
+  it('keeps the standalone helper required units identical to the rootfs recipe', () => {
+    expect(PROJECT_ROOTFS_ENABLED_UNITS).toEqual(ROOTFS_RECIPES[PROJECT_ARTIFACT].enabled);
+  });
+
+  it('enables recipe-required units offline before shifting a migrated root', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+
+    const systemctl = fixture.calls.filter((call) => call.file === '/usr/bin/systemctl');
+    expect(systemctl.slice(0, 2).map((call) => call.args)).toEqual(PROJECT_ROOTFS_ENABLED_UNITS.map((unit) => [
+      '--root=/proc/self/fd/3', 'is-enabled', unit,
+    ]));
+    expect(systemctl.at(-1)?.args).toEqual(['--root=/proc/self/fd/3', 'enable', ...PROJECT_ROOTFS_ENABLED_UNITS]);
+    expect(fixture.calls.findIndex((call) => call.file === '/usr/bin/systemctl' && call.args.includes('enable')))
+      .toBeLessThan(fixture.calls.findIndex((call) => call.file === '/usr/bin/python3'));
+  });
+
+  it('repairs only required unit enablement on an existing root', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+    fixture.calls.length = 0;
+    const receipt = await applyRequest({ domain: 'nspawn', op: 'normalize-rootfs', ...diskRef }, undefined, fixture.options) as {
+      changed: boolean; enabled: string[];
+    };
+
+    expect(receipt).toEqual({ ok: true, rootfsPath: fixture.paths.rootfs, changed: true,
+      enabled: [...PROJECT_ROOTFS_ENABLED_UNITS] });
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/python3')).toBe(false);
+  });
+
+  it('refuses to normalize a disk whose identity is not the requested environment', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+    const identity = JSON.parse(readFileSync(fixture.paths.identity, 'utf8'));
+    writeFileSync(fixture.paths.identity, JSON.stringify({ ...identity, specHash: 'e'.repeat(64) }));
+    fixture.calls.length = 0;
+
+    await expect(applyRequest({ domain: 'nspawn', op: 'normalize-rootfs', ...diskRef }, undefined, fixture.options))
+      .rejects.toThrow(/identity does not match/);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl')).toBe(false);
+  });
+
+  it('refuses to normalize a root filesystem whose owner disagrees with its identity', async () => {
+    const fixture = diskFixture();
+    await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
+    fixture.calls.length = 0;
+    fixture.options.readOwner = () => UID_RANGE_BASE + 1;
+
+    await expect(applyRequest({ domain: 'nspawn', op: 'normalize-rootfs', ...diskRef }, undefined, fixture.options))
+      .rejects.toThrow(/ownership does not match/);
+    expect(fixture.calls.some((call) => call.file === '/usr/bin/systemctl')).toBe(false);
+  });
+
+  it('leaves a new root unchanged when the recipe-required units are already enabled', async () => {
+    const fixture = diskFixture();
+    const baseRunner = fixture.options.runner;
+    fixture.options.runner = (file: string, args: string[]) => {
+      if (file === '/usr/bin/systemctl' && args[1] === 'is-enabled') {
+        fixture.calls.push({ file, args });
+        return { ok: true, stdout: 'enabled\n' };
+      }
+      return baseRunner(file, args);
+    };
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+
+    await applyRequest({ domain: 'nspawn', op: 'materialize', ...diskRef,
+      archivePath: archive, targetPath: fixture.paths.rootfs }, undefined, fixture.options);
+
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args.includes('enable'))).toHaveLength(0);
+    expect(fixture.calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args[1] === 'is-enabled')).toHaveLength(2);
+    rmSync(archive, { force: true });
+  });
 
   it('leaves the machine root traversable, whatever mode the caller or the archive asked for', async () => {
     // Root traverses a 0700 directory it does not own, so a narrow machine root looks like a healthy boot

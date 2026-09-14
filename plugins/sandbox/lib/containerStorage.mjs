@@ -126,6 +126,10 @@ export class ContainerStorage {
       try { return validateManifest(JSON.parse(readFileSync(checkedHostPath(path, { file: true }), 'utf8'))); }
       catch (cause) { if (cause.code === 'ENOENT') return null; throw cause; }
     };
+    const normalizeExistingRootfs = async () => {
+      const driver = this.#driver(spec);
+      if (typeof driver.normalizeRootfs === 'function') await driver.normalizeRootfs(spec);
+    };
     const manifest = readManifest(manifestPath);
     if (manifest) {
       try {
@@ -137,6 +141,7 @@ export class ContainerStorage {
         missing.code = 'disk_missing';
         throw missing;
       }
+      await normalizeExistingRootfs();
       return;
     }
     const pending = join(directory, 'rootfs.pending');
@@ -155,6 +160,7 @@ export class ContainerStorage {
         }
         renameSync(pendingManifestPath, manifestPath);
         syncPath(directory);
+        await normalizeExistingRootfs();
         return;
       }
       unlinkSync(pendingManifestPath);

@@ -608,6 +608,38 @@ describe('nspawn privileged transport', () => {
     expect(artifacts.ensure).toHaveBeenCalledWith(spec.disk.sourceImage, { onProgress });
   });
 
+  it('normalizes an existing root through the bounded privileged operation', async () => {
+    const { client, spec, requests, helperReply } = fixture();
+    helperReply['normalize-rootfs'] = { ok: true, changed: true,
+      enabled: ['systemd-networkd.service', 'systemd-networkd.socket'] };
+    await client.normalizeRootfs(spec);
+    expect(requests.at(-1)).toMatchObject({ op: 'normalize-rootfs', machine: spec.name,
+      kind: 'project', resource: '7', diskId: spec.disk.id });
+  });
+
+  it('reports shared network readiness only with host0 carrier and a global address', async () => {
+    const { client, spec, helperReply } = fixture({ network: { mode: 'shared', inboundPorts: [] } });
+    helperReply.exec = { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
+      stdout: Buffer.from(JSON.stringify({ carrier: false, addresses: [] })).toString('base64'), stderr: '' };
+    await expect(client.networkReadiness(spec)).resolves.toEqual({ ready: false, carrier: false, addresses: [],
+      detail: 'host0 has no carrier and no global address' });
+
+    helperReply.exec.stdout = Buffer.from(JSON.stringify({ carrier: true, addresses: ['10.0.0.7'] })).toString('base64');
+    await expect(client.networkReadiness(spec)).resolves.toEqual({ ready: true, carrier: true, addresses: ['10.0.0.7'] });
+  });
+
+  it('waits through DHCP convergence before declaring the shared network ready', async () => {
+    const { client, spec, helperReply } = fixture({ network: { mode: 'shared', inboundPorts: [] } });
+    let probes = 0;
+    helperReply.exec = () => ({ ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
+      stdout: Buffer.from(JSON.stringify(++probes === 1
+        ? { carrier: true, addresses: [] } : { carrier: true, addresses: ['10.0.0.7'] })).toString('base64'), stderr: '' });
+
+    await expect(client.waitForNetwork(spec, { timeoutMs: 1000 })).resolves
+      .toEqual({ ready: true, carrier: true, addresses: ['10.0.0.7'] });
+    expect(probes).toBe(2);
+  });
+
   it('releases the uid reservation only after storage is verified absent, including retries', async () => {
     const { client, spec, envelope, machines, requests } = fixture();
     rmSync(envelope.nspawn, { force: true });

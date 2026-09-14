@@ -570,6 +570,10 @@ export function safeGuestMountTarget(value) {
 }
 
 export const NSPAWN_PACKAGE = 'systemd-container';
+/** Mirrored from the project-base rootfs recipe. The helper is installed as standalone root-owned ESM and
+ *  cannot import service-user-owned plugin code; the contract test holds this mirror byte-for-byte to the
+ *  recipe so the privileged migration seam never invents a second policy. */
+export const PROJECT_ROOTFS_ENABLED_UNITS = Object.freeze(['systemd-networkd.service', 'systemd-networkd.socket']);
 export const MACHINE_UNIT_PATH = '/etc/systemd/system/elowen-machine@.service';
 export const POLKIT_RULE_PATH = '/etc/polkit-1/rules.d/49-elowen-nspawn.rules';
 const NSPAWN_SETTINGS_ROOT = '/etc/systemd/nspawn';
@@ -1567,12 +1571,14 @@ function nspawnMaterialize(request, storage, options) {
     fchmodSync(pinnedTarget.fd, 0o755);
     (options.setOwner ?? defaultSetOwner)(pinnedTarget.fd, 0, 0);
     truncateMachineId(pinnedEntry(pinnedTarget));
+    const pins = pinFds([pinnedArchive, pinnedTarget]);
+    const normalized = normalizeRootfsEnabledUnits(runner, pinnedTarget, pins);
     const base = uidRangeFor(paths, options);
     // The pass translates guest id g into base+g and reads no other mapping, so establishing a fresh disk
     // needs nothing from /etc/subuid and nothing about the service account.
-    const shifted = shiftOwnership(runner, pinnedTarget.childPath, { base, size: UID_RANGE_SIZE }, pinFds([pinnedArchive, pinnedTarget]));
+    const shifted = shiftOwnership(runner, pinnedTarget.childPath, { base, size: UID_RANGE_SIZE }, pins);
     const identity = writeIdentity(paths, storage, identityFields(request, paths, base), options);
-    return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity };
+    return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity, ...normalized };
   });
 }
 
@@ -1608,6 +1614,23 @@ function truncateMachineId(rootPath) {
   }
 }
 
+/** Apply the rootfs recipe's required enablement through systemd's own offline implementation. A probe
+ *  precedes the mutation so a root produced by the current artifact is byte-for-byte untouched, while a
+ *  migrated Podman-era root changes only the missing enablement links. The pinned descriptor keeps
+ *  `--root` on the tree this helper opened even if its service-user-owned path is renamed concurrently. */
+function normalizeRootfsEnabledUnits(runner, pinnedRoot, pins) {
+  const root = `--root=${pinnedRoot.childPath}`;
+  const missing = [];
+  for (const unit of PROJECT_ROOTFS_ENABLED_UNITS) {
+    const status = runner('/usr/bin/systemctl', [root, 'is-enabled', unit], { timeoutMs: 30_000, pins });
+    if (!status.ok || String(status.stdout || '').trim() !== 'enabled') missing.push(unit);
+  }
+  if (!missing.length) return { changed: false, enabled: [...PROJECT_ROOTFS_ENABLED_UNITS] };
+  const enabled = runner('/usr/bin/systemctl', [root, 'enable', ...missing], { timeoutMs: 30_000, pins });
+  if (!enabled.ok) fail(`the required root filesystem units could not be enabled: ${String(enabled.stderr || '').slice(-400)}`);
+  return { changed: true, enabled: [...PROJECT_ROOTFS_ENABLED_UNITS] };
+}
+
 /** The ownership pass over a disk that already exists, onto the range the registry holds for the
  *  environment. It is idempotent by construction: ids already carrying the machine range are left alone,
  *  so a pass interrupted part-way through a tree is re-run rather than repaired. */
@@ -1617,7 +1640,9 @@ function nspawnShiftOwnership(request, storage, options) {
   const rootfs = trustedPath(storage, paths.rootfs);
   const base = uidRangeFor(paths, options);
   return withPinned([{ path: rootfs }], (pinned) => {
-    const shifted = shiftOwnership(runner, pinned[0].childPath, { base, size: UID_RANGE_SIZE }, pinFds(pinned));
+    const pins = pinFds(pinned);
+    const normalized = normalizeRootfsEnabledUnits(runner, pinned[0], pins);
+    const shifted = shiftOwnership(runner, pinned[0].childPath, { base, size: UID_RANGE_SIZE }, pins);
     writeIdentity(paths, storage, identityFields(request, paths, base), options);
     return {
       ok: true,
@@ -1625,7 +1650,29 @@ function nspawnShiftOwnership(request, storage, options) {
       uidBase: base,
       uidSize: UID_RANGE_SIZE,
       entries: shifted.entries,
+      ...normalized,
     };
+  });
+}
+
+/** Reconcile only the rootfs recipe on an already materialized disk. This is the bounded repair operation
+ *  used before an existing machine starts: no ownership pass, package change or persistent data copy. */
+function nspawnNormalizeRootfs(request, storage, options) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const paths = nspawnDiskPaths(storage, request);
+  const identityPath = trustedPath(storage, paths.identity, { file: true });
+  const rootfs = trustedPath(storage, paths.rootfs);
+  return withPinned([{ path: identityPath, file: true }, { path: rootfs }], ([pinnedIdentity, pinnedRoot]) => {
+    let identity;
+    try { identity = JSON.parse(readFileSync(pinnedEntry(pinnedIdentity), 'utf8')); }
+    catch { fail('the machine disk identity is invalid'); }
+    if (!Number.isSafeInteger(identity?.uidBase) || identity.uidBase < UID_RANGE_BASE) fail('the machine disk identity is invalid');
+    const expected = identityFields(request, paths, identity.uidBase);
+    if (Object.entries(expected).some(([key, value]) => identity[key] !== value)) fail('the machine disk identity does not match the requested environment');
+    const owner = (options.readOwner ?? defaultReadOwner)(pinnedEntry(pinnedRoot));
+    if (owner !== identity.uidBase) fail('the root filesystem ownership does not match its identity');
+    return { ok: true, rootfsPath: rootfs,
+      ...normalizeRootfsEnabledUnits(runner, pinnedRoot, [pinnedIdentity.fd, pinnedRoot.fd]) };
   });
 }
 
@@ -2517,6 +2564,7 @@ const NSPAWN_OPERATIONS = Object.freeze({
   materialize: nspawnMaterialize,
   'write-envelope': nspawnWriteEnvelope,
   'shift-ownership': nspawnShiftOwnership,
+  'normalize-rootfs': nspawnNormalizeRootfs,
   exec: (request, _storage, options) => nspawnExec(request, options),
   start: (request, _storage, options) => nspawnLifecycle(request, 'start', options),
   stop: (request, _storage, options) => nspawnLifecycle(request, 'stop', options),
