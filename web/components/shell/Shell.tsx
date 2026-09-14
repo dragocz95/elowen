@@ -257,12 +257,17 @@ function ShellLayout({ children }: { children: ReactNode }) {
     />
   );
   const content = (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* NOTE: no `container-type` here on purpose — it would make <main> a containing block for
           `position: fixed` descendants and re-anchor any non-portaled overlay (full-screen modals,
           context menus) to it. Content views scope their own `@container` around just the grid/list
           instead, keeping overlays outside it. */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
+      <main
+        data-scroll-owner={onChat ? 'chat-shell' : 'page'}
+        className={`flex min-h-0 flex-1 flex-col overflow-x-hidden ${onChat
+          ? 'overflow-y-hidden'
+          : 'overflow-y-auto overscroll-contain [scrollbar-gutter:stable]'}`}
+      >
         {/* Studio's ruled app bar spans the whole workspace between navigation and advisor, like the
             reference. Document content below keeps its own centred reading frame. */}
         {profile === 'command' ? topBar : null}
@@ -278,7 +283,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
             declaration lives in its manifest and arrives on the nav listing, so the frame is right on the
             first paint; the attribute carries the same one decision to CSS, where the page surfaces inside
             this frame stand down rather than capping the workbench a second time. */}
-        <div data-page-measure={measure} className={`mx-auto flex w-full flex-col ${MEASURE_CLASS[measure]}`}>
+        <div
+          data-page-measure={measure}
+          className={`mx-auto flex w-full flex-col ${MEASURE_CLASS[measure]} ${onChat ? 'min-h-0 flex-1' : ''}`}
+        >
           {/* Frameless page heading + global actions. In drawer mode it also opens mobile navigation. On
               /chat at phone width the whole global bar is suppressed: the conversation already carries its
               own bar, and stacking a second one above it (avatar, bell, search) crowds the small screen.
@@ -311,9 +319,9 @@ function ShellLayout({ children }: { children: ReactNode }) {
               it sits OUTSIDE `.workspace-shell`, which carries `--shell-gutter` of its own, so the two
               add up and a design wanting one exact gutter has to be able to reach this one. */}
           <div
-            className="shell-content px-2"
-            // /chat owns its bottom edge through the measured composer dock + safe-area policy. The generic
-            // page rhythm here was a second 2rem inset below that dock, which is why the focused composer
+            className={`shell-content px-2 ${onChat ? 'flex min-h-0 flex-1 flex-col' : ''}`}
+            // /chat owns its bottom edge through the fixed surface, visual viewport and safe-area policy. The
+            // generic page rhythm here was a second 2rem inset below the composer, which is why the focused one
             // floated a full band above the keyboard. Other routes still clear the launcher/page ending.
             style={{ paddingBottom: onChat ? 0 : launcherVisible ? 'var(--fab-clearance)' : '2rem' }}
           >

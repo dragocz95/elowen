@@ -1589,12 +1589,10 @@ export const ChatConversationBar = memo(function ChatConversationBar({ variant, 
 /** The composer footer: statusline + staged attachments + queue + composer (or the read-only banner that
  *  replaces it).
  *
- *  In the full page it sticks to the bottom of the visible band — the page scrolls behind it, and while a
- *  soft keyboard is up that band ends above the keyboard; the compact dock keeps it in normal flow at the
- *  bottom of its own scroll box. `.chat-composer-dock` (chat.css) owns ALL of that: the stickiness, the
- *  visual-viewport inset it rests on, and the bottom safe-area inset that keeps the send button clear of a
- *  phone's home indicator. Deliberately no position utility here — two declarations of one element's
- *  position is how a `sticky` utility came to be silently overridden by the stylesheet.
+ *  In both variants it is a non-scrolling flex child below the transcript scroller. The full chat surface consumes
+ *  the visual-viewport inset as part of its own height, so the composer reaches the visible band without a
+ *  sticky position or a page scroll. `.chat-composer-dock` owns only the safe-area padding that keeps the
+ *  send button clear of a phone's home indicator.
  *
  *  No hairline and NO fade above the footer: a gradient over the transcript's last lines read as "there is
  *  more below" and had readers scrolling for text that was never hidden. The dock's own opaque background
@@ -1865,6 +1863,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   }), [cards, railShowsTasks]);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptContentRef = useRef<HTMLDivElement>(null);
   const surfaceRootRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const askRef = useRef<HTMLDivElement>(null);
@@ -1887,14 +1886,10 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   const anchorNodeRef = useRef<HTMLElement | null>(null);
   const anchorTopRef = useRef(0);
 
-  // The element that actually scrolls the transcript: in the full page it is the shell <main> (the page
-  // itself scrolls); the compact dock scrolls its own box. Every scroll read/write below goes through this
-  // one resolver.
-  const getScroller = useCallback((): HTMLElement | null => {
-    const el = scrollRef.current;
-    if (!el) return null;
-    return variant === 'full' ? el.closest('main') : el;
-  }, [variant]);
+  // The transcript owns every conversation scroll on both surfaces. The shell page never participates in
+  // follow-newest, focus recovery or lazy history loading, so mobile browser focus handling cannot combine
+  // a page scroll with a second chat scroll.
+  const getScroller = useCallback((): HTMLElement | null => scrollRef.current, []);
 
   // ── THE SCROLL CONTRACT ────────────────────────────────────────────────────────────────────────────
   // One invariant owns every scroll write in this component: while `followNewestRef` is true the transcript
@@ -1952,21 +1947,22 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   // enough (and avoids re-firing on the controller's per-render identity churn).
   useEffect(() => { ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Entering the full chat route always opens at the newest turn. The shell <main> survives route changes,
-  // so neither its old scrollTop nor the previous visit's engagement may become this visit's chat state.
+  // Entering the full chat route always opens at the newest turn. The transcript scroller is route-owned,
+  // so it starts from a clean offset rather than inheriting the shell page's position.
   //
-  // The ResizeObserver is what makes the guarantee LAYOUT-driven instead of timing-driven, and it replaces
-  // the rAF this used to also fire: a frame is a guess about when the transcript has settled, whereas a
-  // resize IS the transcript settling. Late markdown, a decoded image, a web font and the toolbar portal
-  // each resize the transcript, and each one lands the newest turn back at the bottom — however many
-  // frames after mount it happens.
+  // Observe both geometry owners. The inner content catches markdown, images and fonts growing; the scroller
+  // box catches the composer, safe area or visual viewport reducing the available reading height. Either
+  // real resize re-pins only while the reader is still following the newest turn.
   useLayoutEffect(() => {
     if (variant !== 'full') return;
     followNewestAgain();
-    const transcript = scrollRef.current;
-    const observer = transcript && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => pinToNewest()) : null;
-    if (transcript) observer?.observe(transcript);
-    return () => observer?.disconnect();
+    const scroller = scrollRef.current;
+    const content = transcriptContentRef.current;
+    if (!scroller || !content || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => pinToNewest());
+    observer.observe(scroller);
+    observer.observe(content);
+    return () => observer.disconnect();
   }, [variant, followNewestAgain, pinToNewest]);
 
   // Opening another conversation is an explicit request to see that conversation's newest message. Reset
@@ -2007,10 +2003,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     prevTurnsRef.current = turns;
   }, [turns, variant, getScroller, pinToNewest]);
 
-  // Watch the live scroll position: track "near the bottom" (the stick-to-newest gate above) and load the
-  // next older page when the reader nears the top. Bound imperatively because the scroller is sometimes the
-  // shell <main>, not a node this component renders; rebinds only when the resolver changes (variant) —
-  // the trigger is read through a ref so a per-render identity can't churn the bind.
+  // Watch the transcript's live scroll position: track "near the bottom" and load the next older page when
+  // the reader nears the top. The trigger is read through a ref so a per-render identity cannot churn this
+  // one listener binding.
   useEffect(() => {
     const s = getScroller();
     if (!s) return;
@@ -2114,17 +2109,15 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
 
   // Mobile keyboards have two viewport policies. Chromium honours `interactive-widget=resizes-content`,
   // so the layout viewport itself shrinks; iOS keeps the layout viewport tall and shrinks only
-  // `visualViewport`. The sticky dock therefore needs only the VISUAL bottom offset in the latter case.
-  // Its measured height is also the transcript's reserve: the dock overlaps that padding rather than
-  // obscuring the final turn. Safe-area padding is disabled while the keyboard is open because the visual
-  // viewport already ends above the keyboard/home indicator — adding it again creates the blank band from
-  // the screenshot.
+  // `visualViewport`. The measured VISUAL bottom offset reduces the fixed chat surface's content box once;
+  // the composer remains a normal flex child and the transcript is the only element that scrolls.
+  // Safe-area padding is disabled while the keyboard is open because the visual viewport already ends above
+  // the keyboard/home indicator.
   useLayoutEffect(() => {
     if (variant !== 'full') return;
     const root = surfaceRootRef.current;
-    const dock = composerDockRef.current;
     const composer = composerRef.current;
-    if (!root || !dock || !composer) return;
+    if (!root || !composer) return;
 
     const viewport = window.visualViewport;
     const viewportHeight = () => window.visualViewport?.height ?? window.innerHeight;
@@ -2167,9 +2160,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
 
         root.dataset.chatKeyboardOpen = keyboardOpen ? 'true' : 'false';
         setPx('--chat-visual-bottom-offset', visualBottomOffset);
-        setPx('--chat-composer-height', dock.offsetHeight);
-        // The viewport or dock changed the available reading area. Keep following only for a reader who
-        // was already at the newest turn; `pinToNewest` deliberately does nothing while they read history.
+        // The visible transcript height changed. Keep following only for a reader who was already at the
+        // newest turn; `pinToNewest` deliberately does nothing while they read history.
         pinToNewest();
       });
     };
@@ -2202,8 +2194,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     viewport?.addEventListener('scroll', measure);
     composer.addEventListener('focus', measure);
     composer.addEventListener('blur', measure);
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    observer?.observe(dock);
     return () => {
       cancelAnimationFrame(frame);
       cancelAnimationFrame(baselineFrame);
@@ -2213,9 +2203,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
       viewport?.removeEventListener('scroll', measure);
       composer.removeEventListener('focus', measure);
       composer.removeEventListener('blur', measure);
-      observer?.disconnect();
       root.style.removeProperty('--chat-visual-bottom-offset');
-      root.style.removeProperty('--chat-composer-height');
       delete root.dataset.chatKeyboardOpen;
     };
   }, [variant, pinToNewest]);
@@ -2223,22 +2211,18 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   // Clearance under the transcript for a docked plugin card — today the browser monitor, which floats just
   // above the composer and publishes its measured height back as `--chat-dock-height` on this surface.
   //
-  // The card is a LAYER: it takes no room in the flow, so a conversation long enough to fill the page ends
-  // UNDERNEATH it, and scrolling never brings those lines out. `scroll-margin-bottom` moves where autoscroll
-  // comes to REST but does not extend the scroll RANGE, so the last turn stays covered at the bottom of the
-  // page — which is exactly the report this fixes.
+  // The card is a LAYER: it takes no room in the flow, so a conversation long enough to fill the transcript
+  // can end underneath it. `scroll-margin-bottom` changes where autoscroll rests but does not extend the
+  // scroll range, so the final lines still need measured clearance.
   //
-  // Reserving the card's height unconditionally is what this replaces. The composer dock follows the
-  // content rather than the viewport, so under a short conversation that reserve became a tall empty band
-  // below the last message. The reserve here is geometric instead: it exists only while the transcript's
-  // content would actually come to rest inside the card's zone, and stays 0 for every conversation that
-  // ends above it.
+  // Reserving the card's height unconditionally leaves a tall empty tail under a short conversation. The
+  // reserve is therefore geometric: it exists only while content reaches the card's zone and stays 0 when
+  // the conversation ends above it.
   //
-  // HYSTERESIS. Both terms are compared against the layout WITHOUT the current reserve — the applied value
-  // is subtracted from the dock's measured top, which is the only thing the reserve moves (the content
-  // above it does not shift). Applying a reserve therefore cannot change the answer that asked for it, so
-  // the two states cannot oscillate. Measuring the dock's real rect rather than recomputing from the CSS
-  // variables also keeps this correct while the visual viewport shifts the sticky dock.
+  // HYSTERESIS. Both terms are compared against the layout without the current reserve. At the bottom, an
+  // applied reserve shifts transcript content upward by the same amount, so subtracting it from the fixed
+  // dock zone reconstructs the unreserved comparison. Applying a reserve therefore cannot change the answer
+  // that asked for it, and the two states cannot oscillate.
   //
   // The plugin owns the card and writes `--chat-dock-height` as an inline style. Its API is fixed and
   // read-only from here, so the style attribute IS the seam, and a MutationObserver is how this side reads
@@ -2247,8 +2231,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     if (variant !== 'full') return;
     const root = surfaceRootRef.current;
     const transcript = scrollRef.current;
+    const contentRoot = transcriptContentRef.current;
     const dock = composerDockRef.current;
-    if (!root || !transcript || !dock) return;
+    if (!root || !transcript || !contentRoot || !dock) return;
 
     let frame = 0;
     let wrapped: HTMLElement | null = null;
@@ -2271,7 +2256,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const cardHeight = parseFloat(root.style.getPropertyValue('--chat-dock-height')) || 0;
-        const target = cardHeight > 0 ? wrapTarget(transcript) : null;
+        const target = cardHeight > 0 ? wrapTarget(contentRoot) : null;
 
         // PHASE ONE — measure the layout the wrap is NOT in. The float makes its own block taller, so a
         // margin computed from a wrapped block would feed its own growth back in and never settle. The
@@ -2283,7 +2268,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         const gap = DOCK_CARD_GAP_REM * remPx();
         const zoneBottom = dock.getBoundingClientRect().top - applied - gap;
         const zoneTop = zoneBottom - cardHeight;
-        const content = cardHeight > 0 ? lastContentRect(transcript) : null;
+        const content = cardHeight > 0 ? lastContentRect(contentRoot) : null;
         const targetHeight = target ? target.getBoundingClientRect().height : 0;
         const card = cardHeight > 0 ? dockedCardRect(root, cardHeight) : null;
 
@@ -2301,16 +2286,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         const spacerTop = Math.max(0, targetHeight - cardHeight);
         // Whatever the wrap cannot clear. The wrapped block looks after itself, so what is left is the
         // content ABOVE it — earlier turns the card's zone still reaches over when the block is shorter
-        // than the card. Clearing them means pushing the card down to the block's top edge, and no
-        // further: the reserve moves the dock (and with it the absolutely positioned card) rather than the
-        // content, so `target.top - zoneTop` is exactly the deficit and never a whole card height. With no
-        // wrap target at all (a turn ending in tool rows or an image) the same measure falls back to the
-        // real end of the content.
+        // than the card. The reserve extends the transcript's scroll range, so the next bottom pin shifts
+        // content upward by exactly this deficit. With no wrap target at all (a turn ending in tool rows or
+        // an image) the same measure falls back to the real end of the content.
         //
-        // Bounded by the card, which is the deficit's own ceiling — and load-bearing while the dock is
-        // STUCK (a soft keyboard, a reader up in the history): a stuck dock's top does not move when the
-        // reserve grows, so the `- applied` above has nothing to cancel and the two terms would otherwise
-        // chase each other upward frame after frame.
+        // Bounded by the card, which is the deficit's own ceiling and also prevents a stale reserve from
+        // growing while a reader is intentionally parked higher in the transcript.
         const reserve = Math.min(cardHeight, Math.max(0, (target ? target.getBoundingClientRect().top : content.bottom) - zoneTop));
 
         // Guarded: this lands on the SAME style attribute the MutationObserver below watches, so an
@@ -2337,13 +2318,13 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
 
     measure();
     const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    resize?.observe(transcript);
+    resize?.observe(contentRoot);
     resize?.observe(dock);
     // A new last turn, or a turn that grew a new segment, changes what the wrap rides on.
     const children = typeof MutationObserver === 'undefined' ? null : new MutationObserver(measure);
-    children?.observe(transcript, { childList: true, subtree: true });
-    // The surface's own style attribute carries `--chat-dock-height` (the plugin) and the composer
-    // measurements (the effect above); both move the card, so both are worth a remeasure.
+    children?.observe(contentRoot, { childList: true, subtree: true });
+    // The surface's own style attribute carries `--chat-dock-height` from the plugin and the visual viewport
+    // inset; both move the card's zone, so both are worth a remeasure.
     const style = typeof MutationObserver === 'undefined' ? null : new MutationObserver(measure);
     style?.observe(root, { attributes: true, attributeFilter: ['style'] });
     return () => {
@@ -2392,7 +2373,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   return (
     <div
       ref={surfaceRootRef}
-      className={`relative flex flex-col ${variant === 'full' ? 'chat-surface-full flex-1' : 'h-full min-h-0'}`}
+      className={`relative flex flex-col ${variant === 'full' ? 'chat-surface-full min-h-0 flex-1 overflow-hidden' : 'h-full min-h-0'}`}
       data-variant={variant}
     >
       <ChatConversationBar
@@ -2403,12 +2384,20 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         statuslineShown={statuslineShown}
       />
 
-      {/* Messages. The full /chat variant flows full-width and lets the page scroll (no inner scroll box);
-          turns stack with NO container gap — each segment carries its own margin, so tool rows keep one
-          uniform rhythm across turn boundaries and only a speaker change opens a block break. The compact
-          dock keeps its own internal scroll and per-turn gap. */}
+      {/* Messages. Both variants have one explicit transcript scroller. The full page keeps its hero and
+          composer outside that scroller; the inner content box is what grows and what late media resizes.
+          Turns stack with no container gap on the full page, while the compact dock keeps its row gap. */}
       <ChatArtifactScope artifacts={artifacts} narration={narration} pendingInput={pendingInput}>
-      <div ref={scrollRef} data-testid="chat-transcript" className={`flex flex-1 flex-col ${variant === 'full' ? 'chat-gutter chat-transcript' : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
+      <div
+        ref={scrollRef}
+        data-testid="chat-transcript"
+        className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${variant === 'full' ? 'chat-transcript' : ''}`}
+      >
+      <div
+        ref={transcriptContentRef}
+        data-testid="chat-transcript-content"
+        className={`flex min-h-full flex-col ${variant === 'full' ? 'chat-gutter chat-transcript-content' : 'gap-3 p-3'}`}
+      >
         {turns.length === 0 && ready ? (
           variant === 'full' ? (
             <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center">
@@ -2485,6 +2474,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
           </div>
         ) : null}
         </div>
+      </div>
       </div>
       </ChatArtifactScope>
 

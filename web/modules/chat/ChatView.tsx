@@ -1,6 +1,4 @@
 'use client';
-import { useRef } from 'react';
-import { useFillHeight } from '../../lib/useFillHeight';
 import { useMobileViewport } from '../../lib/useMobile';
 import { BrainChatSurface } from '../advisor/BrainChatSurface';
 import { TelemetryPanel } from '../advisor/TelemetryPanel';
@@ -12,10 +10,10 @@ import { ChatDeckHero } from './ChatDeckHero';
  *  (useBrainChat) — it must NEVER wrap its own <BrainChatProvider>, or a second controller + SSE stream
  *  would open. An Elowen-style stat hero sits on top; the conversation renders natively in the content
  *  below (no card frame). This page mounts no conversation list of its own: the header's switcher opens
- *  the one the provider owns. useFillHeight gives the
- *  surface a MIN height of one viewport (so a short conversation still fills the screen and pins the
- *  composer to the bottom); a longer transcript grows past it and the page itself scrolls — no inner
- *  scroll box, the whole width is used, and older messages page in on scroll-up.
+ *  the one the provider owns. The shell gives this route one fixed-height application region. The transcript
+ *  is the route's only vertical scroll owner, while the hero and composer remain fixed inside that region.
+ *  This prevents mobile browser
+ *  focus handling from scrolling the shell page and the transcript independently.
  *
  *  The telemetry rail is NOT mounted here on desktop any more. It is a full-height dock owned by the
  *  shell (components/shell/Shell.tsx → ChatRailSplit), because a rail rendered as a sibling of the
@@ -27,8 +25,6 @@ import { ChatDeckHero } from './ChatDeckHero';
  *  Both ends address one `useTelemetryRail()` state, so the toggle in the conversation's header and the
  *  panel it toggles cannot disagree about whether the rail is collapsed. */
 export function ChatView() {
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const fillHeight = useFillHeight(surfaceRef);
   const mobile = useMobileViewport();
   const rail = useTelemetryRail();
 
@@ -40,12 +36,8 @@ export function ChatView() {
           chat.css rather than being withheld here. Being CSS it also holds from the first paint instead
           of waiting for the viewport measurement. */}
       <ChatDeckHero />
-      <div
-        ref={surfaceRef}
-        style={fillHeight ? { minHeight: fillHeight } : undefined}
-        className="relative flex"
-      >
-        <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <BrainChatSurface
             variant="full"
             onOpenTelemetry={mobile ? () => rail?.setMobileOpen(true) : () => rail?.toggleCollapsed()}

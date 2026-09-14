@@ -81,8 +81,10 @@ for (const profile of [
         slotPadding: parseFloat(getComputedStyle(composer.parentElement!).paddingBottom) * uiScale,
         surfacePadding: parseFloat(getComputedStyle(surface).paddingBottom) * uiScale,
         lastClearance: composerRect.top - lastRect.bottom,
-        reserveBeyondDock: parseFloat(getComputedStyle(transcript).paddingBottom) * uiScale - dockRect.height,
+        transcriptDockGap: dockRect.top - transcript.getBoundingClientRect().bottom,
         dockSafePadding: parseFloat(getComputedStyle(dock).paddingBottom),
+        pageScroll: document.scrollingElement?.scrollTop ?? 0,
+        mainScroll: main.scrollTop,
         horizontalOverflow: main.scrollWidth - main.clientWidth,
       };
     });
@@ -96,20 +98,21 @@ for (const profile of [
     expect(settled.composerGap).toBeLessThanOrEqual(16);
     expect(settled.surfacePadding).toBe(0);
     expect(settled.lastClearance).toBeGreaterThanOrEqual(4);
-    expect(settled.reserveBeyondDock).toBeGreaterThanOrEqual(4);
-    expect(settled.reserveBeyondDock).toBeLessThanOrEqual(20);
+    expect(settled.transcriptDockGap).toBeGreaterThanOrEqual(-1);
+    expect(settled.transcriptDockGap).toBeLessThanOrEqual(1);
     expect(settled.dockSafePadding).toBe(0);
+    expect(settled.pageScroll).toBe(0);
+    expect(settled.mainScroll).toBe(0);
     expect(settled.horizontalOverflow).toBeLessThanOrEqual(0);
 
     // A reader who deliberately leaves the newest turn owns the scroll position. A second keyboard-height
     // change updates the dock geometry but must not call the follow-newest writer behind their back.
-    const main = app.locator('main');
-    await main.hover({ position: { x: profile.keyboard.width / 2, y: 120 } });
+    await chat.transcript.hover({ position: { x: profile.keyboard.width / 2, y: 120 } });
     await app.mouse.wheel(0, -600);
-    const readingAt = await main.evaluate((element) => element.scrollTop);
+    const readingAt = await chat.transcript.evaluate((element) => element.scrollTop);
     expect(readingAt).toBeGreaterThan(0);
     await app.setViewportSize({ width: profile.keyboard.width, height: profile.keyboard.height - 40 });
-    await expect.poll(async () => Math.abs((await main.evaluate((element) => element.scrollTop)) - readingAt)).toBeLessThan(40);
+    await expect.poll(async () => Math.abs((await chat.transcript.evaluate((element) => element.scrollTop)) - readingAt)).toBeLessThan(40);
   });
 }
 
@@ -194,7 +197,7 @@ test('opening a chat and growing its composer keep the newest message in view', 
   await chat.goto();
   await expect(chat.lastTurn()).toContainText('Msg 59 (elowen)');
 
-  const bottomGap = () => app.locator('main').evaluate((main) => main.scrollHeight - main.scrollTop - main.clientHeight);
+  const bottomGap = () => chat.transcript.evaluate((scroller) => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight);
   // The dock's bottom safe-area padding intentionally leaves a small non-zero gap.
   await expect.poll(bottomGap, { message: 'the opened conversation did not start at its newest message' }).toBeLessThan(32);
 
@@ -215,16 +218,15 @@ test('opening a chat and growing its composer keep the newest message in view', 
 });
 
 // Entering /chat is a LAYOUT guarantee, not a timing one: however many frames the transcript takes to
-// settle, the newest turn ends up at the bottom. Both halves of the defect this covers were races between
-// a pin write and the `scroll` event that write fires — the shell <main> outlives a route change, so it
-// carries the previous page's offset into the surface's first layout, and the transcript is still short at
-// that moment. Whichever handler won decided where the conversation opened, so it opened somewhere
-// different each time and sometimes at the top.
+// settle, the newest turn ends up at the bottom. The transcript scroller is route-owned, but its first
+// content measurements and the `scroll` event caused by its own pin can still arrive in either order.
+// Whichever handler wins must never classify the surface's write as reader intent or open the conversation
+// somewhere in the middle.
 test('every entry to /chat opens on the newest turn without tripping the older-history loader', async ({ app, seed }) => {
   await seed.messages(seedTurns);
   const chat = new ChatPage(app);
   // The dock's bottom safe-area padding intentionally leaves a small non-zero gap.
-  const bottomGap = () => app.locator('main').evaluate((main) => main.scrollHeight - main.scrollTop - main.clientHeight);
+  const bottomGap = () => chat.transcript.evaluate((scroller) => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight);
 
   // Repeated on purpose. A single visit passed even while the bug was live; what it never did was pass
   // four times running, because each entry raced differently.
@@ -260,8 +262,8 @@ test(`a reader who scrolled up with ${gesture} is not dragged back down by a str
 
   // Use the browser's real input path. A bare programmatic scroll is indistinguishable from the surface's
   // own write and must NOT count as reader intent.
-  const main = app.locator('main');
-  const box = await main.boundingBox();
+  const scroller = chat.transcript;
+  const box = await scroller.boundingBox();
   if (!box) throw new Error('chat scroller has no bounding box');
   // The conversation opens AT its newest turn, so the resting offset is already large — `scrollTop > 0`
   // is true before any gesture and says nothing. The resting offset is what tells a gesture that moved the
@@ -272,7 +274,7 @@ test(`a reader who scrolled up with ${gesture} is not dragged back down by a str
   const settledOffset = async (): Promise<number> => {
     let previous = -1;
     for (let attempt = 0; attempt < 20; attempt++) {
-      const now = await main.evaluate((scroller) => scroller.scrollTop);
+      const now = await scroller.evaluate((node) => node.scrollTop);
       if (now === previous) return now;
       previous = now;
       await app.waitForTimeout(50);
@@ -281,7 +283,7 @@ test(`a reader who scrolled up with ${gesture} is not dragged back down by a str
   };
   const restingAt = await settledOffset();
   if (gesture === 'wheel') {
-    await main.hover({ position: { x: box.width / 2, y: box.height / 2 } });
+    await scroller.hover({ position: { x: box.width / 2, y: box.height / 2 } });
     await app.mouse.wheel(0, -600);
   } else if (gesture === 'keyboard') {
     await app.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -310,9 +312,9 @@ test(`a reader who scrolled up with ${gesture} is not dragged back down by a str
 
   // THE invariant, and it is about the reader, not about the scrollbar: growth below the viewport must not
   // move them. Their offset is exactly where they left it, and the newest turn is now far below.
-  const after = await app.locator('main').evaluate((main) => ({
-    scrollTop: main.scrollTop,
-    gap: main.scrollHeight - main.scrollTop - main.clientHeight,
+  const after = await scroller.evaluate((node) => ({
+    scrollTop: node.scrollTop,
+    gap: node.scrollHeight - node.scrollTop - node.clientHeight,
   }));
   expect(after.scrollTop, 'a streaming delta moved the reader').toBe(readingAt);
   expect(after.gap, 'a streaming delta yanked the reader back down to the newest turn').toBeGreaterThan(32);
