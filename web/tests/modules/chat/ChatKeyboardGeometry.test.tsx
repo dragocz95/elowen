@@ -12,18 +12,10 @@ import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailSta
 
 /** The iOS keyboard path, modelled deterministically.
  *
- *  iOS does not resize the layout viewport for the soft keyboard: `window.innerHeight` stays the full
- *  screen and only `visualViewport` shrinks — and it also SCROLLS, so `offsetTop` grows as Safari pushes
- *  the focused field into the smaller visible band. The distance the composer has to travel is therefore
- *  `innerHeight - offsetTop - visualViewport.height`, and that figure may be applied to the layout exactly
- *  ONCE. Applying it twice (a second CSS rule that also offsets the dock's position) is what left the
- *  composer a whole keyboard height above the keyboard on a real iPhone, with a black band between them.
- *
- *  This suite owns the JavaScript half of that contract: the one number the surface publishes. The CSS
- *  half — that exactly one rule turns it into a position — is `tests/styles/chatComposerDock.test.ts`,
- *  and the real end-to-end geometry is measured in a browser by
- *  `tests/e2e/specs/chat.mobile-keyboard.e2e.ts`. jsdom performs no layout, so a rect assertion here
- *  would be fiction. */
+ * iOS does not resize the layout viewport for the soft keyboard: `window.innerHeight` stays full-size and
+ * only `visualViewport` shrinks. Its bottom gap is published once to the fixed chat surface, whose content
+ * box becomes shorter while the composer remains in normal flow. The stylesheet contract is pinned by
+ * `tests/styles/chatComposerDock.test.ts`; real scroll and rect geometry is covered in Playwright. */
 
 class FakeVisualViewport extends EventTarget {
   width: number;
@@ -100,13 +92,12 @@ function renderChat(node: ReactNode) {
   );
 }
 
-/** What the layout is told: the published inset, and whether the surface considers the keyboard open. */
-function published(): { inset: number; open: string | undefined; composerHeight: string } {
+/** What the fixed chat surface is told: the visible-band inset and keyboard state. */
+function published(): { inset: number; open: string | undefined } {
   const surface = screen.getByTestId('chat-composer-dock').closest<HTMLElement>('[data-variant="full"]')!;
   return {
     inset: parseFloat(surface.style.getPropertyValue('--chat-visual-bottom-offset')) || 0,
     open: surface.dataset.chatKeyboardOpen,
-    composerHeight: surface.style.getPropertyValue('--chat-composer-height'),
   };
 }
 
@@ -115,7 +106,7 @@ function published(): { inset: number; open: string | undefined; composerHeight:
 const expectedInset = () => window.innerHeight - viewport.offsetTop - viewport.height;
 
 const settle = async () => {
-  await waitFor(() => expect(published().composerHeight).not.toBe(''));
+  await waitFor(() => expect(published().open).toBe('false'));
 };
 
 describe('iOS soft keyboard geometry on /chat', () => {

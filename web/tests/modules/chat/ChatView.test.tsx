@@ -55,7 +55,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; localStorage.clear(); });
+afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; localStorage.clear(); vi.restoreAllMocks(); });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -216,15 +216,14 @@ describe('ChatView (/chat page)', () => {
       const body = await request.json() as { session?: string };
       return HttpResponse.json({ sessionId: body.session ?? 'brain-1' }, { status: 201 });
     }));
-    const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(
+    render(
       <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main><ConversationSwitcherModal /></BrainChatProvider></ToastProvider></Wrapper>,
     );
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
-    const main = container.querySelector('main')!;
-    Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1400 });
-    scrollTo.mockClear();
+    const transcript = screen.getByTestId('chat-transcript');
+    Object.defineProperty(transcript, 'scrollHeight', { configurable: true, value: 1400 });
+    const scrollTo = vi.spyOn(transcript, 'scrollTo');
 
     fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
     // The row's control says what following it DOES, and the state now lives in its own column beside it.
@@ -236,14 +235,14 @@ describe('ChatView (/chat page)', () => {
   });
 
   it('keeps the newest message pinned while the composer grows', async () => {
-    const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo');
     const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(
+    render(
       <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main></BrainChatProvider></ToastProvider></Wrapper>,
     );
     const composer = await screen.findByPlaceholderText(/Write a message|Napište zprávu/i) as HTMLTextAreaElement;
-    const main = container.querySelector('main')!;
-    Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1600 });
+    const transcript = screen.getByTestId('chat-transcript');
+    Object.defineProperty(transcript, 'scrollHeight', { configurable: true, value: 1600 });
+    const scrollTo = vi.spyOn(transcript, 'scrollTo');
     Object.defineProperty(composer, 'scrollHeight', { configurable: true, value: 120 });
     // jsdom does not lay out the textarea when its inline height changes.
     Object.defineProperty(composer, 'offsetHeight', { configurable: true, get: () => parseFloat(composer.style.height) || 0 });
@@ -265,16 +264,16 @@ describe('ChatView (/chat page)', () => {
     Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
     document.documentElement.style.setProperty('--ui-scale', String(scale));
-    const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo');
     try {
       const { container } = renderChat(<main><ChatView /></main>);
       const composer = await screen.findByTestId('chat-composer');
       const dock = screen.getByTestId('chat-composer-dock');
       const surface = dock.closest<HTMLElement>('[data-variant="full"]')!;
+      const transcript = screen.getByTestId('chat-transcript');
       const main = container.querySelector('main')!;
-      Object.defineProperty(dock, 'offsetHeight', { configurable: true, value: 88 });
-      Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1600 });
-      scrollTo.mockClear();
+      Object.defineProperty(transcript, 'scrollHeight', { configurable: true, value: 1600 });
+      const transcriptScroll = vi.spyOn(transcript, 'scrollTo');
+      const mainScroll = vi.spyOn(main, 'scrollTo');
 
       composer.focus();
       viewport.height = 500;
@@ -283,10 +282,11 @@ describe('ChatView (/chat page)', () => {
       await waitFor(() => expect(surface).toHaveAttribute('data-chat-keyboard-open', 'true'));
       const expectedOffset = (window.innerHeight - viewport.offsetTop - viewport.height) / scale;
       expect(parseFloat(surface.style.getPropertyValue('--chat-visual-bottom-offset'))).toBeCloseTo(expectedOffset, 0);
-      expect(surface.style.getPropertyValue('--chat-composer-height')).toBe('88px');
-      expect(scrollTo).toHaveBeenCalledWith({ top: 1600 });
+      expect(transcriptScroll).toHaveBeenCalledWith({ top: 1600 });
+      expect(mainScroll).not.toHaveBeenCalled();
+      transcriptScroll.mockRestore();
+      mainScroll.mockRestore();
     } finally {
-      scrollTo.mockRestore();
       Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalViewport });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
       if (originalScale) document.documentElement.style.setProperty('--ui-scale', originalScale);
@@ -315,25 +315,16 @@ describe('ChatView (/chat page)', () => {
     }
   });
 
-  it('keeps the chat fill height stable when a phone resizes while scrolled', async () => {
-    const { wrapper: Wrapper } = createWrapper();
-    const { container } = render(
-      <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main></BrainChatProvider></ToastProvider></Wrapper>,
-    );
+  it('uses a fixed chat region with the transcript as its only scroll owner', async () => {
+    renderChat(<main><ChatView /></main>);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
 
     const transcript = screen.getByTestId('chat-transcript');
-    const host = transcript.parentElement!.parentElement!.parentElement!;
-    const main = container.querySelector('main')!;
-    const innerHeight = window.innerHeight;
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
-    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 900, writable: true });
-    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({ top: 0 } as DOMRect);
-    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ top: -800 } as DOMRect);
-
-    fireEvent(window, new Event('resize'));
-
-    await waitFor(() => expect(host.style.minHeight).toBe('744px'));
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+    const surface = transcript.closest<HTMLElement>('[data-variant="full"]')!;
+    const host = surface.parentElement!.parentElement!;
+    expect(transcript).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto', 'overscroll-contain');
+    expect(surface).toHaveClass('min-h-0', 'flex-1', 'overflow-hidden');
+    expect(host).toHaveClass('min-h-0', 'flex-1');
+    expect(host.style.minHeight).toBe('');
   });
 });

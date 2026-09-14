@@ -1,6 +1,10 @@
 /* Chat register: .chat-hero*, .chat-gutter, .chat-transcript, .chat-statusline, .chat-composer*,
    .chat-markdown overflow, .chat-tool*. */
 
+/* /chat is an application region, not a scrolling document. The shell fixes this module to its available
+   height; the transcript below owns vertical scrolling while the hero and composer remain outside it. */
+.module-root[data-module='chat'] { height: 100%; min-height: 0; }
+
 /* /chat identity hero: the section icon + the page's real <h1>, with a row of live conversation stats.
    Deliberately compact — the conversation below owns the viewport — but the heading is a genuine level 1
    so the document HAS one, exactly like every other page. Visual size and semantic level are independent.
@@ -78,31 +82,17 @@
   .chat-statusline [data-stat='context'] { display: none; }
 }
 
-/* The sticky composer dock, and the ONE place the dock's position is declared — the element carries no
-   position utility of its own, so there is nothing for this to silently win against.
-
-   `sticky` is load-bearing, not decoration. `bottom` is the visual-viewport inset below: on a browser
-   whose soft keyboard resizes the layout viewport it is 0 and this is an ordinary bottom-stuck dock,
-   while on iOS — which keeps the layout viewport tall and shrinks only `visualViewport` — it is how far
-   the dock must come to rest ABOVE the layout viewport's (hidden) bottom edge. A sticky element resolves
-   that against the scrollport, so the figure lands exactly once. Give it `position: relative` instead and
-   the same `bottom` becomes a TRANSLATION applied on top of the surface tail below, which offsets the
-   dock by the inset a second time and leaves a keyboard-sized black band under the composer.
+/* The composer is a non-scrolling flex child of the chat application region, not a sticky child of the page.
+   The iOS visual viewport inset is consumed once as bottom padding on the whole surface. Because the
+   surface uses border-box sizing inside a fixed-height shell, that padding reduces the transcript's
+   available height and places the composer on the visible band without moving either page scroll owner.
 
    The safe-area inset keeps the composer clear of a phone's home indicator; while the keyboard is open
    the visible band already ends above it, so the rule below takes it back off. */
-.chat-composer-dock {
-  position: sticky;
-  bottom: var(--chat-visual-bottom-offset, 0px);
-  padding-bottom: var(--safe-bottom);
-}
+.chat-composer-dock { flex: none; padding-bottom: var(--safe-bottom); }
 .chat-surface-full[data-chat-keyboard-open='true'] .chat-composer-dock { padding-bottom: 0; }
-/* The other half of the same figure, and deliberately under NO width query: a tail of page below the last
-   turn, so the reader can scroll it clear of the risen dock instead of leaving it under the keyboard. The
-   tail is page LENGTH, never a position — the dock's resting place is the sticky `bottom` above, and these
-   two rules are the only ones allowed to read the inset (tests/styles/chatComposerDock.test.ts).
-   A soft keyboard is not a phone-only event: iPadOS runs the same visual-viewport policy well above the
-   48rem breakpoint, and with no keyboard the inset is 0 and this rule is a no-op everywhere. */
+/* A soft keyboard is not a phone-only event: iPadOS runs the same visual-viewport policy above the phone
+   breakpoint. With no keyboard the inset is 0, so the same rule is inert on every other surface. */
 .chat-surface-full { padding-bottom: var(--chat-visual-bottom-offset, 0px); }
 .chat-composer-slot { padding-block: 0.25rem 1rem; }
 
@@ -128,7 +118,7 @@
    the whole card height, and it stays 0 for a conversation whose end never reaches the card.
 
    Nothing docked means no attribute, no variables, and every rule here is a no-op. */
-.chat-surface-full .chat-transcript > :last-child { scroll-margin-bottom: var(--chat-dock-height, 0px); }
+.chat-surface-full .chat-transcript-content > :last-child { scroll-margin-bottom: var(--chat-dock-height, 0px); }
 
 /* The wrap spacer. `shape-outside: inset(0)` keeps the exclusion rectangular and explicit rather than
    inherited from a box the theme might round. `clear: right` stops two spacers stacking side by side if a
@@ -144,17 +134,9 @@
   shape-outside: inset(0);
 }
 
-/* On a phone the sticky dock deliberately overlaps a measured reserve at the end of the transcript. The
-   last turn therefore clears the WHOLE live footer (status, queue, attachments and a growing textarea),
-   while the footer remains one visual layer rather than contributing its height twice. The keyboard's own
-   scroll range is NOT part of this: that tail is unconditional, above. */
+/* Phone density changes only the composer's internal rhythm. The footer stays in normal flex flow, so
+   the transcript never reserves or overlaps a second copy of its height. */
 @media (width < 48rem) {
-  .chat-surface-full .chat-transcript {
-    padding-bottom: calc(var(--chat-transcript-pad-bottom) + var(--chat-composer-height, 0px) + 0.375rem);
-  }
-  .chat-surface-full .chat-composer-dock {
-    margin-top: calc(-1 * var(--chat-composer-height, 0px));
-  }
   .chat-surface-full .chat-composer-slot { padding-bottom: 0.375rem; }
 }
 
@@ -170,6 +152,11 @@
    media query is the right tool. At 740x360 the hero, the transcript padding and the composer dock
    between them left barely half the height for the conversation. */
 @media (height < 34rem) {
+  /* A short landscape keyboard can leave less visible height than the app bar, hero and composer need
+     together. While the field is focused, keep the route in a deliberate compose mode: the transcript and
+     composer own the visible band, and the surrounding chrome returns as soon as the keyboard closes. */
+  main[data-scroll-owner='chat-shell']:has(.chat-surface-full[data-chat-keyboard-open='true']) .top-bar,
+  .module-root[data-module='chat']:has(.chat-surface-full[data-chat-keyboard-open='true']) .chat-hero { display: none; }
   .chat-hero { gap: 0.7rem; padding-block: 0.45rem; }
   .chat-hero__icon { display: none; }
   .chat-hero__metrics { display: none; }
