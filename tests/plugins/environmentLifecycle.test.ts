@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -1028,6 +1028,79 @@ describe('durable managed environment lifecycle', () => {
     expect(readFileSync(hostPath, 'utf8')).toBe('concurrent');
     await runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 });
     expect(sql.prepare('SELECT id FROM p_sandbox_file_uploads').all()).toEqual([]);
+  });
+
+  /** The compare-and-swap a managed file CREATION is made of.
+   *
+   *  `expectedVersion: null` is not a missing version. It is the create-only swap the guest implements by
+   *  refusing the write unless the destination is absent, and it is what every managed consumer sends for
+   *  a file that is not there yet: Write and Edit through `plugins/files/managed.mjs`, the MCP and
+   *  terminal image writers, and `managedArtifacts`. This boundary held every kind to "a string, or
+   *  omitted", so each of those creations was refused with a 400 before the guest ever saw it — and since
+   *  the request was malformed in the same way every time, retrying it produced the same refusal. The
+   *  chunked upload path accepted the identical value, which is what made this a disagreement between two
+   *  validators for one field rather than a missing feature.
+   *
+   *  The guest helper below is the real one, so this covers the whole path rather than the validator. */
+  it('creates an absent managed file through the null compare-and-swap and keeps the swap honest', async () => {
+    const { runtime, nspawn, root } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const guestToHost = (value: string) => value.replace('/sales-dashboard', root);
+    nspawn.exec.mockImplementation(async (...args: any[]) => {
+      const argv = args[2]; const options = args[3];
+      const request = JSON.parse(options.input);
+      const result = spawnSync(argv[0], argv.slice(1), {
+        input: JSON.stringify({ ...request, root, path: guestToHost(request.path),
+          ...(request.destination ? { destination: guestToHost(request.destination) } : {}) }),
+        encoding: 'utf8', maxBuffer: 2 ** 21,
+      });
+      if (result.error) throw result.error;
+      return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr, truncated: false };
+    });
+    const files = (operation: any) => runtime.projectFiles({ ...input, operation });
+    // A DOTFILE, because the production failure was a `.gitignore` and nothing on this path may read a
+    // leading dot as anything but an ordinary name.
+    const path = '/sales-dashboard/.gitignore';
+    const hostPath = join(root, '.gitignore');
+    const body = (text: string) => Buffer.from(text, 'utf8').toString('base64');
+
+    const created = await files({ kind: 'write', path, base64: body('node_modules\n'), expectedVersion: null });
+    expect(created.entry).toMatchObject({ kind: 'file', path: hostPath });
+    expect(readFileSync(hostPath, 'utf8')).toBe('node_modules\n');
+
+    // Repeating the same creation is a conflict rather than a silent overwrite: the destination exists now,
+    // which is precisely what the null swap says it must not.
+    // The CODE is the contract here, not the wording: this refusal is raised inside the guest, so its
+    // message is whichever of the two conditions `expected()` found.
+    await expect(files({ kind: 'write', path, base64: body('clobbered\n'), expectedVersion: null })).rejects.toMatchObject({ code: 'version_conflict' });
+    expect(readFileSync(hostPath, 'utf8')).toBe('node_modules\n');
+
+    // An overwrite swaps against the version the creation returned; a stale one keeps its refusal.
+    const updated = await files({ kind: 'write', path, base64: body('dist\n'), expectedVersion: created.entry.version });
+    expect(readFileSync(hostPath, 'utf8')).toBe('dist\n');
+    await expect(files({ kind: 'write', path, base64: body('stale\n'), expectedVersion: created.entry.version })).rejects.toMatchObject({ code: 'version_conflict' });
+    expect(readFileSync(hostPath, 'utf8')).toBe('dist\n');
+
+    // No version at all stays refused — and so does an explicit `undefined`, which JSON would drop on the
+    // way out, leaving the guest to read the absent key as the create-only swap the caller never asked for.
+    await expect(files({ kind: 'write', path, base64: body('x') })).rejects.toThrow(/content version is required/i);
+    await expect(files({ kind: 'write', path, base64: body('x'), expectedVersion: undefined })).rejects.toThrow(/content version is required/i);
+    for (const malformed of [7, true, {}, ['v'], 'v'.repeat(257)]) {
+      await expect(files({ kind: 'write', path, base64: body('x'), expectedVersion: malformed })).rejects.toThrow(/expected file version/i);
+    }
+    expect(readFileSync(hostPath, 'utf8')).toBe('dist\n');
+
+    // `remove` and `rename` have no create-only form — there is no version of an absent file to swap
+    // against — so null stays a refusal for them, and widening `write` must not have widened these.
+    await expect(files({ kind: 'remove', path, expectedVersion: null })).rejects.toThrow(/expected file version/i);
+    await expect(files({ kind: 'rename', path, destination: '/sales-dashboard/moved', expectedVersion: null })).rejects.toThrow(/expected file version/i);
+    expect(readFileSync(hostPath, 'utf8')).toBe('dist\n');
+
+    // The honest forms of both still work, so nothing was narrowed that should not have been.
+    const moved = await files({ kind: 'rename', path, destination: '/sales-dashboard/moved', expectedVersion: updated.entry.version });
+    expect(readFileSync(join(root, 'moved'), 'utf8')).toBe('dist\n');
+    await files({ kind: 'remove', path: '/sales-dashboard/moved', expectedVersion: moved.entry.version });
+    expect(existsSync(join(root, 'moved'))).toBe(false);
   });
   // A project that has been snapshotted is still deletable, and the deletion reaches for no image and no
   // named volume handle on the way: a machine environment owns neither, and the runtime client refuses

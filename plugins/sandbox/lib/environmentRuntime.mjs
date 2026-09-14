@@ -141,6 +141,37 @@ function command(input, synchronous = false) {
   }
   throw error('invalid_command', 'Invalid managed execution command', 400);
 }
+/** How each guest file operation may spell `expectedVersion`, mirroring the `GuestFileOperation` union in
+ *  `src/plugins/environmentTypes.ts` — the single declaration of the guest compare-and-swap contract.
+ *
+ *  `null` is NOT a missing version. It is the CREATE-ONLY swap, which `expected()` in `guestFiles.py`
+ *  answers by refusing the write unless the destination is absent, and it is what every managed consumer
+ *  sends for a file that does not exist yet: Write and Edit through `plugins/files/managed.mjs`, the MCP
+ *  and terminal image writers, and `writeGuestFile` in `src/brain/managedArtifacts.ts`, whose default it
+ *  is. Holding every kind to "a string, or omitted" made this the one validator that refused it, while
+ *  `validateUploadOperation` accepted the same value on the chunked path and the guest implemented it. So
+ *  creating any file through the single-write path was rejected here, with a 400, before the guest ever
+ *  saw it — and because that rejection described the REQUEST rather than the destination, repeating it
+ *  produced the same answer every time.
+ *
+ *  `remove` and `rename` stay string-only: an absent file has no version to swap against. `read` may omit
+ *  the field, and an explicit `undefined` counts as omitted everywhere — JSON would drop it on the way to
+ *  the guest, which would then read the absent key as the create-only swap nobody asked for.
+ *
+ *  A Map, not an object, for the reason spelled out in `guestFileTransport.mjs`: an object lookup answers
+ *  for every key on `Object.prototype`, so a kind named `constructor` or `toString` would find a "rule". */
+const VERSION_RULES = new Map(Object.entries({ read: 'optional', write: 'nullable', remove: 'string', rename: 'string' }));
+function versionSwap(op) {
+  const rule = VERSION_RULES.get(op.kind);
+  if (op.expectedVersion === undefined) {
+    if (rule && rule !== 'optional') throw error('version_required', 'A content version is required', 400);
+    return;
+  }
+  const valid = op.expectedVersion === null
+    ? rule === 'nullable'
+    : Boolean(rule) && typeof op.expectedVersion === 'string' && op.expectedVersion.length <= 256;
+  if (!valid) throw error('invalid_operation', 'Invalid expected file version', 400);
+}
 function fileOperation(op) {
   if (UPLOAD_KINDS.includes(op?.kind)) return validateUploadOperation(op);
   const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length', 'expectedVersion'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
@@ -148,9 +179,8 @@ function fileOperation(op) {
   if (!op || !Object.hasOwn(keys, op.kind) || Object.keys(op).some((key) => !['kind', 'path', 'root', ...keys[op.kind]].includes(key))) throw error('invalid_operation', 'Invalid guest file operation', 400);
   guestPath(op.path);
   if (op.root !== undefined) guestPath(op.root);
-  if (op.expectedVersion !== undefined && (typeof op.expectedVersion !== 'string' || op.expectedVersion.length > 256)) throw error('invalid_operation', 'Invalid expected file version', 400);
+  versionSwap(op);
   if (op.kind === 'rename') guestPath(op.destination);
-  if (['write', 'remove', 'rename'].includes(op.kind) && !Object.hasOwn(op, 'expectedVersion')) throw error('version_required', 'A content version is required', 400);
   if (Buffer.byteLength(JSON.stringify(op)) > 1024 * 1024) throw error('input_limit', 'Guest input exceeds its bound', 400);
   return op;
 }
