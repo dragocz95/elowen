@@ -14,6 +14,9 @@ import time
 
 MAX_BYTES = 524288
 MAX_ENTRIES = 10000
+# A managed mirror accounts for up to 20,000 visited paths and requests one sentinel entry so it can
+# distinguish an exactly-full complete tree from an incomplete one without paging an unversioned walk.
+MAX_WALK_ENTRIES = 20001
 SAFE_INT = 9007199254740991
 
 
@@ -421,7 +424,7 @@ def run(op):
         # `limit` bounds every entry the traversal LOOKS AT, not the subset it chooses to return. A
         # directory and a symlink cost the same work to examine as a file, so counting only files let a
         # walk wander through any number of them and still answer "complete".
-        limit = bounded(op.get('limit'), 1, MAX_ENTRIES + 1)
+        limit = bounded(op.get('limit'), 1, MAX_WALK_ENTRIES)
         # Levels of descent BELOW the root. 0 lists the root's own children and goes no deeper, which is
         # what expanding one directory in an editor asks for.
         max_depth = bounded(op.get('maxDepth', 64), 0, 64)
@@ -476,7 +479,7 @@ def run(op):
             nested = []
             for item in children:
                 visited += 1
-                if visited > limit or visited > MAX_ENTRIES + 1 or time.monotonic() > deadline:
+                if visited > limit or visited > MAX_WALK_ENTRIES or time.monotonic() > deadline:
                     truncated = True
                     break
                 # `follow_symlinks=False` throughout, so a link is never DESCENDED into and the traversal

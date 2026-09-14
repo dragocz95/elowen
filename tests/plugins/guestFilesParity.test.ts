@@ -172,6 +172,14 @@ describe('guestFiles helper parity', () => {
     const walk = (path: string, extra: Record<string, unknown> = {}) =>
       runHelper({ kind: 'walk', path, limit: 10001, skip: ['.git', 'node_modules'], ...extra });
 
+    it('accepts the 20,001-entry sentinel required by complete managed mirror scans', () => {
+      const accepted = runHelper({ kind: 'walk', path: root, limit: 20001, skip: [] });
+      expect(accepted.ok).toBe(true);
+      const refused = runHelper({ kind: 'walk', path: root, limit: 20002, skip: [] });
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) expect(refused.error.code).toBe('invalid_limit');
+    });
+
     it('returns files AND directories in one pass, sorted, with kind, size and time', () => {
       const dir = join(root, 'walk-basic');
       mkdirSync(join(dir, 'src', 'deep'), { recursive: true });
