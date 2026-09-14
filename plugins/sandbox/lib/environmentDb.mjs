@@ -89,6 +89,20 @@ export const environmentPublicationMigration = {
   },
 };
 
+/** The last measured Project resources live with the runtime generation that owns them. `resource_refresh_epoch`
+ * advances whenever lifecycle state or specification changes, so an old measurement can remain visible while
+ * stale without being mistaken for current, and a late asynchronous writer can be fenced by generation+epoch. */
+export const environmentResourceSnapshotMigration = {
+  version: 8,
+  up(m) {
+    m.exec(`
+      ALTER TABLE p_sandbox_runtimes ADD COLUMN resource_snapshot_json TEXT;
+      ALTER TABLE p_sandbox_runtimes ADD COLUMN resource_sampled_at INTEGER;
+      ALTER TABLE p_sandbox_runtimes ADD COLUMN resource_refresh_epoch INTEGER NOT NULL DEFAULT 0;
+    `);
+  },
+};
+
 /** The idempotency key a caller attaches to a lifecycle request, which is what one durable operation row
  * is identified by for one resource and account. The store states the rule once so API and runtime
  * validation cannot disagree about which keys exist. */
@@ -114,7 +128,9 @@ export const hostOperationView = (op) => ({ ...operationProgress(op), runtime: o
  *  the generation one of them reserved must not be handed out a second time. */
 export const OPERATION_HISTORY = 20;
 
-const runtime = (row) => row ? { ...row, generation: Number(row.generation), spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
+const runtime = (row) => row ? { ...row, generation: Number(row.generation), resource_refresh_epoch: Number(row.resource_refresh_epoch ?? 0),
+  resource_sampled_at: row.resource_sampled_at === null || row.resource_sampled_at === undefined ? null : Number(row.resource_sampled_at),
+  spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
 const publication = (row) => ({ publicationId: row.resource_id, projectId: Number(row.project_id), generation: Number(row.generation), port: JSON.parse(row.spec_json).port });
 const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json),
   steps: JSON.parse(row.steps_json ?? '[]'), step_index: Number(row.step_index ?? 0),
@@ -147,8 +163,25 @@ export function createEnvironmentStore(db, identity) {
       return get(kind, id);
     },
     save(row) {
-      db.prepare('UPDATE p_sandbox_runtimes SET generation=?,state=?,desired_state=?,spec_json=?,limits_json=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE kind=? AND resource_id=?')
-        .run(row.generation, row.state, row.desired_state, JSON.stringify(row.spec), JSON.stringify(row.limits), row.error ?? null, row.kind, row.resource_id);
+      const specJson = JSON.stringify(row.spec);
+      const limitsJson = JSON.stringify(row.limits);
+      db.prepare(`UPDATE p_sandbox_runtimes SET
+        resource_refresh_epoch=resource_refresh_epoch + CASE
+          WHEN generation<>? OR state<>? OR desired_state<>? OR spec_json<>? OR limits_json<>? THEN 1 ELSE 0 END,
+        generation=?,state=?,desired_state=?,spec_json=?,limits_json=?,error=?,updated_at=CURRENT_TIMESTAMP
+        WHERE kind=? AND resource_id=?`)
+        .run(row.generation, row.state, row.desired_state, specJson, limitsJson,
+          row.generation, row.state, row.desired_state, specJson, limitsJson, row.error ?? null, row.kind, row.resource_id);
+    },
+    /** Persist one completed measurement only if the lifecycle generation and invalidation epoch it sampled
+     * still own the row. The start timestamp additionally orders overlapping daemon generations: an older
+     * refresh that finishes late cannot replace a sample begun after it. */
+    saveResourceSnapshot(row, resources, stale, sampledAt, startedAt) {
+      const snapshot = JSON.stringify({ generation: row.generation, epoch: row.resource_refresh_epoch, resources, stale: stale === true });
+      return db.prepare(`UPDATE p_sandbox_runtimes SET resource_snapshot_json=?,resource_sampled_at=?
+        WHERE kind=? AND resource_id=? AND generation=? AND resource_refresh_epoch=?
+          AND (resource_sampled_at IS NULL OR resource_sampled_at<=?)`)
+        .run(snapshot, sampledAt, row.kind, row.resource_id, row.generation, row.resource_refresh_epoch, startedAt).changes > 0;
     },
     active(kind, id) { return operation(db.prepare("SELECT * FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? AND status IN ('pending','running')").get(kind, String(id))); },
     prior(kind, id, userId, key) { return operation(db.prepare('SELECT * FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? AND user_id IS ? AND request_key=?').get(kind, String(id), userId, key)); },

@@ -69,6 +69,24 @@ const LEGACY_V1 = `
 
 const context = (db: ReturnType<typeof openDb>) => ({ db: () => makePluginDb(db, 'sandbox', { canMigrate: true }) });
 
+describe('the Sandbox resource snapshot migration', () => {
+  it('adds only nullable snapshot state and a monotonic refresh epoch to existing runtime rows', () => {
+    const db = openDb(':memory:');
+    const pluginDb = makePluginDb(db, 'sandbox', { canMigrate: true });
+    pluginDb.migrate(SANDBOX_MIGRATIONS.filter((step: { version: number }) => step.version < 8));
+    db.prepare(`INSERT INTO p_sandbox_runtimes
+      (kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json,error)
+      VALUES('project','7',7,4,'running','running','{"input":{"generation":4}}','{"cpus":2}','retained')`).run();
+
+    const migration = SANDBOX_MIGRATIONS.filter((step: { version: number }) => step.version === 8);
+    expect(migration).toHaveLength(1);
+    pluginDb.migrate(migration);
+
+    expect(db.prepare("SELECT generation,state,error,resource_snapshot_json,resource_sampled_at,resource_refresh_epoch FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get())
+      .toEqual({ generation: 4, state: 'running', error: 'retained', resource_snapshot_json: null, resource_sampled_at: null, resource_refresh_epoch: 0 });
+  });
+});
+
 describe('the Sandbox plugin migration that retires the workspace tables', () => {
   it('drops them, removes the lease workspace column and migrates the live lease rows across', () => {
     const db = openDb(':memory:');
@@ -142,7 +160,7 @@ describe('the Sandbox plugin migration that retires the workspace tables', () =>
   function liveInstance(db: ReturnType<typeof openDb>): void {
     db.exec(LEGACY_V1);
     makePluginDb(db, 'sandbox', { canMigrate: true })
-      .migrate(SANDBOX_MIGRATIONS.filter((step: { version: number }) => step.version !== 7));
+      .migrate(SANDBOX_MIGRATIONS.filter((step: { version: number }) => step.version < 7));
     db.prepare('INSERT INTO p_sandbox_workspaces (id, user_id, project_id, label, path, branch, base_ref) VALUES (?,?,?,?,?,?,?)')
       .run('ws_1', 1, 7, 'feature', '/data/users/1/workspaces/feature', 'elowen/u1/feature', 'main');
     db.prepare('INSERT INTO p_sandbox_session_bindings (session_id, user_id, project_id, workspace_id) VALUES (?,?,?,?)')

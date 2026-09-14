@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { environmentMigration, environmentPublicationMigration, environmentProgressMigration } from './environmentDb.mjs';
+import { environmentMigration, environmentPublicationMigration, environmentProgressMigration, environmentResourceSnapshotMigration } from './environmentDb.mjs';
 import { guestFileMigration } from './guestFileTransport.mjs';
 
 const EXECUTION_LEASE_MS = 20_000;
@@ -148,6 +148,7 @@ const workspaceRetirementMigration = {
 export const SANDBOX_MIGRATIONS = [
   workspaceTablesMigration, leaseKindsMigration, workspaceRetirementMigration,
   environmentMigration, guestFileMigration, environmentProgressMigration, environmentPublicationMigration,
+  environmentResourceSnapshotMigration,
 ];
 
 function processExists(pid) {

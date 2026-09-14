@@ -193,6 +193,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   storage = new ContainerStorage(nspawn), cpuModel = detectedCpuModel(), daemon = typeof process.send !== 'function' }) {
   const store = createEnvironmentStore(db, processIdentity);
   const hostCpuModel = typeof cpuModel === 'string' && cpuModel.trim() ? cpuModel.trim().slice(0, 160) : null;
+  const RESOURCE_USAGE_TTL_MS = 25_000;
+  /** One promise may refresh several rows, and every row key points at that same promise. The key includes
+   * the durable invalidation epoch, so lifecycle movement admits a new refresh without joining obsolete work. */
+  const resourceRefreshes = new Map();
+  const resourceRefreshFailures = new Map();
+  const resourceKey = (row) => `${row.kind}:${row.resource_id}:${row.generation}:${row.resource_refresh_epoch}`;
   /** Which runtime drives THIS specification. The disk record is the only discriminator, and a row whose
    *  disk does not name this runtime is refused by name rather than adopted. */
   const runtimeFor = (spec) => selectRuntimeClient(spec, { nspawn });
@@ -1819,42 +1825,123 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } catch (cause) { await release(); throw cause; }
   }
 
-  /** One authorized read for every managed row currently visible in the Project register. Runtime counters
-   *  are measured together; a broken cgroup or disk probe degrades only the resource fields and never hides
-   *  the environment state or lifecycle actions the same response carries. */
+  const metricStates = new Set(['ready', 'sampling', 'stopped', 'unavailable']);
+  const finiteOrNull = (value) => value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  function validResourceMetric(metric, kind) {
+    if (!metric || typeof metric !== 'object' || !metricStates.has(metric.state)) return false;
+    if (kind === 'cpu') return finiteOrNull(metric.usedCpus) && finiteOrNull(metric.percent)
+      && (metric.state !== 'ready' || (typeof metric.usedCpus === 'number' && typeof metric.percent === 'number'))
+      && (metric.model === undefined || metric.model === null || typeof metric.model === 'string');
+    return finiteOrNull(metric.usedBytes) && finiteOrNull(metric.limitBytes)
+      && (metric.state !== 'ready' || typeof metric.usedBytes === 'number');
+  }
+  function validResources(resources) {
+    return resources && typeof resources === 'object'
+      && validResourceMetric(resources.cpu, 'cpu')
+      && validResourceMetric(resources.memory, 'memory')
+      && validResourceMetric(resources.disk, 'disk');
+  }
+  function storedResources(row) {
+    if (typeof row.resource_snapshot_json !== 'string' || !Number.isSafeInteger(row.resource_sampled_at) || row.resource_sampled_at < 0) return null;
+    try {
+      const snapshot = JSON.parse(row.resource_snapshot_json);
+      if (!snapshot || snapshot.generation !== row.generation || !Number.isSafeInteger(snapshot.epoch) || snapshot.epoch < 0
+        || !validResources(snapshot.resources)) return null;
+      return { resources: snapshot.resources, epoch: snapshot.epoch, sampledAt: row.resource_sampled_at, stale: snapshot.stale === true };
+    } catch { return null; }
+  }
+  function unavailableResources(environment) {
+    const active = ['running', 'starting'].includes(environment.state);
+    return {
+      cpu: { state: active ? 'unavailable' : 'stopped', usedCpus: null, percent: null, model: hostCpuModel },
+      memory: { state: active ? 'unavailable' : 'stopped', usedBytes: null, limitBytes: environment.limits.memoryMb * 1024 * 1024 },
+      disk: { state: 'unavailable', usedBytes: null, limitBytes: null },
+    };
+  }
+  const measuredState = (metric) => metric.state === 'ready' || metric.state === 'stopped';
+  /** A per-resource probe may fail inside an otherwise successful batch. Keep a prior measured figure for
+   * only that resource, and persist that retention as stale metadata so a restart remains equally honest. */
+  function retainMeasuredResources(previous, measured) {
+    let stale = false;
+    const resources = {};
+    for (const kind of ['cpu', 'memory', 'disk']) {
+      if (measuredState(measured[kind]) || !previous || previous[kind]?.state !== 'ready') resources[kind] = measured[kind];
+      else { resources[kind] = previous[kind]; stale = true; }
+    }
+    return { resources, stale };
+  }
+  function clearResourceFailures(row) {
+    const prefix = `${row.kind}:${row.resource_id}:`;
+    for (const key of resourceRefreshFailures.keys()) if (key.startsWith(prefix)) resourceRefreshFailures.delete(key);
+  }
+  /** Begin one shared nspawn measurement for the rows this read found stale. It is deliberately detached
+   * from the response: Project cards render the durable snapshot first, then ordinary polling observes the
+   * completed write. Generation, invalidation epoch and refresh start time fence every write. */
+  function refreshResources(entries) {
+    const pending = entries.filter((entry) => !resourceRefreshes.has(entry.key));
+    if (!pending.length || typeof nspawn?.resourceUsageBatch !== 'function') return;
+    const startedAt = Date.now();
+    let refresh;
+    refresh = (async () => {
+      try {
+        const measured = await nspawn.resourceUsageBatch(pending.map(({ spec, state }) => ({ spec, state })));
+        if (!Array.isArray(measured) || measured.length !== pending.length) throw new Error('Invalid resource usage batch');
+        const resources = measured.map((value) => ({ ...value, cpu: { ...value?.cpu, model: hostCpuModel } }));
+        if (resources.some((value) => !validResources(value))) throw new Error('Invalid resource usage values');
+        const updates = resources.map((value, index) => retainMeasuredResources(storedResources(pending[index].row)?.resources, value));
+        const sampledAt = Date.now();
+        store.transaction(() => pending.forEach((entry, index) => {
+          if (store.saveResourceSnapshot(entry.row, updates[index].resources, updates[index].stale, sampledAt, startedAt)) clearResourceFailures(entry.row);
+        }));
+      } catch (cause) {
+        const message = String(cause?.message ?? cause).slice(0, 500);
+        for (const entry of pending) resourceRefreshFailures.set(entry.key, message);
+        ctx.logger.warn(`Project resource usage refresh failed: ${message}`);
+      } finally {
+        for (const entry of pending) if (resourceRefreshes.get(entry.key) === refresh) resourceRefreshes.delete(entry.key);
+      }
+    })();
+    for (const entry of pending) resourceRefreshes.set(entry.key, refresh);
+  }
+
+  /** One authorized read for every managed row currently visible in the Project register. Authorization for
+   * the WHOLE batch finishes before any runtime row is read. The response contains only persisted values and
+   * starts one deduplicated background refresh for rows whose snapshot is missing, invalidated or old. */
   async function environmentUsageBatch(input) {
     account(input?.accountUserId, false);
     if (!Array.isArray(input?.projectIds) || input.projectIds.length < 1 || input.projectIds.length > 1000
       || new Set(input.projectIds).size !== input.projectIds.length
       || input.projectIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw error('invalid_project_ids', 'A bounded list of Project ids is required', 400);
+    for (const id of input.projectIds) await authorize(id, input.accountUserId, false);
+
+    const now = Date.now();
     const projects = [];
-    const measurable = [];
+    const refreshable = [];
     for (const id of input.projectIds) {
-      await authorize(id, input.accountUserId, false);
       const row = store.get('project', id);
       const environment = row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null,
         limits: configuredDefaults(ctx.config), network: configuredNetwork(ctx.config) };
-      const empty = {
-        cpu: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedCpus: null, percent: null, model: hostCpuModel },
-        memory: { state: ['running', 'starting'].includes(environment.state) ? 'unavailable' : 'stopped', usedBytes: null, limitBytes: environment.limits.memoryMb * 1024 * 1024 },
-        disk: { state: row ? 'unavailable' : 'ready', usedBytes: row ? null : 0, limitBytes: null },
-      };
-      const index = projects.push({ projectId: id, environment, resources: empty }) - 1;
+      const snapshot = row ? storedResources(row) : null;
+      const key = row ? resourceKey(row) : null;
+      const stale = snapshot === null ? key !== null && resourceRefreshFailures.has(key)
+        : snapshot.stale || snapshot.epoch !== row.resource_refresh_epoch
+          || now - snapshot.sampledAt >= RESOURCE_USAGE_TTL_MS || resourceRefreshFailures.has(key);
+      const project = { projectId: id, environment, sampledAt: snapshot ? new Date(snapshot.sampledAt).toISOString() : null,
+        stale, refreshing: false, resources: snapshot?.resources ?? unavailableResources(environment) };
+      projects.push(project);
       if (!row || neverMaterialized(row) || row.state === 'deleted') continue;
-      try { measurable.push({ index, spec: specFor(row.spec), state: row.state }); }
-      catch { /* The environment state remains useful even when its legacy specification cannot be read. */ }
-    }
-    if (measurable.length && typeof nspawn?.resourceUsageBatch === 'function') {
       try {
-        const measured = await nspawn.resourceUsageBatch(measurable.map(({ spec, state }) => ({ spec, state })));
-        if (!Array.isArray(measured) || measured.length !== measurable.length) throw new Error('Invalid resource usage batch');
-        measurable.forEach(({ index }, offset) => {
-          const resources = measured[offset];
-          projects[index].resources = { ...resources, cpu: { ...resources.cpu, model: hostCpuModel } };
-        });
-      } catch { /* The per-row unavailable resource state above is the explicit failure result. */ }
+        const entry = { key, row, spec: specFor(row.spec), state: row.state };
+        if (!snapshot || stale) refreshable.push(entry);
+      } catch { /* The current environment remains visible; an unreadable legacy spec has no safe probe. */ }
     }
-    return { sampledAt: new Date().toISOString(), projects };
+    refreshResources(refreshable);
+    for (const project of projects) {
+      const row = store.get('project', project.projectId);
+      if (row) project.refreshing = resourceRefreshes.has(resourceKey(row));
+    }
+    const sampled = projects.map((project) => project.sampledAt).filter(Boolean).map((value) => Date.parse(value));
+    return { sampledAt: sampled.length ? new Date(Math.min(...sampled)).toISOString() : null, projects };
   }
 
   const control = {
@@ -1898,6 +1985,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // to report, and it never reaches here: the marker only says the sweep has ended.
       const sweep = reconcileInFlight;
       if (sweep) await sweep;
+      // A resource refresh admitted by the detached runtime may still hold an nspawn sample and a database
+      // write. Wait for it so plugin reload cannot leave an unowned writer behind; its durable CAS still
+      // fences a newer lifecycle generation or a refresh that began later.
+      await Promise.allSettled([...new Set(resourceRefreshes.values())]);
       // A publication binding or release that was already admitted keeps going after the detach: it holds
       // the publication lock, and the forwarder it is spawning would otherwise be created by a generation
       // that is going away and outlive it. `assertLive()` precedes registration in both entry points, so
