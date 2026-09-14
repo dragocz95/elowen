@@ -1093,8 +1093,28 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
         { name: 'discord', notify: async (_text, channelId) => { seen.push({ platform: 'discord', channelId }); } },
         { name: 'msteams', notify: async (_text, channelId) => { seen.push({ platform: 'msteams', channelId }); } },
       ]);
-      await orch.notify('the report', 'destination:msteams:a%3Aconversation');
-      expect(seen).toEqual([{ platform: 'msteams', channelId: 'a:conversation' }]);
+      await orch.notify('teams report', 'destination:msteams:a%3Aconversation%234');
+      await orch.notify('discord report', 'destination:discord:thread%3A789%230');
+      expect(seen).toEqual([
+        { platform: 'msteams', channelId: 'a:conversation#4' },
+        { platform: 'discord', channelId: 'thread:789#0' },
+      ]);
+    });
+
+    it('removes conversation generations before handing Telegram and WhatsApp their native destination', async () => {
+      const seen: { platform: string; channelId?: string }[] = [];
+      const orch = await orchestratorWith([
+        { name: 'telegram', notify: async (_text, channelId) => { seen.push({ platform: 'telegram', channelId }); } },
+        { name: 'whatsapp', notify: async (_text, channelId) => { seen.push({ platform: 'whatsapp', channelId }); } },
+      ]);
+
+      await orch.notify('telegram reply', 'destination:telegram:-100123456%234');
+      await orch.notify('whatsapp reply', 'destination:whatsapp:420778433908%40s.whatsapp.net%232%232');
+
+      expect(seen).toEqual([
+        { platform: 'telegram', channelId: '-100123456' },
+        { platform: 'whatsapp', channelId: '420778433908@s.whatsapp.net' },
+      ]);
     });
 
     it('rejects a targeted destination while its platform is unavailable so durable delivery retries', async () => {

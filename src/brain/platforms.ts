@@ -5,7 +5,7 @@ import type { Policy } from '../plugins/policy.js';
 import { narrowToolAllowList, type ToolPolicy, type TurnAutomation, type TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
-import { channelSessionId, isChannelSession } from './sessionId.js';
+import { channelSessionId, channelTransportId, isChannelSession } from './sessionId.js';
 import { platformOrigin } from '../api/clientIp.js';
 import { openTurn, type TurnActivityFeed, type TurnOriginPin } from './session/turnSettled.js';
 import { spawnOriginOfTurn } from './spawnOrigin.js';
@@ -620,7 +620,7 @@ export class PlatformOrchestrator {
     for (const p of targets) {
       if (typeof p.notify === 'function') {
         try {
-          await p.notify(text, destination?.id ?? channelId, notice);
+          await p.notify(text, destination ? channelTransportId(destination.platform, destination.id) : channelId, notice);
           delivered = true;
         } catch (e) {
           failures.push(`${p.name}: ${e instanceof Error ? e.message : String(e)}`);

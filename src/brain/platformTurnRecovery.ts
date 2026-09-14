@@ -21,8 +21,10 @@
  *  `destination:` encoding (plugins/destinations.ts) so it can never broadcast. The target is the
  *  envelope's own `deliveryTarget` for a direct chat, and for a shared room it is derived from the
  *  registry channel key: the key is minted as `<platform>-<threadId ?? channelId>` (keyOf in platforms.ts,
- *  platform names never contain a hyphen — see platformOfSession), so the tail IS the platform's own send
- *  address for that room or thread. The reply is always posted as a FRESH message at the conversation's
+ *  platform names never contain a hyphen — see platformOfSession). That tail still carries Elowen's
+ *  `#<generation>` session suffix; the outbound boundary removes it before the provider API call, so
+ *  recovery keeps targeting the exact durable conversation while the provider receives its native id.
+ *  The reply is always posted as a FRESH message at the conversation's
  *  tail, never an edit of a pre-restart bubble: the adapters' conversation-order tracker
  *  (createConversationOrderTracker in elowen-plugin-shared) exists precisely because an in-place edit can
  *  land above messages that arrived later, and a fresh tail message cannot overtake anything by
@@ -93,7 +95,8 @@ const RESUME_REFUSED_NOTICE = 'A restart interrupted a reply in this conversatio
 
 /** The outbound target for a captured turn, or null when none can be named. Direct chats carry their own
  *  opaque target; a shared room's is derived from the registry key exactly as described in the module
- *  doc. Null (or an id the destination encoder refuses) fails the park/resume closed. */
+ *  doc. The routed id deliberately retains the session generation until PlatformOrchestrator reaches the
+ *  adapter boundary. Null (or an id the destination encoder refuses) fails the park/resume closed. */
 export function resumeDeliveryTarget(envelope: PlatformTurnResumeEnvelope): string | null {
   if (envelope.deliveryTarget !== undefined) return envelope.deliveryTarget;
   const prefix = `${envelope.platform}-`;
