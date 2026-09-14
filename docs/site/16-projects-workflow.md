@@ -60,9 +60,9 @@ Choose the whole Project or one folder, then use the mirror controls to pause, r
 
 ### Published Sites
 
-The optional **Sites** plugin can create an immutable static release from a finished Project build, or publish an address that forwards to an application already running inside an explicit managed Project. `SitePublish` copies and retains static output; a proxy publication verifies the Project application and starts nothing itself.
+The optional **Sites** plugin publishes an address that forwards to an application already running inside an explicit managed Project. `SiteCreate` records the Project and its loopback port; `SitePublish` verifies that service through the durable Project transport and starts or copies nothing.
 
-Sites can be private, visible to Project members, available to signed-in accounts, shared with named guests, or made public through an explicit confirmation in the Sites UI. Application lifecycle, logs and resource limits belong to the managed Project. Static source remains in the Project even if the published site is deleted.
+Sites can be private, visible to Project members, available to signed-in accounts, shared with named guests, or made public through an explicit confirmation in the Sites UI. Application lifecycle, source, logs and resource limits belong to the managed Project. File publications created by older releases keep serving and rolling back their retained files, but new file publications cannot be created or published.
 
 ### Project Editor
 

@@ -164,8 +164,22 @@ server {
     listen 443 ssl;
     server_name elowen.example.com;
 
-    # Browser image attachments are base64 JSON and may be up to 5 MB.
+    # Ordinary API requests carry JSON. Keep a bounded ceiling while leaving enough room for images.
     client_max_body_size 25m;
+
+    # A conversation upload is a raw stream written into the selected Project. The web BFF streams it to
+    # the daemon, so this exact route must neither inherit the ordinary body cap nor spool the file first.
+    location = /api/brain/uploads {
+        client_max_body_size 0;
+        proxy_pass http://127.0.0.1:4500;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:4500;
