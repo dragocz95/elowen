@@ -163,9 +163,8 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                   <Gauge size={13} aria-hidden />
                   {t.stats.speed}
                 </span>
-                {/* The latest completed model call's effective rate — output tokens (reasoning and
-                    tool-call tokens included) over the whole logical request from initiation, header
-                    waits and retries included; not a pure decode figure. */}
+                {/* Current-turn generated output, including reasoning and tool calls, over successful
+                    provider generation time. Queue/header wait, retries and tools are excluded. */}
                 <span className="font-mono text-sm tabular-nums text-foreground">
                   {u ? formatSpeed(u.effectiveTps) : '—'}
                 </span>

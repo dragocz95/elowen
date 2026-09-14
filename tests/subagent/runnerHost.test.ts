@@ -141,6 +141,13 @@ describe('SubagentRunnerHost — the forked runner as seen from the daemon', () 
     child.reply({ type: 'progress', turnId, event: { type: 'tool', name: 'Bash', detail: 'ls' } });
     child.reply({
       type: 'progress', turnId,
+      event: { type: 'idle', model: 'm', usage: {
+        tokens: 1, contextWindow: 2, percent: 3, totalTokens: 42, cost: 0,
+        effectiveTps: 31.25, effectiveTurnId: 'turn-1', effectiveModel: 'p/m',
+      } },
+    });
+    child.reply({
+      type: 'progress', turnId,
       event: { type: 'subagent', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' },
     });
     child.reply({
@@ -151,6 +158,10 @@ describe('SubagentRunnerHost — the forked runner as seen from the daemon', () 
     await run;
     expect(seen).toEqual([
       { type: 'tool', name: 'Bash', detail: 'ls' },
+      { type: 'idle', model: 'm', usage: {
+        tokens: 1, contextWindow: 2, percent: 3, totalTokens: 42, cost: 0,
+        effectiveTps: 31.25, effectiveTurnId: 'turn-1', effectiveModel: 'p/m',
+      } },
       {
         type: 'subagent', id: 'nested:brain-ch-subagent-sub-grandchild',
         sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running', task: '', tools: 0, seconds: 0,

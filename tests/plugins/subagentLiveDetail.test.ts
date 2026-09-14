@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { foldToolDetail } from '../../plugins/subagent/lib/progress.mjs';
+import { foldEffectiveUsage, foldToolDetail } from '../../plugins/subagent/lib/progress.mjs';
 
 /** The rail row of a running child used to read `Edit /var/www/.config/elowen/worktrees/…` — a tool name
  *  plus its salient argument, which says what the child touches but not what it is doing. The model already
@@ -70,5 +70,34 @@ describe('subagent plugin — the live rail detail of a running child', () => {
 
     expect(first.detail).toBe('Read a.ts');
     expect(second).toEqual({ reason: '', detail: 'Grep needle' });
+  });
+});
+
+describe('subagent plugin — effective speed continuity', () => {
+  const state = () => ({ tokens: undefined as number | undefined, effectiveTps: undefined as number | undefined,
+    effectiveTurnId: undefined as string | undefined, effectiveModel: undefined as string | undefined });
+
+  it('retains speed for a same-turn status update without a new measurement', () => {
+    const row = state();
+    foldEffectiveUsage(row, { totalTokens: 100, effectiveTps: 25, effectiveTurnId: 'turn-1', effectiveModel: 'p/m' });
+    foldEffectiveUsage(row, { totalTokens: 120, effectiveTurnId: 'turn-1', effectiveModel: 'p/m' });
+    expect(row).toEqual({ tokens: 120, effectiveTps: 25, effectiveTurnId: 'turn-1', effectiveModel: 'p/m' });
+  });
+
+  it('clears stale speed at a new turn or model before the first valid sample', () => {
+    const row = state();
+    foldEffectiveUsage(row, { effectiveTps: 25, effectiveTurnId: 'turn-1', effectiveModel: 'p/a' });
+    foldEffectiveUsage(row, { effectiveTurnId: 'turn-2', effectiveModel: 'p/b' });
+    expect(row.effectiveTps).toBeUndefined();
+    expect(row.effectiveTurnId).toBe('turn-2');
+    expect(row.effectiveModel).toBe('p/b');
+  });
+
+  it('ignores invalid speed values instead of persisting zero, infinity or NaN', () => {
+    for (const effectiveTps of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const row = state();
+      foldEffectiveUsage(row, { effectiveTps, effectiveTurnId: 'turn-1', effectiveModel: 'p/m' });
+      expect(row.effectiveTps).toBeUndefined();
+    }
   });
 });

@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import {
+  type AgentSession,
   type AgentSessionEvent,
   type ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
@@ -10,6 +12,7 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import type { ProviderRequestStore, ProviderRequestUsage } from '../../store/providerRequestStore.js';
+import { addSpeedSample, speedOf, type SpeedAggregate } from '../../shared/effectiveSpeed.js';
 import { logger } from '../../shared/logger.js';
 
 const log = logger('provider-request-recorder');
@@ -30,20 +33,44 @@ export interface ProviderRequestRecorderOptions {
   monoNow?: () => number;
 }
 
-/** Effective-speed timing stamped onto the terminal assistant message, measured at the streamSimple
- *  seam — the request's INITIATION, before the provider's response headers are awaited — and persisted
- *  by the session projector alongside the legacy post-header `durationMs`. Both live on the message,
- *  so the statusline, the stats aggregates and rehydrated history read one representation:
- *  - `effectiveMs`: the whole logical request, monotonic ms. Includes the wait for the provider's
- *    response headers (prompt processing, queueing, and — for a buffered delivery — the entire
- *    server-side generation that never streams), plus every auto-retry and its backoff. Excludes tool
- *    execution between model calls, which happens outside any single request. The speed pair is used only
- *    when the terminal assistant content has no `toolCall` block, because provider usage cannot split those
- *    serialized arguments from model text.
- *  - `firstContentMs`: single-attempt calls only, from initiation to the FIRST streamed content event
- *    (thinking, text, or a tool call). A retried call has no honest single wait-to-first-content, so
- *    the field is absent there rather than faked. It is NOT a time-to-first-hidden-token figure. */
-export interface EffectiveRequestTiming { effectiveMs?: number; firstContentMs?: number }
+/** Canonical speed timing persisted on successful terminal assistant messages.
+ *
+ *  `effectiveMs` is this request's successful provider-generation window from accepted response headers
+ *  to terminal stream completion. It excludes request queue/header wait, failed attempts, retry backoff,
+ *  tool execution and all between-request waiting. `effectiveTimingVersion: 3` distinguishes this contract
+ *  from older rows whose effectiveMs included queue/retry time and excluded tool-call responses.
+ *
+ *  The turn fields are the exact cumulative pair across every valid successful request in the current
+ *  agent run and model identity. They are repeated on later successful messages so a status snapshot keeps
+ *  the aggregate through tool transitions and compaction without recomputing from wall time.
+ *
+ *  `firstContentMs` remains user-perceived wait from request initiation to the first streamed content on a
+ *  single attempt. It is not part of the speed denominator. */
+export interface EffectiveRequestTiming {
+  effectiveTimingVersion?: 3;
+  effectiveMs?: number;
+  effectiveTurnId?: string;
+  effectiveModel?: string;
+  effectiveTurnOutput?: number;
+  effectiveTurnMs?: number;
+  firstContentMs?: number;
+}
+
+export interface EffectiveTurnState {
+  turnId: string;
+  model?: string;
+  output: number;
+  elapsedMs: number;
+  firstContentMs?: number;
+}
+
+/** Live turn identity and cumulative measured pair for status snapshots. Weak ownership prevents a disposed
+ *  session from being retained solely for telemetry. */
+const effectiveTurns = new WeakMap<AgentSession, EffectiveTurnState>();
+export function effectiveTurnStateOf(session: AgentSession): EffectiveTurnState | undefined {
+  const state = effectiveTurns.get(session);
+  return state ? { ...state } : undefined;
+}
 
 function assistantUsage(message: AssistantMessage): ProviderRequestUsage {
   const usage = message.usage;
@@ -77,9 +104,9 @@ function eventError(event: AssistantMessageEvent): AssistantMessage | undefined 
  * runs PI's complete extension chain, then records the returned value, so capture still observes the final
  * post-transform body while compaction no longer disappears from the log.
  *
- * The same wrapper is the canonical effective-speed seam: a logical request is timed with a monotonic
- * clock from the streamSimple call (before any header wait) to its terminal event, across PI auto-retries,
- * and stamped onto the terminal message as {@link EffectiveRequestTiming}. It works for every transport
+ * The same wrapper is the canonical effective-speed seam: every successful request is timed with a
+ * monotonic clock from accepted response headers to its terminal event, then folded into the current
+ * turn/model aggregate and stamped as {@link EffectiveRequestTiming}. It works for every transport
  * (HTTP and the Codex WebSocket) because it never depends on transport-specific hooks.
  */
 export class ProviderRequestRecorder {
@@ -95,15 +122,16 @@ export class ProviderRequestRecorder {
   private captureBroken = false;
   private readonly now: () => number;
   private readonly mono: () => number;
-  /** Effective-speed chain state. `requestStartMono` is the open logical request's monotonic start;
-   *  it survives a FAILED attempt (a retry carries the same request forward, backoff included) and is
-   *  cleared when the request completes, a new agent run starts, or the session settles. Timing is
-   *  capture-independent: capture rows gate only the request debugger, never these numbers. */
-  private requestStartMono: number | null = null;
+  /** Timing is capture-independent: capture rows gate only the request debugger, never these numbers. */
   private requestAttempts = 0;
   private requestRetryCarried = false;
   private attemptStartMono = 0;
+  private attemptResponseMono: number | null = null;
   private attemptFirstContentMs: number | null = null;
+  private turnId = randomUUID();
+  private turnModel: string | undefined;
+  private turnAggregate: SpeedAggregate = { output: 0, elapsedMs: 0 };
+  private boundSession: AgentSession | undefined;
 
   constructor(private readonly options: ProviderRequestRecorderOptions) {
     this.now = options.now ?? Date.now;
@@ -115,13 +143,14 @@ export class ProviderRequestRecorder {
           // Disable a broken capture for its turn, not for the lifetime of a reused session.
           this.captureBroken = false;
           this.turn += 1;
-          // A new agent run is a new logical request — no stale chain may reach into it. PI's
-          // auto-retry is the one exception: the retry re-enters the loop as a NEW run (a fresh
-          // agent_start) while the client has been waiting through ONE logical request, so a carried
-          // retry keeps the chain it was handed.
+          // A new agent run is a hard speed boundary. PI's auto-retry re-enters as agent_start while the
+          // same turn is still open, so only that explicit carry preserves the identity and aggregate.
           if (!this.requestRetryCarried) {
-            this.requestStartMono = null;
             this.requestAttempts = 0;
+            this.turnId = randomUUID();
+            this.turnModel = undefined;
+            this.turnAggregate = { output: 0, elapsedMs: 0 };
+            this.publishTurnState();
           }
           return;
         case 'compaction_start':
@@ -170,9 +199,8 @@ export class ProviderRequestRecorder {
         case 'agent_settled':
           this.retryOf = undefined;
           this.lastFailedRequestId = null;
-          // The run is over: an open logical request (an attempt that never terminalized) stays open
-          // no longer, so its wait can never bleed into the next turn.
-          this.requestStartMono = null;
+          // The run is over: an unterminated attempt must never bleed into the next turn.
+          this.attemptResponseMono = null;
           this.requestAttempts = 0;
           this.requestRetryCarried = false;
           return;
@@ -249,21 +277,18 @@ export class ProviderRequestRecorder {
     const originalPayload = options?.onPayload;
     const originalResponse = options?.onResponse;
     let capturedRequestId: string | undefined;
-    // Effective-speed timing starts HERE — the request's initiation, before the provider's response
-    // headers are awaited (the projector's post-header `durationMs` cannot see header waits or a
-    // buffered delivery). A chat attempt whose predecessor FAILED carries the same logical request
-    // forward: PI's auto-retries and their backoff are part of what the client waited through. Tool
-    // execution between calls never touches this state — it happens between streamSimple calls, and
-    // only a retry carries the chain on. Compaction is decided from PI's compaction bracket, not from
-    // capture rows, so capture being off can never misclassify a stream.
+    // Request initiation is retained only for first-content latency. The speed denominator begins later,
+    // when onResponse confirms accepted headers for this exact attempt. Failed attempts and retry backoff
+    // therefore never enter a successful sample. Compaction is outside chat speed entirely.
     const attemptStartMono = this.mono();
     const isCompaction = this.compactionActive;
     if (!isCompaction) {
-      if (this.requestRetryCarried && this.requestStartMono != null) this.requestAttempts += 1;
-      else { this.requestStartMono = attemptStartMono; this.requestAttempts = 1; }
+      this.requestAttempts = this.requestRetryCarried ? this.requestAttempts + 1 : 1;
       this.requestRetryCarried = false;
+      this.ensureTurnModel(`${model.provider}/${model.id}`);
     }
     this.attemptStartMono = attemptStartMono;
+    this.attemptResponseMono = null;
     this.attemptFirstContentMs = null;
     const wrappedOptions = {
       ...options,
@@ -277,6 +302,10 @@ export class ProviderRequestRecorder {
       },
       onResponse: async (response: Parameters<NonNullable<typeof originalResponse>>[0], responseModel: Model<Api>) => {
         await originalResponse?.(response, responseModel);
+        // Accepted response headers are the closest transport-independent start of provider generation
+        // available to every PI dialect. Queue/header wait is deliberately excluded; a non-success status
+        // cannot start a sample even if the body later emits an error message.
+        if (!isCompaction && response.status >= 200 && response.status < 300) this.attemptResponseMono = this.mono();
         // The kill switch is sampled at onPayload for this exact provider call. A response for an
         // uncaptured request remains uncaptured even if the operator enabled capture while it was running.
         if (!capturedRequestId) return;
@@ -353,21 +382,61 @@ export class ProviderRequestRecorder {
     this.stampEffective(message, false);
   }
 
-  /** Stamp the logical-request timing onto the terminal message. The numerator stays whatever output
-   *  the provider reports (set separately on `usage`); nothing is invented or clipped here. A
-   *  COMPLETED call closes the chain — a later streamSimple call is a new logical request. A FAILED
-   *  one keeps the chain open for the retry that may follow. */
+  /** Stamp one successful request sample plus the current turn aggregate. Provider-normalized `usage.output`
+   *  is authoritative and already includes reasoning and serialized tool calls. Invalid/missing usage or a
+   *  zero timing window contributes nothing and leaves an earlier valid aggregate intact. */
   private stampEffective(message: AssistantMessage, completed: boolean): void {
-    if (this.requestStartMono == null) return;
-    const effectiveMs = Math.max(0, this.mono() - this.requestStartMono);
-    (message as { effectiveMs?: number }).effectiveMs = effectiveMs;
+    const timing = message as AssistantMessage & EffectiveRequestTiming;
     if (completed && this.requestAttempts === 1 && this.attemptFirstContentMs != null) {
-      (message as { firstContentMs?: number }).firstContentMs = this.attemptFirstContentMs;
+      timing.firstContentMs = this.attemptFirstContentMs;
     }
-    if (completed) {
-      this.requestStartMono = null;
-      this.requestAttempts = 0;
+    const output = message.usage?.output ?? 0;
+    const elapsedMs = completed && message.stopReason !== 'error' && message.stopReason !== 'aborted'
+      && this.attemptResponseMono != null
+      ? Math.max(0, this.mono() - this.attemptResponseMono)
+      : 0;
+    if (speedOf(output, elapsedMs) != null) {
+      timing.effectiveTimingVersion = 3;
+      timing.effectiveMs = elapsedMs;
+      this.turnAggregate = addSpeedSample(this.turnAggregate, { output, elapsedMs });
     }
+    // Repeat the aggregate even when THIS successful response was unmeasurable. A tool/status transition
+    // without a new valid sample merges with the existing turn instead of clearing its last known speed.
+    if (completed && this.turnAggregate.output > 0 && this.turnAggregate.elapsedMs > 0) {
+      timing.effectiveTimingVersion = 3;
+      timing.effectiveTurnId = this.turnId;
+      timing.effectiveModel = this.turnModel;
+      timing.effectiveTurnOutput = this.turnAggregate.output;
+      timing.effectiveTurnMs = this.turnAggregate.elapsedMs;
+    }
+    this.publishTurnState(timing.firstContentMs);
+    if (completed) this.requestAttempts = 0;
+    this.attemptResponseMono = null;
+  }
+
+  bindSession(session: AgentSession): void {
+    this.boundSession = session;
+  }
+
+  private ensureTurnModel(model: string): void {
+    if (this.turnModel === model) return;
+    if (this.turnModel !== undefined) {
+      this.turnId = randomUUID();
+      this.turnAggregate = { output: 0, elapsedMs: 0 };
+    }
+    this.turnModel = model;
+    this.publishTurnState();
+  }
+
+  private publishTurnState(firstContentMs?: number): void {
+    if (!this.boundSession) return;
+    effectiveTurns.set(this.boundSession, {
+      turnId: this.turnId,
+      ...(this.turnModel ? { model: this.turnModel } : {}),
+      output: this.turnAggregate.output,
+      elapsedMs: this.turnAggregate.elapsedMs,
+      ...(firstContentMs != null ? { firstContentMs } : {}),
+    });
   }
 
   private openAttempt(model: Model<Api>, payload: unknown): string | undefined {
@@ -508,9 +577,9 @@ export class ProviderRequestRecorder {
     this.retryOf = undefined;
     this.lastFailedRequestId = null;
     this.captureBroken = true;
-    // Timing state cannot survive a broken correlation either: a fresh chain keeps the next call's
-    // measurement honest instead of silently extending a window that was lost.
-    this.requestStartMono = null;
+    // Drop only this attempt's timing. A previous valid turn aggregate remains authoritative; request
+    // debugger correlation is independent from the provider stream measurement.
+    this.attemptResponseMono = null;
     this.requestAttempts = 0;
     this.requestRetryCarried = false;
     if (!pending) return;

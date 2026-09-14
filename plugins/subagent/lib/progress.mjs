@@ -25,3 +25,23 @@ export const foldToolDetail = (event, sticky) => {
   if (reason) return { reason, detail: reason };
   return { reason: '', detail: event.detail ? `${event.name} ${event.detail}` : event.name };
 };
+
+/** Merge one core-computed usage snapshot into a durable delegated progress row. The explicit turn/model
+ * identity is the stale-value fence: a new identity clears the prior speed even before the new turn has a
+ * valid sample; a same-identity tool/status snapshot without a sample retains the last measured aggregate. */
+export const foldEffectiveUsage = (state, usage) => {
+  if (!usage || typeof usage !== 'object') return;
+  if (Number.isSafeInteger(usage.totalTokens) && usage.totalTokens >= 0) state.tokens = usage.totalTokens;
+  const turnId = typeof usage.effectiveTurnId === 'string' && usage.effectiveTurnId ? usage.effectiveTurnId : undefined;
+  const model = typeof usage.effectiveModel === 'string' ? usage.effectiveModel : undefined;
+  if (turnId && (state.effectiveTurnId !== turnId || state.effectiveModel !== model)) {
+    state.effectiveTps = undefined;
+    state.effectiveTurnId = turnId;
+    state.effectiveModel = model;
+  }
+  if (typeof usage.effectiveTps === 'number' && Number.isFinite(usage.effectiveTps) && usage.effectiveTps > 0) {
+    state.effectiveTps = usage.effectiveTps;
+    if (turnId) state.effectiveTurnId = turnId;
+    if (model !== undefined) state.effectiveModel = model;
+  }
+};

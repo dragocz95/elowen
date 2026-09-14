@@ -7,7 +7,7 @@ import type { ProcessInfo } from './processRegistry.js';
 import { extractReason } from './toolReason.js';
 import { collapseWhitespace } from '../shared/text.js';
 import { speedOf } from '../shared/effectiveSpeed.js';
-import type { EffectiveRequestTiming } from './session/providerRequestRecorder.js';
+import { effectiveTurnStateOf, type EffectiveRequestTiming } from './session/providerRequestRecorder.js';
 import { residentContextUsageOf } from './contextBreakdown.js';
 import { IMAGE_PREVIEW_TOOL, storeToolResultImage } from './chatImages.js';
 
@@ -138,7 +138,7 @@ export type BrainEvent =
    *  ALREADY RUNNING turn and returned at once. Its own row is terminal and honest, but nothing finished —
    *  the delegation it steered into is still working — so a renderer shows a steer instead of a settled run
    *  and no finish marker is recorded. Present only on such a call; every other update is unchanged. */
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; name?: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; steered?: true }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; name?: string; detail?: string; tools: number; tokens?: number; effectiveTps?: number; effectiveTurnId?: string; effectiveModel?: string; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; steered?: true }
   /** Live snapshot of a declarative sub-agent WORKFLOW (a DAG the delegating agent authored via
    *  `WorkflowStart`). One event per state change carries the WHOLE workflow — its overall status and
    *  the full node list with each node's dependencies, live status, and the child session/tokens/tool
@@ -232,6 +232,9 @@ export interface WorkflowNode {
   sessionId?: string;
   detail?: string;
   tokens?: number;
+  effectiveTps?: number;
+  effectiveTurnId?: string;
+  effectiveModel?: string;
   seconds?: number;
   model?: string;
   /** The reasoning effort this node actually runs on — its own `thinkingLevel` declaration, or the level
@@ -259,6 +262,9 @@ export interface SubagentCompletion {
   error?: string;
   tools: number;
   tokens?: number;
+  effectiveTps?: number;
+  effectiveTurnId?: string;
+  effectiveModel?: string;
   seconds: number;
   model?: string;
 }
@@ -448,8 +454,9 @@ export function sessionUsageSnapshot(
   session: AgentSession,
   store: { descendantUsage(id: string): { totalTokens: number; cost: number } },
   sessionId: string,
+  activeModel?: string,
 ): BrainUsage {
-  return withDescendantUsage(usageOf(session), store.descendantUsage(sessionId));
+  return withDescendantUsage(usageOf(session, activeModel), store.descendantUsage(sessionId));
 }
 
 /** A short human reason for a retry notice. Provider errors usually arrive as `429 {json blob}` — the
@@ -706,7 +713,7 @@ export function queueItems(steering: readonly string[], followUp: readonly strin
 
 /** Snapshot a session's statusline numbers: resident context from the provider-specific owner plus
  * per-message billing totals. Callers use {@link sessionUsageSnapshot} to also roll up descendants. */
-function usageOf(session: AgentSession): BrainUsage {
+function usageOf(session: AgentSession, activeModel?: string): BrainUsage {
   const ctx = residentContextUsageOf(session);
   let totalTokens = 0;
   let cost = 0;
@@ -739,30 +746,40 @@ function usageOf(session: AgentSession): BrainUsage {
     tokens: ctx?.tokens ?? null, contextWindow: ctx?.contextWindow ?? 0, percent: ctx?.percent ?? null, totalTokens, cost,
     input, output, cacheRead, cacheWrite, reasoning,
     outputTps: measuredMs > 0 ? measuredOutput / (measuredMs / 1000) : null,
-    ...latestEffectiveCall(session),
+    ...latestEffectiveCall(session, activeModel),
   };
 }
 
-/** The LATEST COMPLETED model call — the figure the statusline shows instead of a session-wide blend.
- *  Failed and aborted attempts are not completed calls, so the previous completion still answers. Once
- *  the latest completion is found, an absent timing stamp or usable output makes the speed unknown rather
- *  than exposing an older call from another turn or model. Compaction summaries are not assistant rows. */
-function hasIneligibleEffectiveContent(message: { content?: unknown }): boolean {
-  if (!Array.isArray(message.content)) return true;
-  return message.content.some((block) => {
-    if (!block || typeof block !== 'object' || Array.isArray(block)) return true;
-    return (block as { type?: unknown }).type === 'toolCall';
-  });
-}
-
-function latestEffectiveCall(session: AgentSession): Pick<BrainUsage, 'effectiveTps' | 'firstContentMs'> {
-  for (let i = session.messages.length - 1; i >= 0; i--) {
-    const m = session.messages[i] as { role?: string; stopReason?: string; usage?: { output?: number }; content?: unknown } & EffectiveRequestTiming;
-    if (m.role !== 'assistant') continue;
-    if (m.stopReason === 'error' || m.stopReason === 'aborted') continue;
-    const tps = hasIneligibleEffectiveContent(m) ? null : speedOf(m.usage?.output ?? 0, m.effectiveMs ?? 0);
+/** Current turn/model aggregate. A live recorder state is authoritative even before the first valid sample:
+ *  its identity explicitly clears the previous turn. Rehydrated idle sessions fall back to the latest v3
+ *  successful message, whose repeated aggregate survives persistence and compaction. */
+function latestEffectiveCall(session: AgentSession, activeModel?: string): Pick<BrainUsage,
+  'effectiveTps' | 'effectiveOutput' | 'effectiveMs' | 'effectiveTurnId' | 'effectiveModel' | 'firstContentMs'> {
+  const live = effectiveTurnStateOf(session);
+  if (live) {
+    if (activeModel && live.model && live.model !== activeModel) return {};
+    const tps = speedOf(live.output, live.elapsedMs);
     return {
-      ...(tps != null ? { effectiveTps: tps } : {}),
+      effectiveTurnId: live.turnId,
+      ...(live.model ? { effectiveModel: live.model } : {}),
+      ...(tps != null ? { effectiveTps: tps, effectiveOutput: live.output, effectiveMs: live.elapsedMs } : {}),
+      ...(live.firstContentMs != null ? { firstContentMs: live.firstContentMs } : {}),
+    };
+  }
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    const m = session.messages[i] as { role?: string; stopReason?: string } & EffectiveRequestTiming;
+    if (m.role !== 'assistant' || m.stopReason === 'error' || m.stopReason === 'aborted') continue;
+    if (m.effectiveTimingVersion !== 3 || !m.effectiveTurnId) return {};
+    if (activeModel && m.effectiveModel && m.effectiveModel !== activeModel) return {};
+    const tps = speedOf(m.effectiveTurnOutput ?? 0, m.effectiveTurnMs ?? 0);
+    return {
+      effectiveTurnId: m.effectiveTurnId,
+      ...(m.effectiveModel ? { effectiveModel: m.effectiveModel } : {}),
+      ...(tps != null ? {
+        effectiveTps: tps,
+        effectiveOutput: m.effectiveTurnOutput,
+        effectiveMs: m.effectiveTurnMs,
+      } : {}),
       ...(m.firstContentMs != null ? { firstContentMs: m.firstContentMs } : {}),
     };
   }

@@ -177,6 +177,12 @@ describe('the progress events allowed across the boundary', () => {
       .toEqual({ type: 'tool', name: 'Bash', detail: 'ls -la' }); // icon/id/command are display noise
     expect(toDelegatedProgress({ type: 'step', step: 3, maxSteps: 10, usage: { tokens: 1, contextWindow: 2, percent: 3, totalTokens: 42, cost: 0 } }))
       .toMatchObject({ type: 'step', step: 3, usage: { totalTokens: 42 } });
+    expect(toDelegatedProgress({ type: 'idle', model: 'm', usage: {
+      tokens: 1, contextWindow: 2, percent: 3, totalTokens: 42, cost: 0,
+      effectiveTps: 12.5, effectiveTurnId: 'turn-1', effectiveModel: 'p/m',
+    } })).toMatchObject({ type: 'idle', model: 'm', usage: {
+      effectiveTps: 12.5, effectiveTurnId: 'turn-1', effectiveModel: 'p/m',
+    } });
     expect(toDelegatedProgress({
       type: 'subagent', id: 'call-grand', sessionId: 'brain-ch-subagent-sub-grand', status: 'running',
       task: 'inspect', tools: 1, seconds: 2,
@@ -190,6 +196,5 @@ describe('the progress events allowed across the boundary', () => {
     expect(toDelegatedProgress({ type: 'text', text: 'a long streamed answer' })).toBeUndefined();
     expect(toDelegatedProgress({ type: 'reasoning', text: 'private thinking' })).toBeUndefined();
     expect(toDelegatedProgress({ type: 'tool_args', id: 't1', delta: '{"path":' })).toBeUndefined();
-    expect(toDelegatedProgress({ type: 'idle', model: 'm' })).toBeUndefined();
   });
 });

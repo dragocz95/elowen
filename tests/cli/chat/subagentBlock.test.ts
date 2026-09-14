@@ -9,7 +9,7 @@ const CHILD = 'brain-ch-subagent-sub-dlg-abc';
 
 const delegation = (over: Partial<SubagentState> = {}): SubagentState => ({
   sessionId: CHILD, status: 'running', task: 'Audit the delegation rail', name: 'rail audit',
-  tools: 18, seconds: 900, model: 'deepseek-v4-flash', ...over,
+  tools: 18, seconds: 900, model: 'deepseek-v4-flash', effectiveTps: 42.5, ...over,
 });
 
 const turnOf = (name: string, sub: SubagentState): ChatTurn => ({
@@ -56,6 +56,7 @@ describe('the sub-agent block of a steered continuation', () => {
     const running = render(turnOf('Delegate', delegation({ detail: 'Reading config…' })));
     expect(running).toContain('●');
     expect(running).toContain('Reading config…');
+    expect(running).toContain('43 t/s');
     expect(running).not.toContain('steered');
 
     const finished = render(turnOf('Delegate', delegation({ status: 'done' })));

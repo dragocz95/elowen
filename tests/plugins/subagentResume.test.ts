@@ -327,7 +327,8 @@ describe('subagent plugin — listing and continuing past sub-agents', () => {
       reply = 'refined and re-checked';
       continueProgress = (onEvent) => {
         onEvent?.({ type: 'tool', name: 'Read', detail: 'a.ts' });
-        onEvent?.({ type: 'idle', usage: { totalTokens: 500 } });
+        onEvent?.({ type: 'idle', usage: { totalTokens: 500, effectiveTps: 42.5, effectiveTurnId: 'turn-1', effectiveModel: 'provider/model' } });
+        onEvent?.({ type: 'step', usage: { totalTokens: 520, effectiveTurnId: 'turn-1', effectiveModel: 'provider/model' } });
       };
       const updates: SubagentUpdate[] = [];
       const tool = reg.tools.find((t) => t.name === 'DelegateContinue')!;
@@ -343,7 +344,10 @@ describe('subagent plugin — listing and continuing past sub-agents', () => {
       expect(updates[0]).toMatchObject({ id: 'call-42', sessionId: 'brain-ch-subagent-x', status: 'running' });
       expect(updates.some((u) => u.status === 'running' && u.tools === 1 && u.detail === 'Read a.ts')).toBe(true);
       expect(updates.some((u) => u.tokens === 500)).toBe(true);
-      expect(updates.at(-1)).toMatchObject({ status: 'done' });
+      expect(updates.at(-1)).toMatchObject({
+        status: 'done', tokens: 520, effectiveTps: 42.5,
+        effectiveTurnId: 'turn-1', effectiveModel: 'provider/model',
+      });
     });
 
     // The host aborts an in-flight continuation exactly like any delegated send: requestPendingAbort

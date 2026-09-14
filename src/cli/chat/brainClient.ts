@@ -41,11 +41,12 @@ export interface BrainUsageView {
   /** Average output tokens/sec over the session's measured generations (post-header window); null when
    *  none measured. Legacy figure — the statusline shows `effectiveTps` instead. */
   outputTps?: number | null;
-  /** Effective tokens/sec of the conversation's LATEST completed measured model call: provider output over
-   *  the whole logical request from initiation, with header waits, prompt processing, retries and backoff
-   *  included and tool execution excluded. Absent for generations containing toolCall blocks, because their
-   *  serialized arguments cannot be separated from model text, and on older daemons. */
+  /** Current turn/model aggregate over successful provider generation windows. */
   effectiveTps?: number | null;
+  effectiveOutput?: number;
+  effectiveMs?: number;
+  effectiveTurnId?: string;
+  effectiveModel?: string;
   /** Wait, in ms, from that call's initiation to its first streamed content (thinking, text, or a tool
    *  call). For a buffered delivery this spans the whole generation. Present only on single-attempt
    *  calls; absent on older daemons. */

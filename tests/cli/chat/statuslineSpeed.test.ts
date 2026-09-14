@@ -4,11 +4,9 @@ import { terminalPlainText } from '../../../src/cli/ui/text.js';
 
 /** Output speed in the statusline and the composer chip.
  *
- *  The interesting cases are all about ABSENCE. `effectiveTps` is the effective rate of the LATEST
- *  completed measured model call — whole logical request from initiation, header waits, prompt
- *  processing, reasoning and retries included — so a fresh conversation legitimately has no figure at
- *  all, and rendering that as "0 tok/s" would claim the model has stalled rather than that nothing has
- *  been measured yet. */
+ *  The interesting cases are all about ABSENCE. `effectiveTps` is the current turn's generated output over
+ *  successful provider generation time, so a fresh conversation legitimately has no figure at all and
+ *  rendering that as "0 tok/s" would claim a stall rather than an unknown measurement. */
 
 const usage = (over: Partial<Parameters<typeof statusline>[1] & object> = {}) => ({
   tokens: 1000, contextWindow: 200_000, percent: 5, totalTokens: 5000, cost: 1.25, ...over,
@@ -16,7 +14,7 @@ const usage = (over: Partial<Parameters<typeof statusline>[1] & object> = {}) =>
 const plain = (s: string | undefined): string => terminalPlainText(s ?? '');
 
 describe('statusline — output speed', () => {
-  it('reports the effective speed of the latest completed call when the toggle is on', () => {
+  it('reports the effective speed of the current turn when the toggle is on', () => {
     const line = plain(statusline({ showSpeed: true }, usage({ effectiveTps: 70.3 }), 'opus'));
     expect(line).toContain('70 tok/s');
   });

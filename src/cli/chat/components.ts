@@ -228,7 +228,8 @@ export class SubagentPanel implements Component {
       // Built plain first, then coloured — geometry is measured on the plain strings (identical, since
       // visibleWidth strips ANSI) and the selected row MUST receive text with no escapes of its own: SGR
       // has no stack, so an embedded colour would end the highlight at the first glyph.
-      const meta = [e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : '']
+      const meta = [e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : '',
+        typeof e.effectiveTps === 'number' && e.effectiveTps >= 1 ? `${Math.round(e.effectiveTps)} t/s` : '']
         .filter(Boolean).map((value) => inlineText(String(value))).join(' · ');
       // truncateToWidth fences its '…' ellipsis with a `\x1b[0m` reset. On the selected row that reset ends
       // the highlight background early (SGR has no stack), so strip SGR here to keep these strings truly

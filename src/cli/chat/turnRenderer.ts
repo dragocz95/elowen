@@ -353,9 +353,11 @@ export class TurnRenderer {
     // ever ellipsized into prose here. A run recorded before the field falls back to that task text.
     const label = truncateToWidth(terminalInlineText(subagent.name || subagent.task), Math.max(12, width - 26), '…');
     const tokens = subagent.tokens ? `${formatK(subagent.tokens)} tok` : '';
+    const speed = typeof subagent.effectiveTps === 'number' && subagent.effectiveTps >= 1
+      ? `${Math.round(subagent.effectiveTps)} t/s` : '';
     const detail = subagent.status === 'running'
-      ? [subagent.detail ?? 'starting…', subagent.model, formatDuration(subagent.seconds), tokens]
-      : [`${subagent.tools} tool${subagent.tools === 1 ? '' : 's'}`, subagent.model, formatDuration(subagent.seconds), tokens];
+      ? [subagent.detail ?? 'starting…', subagent.model, formatDuration(subagent.seconds), tokens, speed]
+      : [`${subagent.tools} tool${subagent.tools === 1 ? '' : 's'}`, subagent.model, formatDuration(subagent.seconds), tokens, speed];
     const meta = detail.filter(Boolean).map((value) => terminalInlineText(String(value))).join(' · ');
     // A foreground sub-agent blocks the parent's tool result until it finishes; Ctrl+B detaches it so the
     // parent continues and the child's result is delivered back asynchronously. The footer already carries

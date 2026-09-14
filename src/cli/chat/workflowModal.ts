@@ -230,6 +230,7 @@ class WorkflowModal implements Component, Focusable {
       if (selected) selectedRow = rows.length;
       const meta = [
         node.tokens !== undefined ? `${formatK(node.tokens)} tok` : '',
+        typeof node.effectiveTps === 'number' && node.effectiveTps >= 1 ? `${Math.round(node.effectiveTps)} t/s` : '',
         this.seconds(node, now) !== undefined ? formatDuration(this.seconds(node, now)!) : '',
       ].filter(Boolean).join(' · ');
       const mid = node.status === 'running' ? (node.detail ?? '') : node.status === 'pending' ? `waits: ${node.deps.join(', ') || '—'}` : '';
@@ -255,6 +256,8 @@ class WorkflowModal implements Component, Focusable {
     const vitals = [
       `${STATUS_INK[node.status](glyphOf(node, spinner))} ${STATUS_INK[node.status](node.status)}`,
       node.tokens !== undefined ? `${color.text(formatK(node.tokens))}${color.faint(' tok')}` : '',
+      typeof node.effectiveTps === 'number' && node.effectiveTps >= 1
+        ? `${color.text(String(Math.round(node.effectiveTps)))}${color.faint(' t/s')}` : '',
       // Directly after the tokens: which model actually burned them. A workflow routinely mixes models
       // across nodes, so the count alone does not tell you what you are paying for.
       node.model ? `${color.faint('model ')}${color.text(terminalInlineText(node.model))}` : '',

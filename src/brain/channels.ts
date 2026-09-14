@@ -1266,7 +1266,7 @@ export class ChannelSessionService {
             // A platform footer renders this spec, so the fallback half has to be translated: `ch.provider`
             // is PI's registry name, and emitting it raw would put `elowen-<id>` in front of the room.
             model: execRefSpec({ program: 'elowen', provider: ch.providerId || fromRegistryProvider(ch.provider), model: ch.model }),
-            usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId),
+            usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId, `${ch.provider}/${ch.model}`),
           });
         } finally { detach?.(); }
         // Auto-compaction is PI-native (the factory configures the channel's reserveTokens from
@@ -1594,7 +1594,7 @@ export class ChannelSessionService {
       // A background delegate can outlive the parent's own prompt. Keep `/stop` available while any
       // tracked descendant is still running so the channel can cancel the whole tree.
       streaming: ch.session.isStreaming || this.d.registry.hasActiveChildren(ch.sessionId),
-      usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId),
+      usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId, `${ch.provider}/${ch.model}`),
       fastAvailable: ch.fastAvailable,
     } : null;
   }

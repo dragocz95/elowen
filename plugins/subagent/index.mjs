@@ -12,7 +12,7 @@ import { raceDetach } from './lib/detach.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
 import { resolveStallMs } from './lib/stall.mjs';
 import { toolListCovers } from './lib/toolLists.mjs';
-import { foldToolDetail } from './lib/progress.mjs';
+import { foldEffectiveUsage, foldToolDetail } from './lib/progress.mjs';
 import { resolveSubagentName } from './lib/name.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './lib/thinking.mjs';
 import {
@@ -249,6 +249,9 @@ export function register(ctx) {
     detail: job.detail,
     tools: job.tools,
     tokens: job.tokens,
+    ...(job.effectiveTps !== undefined ? { effectiveTps: job.effectiveTps } : {}),
+    ...(job.effectiveTurnId ? { effectiveTurnId: job.effectiveTurnId } : {}),
+    ...(job.effectiveModel ? { effectiveModel: job.effectiveModel } : {}),
     seconds: elapsedSeconds(job),
     model: job.model,
   });
@@ -263,6 +266,7 @@ export function register(ctx) {
     if (job.model) lines.splice(3, 0, `Model: ${job.model}`);
     if (job.detail) lines.push(`Progress: ${job.detail}`);
     if (job.tokens !== undefined) lines.push(`Tokens: ${job.tokens}`);
+    if (job.effectiveTps !== undefined) lines.push(`Speed: ${job.effectiveTps} t/s`);
     if (job.status === 'error') lines.push(`Error: ${job.error}`);
     return lines.join('\n');
   };
@@ -317,6 +321,9 @@ export function register(ctx) {
         detail: job.detail,
         tools: job.tools,
         tokens: job.tokens,
+        ...(job.effectiveTps !== undefined ? { effectiveTps: job.effectiveTps } : {}),
+        ...(job.effectiveTurnId ? { effectiveTurnId: job.effectiveTurnId } : {}),
+        ...(job.effectiveModel ? { effectiveModel: job.effectiveModel } : {}),
         seconds: Math.round((Date.now() - job.startedAt) / 1000),
         model: job.model,
         thinkingLevel: job.thinkingLevel,
@@ -353,6 +360,9 @@ export function register(ctx) {
         error: job.error,
         tools: job.tools,
         tokens: job.tokens,
+        ...(job.effectiveTps !== undefined ? { effectiveTps: job.effectiveTps } : {}),
+        ...(job.effectiveTurnId ? { effectiveTurnId: job.effectiveTurnId } : {}),
+        ...(job.effectiveModel ? { effectiveModel: job.effectiveModel } : {}),
         seconds: elapsedSeconds(job),
         model: job.model,
       });
@@ -638,6 +648,9 @@ export function register(ctx) {
         // the derived tool label (see lib/progress.mjs).
         reason: '',
         tokens: undefined,
+        effectiveTps: undefined,
+        effectiveTurnId: undefined,
+        effectiveModel: undefined,
         model: model?.model,
         // The level this delegation actually spawns with (inherited from the parent turn above). Carried
         // on the job so the rail entry can report it: a drilled-in sub-agent reads its reasoning level
@@ -678,7 +691,7 @@ export function register(ctx) {
           ({ reason: state.reason, detail: state.detail } = foldToolDetail(e, state.reason));
           push('running');
         }
-        else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
+        else if ((e.type === 'step' || e.type === 'idle') && e.usage) { foldEffectiveUsage(state, e.usage); push('running'); }
         // The child's own sub-agent or workflow is running (a nested Delegate mid-turn, or the host's
         // keep-alive while the child waits on it after its turn): this call is not stalled and its progress
         // says what it waits for. The host holds the call open itself — nothing to collect or loop on here.
@@ -1093,6 +1106,9 @@ export function register(ctx) {
         detail: undefined,
         reason: '',
         tokens: undefined,
+        effectiveTps: undefined,
+        effectiveTurnId: undefined,
+        effectiveModel: undefined,
         startedAt: Date.now(),
         finishedAt: undefined,
         result: undefined,
@@ -1138,7 +1154,7 @@ export function register(ctx) {
           ({ reason: state.reason, detail: state.detail } = foldToolDetail(e, state.reason));
           push('running');
         }
-        else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
+        else if ((e.type === 'step' || e.type === 'idle') && e.usage) { foldEffectiveUsage(state, e.usage); push('running'); }
         // Same as Delegate: the host keeps this continuation open while the child's own sub-agent runs, and
         // this is what the call's row says meanwhile.
         else if (nestedWorkRunning(e)) { state.detail = nestedWaitDetail(e); push('running'); }

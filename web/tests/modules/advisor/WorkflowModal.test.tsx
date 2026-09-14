@@ -68,7 +68,7 @@ afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; localStor
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
-interface TestNode { id: string; task: string; status: 'pending' | 'running' | 'done' | 'error'; deps: string[]; result?: string; error?: string; model?: string; thinkingLevel?: string }
+interface TestNode { id: string; task: string; status: 'pending' | 'running' | 'done' | 'error'; deps: string[]; result?: string; error?: string; model?: string; thinkingLevel?: string; effectiveTps?: number }
 const dagEvents = (nodes: TestNode[]) => ([
   { type: 'tool', name: 'WorkflowStart', id: 'w-call' },
   { type: 'workflow', id: 'wf-1', toolCallId: 'w-call', title: 'Rail parity', status: 'running', nodes },
@@ -162,6 +162,15 @@ describe('workflow DAG modal', () => {
     const detail = screen.getByTestId('workflow-node-detail').textContent ?? '';
     expect(detail).toContain('p/m');
     expect(detail).toContain('high');
+  });
+
+  it('shows the core-computed effective speed for a workflow node', async () => {
+    const es = await renderChat();
+    await openDag(es, [
+      { id: 'verify', task: 'ověřit testy', status: 'running', deps: [], effectiveTps: 37.6 },
+    ]);
+    expect(screen.getByTestId('workflow-node-verify').textContent).toContain('38 tok/s');
+    expect(screen.getByTestId('workflow-node-detail').textContent).toContain('38 tok/s');
   });
 
   it('says nothing about reasoning for a node that reported no level', async () => {

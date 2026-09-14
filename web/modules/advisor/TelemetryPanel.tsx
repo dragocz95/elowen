@@ -508,7 +508,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
               <LiveRow
                 label={agent.name || agent.task}
                 secondary={agent.detail}
-                meta={agent.tokens != null ? formatTokens(agent.tokens) : undefined}
+                meta={[
+                  agent.tokens != null ? formatTokens(agent.tokens) : '',
+                  typeof agent.effectiveTps === 'number' && agent.effectiveTps >= 1
+                    ? `${Math.round(agent.effectiveTps)} ${t.brainChat.tokensPerSecond}` : '',
+                ].filter(Boolean).join(' · ') || undefined}
                 tone={agent.status === 'running' ? 'running' : 'idle'}
                 title={agent.task}
                 ariaLabel={t.telemetry.agentsOpen}

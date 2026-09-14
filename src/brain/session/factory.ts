@@ -669,6 +669,7 @@ export class BrainSessionFactory {
     // Wraps nothing: the hook only needs the live session to read its context and reach `streamFunction`,
     // so it deliberately joins AFTER the wrappers its own request has to pass through.
     inSessionCompaction?.install(session);
+    requestRecorder.bindSession(session);
     session.subscribe(requestRecorder.observe);
     // PI's steering queue defaults to "one-at-a-time", so N messages sent during a running turn cost N
     // model rounds and the agent answers each without seeing the ones behind it. "all" hands the whole

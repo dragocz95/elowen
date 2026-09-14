@@ -1618,11 +1618,9 @@ export const ChatFooterDock = memo(function ChatFooterDock({ variant, dockRef, c
                 <span data-stat="context" className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
               ) : null}
               {lineCfg.showTokens && usage ? <span data-stat="tokens" className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
-              {/* Effective speed of the LATEST completed model call: output tokens (reasoning and
-                  tool-call tokens included) over the whole logical request from initiation — header
-                  waits, prompt processing, retries and backoff included. Absent until something has
-                  been measured, and hidden below 1 tok/s where the rounded figure would read as a
-                  stall rather than as too few samples. */}
+              {/* Current-turn generated output, including reasoning and tool calls, over successful provider
+                  generation time. Queue/header wait, failed retries, tools and human waits are excluded.
+                  Hidden below 1 tok/s so rounding never renders a misleading zero. */}
               {lineCfg.showSpeed && typeof usage?.effectiveTps === 'number' && usage.effectiveTps >= 1 ? (
                 <span data-stat="speed" className="shrink-0 whitespace-nowrap">{Math.round(usage.effectiveTps)} {t.brainChat.tokensPerSecond}</span>
               ) : null}

@@ -5,11 +5,11 @@ import { BrainUsageStore, rollupDroppedUsage } from '../../src/store/brainUsageS
 import { installBrainUsageRollup, rebuildBrainUsageRollup } from '../../src/store/brainUsageRollup.js';
 
 describe('brain usage write-time projection', () => {
-  it('folds only valid content-only generations into the effective pair while retaining totals', () => {
+  it('folds every v3 successful generation, including tool calls, while retaining totals', () => {
     const assistant = (content: unknown) => ({
       usage_epoch: 0,
       content: JSON.stringify({
-        role: 'assistant', timestamp: 1, effectiveMs: 1000, content,
+        role: 'assistant', timestamp: 1, effectiveTimingVersion: 3, effectiveMs: 1000, content,
         usage: { output: 100, totalTokens: 150 },
       }),
     });
@@ -21,14 +21,14 @@ describe('brain usage write-time projection', () => {
       assistant([{ type: 'text', text: 'ok' }, 42]),
     ]);
     expect(rollup).toMatchObject([{
-      output: 500, totalTokens: 750, effectiveTimingVersion: 2, effectiveMs: 1000, effectiveOutput: 100,
+      output: 500, totalTokens: 750, effectiveTimingVersion: 3, effectiveMs: 5000, effectiveOutput: 500,
     }]);
   });
 
   it('projects exact call counts for live rows and new compaction day buckets', () => {
     const db = openDb(':memory:');
     expect(db.prepare('SELECT ready, effective_pair_version FROM brain_usage_rollup_state WHERE id = 1').get())
-      .toEqual({ ready: 1, effective_pair_version: 2 });
+      .toEqual({ ready: 1, effective_pair_version: 3 });
     db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run();
     const store = new BrainStore(db);
     store.createSession({ id: 's1', userId: 1, model: 'model-a', provider: 'provider-a' });
@@ -46,12 +46,12 @@ describe('brain usage write-time projection', () => {
     expect(db.prepare("SELECT calls FROM brain_usage_rows WHERE source_message_id = 'sum'").get()).toEqual({ calls: 1 });
   });
 
-  it('fails closed for malformed assistant content in legacy reads and insert/update triggers', () => {
+  it('uses trusted v3 usage regardless of display content shape in legacy reads and triggers', () => {
     const db = openDb(':memory:');
     db.prepare("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')").run();
     db.prepare("INSERT INTO brain_sessions (id, user_id, model, provider) VALUES ('s1', 1, 'm', 'p')").run();
     const messageJson = (content: unknown, includeContent = true) => JSON.stringify({
-      model: 'm', provider: 'p', timestamp: 1, effectiveMs: 1000,
+      model: 'm', provider: 'p', timestamp: 1, effectiveTimingVersion: 3, effectiveMs: 1000,
       ...(includeContent ? { content } : {}), usage: { output: 100, totalTokens: 100 },
     });
     const insert = db.prepare(
@@ -65,21 +65,21 @@ describe('brain usage write-time projection', () => {
     expect(db.prepare('SELECT source_message_id, effective_ms, effective_output FROM brain_usage_rows ORDER BY source_message_id').all())
       .toEqual([
         { source_message_id: 'eligible', effective_ms: 1000, effective_output: 100 },
-        { source_message_id: 'missing', effective_ms: 0, effective_output: 0 },
-        { source_message_id: 'non-array', effective_ms: 0, effective_output: 0 },
-        { source_message_id: 'scalar-block', effective_ms: 0, effective_output: 0 },
+        { source_message_id: 'missing', effective_ms: 1000, effective_output: 100 },
+        { source_message_id: 'non-array', effective_ms: 1000, effective_output: 100 },
+        { source_message_id: 'scalar-block', effective_ms: 1000, effective_output: 100 },
       ]);
 
     db.prepare("UPDATE brain_messages SET content = ? WHERE id = 'eligible'")
       .run(messageJson([{ type: 'text', text: 'ok' }, null]));
     expect(db.prepare("SELECT effective_ms, effective_output FROM brain_usage_rows WHERE source_message_id = 'eligible'").get())
-      .toEqual({ effective_ms: 0, effective_output: 0 });
+      .toEqual({ effective_ms: 1000, effective_output: 100 });
 
     db.prepare('UPDATE brain_usage_rollup_state SET ready = 0, effective_pair_version = 1 WHERE id = 1').run();
     const legacy = new BrainUsageStore(db).usageByModel(1)[0]!.usage;
     expect(legacy.output).toBe(400);
-    expect(legacy.effectiveMeasuredOutput).toBe(0);
-    expect(legacy.effectiveTps).toBeNull();
+    expect(legacy.effectiveMeasuredOutput).toBe(400);
+    expect(legacy.effectiveTps).toBeCloseTo(100);
   });
 
   it('upgrades the prior projection shape without rewriting its historical rows', () => {
@@ -178,7 +178,7 @@ describe('brain usage write-time projection', () => {
     db.prepare("INSERT INTO brain_sessions (id, user_id, model, provider) VALUES ('s1', 1, 'm', 'p')").run();
     const message = (id: string, content: unknown, includeContent = true) => db.prepare(
       'INSERT INTO brain_messages (id, session_id, role, content, usage_epoch) VALUES (?, ?, ?, ?, 0)',
-    ).run(id, 's1', 'assistant', JSON.stringify({ model: 'm', provider: 'p', timestamp: 1, effectiveMs: 1000,
+    ).run(id, 's1', 'assistant', JSON.stringify({ model: 'm', provider: 'p', timestamp: 1, effectiveTimingVersion: 3, effectiveMs: 1000,
       ...(includeContent ? { content } : {}), usage: { output: 10, totalTokens: 10 } }));
     message('eligible', [{ type: 'text', text: 'done' }]);
     message('tool', [{ type: 'toolCall', name: 'Read', arguments: {} }]);
@@ -208,17 +208,17 @@ describe('brain usage write-time projection', () => {
     expect(db.prepare('SELECT source_message_id, effective_ms, effective_output FROM brain_usage_rows ORDER BY source_message_id').all())
       .toEqual([
         { source_message_id: 'eligible', effective_ms: 1000, effective_output: 10 },
-        { source_message_id: 'missing', effective_ms: 0, effective_output: 0 },
-        { source_message_id: 'non-array', effective_ms: 0, effective_output: 0 },
-        { source_message_id: 'scalar-block', effective_ms: 0, effective_output: 0 },
-        { source_message_id: 'tool', effective_ms: 0, effective_output: 0 },
+        { source_message_id: 'missing', effective_ms: 1000, effective_output: 10 },
+        { source_message_id: 'non-array', effective_ms: 1000, effective_output: 10 },
+        { source_message_id: 'scalar-block', effective_ms: 1000, effective_output: 10 },
+        { source_message_id: 'tool', effective_ms: 1000, effective_output: 10 },
       ]);
     expect(db.prepare('SELECT ready, effective_pair_version FROM brain_usage_rollup_state WHERE id = 1').get())
-      .toEqual({ ready: 1, effective_pair_version: 2 });
+      .toEqual({ ready: 1, effective_pair_version: 3 });
 
     installBrainUsageRollup(db);
     expect(db.prepare('SELECT generation, effective_pair_version FROM brain_usage_rollup_state WHERE id = 1').get())
-      .toEqual({ generation: first.generation, effective_pair_version: 2 });
+      .toEqual({ generation: first.generation, effective_pair_version: 3 });
   });
 
   it('backfills legacy provider attribution once and removes brain_messages from usage reads', () => {

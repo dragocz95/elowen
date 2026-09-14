@@ -88,6 +88,8 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
   // task renders as the same prefix in every box. The line above already shows the live activity.
   const nodeVitals = (node: WorkflowNode): string => [
     node.tokens !== undefined ? `${formatTokens(node.tokens)} ${t.agents.tokens.toLowerCase()}` : '',
+    typeof node.effectiveTps === 'number' && node.effectiveTps >= 1
+      ? `${Math.round(node.effectiveTps)} ${t.brainChat.tokensPerSecond}` : '',
     node.seconds !== undefined ? `${node.seconds}s` : '',
   ].filter(Boolean).join(' · ');
 
@@ -222,6 +224,8 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
     selected.model ? `${t.agents.model}: ${selected.model}` : '',
     selected.thinkingLevel ? `${t.brainChat.reasoningLabel}: ${selected.thinkingLevel}` : '',
     selected.tokens !== undefined ? `${formatTokens(selected.tokens)} ${t.agents.tokens.toLowerCase()}` : '',
+    typeof selected.effectiveTps === 'number' && selected.effectiveTps >= 1
+      ? `${Math.round(selected.effectiveTps)} ${t.brainChat.tokensPerSecond}` : '',
     selected.seconds !== undefined ? `${selected.seconds}s` : '',
     `${t.workflowModal.deps}: ${selected.deps.join(', ') || t.workflowModal.depsNone}`,
   ].filter(Boolean) : [];

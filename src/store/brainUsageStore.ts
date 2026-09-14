@@ -69,10 +69,10 @@ const producingProvider = (src: string, path: string, modelPath: string, fallbac
 // compaction moment. `model` is the row's own producing model, falling back to the session's model only
 // for legacy rows that predate per-message model capture. `measured_output` is the slice of `output` that
 // `duration_ms` actually timed (see {@link UsageRollupBucket}) — the legacy tok/s numerator, kept separate so
-// untimed history can never be read as measured. `effective_ms`/`effective_output` are the end-to-end
-// counterpart: the recorder stamps `$.effectiveMs` (whole logical request from initiation, retries
-// included) on new messages. Only successful terminal rows count, and compacted pairs need the current
-// discriminator; failed prefixes, older history and ambiguous old rollups remain unknown. Purely static SQL (no user input) → safe to
+// untimed history can never be read as measured. `effective_ms`/`effective_output` are the v3 counterpart:
+// successful provider-generation time and canonical output including reasoning/tool calls. Compacted pairs
+// need the current discriminator; failed prefixes, older history and ambiguous old rollups remain unknown.
+// Purely static SQL (no user input) → safe to
 // interpolate. Callers add the user/window/day filters + GROUP BY.
 //
 // The `json_valid` guards are load-bearing: `json_extract` and `json_each` THROW on malformed JSON, so a
@@ -88,28 +88,13 @@ const producingProvider = (src: string, path: string, modelPath: string, fallbac
 // keeps a bucket element that is a scalar — including a DOUBLE-SERIALIZED bucket, a JSON string whose
 // text happens to be an object — out of the fan-out. Every numeric field goes through {@link numeric}.
 const safeJson = (src: string): string => `CASE WHEN json_valid(${src}) THEN ${src} ELSE '{}' END`;
-const safeContentArray = (src: string): string =>
-  `CASE WHEN json_type(${safeJson(src)}, '$.content') = 'array'
-          THEN json_extract(${safeJson(src)}, '$.content') ELSE '[]' END`;
-
-const hasInvalidEffectiveContent = (src: string): string =>
-  `(COALESCE(json_type(${safeJson(src)}, '$.content'), '') <> 'array'
-    OR EXISTS (SELECT 1 FROM json_each(${safeContentArray(src)}) AS block
-                 WHERE block.type <> 'object'))`;
-
-const hasToolCallContent = (src: string): string =>
-  `(EXISTS (SELECT 1 FROM json_each(${safeContentArray(src)}) AS block
-              WHERE CASE WHEN block.type = 'object'
-                         THEN json_extract(block.value, '$.type') = 'toolCall'
-                         ELSE 0 END))`;
-
 const successfulEffectiveMessage = (src: string): string =>
   `COALESCE(json_extract(${safeJson(src)}, '$.stopReason'), '') NOT IN ('error', 'aborted')
-   AND NOT ${hasInvalidEffectiveContent(src)}
-   AND NOT ${hasToolCallContent(src)}`;
+   AND json_type(${safeJson(src)}, '$.effectiveTimingVersion') = 'integer'
+   AND json_extract(${safeJson(src)}, '$.effectiveTimingVersion') = 3`;
 
 const trustedEffectiveRollup = (src: string): string =>
-  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 2`;
+  `json_type(${src}, '$.effectiveTimingVersion') = 'integer' AND json_extract(${src}, '$.effectiveTimingVersion') = 3`;
 
 const USAGE_ROWS = `
   SELECT s.user_id AS user_id, s.id AS session_id, m.usage_epoch AS usage_epoch,
@@ -235,12 +220,10 @@ export interface UsageRollupBucket {
    *  remain unknown (0) rather than being presented as one call when they may contain thousands. */
   calls?: number;
   durationMs?: number; measuredOutput?: number; cost?: { total: number };
-  /** Marks a rollup whose effective pair contains only successful assistant generations without tool calls.
-   *  Earlier persisted rollups are ambiguous because provider usage did not split tool-call tokens, so absence
-   *  stays unknown. */
-  effectiveTimingVersion?: 2;
-  /** The end-to-end measured pair (see {@link EffectiveRequestTiming}): wall time and output tokens of
-   *  dropped successful generations without toolCall blocks that carried the recorder's effective stamp. */
+  /** Marks a rollup whose effective pair uses successful-provider generation windows and canonical output,
+   *  including reasoning and tool-call output. Earlier timing contracts remain unknown. */
+  effectiveTimingVersion?: 3;
+  /** The measured pair (see {@link EffectiveRequestTiming}) of dropped successful generations. */
   effectiveMs?: number; effectiveOutput?: number;
 }
 
@@ -287,7 +270,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
     // Same rule for the end-to-end pair, so an effective rate survives compaction exactly as far as its
     // samples do: rows written before effective timing existed contribute to neither side.
     if (effective.effectiveMs > 0 && effective.output > 0) {
-      b.effectiveTimingVersion = 2;
+      b.effectiveTimingVersion = 3;
       b.effectiveMs = (b.effectiveMs ?? 0) + effective.effectiveMs;
       b.effectiveOutput = (b.effectiveOutput ?? 0) + effective.output;
     }
@@ -299,7 +282,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
     let content: unknown;
     try { content = JSON.parse(row.content); } catch { continue; }
     if (typeof content !== 'object' || content === null) continue;
-    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; provider?: unknown; providerIdentity?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown; effectiveMs?: unknown; stopReason?: unknown; content?: unknown };
+    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; provider?: unknown; providerIdentity?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown; effectiveTimingVersion?: unknown; effectiveMs?: unknown; stopReason?: unknown };
     if (Array.isArray(c.usageRollup)) {
       // A prior divider — merge each of its per-identity buckets (chained compaction). Legacy buckets have
       // no provider, so they remain separate and unresolved rather than being guessed from newer state.
@@ -314,7 +297,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
           pb.providerIdentity === 'config', at,
         ), pb, at, num(pb.calls),
           { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) },
-          pb.effectiveTimingVersion === 2
+          pb.effectiveTimingVersion === 3
             ? { effectiveMs: num(pb.effectiveMs), output: num(pb.effectiveOutput) }
             : { effectiveMs: 0, output: 0 });
       }
@@ -322,9 +305,6 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
       // An assistant message — attribute to the identity it recorded. Empty fields are resolved from the
       // session only by the SQL reader, which still has that session row; the persisted rollup never guesses.
       const at = typeof c.timestamp === 'number' ? c.timestamp : 0;
-      const validEffectiveContent = Array.isArray(c.content) && c.content.every((block) =>
-        !!block && typeof block === 'object' && !Array.isArray(block)
-        && (block as { type?: unknown }).type !== 'toolCall');
       fold(bucketFor(
         row.usage_epoch ?? 0,
         typeof c.provider === 'string' ? c.provider : '',
@@ -332,7 +312,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
         c.providerIdentity === 'config', at,
       ), c.usage, at, 1,
         { durationMs: num(c.durationMs), output: num(c.usage.output) },
-        c.stopReason === 'error' || c.stopReason === 'aborted' || !validEffectiveContent
+        c.stopReason === 'error' || c.stopReason === 'aborted' || c.effectiveTimingVersion !== 3
           ? { effectiveMs: 0, output: 0 }
           : { effectiveMs: num(c.effectiveMs), output: num(c.usage.output) });
     }
@@ -372,7 +352,7 @@ export class BrainUsageStore {
     if (!this.hasUsageRollupTable()) return false;
     const row = this.db.prepare('SELECT ready, effective_pair_version AS effectivePairVersion FROM brain_usage_rollup_state WHERE id = 1')
       .get() as { ready: number; effectivePairVersion: number } | undefined;
-    return row?.ready === 1 && row.effectivePairVersion >= 2;
+    return row?.ready === 1 && row.effectivePairVersion >= 3;
   }
 
   /** Advance the user's logical accounting generation. Historical transcript/projection rows remain

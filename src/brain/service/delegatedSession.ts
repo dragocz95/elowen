@@ -56,7 +56,12 @@ function narrowSubagentProgress(e: BrainEvent): SubagentProgressEvent {
     ...('detail' in e && e.detail !== undefined ? { detail: e.detail } : {}),
     ...('sessionId' in e && e.sessionId !== undefined ? { sessionId: e.sessionId } : {}),
     ...('status' in e && e.status !== undefined ? { status: e.status } : {}),
-    ...('usage' in e && e.usage !== undefined ? { usage: { totalTokens: e.usage.totalTokens } } : {}),
+    ...('usage' in e && e.usage !== undefined ? { usage: {
+      totalTokens: e.usage.totalTokens,
+      ...(e.usage.effectiveTps !== undefined ? { effectiveTps: e.usage.effectiveTps } : {}),
+      ...(e.usage.effectiveTurnId ? { effectiveTurnId: e.usage.effectiveTurnId } : {}),
+      ...(e.usage.effectiveModel ? { effectiveModel: e.usage.effectiveModel } : {}),
+    } } : {}),
   };
 }
 

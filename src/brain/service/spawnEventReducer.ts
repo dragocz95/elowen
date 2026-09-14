@@ -160,7 +160,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       if (terminalIdleDeferred) {
         replay.publish({
           type: 'idle', model: model.id,
-          usage: sessionUsageSnapshot(session, store, sessionId),
+          usage: sessionUsageSnapshot(session, store, sessionId, `${model.provider}/${model.id}`),
           ...(settledDurationMs != null ? { durationMs: settledDurationMs } : {}),
           ...(settledCompletedAt ? { completedAt: settledCompletedAt } : {}),
         });
@@ -185,7 +185,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
         logger('brain-step-ceiling').warn(`session ${sessionId} hit the step ceiling (${steps} > ${maxSteps}); aborting the run`);
         void abortSessionWork(session).catch(() => { /* already settling */ });
       } else {
-        const usage = sessionUsageSnapshot(session, store, sessionId);
+        const usage = sessionUsageSnapshot(session, store, sessionId, `${model.provider}/${model.id}`);
         replay.publish({ type: 'step', step: steps, maxSteps, usage, ...(steps === 1 && turnStartedAt != null ? { turnStartedAt } : {}) });
       }
     }
@@ -280,7 +280,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
     // terminal idle: headless must keep waiting and interactive clients must keep their spinner alive.
     if (suppressAgentEndIdle && be.type === 'idle') return;
     if (be.type === 'idle') {
-      be.usage = sessionUsageSnapshot(session, store, sessionId);
+      be.usage = sessionUsageSnapshot(session, store, sessionId, `${model.provider}/${model.id}`);
       be.model = model.id;
       terminalIdleDeferred = false;
       live.lastAdmitted = undefined; // turn settled — a later cancel with no new turn must not discard it
@@ -297,7 +297,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
     if (emitFailedRecoveryIdle) {
       replay.publish({
         type: 'idle', model: model.id,
-        usage: sessionUsageSnapshot(session, store, sessionId),
+        usage: sessionUsageSnapshot(session, store, sessionId, `${model.provider}/${model.id}`),
         ...(settledDurationMs != null ? { durationMs: settledDurationMs } : {}),
         ...(settledCompletedAt ? { completedAt: settledCompletedAt } : {}),
       });

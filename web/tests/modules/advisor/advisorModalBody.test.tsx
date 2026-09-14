@@ -26,7 +26,7 @@ function soleBody(): HTMLElement {
 const AGENTS: SubagentState[] = [
   {
     sessionId: 's-1', status: 'running', task: 'inspect the code', detail: 'Read src/a.ts',
-    tools: 3, tokens: 1200, seconds: 4, model: 'anthropic/sonnet',
+    tools: 3, tokens: 1200, effectiveTps: 44.4, seconds: 4, model: 'anthropic/sonnet',
     thinkingLevel: 'high', thinkingLabel: 'High',
     startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:01:50',
     background: true, autoDeliver: true, resultDelivery: 'pending',
@@ -72,9 +72,9 @@ describe('the advisor agents table', () => {
     expect(body.contains(table), 'the wide register scrolls in the shared body').toBe(true);
     expect(table.tagName).toBe('DIV');
     expect(table).toHaveClass('min-w-[82rem]');
-    expect(table.style.getPropertyValue('--data-table-columns')).toBe('5.5rem minmax(16rem,1.8fr) 9rem 5.5rem 4.5rem 6rem 8.5rem 8.5rem 8rem 1.25rem');
+    expect(table.style.getPropertyValue('--data-table-columns')).toBe('5.5rem minmax(16rem,1.8fr) 9rem 5.5rem 4.5rem 4.5rem 6rem 8.5rem 8.5rem 8rem 1.25rem');
 
-    for (const heading of ['Status', 'Task', 'Model', 'Tokens', 'Tools', 'Runtime', 'Started', 'Updated', 'Mode / delivery']) {
+    for (const heading of ['Status', 'Task', 'Model', 'Tokens', 'tok/s', 'Tools', 'Runtime', 'Started', 'Updated', 'Mode / delivery']) {
       expect(screen.getByRole('columnheader', { name: heading })).toBeInTheDocument();
     }
     for (const value of ['inspect the code', 'Read src/a.ts', 'anthropic/sonnet', 'High', '1.2k', 'Automatic delivery', 'Delivery pending']) {

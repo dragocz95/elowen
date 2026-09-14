@@ -26,8 +26,8 @@ const LEFT = '\x1b[D';
 const WF: WorkflowState = {
   id: 'wf-1', toolCallId: 'call-1', title: 'ship the parser', status: 'running',
   nodes: [
-    { id: 'gather', task: 'Read the parser sources and summarize the token grammar', status: 'done', deps: [], sessionId: 's-gather', tokens: 4200, seconds: 9, model: 'claude-opus-4-8', result: 'grammar has 14 token kinds' },
-    { id: 'analyze', task: 'Find every edge case the grammar misses', status: 'running', deps: ['gather'], sessionId: 's-analyze', tokens: 1800, seconds: 5, detail: 'Read src/lexer.ts', model: 'claude-opus-4-8' },
+    { id: 'gather', task: 'Read the parser sources and summarize the token grammar', status: 'done', deps: [], sessionId: 's-gather', tokens: 4200, effectiveTps: 37.6, seconds: 9, model: 'claude-opus-4-8', result: 'grammar has 14 token kinds' },
+    { id: 'analyze', task: 'Find every edge case the grammar misses', status: 'running', deps: ['gather'], sessionId: 's-analyze', tokens: 1800, effectiveTps: 42.2, seconds: 5, detail: 'Read src/lexer.ts', model: 'claude-opus-4-8' },
     { id: 'write', task: 'Write the fix and a regression test', status: 'pending', deps: ['analyze'] },
   ],
 };
@@ -133,6 +133,7 @@ describe('workflow canvas modal', () => {
     expect(flat).toMatch(/╭ [✓✗⏸⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+─+╮/); // the selected/running nodes draw as titled cards
     expect(flat).toContain('▶');    // dependency edges end in an arrowhead
     expect(flat).toMatch(SPIN);     // a running node spins
+    expect(flat).toContain('38 t/s');
     // The first node starts selected: its dock names it, calls it a root, and offers the drill-in.
     expect(flat).toMatch(/─ gather ─/);
     expect(flat).toMatch(/deps\s+root/);

@@ -42,7 +42,7 @@ export interface SubagentProgressEvent {
   detail?: string;
   sessionId?: string;
   status?: string;
-  usage?: { totalTokens?: number };
+  usage?: { totalTokens?: number; effectiveTps?: number | null; effectiveTurnId?: string; effectiveModel?: string };
 }
 
 /** How a sub-agent continuation ended. `reply` = the child was idle, ran the follow-up as its own turn
