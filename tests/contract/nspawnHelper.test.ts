@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import {
   RESOURCE_USAGE_TIMEOUT_MS,
   commandOptionsFor,
   defaultCommandRunner,
+  defaultReadDescriptorOwner,
   MACHINE_UNIT_PATH,
   MACHINE_STORAGE_RECEIPT_PATH,
   MACHINE_FIREWALL_UNIT,
@@ -1228,6 +1229,22 @@ describe('privileged helper: host artefacts and readiness', () => {
 });
 
 describe('privileged helper: the disk identity record', () => {
+  it('reads a pinned object owner from the descriptor target, not its procfs symlink', () => {
+    const target = process.geteuid?.() === 0 ? join(scratch, 'descriptor-owner-probe') : '/tmp';
+    if (process.geteuid?.() === 0) {
+      writeFileSync(target, 'probe');
+      chownSync(target, 1, 1);
+    }
+    const fd = openSync(target, constants.O_RDONLY);
+    try {
+      const descriptorPath = `/proc/self/fd/${fd}`;
+      expect(lstatSync(descriptorPath).uid).not.toBe(fstatSync(fd).uid);
+      expect(defaultReadDescriptorOwner(fd)).toBe(fstatSync(fd).uid);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   function diskFixture(ref: typeof diskRef = diskRef) {
     const paths = nspawnDiskPaths(storage, ref);
     mkdirSync(paths.rootfs, { recursive: true });
@@ -1244,6 +1261,7 @@ describe('privileged helper: the disk identity record', () => {
         // away to. An empty range registry allocates the first slot, so this is the range every envelope
         // written through this fixture declares.
         readOwner: () => UID_RANGE_BASE,
+        readDescriptorOwner: () => UID_RANGE_BASE,
         // The other half of the same limitation: a test cannot give a directory away either, so the
         // handover the extraction performs is recorded rather than made.
         setOwner: () => {},
@@ -1323,7 +1341,7 @@ describe('privileged helper: the disk identity record', () => {
     const fixture = diskFixture();
     await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef }, undefined, fixture.options);
     fixture.calls.length = 0;
-    fixture.options.readOwner = () => UID_RANGE_BASE + 1;
+    fixture.options.readDescriptorOwner = () => UID_RANGE_BASE + 1;
 
     await expect(applyRequest({ domain: 'nspawn', op: 'normalize-rootfs', ...diskRef }, undefined, fixture.options))
       .rejects.toThrow(/ownership does not match/);
