@@ -108,7 +108,7 @@ type PluginProjectRowsHook = (input: { projects: Project[] }) => {
    *  carried only by `ready`; `absolute` is a real figure with no configured ceiling to divide by. */
   metrics?: Record<number, {
     label: string;
-    items: { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'loading' | 'stopped' | 'unavailable' }[];
+    items: { id: string; label: string; value: string; valueText?: string; percent?: number; state: 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable' }[];
     refreshing?: boolean;
     stale?: boolean;
     staleLabel?: string;

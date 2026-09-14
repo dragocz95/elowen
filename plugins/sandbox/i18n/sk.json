@@ -139,8 +139,6 @@
       "usageCpu": "CPU",
       "usageRam": "RAM",
       "usageDisk": "Disk",
-      "usageLoading": "Načítava sa…",
-      "usageSampling": "Meranie…",
       "usageUnavailable": "Nedostupné",
       "usageStopped": "Zastavené",
       "usageLimitUnknown": "Strop disku tohto prostredia sa nepodarilo zistiť.",

@@ -139,8 +139,6 @@
       "usageCpu": "CPU",
       "usageRam": "RAM",
       "usageDisk": "Disk",
-      "usageLoading": "Načítání…",
-      "usageSampling": "Měření…",
       "usageUnavailable": "Nedostupné",
       "usageStopped": "Zastaveno",
       "usageLimitUnknown": "Strop disku tohoto prostředí se nepodařilo zjistit.",
