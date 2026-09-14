@@ -1,46 +1,71 @@
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createPublishedSitesGatewayControl,
   installSiteGatewayHelper,
   siteGatewayHelperStatus,
   siteGatewayHelperTimeoutMs,
 } from '../../src/privileged/publishedSitesGateway.js';
+import { SITE_GATEWAY_HELPER_PATH } from '../../src/shared/siteGateway.js';
 
 const TOKEN = 'a'.repeat(43);
+const MODULE_SOURCE = readFileSync(new URL('../../src/privileged/publishedSitesGateway.ts', import.meta.url), 'utf8');
 
+/** The two files the maintenance code reads, and the one way it may replace the installed copy. */
 function helperIO(installed: string) {
-  const writes: Buffer[] = [];
-  const exec = vi.fn(async () => {});
+  const installs: { path: string; data: Buffer }[] = [];
+  const install = vi.fn(async (path: string, data: Buffer) => { installs.push({ path, data }); });
   return {
-    writes,
-    exec,
+    installs,
+    install,
     readFile: async (path: string) => Buffer.from(path.includes('/scripts/') ? 'shipped helper' : installed),
-    writeFile: async (_path: string, data: Buffer) => { writes.push(data); },
-    remove: async () => {},
   };
 }
 
+/** The account the process runs as decides whether a root-owned file can be replaced at all. */
+function runningAs(uid: number) {
+  vi.spyOn(process, 'getuid').mockReturnValue(uid);
+}
+
+afterEach(() => { vi.restoreAllMocks(); });
+
 describe('published sites gateway helper maintenance', () => {
-  it('compares shipped and installed content digests', async () => {
+  it('compares shipped and installed content digests, and names the command an operator can run', async () => {
     expect(await siteGatewayHelperStatus(helperIO('shipped helper'))).toMatchObject({ ok: true });
-    expect(await siteGatewayHelperStatus(helperIO('stale helper'))).toMatchObject({
-      ok: false,
-      detail: expect.stringContaining('sudo -n /usr/bin/install -o root -g root -m 0755'),
-    });
+    const drifted = await siteGatewayHelperStatus(helperIO('stale helper'));
+    expect(drifted).toMatchObject({ ok: false, detail: expect.stringContaining('sudo install -o root -g root -m 0755') });
+    expect(drifted.detail).toContain(SITE_GATEWAY_HELPER_PATH);
   });
 
-  it('installs the shipped helper through the pinned sudo command only when drifted', async () => {
+  it('leaves a current helper alone, and never touches the installed copy twice', async () => {
+    runningAs(0);
     const equal = helperIO('shipped helper');
     expect(await installSiteGatewayHelper(equal)).toBe(false);
-    expect(equal.exec).not.toHaveBeenCalled();
+    expect(equal.install).not.toHaveBeenCalled();
+  });
 
+  it('replaces a drifted helper from this release when it already runs as root', async () => {
+    runningAs(0);
     const drifted = helperIO('stale helper');
     expect(await installSiteGatewayHelper(drifted)).toBe(true);
-    expect(drifted.writes).toEqual([Buffer.from('shipped helper')]);
-    expect(drifted.exec).toHaveBeenCalledWith('sudo', [
-      '-n', '/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0755',
-      '/tmp/elowen-site-gateway', '/usr/local/libexec/elowen-site-gateway',
-    ]);
+    expect(drifted.installs).toEqual([{ path: SITE_GATEWAY_HELPER_PATH, data: Buffer.from('shipped helper') }]);
+  });
+
+  // The regression this whole change is about: the refresh used to be an `install` from a path under
+  // /tmp, granted passwordlessly in sudoers. A grant binds to a USER rather than to the code path it was
+  // written for, so the service user could write that source first and choose what root installed. The
+  // hourly auto-update timer runs as the service user, which is exactly that account.
+  it('does not try to replace a root-owned file as the service user', async () => {
+    runningAs(1000);
+    const drifted = helperIO('stale helper');
+    expect(await installSiteGatewayHelper(drifted)).toBe(false);
+    expect(drifted.install).not.toHaveBeenCalled();
+  });
+
+  it('spawns sudo for the pinned helper argv only, and installs nothing through it', () => {
+    expect(MODULE_SOURCE).toContain("spawn('sudo', [...SITE_GATEWAY_HELPER_ARGV]");
+    expect(MODULE_SOURCE).not.toContain('/usr/bin/install');
+    expect(MODULE_SOURCE).not.toContain("'-n',");
   });
 });
 

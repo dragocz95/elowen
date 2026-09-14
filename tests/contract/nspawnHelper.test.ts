@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -997,12 +997,44 @@ describe('privileged helper: host artefacts and readiness', () => {
     // A request leaves through the machine link and its reply returns to it. Both rules live directly in
     // the native chain so a host does not need Docker's private chain, and fixed leading positions keep a
     // framework jump or host DROP rule from intercepting either direction first.
-    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'FORWARD');
+    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'FORWARD' && rule.spec.includes('ACCEPT'));
     expect(forwarding.map((rule: { id: string }) => rule.id)).toEqual(['firewall:forward-out', 'firewall:forward-back']);
-    expect(forwarding.map((rule) => rule.insertAt)).toEqual([1, 2]);
+    expect(forwarding.map((rule: { binary: string }) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/iptables']);
     expect(forwarding.map((rule) => firewallRuleCommand(rule)).every((command) => command.includes('--comment elowen-machine-'))).toBe(true);
     // The return path is conntrack-scoped, so it opens nothing a machine did not ask for first.
     expect(forwarding[1]!.spec).toContain('RELATED,ESTABLISHED');
+  });
+
+  it('blocks a machine egress path to the cloud platform the host itself lives on, IPv4 and IPv6', () => {
+    // A machine routed through this host reaches the instance-metadata service and the platform's own
+    // virtual IP through FORWARD, which is where the HOST's credentials are served from. The block has to
+    // be in the native chain ahead of both accepts, and ahead is a POSITION, not an ordering within an
+    // array: a host or framework accept that lands above it would let the whole thing through.
+    const egress = NSPAWN_FIREWALL_RULES.filter((rule) => rule.id.startsWith('firewall:egress-'));
+    expect(egress.map((rule) => rule.id)).toEqual([
+      'firewall:egress-link-local', 'firewall:egress-azure-platform', 'firewall:egress-link-local6',
+    ]);
+    expect(egress.every((rule) => rule.chain === 'FORWARD' && rule.spec.includes('-j') && rule.spec.includes('DROP'))).toBe(true);
+    expect(egress.map((rule) => rule.spec[rule.spec.indexOf('-d') + 1])).toEqual(['169.254.0.0/16', '168.63.129.16/32', 'fe80::/10']);
+
+    const accepts = NSPAWN_FIREWALL_RULES.filter((rule) => rule.chain === 'FORWARD' && rule.spec.includes('ACCEPT'));
+    const v4 = NSPAWN_FIREWALL_RULES.filter((rule) => rule.binary === '/usr/sbin/iptables' && rule.chain === 'FORWARD');
+    const v6 = NSPAWN_FIREWALL_RULES.filter((rule) => rule.binary === '/usr/sbin/ip6tables' && rule.chain === 'FORWARD');
+    expect(v4.map((rule) => rule.id)).toEqual([
+      'firewall:egress-link-local', 'firewall:egress-azure-platform', 'firewall:forward-out', 'firewall:forward-back',
+    ]);
+    expect(v4.map((rule) => rule.insertAt)).toEqual([1, 2, 3, 4]);
+    expect(v6.map((rule) => rule.id)).toEqual(['firewall:egress-link-local6']);
+    expect(v6[0]!.insertAt).toBe(1);
+    // No accept may sit at or above an egress block on the same chain, in either direction. This is the
+    // property that would silently fail open if somebody renumbered the list for readability.
+    for (const rule of accepts) {
+      const sameChainDrops = NSPAWN_FIREWALL_RULES.filter((candidate) => candidate.binary === rule.binary
+        && candidate.chain === rule.chain && candidate.spec.includes('DROP'));
+      for (const drop of sameChainDrops) {
+        expect(drop.insertAt, `${drop.id} must precede ${rule.id}`).toBeLessThan(rule.insertAt);
+      }
+    }
   });
 
   it('puts the host guard where a machine-to-host packet actually arrives', () => {
@@ -1016,9 +1048,8 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(returns).toHaveLength(2);
     expect(returns.every((rule) => rule.chain === 'INPUT' && rule.spec.includes('RELATED,ESTABLISHED'))).toBe(true);
     expect(returns.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
-    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.spec.includes('DROP'));
+    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.chain === 'INPUT' && rule.spec.includes('DROP'));
     expect(guards).toHaveLength(2);
-    expect(guards.every((rule) => rule.chain === 'INPUT')).toBe(true);
     expect(guards.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
     // IPv4 DHCP is first, then the native-port return path and guard. IPv6 starts with return then guard.
     const lease = NSPAWN_FIREWALL_RULES.find((rule) => rule.id === 'firewall:machine-dhcp')!;
@@ -1211,6 +1242,63 @@ describe('privileged helper: the disk identity record', () => {
     rmSync(archive, { force: true });
   });
 
+  it('empties the template machine id, so two machines from one image are not the same host', async () => {
+    // The tree arrives through the archive, so the fake extraction writes what a real one would: a
+    // machine-id inside `etc`, reached through the pinned `--directory` the helper handed to tar.
+    const fixture = diskFixture();
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+    fixture.options.runner = (file: string, args: string[]) => {
+      // What a real tar does with `--directory`: everything the archive carries lands inside that tree,
+      // which is the staging directory the helper pinned for it.
+      if (file === '/usr/bin/tar' && args.includes('--directory')) {
+        mkdirSync(join(fixture.paths.rootfs, 'etc'), { recursive: true });
+        writeFileSync(join(fixture.paths.rootfs, 'etc', 'machine-id'), '0123456789abcdef0123456789abcdef\n');
+      }
+      return { ok: true, stdout: '' };
+    };
+
+    await applyRequest({
+      domain: 'nspawn',
+      op: 'materialize',
+      ...diskRef,
+      archivePath: archive,
+      targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options);
+
+    // Truncated, and only that: systemd generates a fresh id on first boot, while the id an image ships
+    // is one that would otherwise make every machine built from it the same host to journald and D-Bus.
+    expect(readFileSync(join(fixture.paths.rootfs, 'etc', 'machine-id'), 'utf8')).toBe('');
+    rmSync(join(fixture.paths.rootfs, 'etc'), { recursive: true, force: true });
+    rmSync(archive, { force: true });
+  });
+
+  it('refuses an archive whose etc is a symlink, instead of truncating whatever it points at', async () => {
+    // An export is untrusted input, and `etc` inside it may be a link to a host file. Following the link
+    // to empty the machine id would give that image a root-writable truncation of any file on the host.
+    const fixture = diskFixture();
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+    const victim = join(fixture.paths.directory, 'host-victim');
+    writeFileSync(victim, 'must survive');
+    fixture.options.runner = (file: string, args: string[]) => {
+      if (file === '/usr/bin/tar' && args.includes('--directory')) symlinkSync(victim, join(fixture.paths.rootfs, 'etc'));
+      return { ok: true, stdout: '' };
+    };
+
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'materialize',
+      ...diskRef,
+      archivePath: archive,
+      targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options)).rejects.toThrow(/machine etc directory is not a directory/);
+    expect(readFileSync(victim, 'utf8')).toBe('must survive');
+    rmSync(join(fixture.paths.rootfs, 'etc'), { force: true });
+    rmSync(victim, { force: true });
+    rmSync(archive, { force: true });
+  });
+
   it('materializes a tree the machine root owns whole, including the directory that becomes its /', async () => {
     // Measured on the deployed build: every freshly created environment failed its first start with
     // `the root filesystem is owned by 1076953121 and this envelope declares the range at 1076953088`,
@@ -1346,7 +1434,13 @@ describe('privileged helper: the disk identity record', () => {
     }, undefined, fixture.options) as { unit: string; uidBase: number };
 
     expect(response.unit).toBe(`elowen-machine@${MACHINE}.service`);
-    const identityWrite = fixture.writes.find((write) => write.path === fixture.paths.identity);
+    // Written through the descriptor of the `.elowen` this helper opened, never through the disk path a
+    // second time: every component above it belongs to the service user, and the atomic write creates
+    // missing parents — so a name swapped between the check and the write would have root create a
+    // root-owned record somewhere else entirely.
+    const identityWrite = fixture.writes.find((write) => write.path.endsWith('/identity.json'));
+    expect(identityWrite?.path).toMatch(/^\/proc\/self\/fd\/\d+\/identity\.json$/);
+    expect(fixture.writes.some((write) => write.path === fixture.paths.identity)).toBe(false);
     // 0640 root:<service group>. The daemon READS this on the execution path — a privileged round trip
     // there would cost more than the state poll this runtime exists to make cheap — and only root writes
     // it. Its authority is its location, outside the root filesystem, where the guest cannot reach it.
@@ -1802,19 +1896,32 @@ describe('privileged helper: disk tree primitives', () => {
     mkdirSync(source, { recursive: true });
     mkdirSync(destination, { recursive: true });
     writeFileSync(join(source, 'file.txt'), 'content');
-    const calls: Call[] = [];
+    const calls: { file: string; args: string[]; pins: number[] }[] = [];
+    const handed: number[] = [];
     const result = await applyRequest({
       domain: 'nspawn', op: 'tree-copy', sourcePath: source, targetPath: destination,
     }, undefined, {
       storage,
-      runner: (file: string, args: string[]) => { calls.push({ file, args }); return { ok: true, stdout: '' }; },
+      runner: (file: string, args: string[], options?: { pins?: number[] }) => {
+        for (const pin of options?.pins ?? []) handed.push(fstatSync(pin).ino);
+        calls.push({ file, args, pins: options?.pins ?? [] });
+        return { ok: true, stdout: '' };
+      },
     }) as { sourcePath: string; targetPath: string };
     expect(result).toMatchObject({ sourcePath: source, targetPath: destination });
     // Exactly the copy, and nothing else: the free-space question is its own operation, and answering it
     // here would walk every tree twice per snapshot.
     expect(calls).toHaveLength(1);
     expect(calls[0].file).toBe('/bin/bash');
-    expect(calls[0].args.slice(2)).toEqual(['elowen-copy-tree', source, destination]);
+    // The names the copy is validated under are never handed to `cp`: the command is given DESCRIPTORS,
+    // addressed as the child's own fd 3 and fd 4, and those descriptors are the two directories this
+    // helper opened. Every component of both paths belongs to the service user, so a name resolved again
+    // by the copy — seconds later, over a tree of any size — is a name that user still controls.
+    expect(calls[0].args.slice(2)).toEqual(['elowen-copy-tree', '/proc/self/fd/3', '/proc/self/fd/4']);
+    expect(calls[0].pins).toHaveLength(2);
+    expect(handed).toEqual([statSync(source).ino, statSync(destination).ino]);
+    // And they are handed over, not held: nothing this helper opens outlives the command it was opened for.
+    for (const pin of calls[0].pins) expect(() => fstatSync(pin)).toThrow(/EBADF/);
   });
 
   it('answers the free-space question without hashing a byte', async () => {
@@ -1822,20 +1929,25 @@ describe('privileged helper: disk tree primitives', () => {
     const second = join(nspawnDiskPaths(storage, diskRef).directory, 'home');
     const destination = join(nspawnDiskPaths(storage, diskRef).storageRoot, 'snapshots');
     for (const path of [first, second, destination]) mkdirSync(path, { recursive: true });
-    const calls: Call[] = [];
+    const calls: { file: string; args: string[]; pins: number[] }[] = [];
+    const handed: number[] = [];
     const result = await applyRequest({
       domain: 'nspawn', op: 'tree-preflight', sourcePaths: [first, second], destinationPath: destination,
     }, undefined, {
       storage,
-      runner: (file: string, args: string[]) => {
-        calls.push({ file, args });
+      runner: (file: string, args: string[], options?: { pins?: number[] }) => {
+        for (const pin of options?.pins ?? []) handed.push(fstatSync(pin).ino);
+        calls.push({ file, args, pins: options?.pins ?? [] });
         return { ok: true, stdout: JSON.stringify({ requiredBytes: 7, marginBytes: 67_108_864, freeBytes: 1 << 30 }) };
       },
     });
     expect(result).toMatchObject({ ok: true, requiredBytes: 7, marginBytes: 67_108_864 });
     expect(calls[0].file).toBe('/usr/bin/python3');
-    expect(calls[0].args[2]).toBe(JSON.stringify([first, second]));
-    expect(calls[0].args[3]).toBe(destination);
+    // Sources and destination alike arrive as pinned descriptors, in the order given, so the walk and the
+    // `statvfs` both answer for the objects that were validated rather than for their names.
+    expect(calls[0].args[2]).toBe(JSON.stringify(['/proc/self/fd/3', '/proc/self/fd/4']));
+    expect(calls[0].args[3]).toBe('/proc/self/fd/5');
+    expect(handed).toEqual([statSync(first).ino, statSync(second).ino, statSync(destination).ino]);
     await expect(applyRequest({ domain: 'nspawn', op: 'tree-preflight', sourcePaths: [], destinationPath: destination }, undefined, { storage }))
       .rejects.toThrow(/requires source trees/);
   });
@@ -1937,6 +2049,53 @@ describe('privileged helper: disk tree primitives', () => {
     // A command that did say something still speaks for itself.
     expect(defaultCommandRunner('/bin/sh', ['-c', 'echo refused >&2; exit 1']))
       .toEqual({ ok: false, stderr: 'refused' });
+  });
+});
+
+describe('privileged helper: a pinned descriptor outlives the name it was validated under', () => {
+  it('runs the privileged command against the object this helper opened, not against the name', () => {
+    // The property the pinned protocol exists for, exercised end to end on the real filesystem. It is the
+    // SHAPE of the race rather than a simulated one: the name is replaced by a symlink pointing outside
+    // the tree the moment the command starts, which is exactly what a service user can do while a tar
+    // extraction or a recursive copy is running. Every one of these operations used to resolve the name
+    // again inside the privileged child, so the child followed the link — as root.
+    const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-pinned-'));
+    const staging = join(root, 'staging');
+    const elsewhere = join(root, 'elsewhere');
+    mkdirSync(staging);
+    mkdirSync(elsewhere);
+    writeFileSync(join(staging, 'validated.txt'), 'inside');
+    writeFileSync(join(elsewhere, 'planted.txt'), 'outside');
+
+    const fd = openSync(staging, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      const before = defaultCommandRunner('/bin/ls', ['/proc/self/fd/3'], { pins: [fd] });
+      expect(before.ok).toBe(true);
+      expect(before.stdout).toContain('validated.txt');
+
+      // The swap. The descriptor still holds the tree that was validated; the name no longer leads to it.
+      renameSync(staging, `${staging}.moved`);
+      symlinkSync(elsewhere, staging);
+
+      const after = defaultCommandRunner('/bin/ls', ['/proc/self/fd/3'], { pins: [fd] });
+      expect(after.ok).toBe(true);
+      expect(after.stdout).toContain('validated.txt');
+      expect(after.stdout).not.toContain('planted.txt');
+      // And the naive reading of the same path really does lead somewhere else, so this is not a test of
+      // a path nothing could have followed.
+      expect(defaultCommandRunner('/bin/ls', [staging]).stdout).toContain('planted.txt');
+    } finally {
+      closeSync(fd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('carries the descriptors in the child stdio array the command options build', () => {
+    // The mechanism, stated on its own: `stdio` entries 3 and up are descriptors, and the child sees them
+    // numbered from 3 regardless of the numbers this process holds them under.
+    const options = commandOptionsFor('/usr/bin/tar', [], undefined, [17, 21]);
+    expect(options.stdio).toEqual(['ignore', 'pipe', 'pipe', 17, 21]);
+    expect(commandOptionsFor('/usr/bin/tar', []).stdio).toEqual(['ignore', 'pipe', 'pipe']);
   });
 });
 
