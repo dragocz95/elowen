@@ -1,4 +1,4 @@
-import { Profiler, type ReactNode } from 'react';
+import { Profiler, useRef, type ReactNode } from 'react';
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 import { setupServer } from 'msw/node';
@@ -6,14 +6,17 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatStatus, useBrainChatTranscript } from '../../../modules/advisor/BrainChatProvider';
 import { ChatView } from '../../../modules/chat/ChatView';
-import { CardBlock, Message } from '../../../modules/advisor/BrainChatSurface';
+import { CardBlock, ChatConversationBar, ChatFooterDock, Message } from '../../../modules/advisor/BrainChatSurface';
 import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailState';
 import * as transcript from '../../../lib/transcript';
 import * as format from '../../../lib/format';
 import * as presentation from '../../../lib/chatPresentation';
 import * as scope from '../../../lib/processScope';
+import * as modelProvider from '../../../lib/modelProvider';
+import * as pageHeader from '../../../lib/pageHeader';
+import * as chatProvider from '../../../modules/advisor/BrainChatProvider';
 
 /** A long conversation that is still working, modelled on the phone screenshot that reported this:
  *  a deep transcript, a 33-item task card at 25 done, two running sub-agents with elapsed clocks, a
@@ -24,12 +27,20 @@ import * as scope from '../../../lib/processScope';
  *  (a long conversation against a short one), which stays meaningful on any host.
  *
  *  Be precise about what changed, because the file it guards is easy to over-claim: settled turn BODIES
- *  were already memoized before this branch. What ran on every single token was the row wrapper for every
- *  turn in the conversation (a component call and a fresh element per row), plus the whole task card and
- *  the elapsed clocks, because the wrapper had to receive the live narration in order to keep it away from
- *  the body. Removing that prop is what lets the row itself be memoized and drop out of the token path;
- *  measured here at 120 turns, React work per token went from 19.4 ms to 11.9 ms and task-card rebuilds
- *  from 21 per 20 tokens to 2.
+ *  were already memoized before this branch. Two separate costs sat on top of that, both measured here at
+ *  120 settled turns, per 20 streamed tokens:
+ *
+ *    1. THE TRANSCRIPT. The row wrapper ran for every turn in the conversation (a component call and a
+ *       fresh element per row), plus the whole task card and the elapsed clocks, because the wrapper had to
+ *       receive the live narration in order to keep it away from the body. Moving those values behind
+ *       `ChatArtifactScope` is what let the row itself be memoized: React work per token 19.4 ms to
+ *       11.9 ms, task-card rebuilds 21 to 2.
+ *    2. THE CHAT CONTEXT. One controller value, rebuilt on every provider render, handed a NEW identity to
+ *       every consumer in the app for every token. Measured on the base commit: 20 context invalidations,
+ *       20 top-bar renders, 40 model-picker label builds, 20 composer renders and 80 statusline/telemetry
+ *       figure builds per 20 tokens. Splitting it by update frequency (actions / status / transcript) and
+ *       memoizing the two halves of the shell takes all five to 0, and React work per token from 11.9 ms
+ *       to 4.9 ms.
  *
  *  The probes are functions the render bodies call, so they count renders without instrumenting the
  *  components under test:
@@ -40,6 +51,9 @@ import * as scope from '../../../lib/processScope';
  *    - `formatTokens`   — the statusline/telemetry figures              → TELEMETRY renders
  *    - `formatDuration` — every elapsed clock on screen (agent chips,
  *                         reasoning blocks, settled turn durations)     → CLOCK renders
+ *    - `PageTopBarPortal` — the full page's toolbar, and nothing else   → TOP BAR renders
+ *    - `brainModelLabel` — the model trigger's label                    → MODEL PICKER renders
+ *    - `useBrainChatInput` — the draft subscription                     → COMPOSER renders
  */
 
 class FakeES {
@@ -134,6 +148,9 @@ interface Probes {
   taskCard: ReturnType<typeof vi.spyOn>;
   telemetry: ReturnType<typeof vi.spyOn>;
   clocks: ReturnType<typeof vi.spyOn>;
+  topBar: ReturnType<typeof vi.spyOn>;
+  modelPicker: ReturnType<typeof vi.spyOn>;
+  composer: ReturnType<typeof vi.spyOn>;
 }
 
 const probes = (): Probes => ({
@@ -145,15 +162,22 @@ const probes = (): Probes => ({
   taskCard: vi.spyOn(presentation, 'todoPreviewItems'),
   telemetry: vi.spyOn(format, 'formatTokens'),
   clocks: vi.spyOn(format, 'formatDuration'),
+  // The full page's toolbar renders through this portal, and nothing else on a chat surface does.
+  topBar: vi.spyOn(pageHeader, 'PageTopBarPortal'),
+  // The model trigger's label — the picker in the top bar and the one in the statusline.
+  modelPicker: vi.spyOn(modelProvider, 'brainModelLabel'),
+  // The draft subscription: called once per ChatComposer render and by nothing else.
+  composer: vi.spyOn(chatProvider, 'useBrainChatInput'),
 });
 const clear = (p: Probes) => { for (const spy of Object.values(p)) spy.mockClear(); };
 const counts = (p: Probes) => Object.fromEntries(Object.entries(p).map(([k, spy]) => [k, spy.mock.calls.length])) as Record<keyof Probes, number>;
 
 /** Mount the long, busy conversation from the screenshot and return its handles. */
-async function openBusyChat(turns: number) {
+async function openBusyChat(turns: number, probe?: ReactNode) {
   const commits: number[] = [];
   renderChat(
     <Profiler id="chat" onRender={(_id, _phase, actualDuration) => commits.push(actualDuration)}>
+      {probe}
       <main><ChatView /></main>
     </Profiler>,
   );
@@ -191,6 +215,20 @@ const median = (values: number[]): number => {
   return sorted[Math.floor(sorted.length / 2)]!;
 };
 
+/** Counts how often each of the three chat context values hands a consumer a NEW identity. This is the
+ *  root-cause probe: with one context, a token invalidated the single value and every consumer in the app
+ *  re-rendered with it, however well memoized their own subtree was. */
+function ContextProbe({ seen }: { seen: { actions: number; status: number; transcript: number } }) {
+  const actions = useBrainChat();
+  const status = useBrainChatStatus();
+  const live = useBrainChatTranscript();
+  const previous = useRef({ actions, status, live });
+  if (previous.current.actions !== actions) { seen.actions += 1; previous.current.actions = actions; }
+  if (previous.current.status !== status) { seen.status += 1; previous.current.status = status; }
+  if (previous.current.live !== live) { seen.transcript += 1; previous.current.live = live; }
+  return null;
+}
+
 describe('a long, still-working conversation', () => {
   it('keeps the transcript row behind a memo boundary', () => {
     // Structural, because it is the thing that is easy to undo by accident: adding one live prop back
@@ -201,6 +239,77 @@ describe('a long, still-working conversation', () => {
       .toBe(Symbol.for('react.memo'));
     expect((CardBlock as unknown as { $$typeof: symbol }).$$typeof, 'the task card lost its memo boundary')
       .toBe(Symbol.for('react.memo'));
+    // The same rule for the two halves of the shell. They read the session's identity and the daemon's
+    // status, neither of which a token touches — but inline in the surface's render they were rebuilt with
+    // it, model picker and editor included.
+    expect((ChatConversationBar as unknown as { $$typeof: symbol }).$$typeof, 'the conversation bar lost its memo boundary')
+      .toBe(Symbol.for('react.memo'));
+    expect((ChatFooterDock as unknown as { $$typeof: symbol }).$$typeof, 'the composer dock lost its memo boundary')
+      .toBe(Symbol.for('react.memo'));
+  });
+
+  it('hands a streamed token to the transcript value alone', async () => {
+    // The split itself, measured at the seam: one value per update frequency. Before it, all three of
+    // these counters moved together, once per token, for every consumer in the app.
+    const seen = { actions: 0, status: 0, transcript: 0 };
+    const { stream } = await openBusyChat(40, <ContextProbe seen={seen} />);
+    // The first delta also clears the compaction notice, which IS a status change. Flush it first so what
+    // is measured below is the token and nothing else.
+    stream.emit('text', { delta: 'token ' });
+    seen.actions = 0; seen.status = 0; seen.transcript = 0;
+
+    for (let i = 0; i < 20; i++) stream.emit('text', { delta: 'token ' });
+    console.info(`[contexts] 20 tokens: ${JSON.stringify(seen)}`);
+    expect(seen.transcript, 'a streamed token has to reach the transcript').toBe(20);
+    expect(seen.actions, 'a streamed token invalidated the session identity and its controls').toBe(0);
+    expect(seen.status, 'a streamed token invalidated the daemon status value').toBe(0);
+
+    // And the status value still moves when its OWN data does — the split narrows the subscription, it
+    // does not freeze it.
+    stream.emit('step', { usage: { tokens: 402_000, contextWindow: 1_000_000, percent: 41, totalTokens: 5_195_900_001, cost: 1.3 } });
+    stream.emit('card', { card: { ...TASK_CARD, title: 'Úkoly (2)' } });
+    expect(seen.status, 'a card or usage event has to reach the status consumers').toBeGreaterThan(0);
+    expect(seen.actions, 'a daemon event invalidated the session identity and its controls').toBe(0);
+  });
+
+  it('leaves the top bar, model picker, composer and telemetry untouched by a streamed token', async () => {
+    const { stream } = await openBusyChat(120);
+    // The compaction notice is cleared by the first delta; that one status change is not the token's cost.
+    stream.emit('text', { delta: 'token ' });
+    const p = probes();
+    clear(p);
+
+    for (let i = 0; i < 20; i++) stream.emit('text', { delta: 'token ' });
+    const seen = counts(p);
+    console.info(`[shell] 20 tokens over 120 settled turns: probes ${JSON.stringify(seen)}`);
+
+    // None of these display anything a text delta changes, and after the context split none of them is
+    // subscribed to one either.
+    expect(seen.topBar, 'a streamed token re-rendered the page toolbar').toBe(0);
+    expect(seen.modelPicker, 'a streamed token re-rendered the model picker').toBe(0);
+    expect(seen.composer, 'a streamed token re-rendered the composer').toBe(0);
+    expect(seen.telemetry, 'a streamed token re-rendered the telemetry figures').toBe(0);
+    expect(seen.rows, 'a streamed token re-rendered settled transcript rows').toBe(0);
+    expect(seen.toolGroups, 'a streamed token re-rendered settled tool groups').toBe(0);
+  });
+
+  it('still re-renders the shell halves when their own data changes', async () => {
+    // The other half of the proof: a memo boundary that never lets anything through is a broken surface,
+    // not a fast one. Each of these events is the one the control actually displays.
+    const { stream, composer } = await openBusyChat(40);
+    const p = probes();
+
+    clear(p);
+    stream.emit('step', { usage: { tokens: 402_000, contextWindow: 1_000_000, percent: 41, totalTokens: 5_195_900_001, cost: 1.3, effectiveTps: 44 } });
+    expect(counts(p).telemetry, 'a usage event did not reach the statusline').toBeGreaterThan(0);
+
+    clear(p);
+    fireEvent.change(composer, { target: { value: 'ahoj' } });
+    expect(counts(p).composer, 'a keystroke did not reach the composer').toBeGreaterThan(0);
+
+    clear(p);
+    stream.emit('session', { sessionId: 'brain-1', model: 'gpt-5.6-nova', provider: 'chatgpt-account' });
+    await waitFor(() => expect(counts(p).modelPicker, 'a model switch did not reach the picker').toBeGreaterThan(0));
   });
 
   it('reconciles only the live turn when a token streams in', async () => {

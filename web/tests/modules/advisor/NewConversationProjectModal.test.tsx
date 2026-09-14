@@ -29,7 +29,7 @@ const chat = vi.hoisted(() => {
     },
   };
 });
-vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => chat.value }));
+vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => chat.value, useBrainChatStatus: () => chat.value }));
 // The real provider closes the question and flips the flag this component reads; the stand-in does the
 // same, so a spec that follows a choice past the dialog sees what the app does.
 chat.closeProjectChoice.mockImplementation(() => { chat.value.projectChoiceOpen = false; });

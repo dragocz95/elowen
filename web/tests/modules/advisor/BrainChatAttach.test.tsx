@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatStatus } from '../../../modules/advisor/BrainChatProvider';
 
 // An attachment is uploaded into the user's project and the message carries its PATH. That replaces the
 // base64 staging this file used to cover, and with it every reason the composer had to judge a file:
@@ -68,7 +68,7 @@ let setInput: (v: string) => void;
 let staged: { name: string; path: string; relative: string }[];
 
 function Probe() {
-  const chat = useBrainChat();
+  const chat = { ...useBrainChat(), ...useBrainChatStatus() };
   addFiles = chat.addFiles;
   submit = chat.submit;
   setInput = chat.setInput;

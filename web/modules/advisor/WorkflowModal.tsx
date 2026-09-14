@@ -7,7 +7,7 @@ import { useMobileViewport } from '../../lib/useMobile';
 import { formatTokens } from '../../lib/format';
 import { DAG_NODE_W, layoutDag, stepDagSelection, workflowLabel, workflowProgress } from '../../lib/workflowDag';
 import type { DagDirection } from '../../lib/workflowDag';
-import { useBrainChat } from './BrainChatProvider';
+import { useBrainChatStatus } from './BrainChatProvider';
 import type { WorkflowState } from '../../lib/transcript';
 
 /** The navigable DAG view of a running workflow — the web counterpart of the CLI's workflow modal
@@ -39,7 +39,7 @@ const ARROW_KEYS: Record<string, DagDirection> = {
 
 export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onClose: () => void }) {
   const { t } = useTranslation();
-  const { workflows } = useBrainChat();
+  const { workflows } = useBrainChatStatus();
   const mobile = useMobileViewport();
   // Pin the selection by node id, not by index: nodes get appended mid-run (WorkflowAddNodes) and the
   // wave layout reorders as statuses change, so an index would drift onto a different node.

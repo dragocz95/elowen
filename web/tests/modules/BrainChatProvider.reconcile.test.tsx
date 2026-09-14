@@ -45,7 +45,7 @@ vi.mock('../../lib/elowenClient', () => ({
   },
 }));
 
-import { BrainChatProvider, useBrainChat, useBrainChatInput } from '../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatInput, useBrainChatStatus, useBrainChatTranscript } from '../../modules/advisor/BrainChatProvider';
 
 const FIX_MODEL: BrainModelOption = {
   provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'gpt-5.6-sol', exec: 'chatgpt-account/gpt-5.6-sol',
@@ -53,7 +53,7 @@ const FIX_MODEL: BrainModelOption = {
 };
 
 function Harness() {
-  const c = useBrainChat();
+  const c = { ...useBrainChat(), ...useBrainChatStatus(), ...useBrainChatTranscript() };
   const input = useBrainChatInput();
   useEffect(() => { c.ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (

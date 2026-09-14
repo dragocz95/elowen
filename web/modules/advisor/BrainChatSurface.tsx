@@ -11,7 +11,7 @@ import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
-import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainModelOption, BrainWorkMode, SlashCommandDef } from '../../lib/types';
+import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainModelOption, BrainWorkMode, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -35,7 +35,7 @@ import { PlanDecisionModal } from './PlanDecisionModal';
 import { GoalStatusInline } from './GoalStatus';
 import { ModelPicker } from './ModelPicker';
 import { ProjectPicker } from './ProjectPicker';
-import { useBrainChat, useBrainChatInput } from './BrainChatProvider';
+import { useBrainChat, useBrainChatInput, useBrainChatStatus, useBrainChatTranscript } from './BrainChatProvider';
 import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
@@ -1204,14 +1204,16 @@ const wrapTarget = (transcript: HTMLElement): HTMLElement | null => {
 };
 
 /** Only this editor subscribes to draft changes. The shared controller still owns the draft and send
- *  actions, but a keystroke does not render the transcript, top bar, cards or telemetry. */
-function ChatComposer({ variant, composerRef, pinToNewest }: {
+ *  actions, but a keystroke does not render the transcript, top bar, cards or telemetry — and a streamed
+ *  token does not render the editor, because nothing it reads changes per token. */
+const ChatComposer = memo(function ChatComposer({ variant, composerRef, pinToNewest }: {
   variant: 'full' | 'compact';
   composerRef: RefObject<HTMLTextAreaElement | null>;
   pinToNewest: () => void;
 }) {
   const { t } = useTranslation();
-  const { setInput, attachments, addFiles, submit, commands, runSlash, queued, onQueueRemove, busy, abort } = useBrainChat();
+  const { setInput, addFiles, submit, commands, runSlash, onQueueRemove, abort } = useBrainChat();
+  const { attachments, queued, busy } = useBrainChatStatus();
   const input = useBrainChatInput();
   const [slashIdx, setSlashIdx] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1369,7 +1371,339 @@ function ChatComposer({ variant, composerRef, pinToNewest }: {
         )}
       </form>
   );
+});
+
+/** Whether the statusline row has any statistic to show at all. The daemon reports `statusline: null` when
+ *  the plugin is disabled, so `lineCfg` IS the plugin set as a surface sees it — no second source. */
+function statuslineHasStats(lineCfg: StatuslineConfig | null): boolean {
+  return !!lineCfg && !!(lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost);
 }
+
+/** The ONE answer to "who owns the model control", read by both of the control's possible hosts.
+ *
+ *  It is not the plugin's presence alone. The statusline can be enabled while its model toggle is off, and
+ *  the reader can collapse the whole row from its chevron; in either state the pill is not on screen, and
+ *  a top bar that had already given up its picker would leave no way to change models at all. So the bar
+ *  stands down exactly when the statusline is actually rendering the control, and takes it back otherwise.
+ *
+ *  `currentModel` is part of that condition and not an extra: a conversation the controller has not
+ *  adopted — a history entry being previewed — has no model to switch, so the statusline prints the name
+ *  as a read-only span (see the model slot in the dock) rather than the picker. Reading the plugin's
+ *  toggles alone left that state with no switcher anywhere: not in the bar's wide controls, not in the
+ *  compact dock, not in the phone's ⋯ menu. */
+function useStatuslineOwnsModel(statuslineShown: boolean): boolean {
+  const { currentModel } = useBrainChat();
+  const { lineCfg } = useBrainChatStatus();
+  return Boolean(lineCfg?.showModel && statuslineHasStats(lineCfg) && statuslineShown && currentModel);
+}
+
+/** The conversation bar. Compact (dock): title + new chat. Full (/chat): the shell's top rule. Both open
+ *  the ONE conversation switcher the provider owns — the dock's own popover list is gone, because two
+ *  lists of the same conversations is what the switcher replaced.
+ *
+ *  Its own component, and memoized, for the same reason the composer is: it reads the conversation's
+ *  identity and the model control, neither of which a streamed token touches. Inline in the surface's
+ *  render it was rebuilt for every delta of every turn. */
+export const ChatConversationBar = memo(function ChatConversationBar({ variant, mobile, telemetryShown, onOpenTelemetry, statuslineShown }: {
+  variant: 'full' | 'compact';
+  mobile: boolean | undefined;
+  telemetryShown?: boolean;
+  onOpenTelemetry?: () => void;
+  statuslineShown: boolean;
+}) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const { sessions, openHistory, setReasoningOpen, setTasksOpen, startNewConversation } = useBrainChat();
+  const statuslineOwnsModel = useStatuslineOwnsModel(statuslineShown);
+  const active = sessions.data?.find((s) => s.active);
+  // A new conversation is created and then asked which project it runs in — the controller owns both
+  // halves, so this control and the switcher's do exactly the same thing.
+  const newChat = () => { void startNewConversation().catch(() => toast(t.brainChat.searchOpenError, 'error')); };
+
+  if (variant === 'compact') {
+    return (
+      <div className="relative flex items-center gap-1 border-b border-border px-2 py-1.5">
+        {/* The conversation's name is the switcher here too. `aria-label` is deliberately absent: the
+            visible label IS the conversation title, and an override would replace it in the accessible
+            name — hiding the one piece of information this control carries. `aria-haspopup="dialog"`
+            says what it opens, which is the shared modal rather than an anchored panel. */}
+        <button
+          type="button"
+          onClick={openHistory}
+          aria-haspopup="dialog"
+          data-testid="chat-dock-conversation-switcher"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
+        >
+          <span className="truncate">{active?.title || t.brainChat.newChat}</span>
+          <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+        </button>
+        <ProjectPicker variant="compact" />
+        {/* The statusline under the conversation carries the picker when it is showing one. */}
+        {statuslineOwnsModel ? null : <ModelPicker variant="compact" />}
+        <ReasoningButton onOpen={() => setReasoningOpen(true)} />
+        <button
+          type="button"
+          onClick={newChat}
+          aria-label={t.brainChat.newChat}
+          title={t.brainChat.newChat}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Plus size={16} aria-hidden />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <PageTopBarPortal>
+      <div className="chat-gutter chat-page-toolbar sticky top-0 z-10 flex min-w-0 shrink-0 items-center gap-1.5 bg-background py-2">
+        {/* These controls ride in the shell's top rule at every width that publishes one — a phone
+            included. Only the frameless design, which has no page slot, keeps this as its own local
+            sticky bar. */}
+        <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-background to-transparent" />
+        {/* The conversation's own name is the switcher: the one thing a reader looks for when they want
+            another conversation is the name of this one. It opens the shared switcher (own list with
+            search, rename and schedules; the register for an administrator) — no second list. */}
+        <button
+          type="button"
+          onClick={openHistory}
+          aria-haspopup="dialog"
+          aria-label={t.chat.openHistory}
+          title={t.chat.openHistory}
+          data-testid="chat-conversation-switcher"
+          className="chat-conversation-switcher flex h-8 min-w-0 max-w-[18rem] shrink items-center gap-1 rounded-md px-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
+        >
+          <span className="truncate">{active?.title || t.brainChat.newChat}</span>
+          <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+        </button>
+        {/* On a phone the model picker folds into the ⋯ menu below; on desktop it stays inline. The
+            work mode does not ride the toolbar any more: the composer's WorkModeSwitch is its single
+            indicator and control on every surface. */}
+        {mobile === false ? (
+          <div className="chat-page-toolbar__wide-controls flex shrink-0 items-center gap-1.5">
+            <ProjectPicker variant="full" />
+            {statuslineOwnsModel ? null : <ModelPicker variant="full" />}
+          </div>
+        ) : null}
+        {/* Reasoning and telemetry are one-tap actions at every width, beside the overflow. */}
+        <ReasoningButton full onOpen={() => setReasoningOpen(true)} />
+        {onOpenTelemetry ? (
+          <button
+            type="button"
+            onClick={onOpenTelemetry}
+            // `telemetryShown` is absent where the rail is a drawer (a phone), so the control is a plain
+            // opener; where the rail is a docked column it is a toggle, and the label has to say which
+            // way it goes or a hidden rail looks like a broken one.
+            aria-label={telemetryShown ? t.telemetry.close : t.telemetry.open}
+            title={telemetryShown ? t.telemetry.close : t.telemetry.open}
+            aria-pressed={telemetryShown}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Activity size={18} aria-hidden />
+          </button>
+        ) : null}
+        {mobile !== true ? (
+          <button
+            type="button"
+            onClick={newChat}
+            aria-label={t.brainChat.newChat}
+            title={t.brainChat.newChat}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Plus size={18} aria-hidden />
+          </button>
+        ) : null}
+        {/* Phones and narrow desktops fold the wide pickers behind ⋯; roomy desktops keep them inline. */}
+        {mobile !== undefined ? (
+          <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
+            <BarOverflowMenu
+              folded={mobile}
+              modelOwnedElsewhere={statuslineOwnsModel}
+              onOpenTasks={() => setTasksOpen(true)}
+              onNewChat={newChat}
+            />
+          </div>
+        ) : null}
+      </div>
+    </PageTopBarPortal>
+  );
+});
+
+/** The composer footer: statusline + staged attachments + queue + composer (or the read-only banner that
+ *  replaces it).
+ *
+ *  In the full page it sticks to the bottom of the visible band — the page scrolls behind it, and while a
+ *  soft keyboard is up that band ends above the keyboard; the compact dock keeps it in normal flow at the
+ *  bottom of its own scroll box. `.chat-composer-dock` (chat.css) owns ALL of that: the stickiness, the
+ *  visual-viewport inset it rests on, and the bottom safe-area inset that keeps the send button clear of a
+ *  phone's home indicator. Deliberately no position utility here — two declarations of one element's
+ *  position is how a `sticky` utility came to be silently overridden by the stylesheet.
+ *
+ *  No hairline and NO fade above the footer: a gradient over the transcript's last lines read as "there is
+ *  more below" and had readers scrolling for text that was never hidden. The dock's own opaque background
+ *  is the only edge.
+ *
+ *  Memoized, and reading only the actions and the status: everything here moves on a user action or a
+ *  daemon event, never per token, so a streaming reply leaves the whole footer — statusline, model picker
+ *  and editor — untouched. */
+export const ChatFooterDock = memo(function ChatFooterDock({ variant, dockRef, composerRef, pinToNewest, telemetryShown, statuslineShown, onToggleStatusline }: {
+  variant: 'full' | 'compact';
+  dockRef: RefObject<HTMLDivElement | null>;
+  composerRef: RefObject<HTMLTextAreaElement | null>;
+  pinToNewest: () => void;
+  telemetryShown?: boolean;
+  statuslineShown: boolean;
+  onToggleStatusline: () => void;
+}) {
+  const { t } = useTranslation();
+  const { sessions, removeAttachment, onQueueRemove, exitReadOnly, exitChildFocus } = useBrainChat();
+  const { notice, ask, usage, goal, lineCfg, attachments, queued, readOnly, childFocus } = useBrainChatStatus();
+  const statuslineOwnsModel = useStatuslineOwnsModel(statuslineShown);
+  const active = sessions.data?.find((s) => s.active);
+  // A visible docked rail already reports the goal, so the statusline does not repeat it — the surface's
+  // `railOwnsLiveWork` rule, applied to the one row that can show it here.
+  const activeSurfaceGoal = goal?.status === 'active' && telemetryShown !== true ? goal : null;
+  const hasStatuslineStats = statuslineHasStats(lineCfg);
+
+  return (
+    <div ref={dockRef} data-testid="chat-composer-dock" className={variant === 'full' ? 'chat-composer-dock z-10 bg-background' : ''}>
+      {/* One-line server status notice when the daemon sends one. The running state itself is signalled by
+          the composer's Stop button (no separate "thinking" spinner). Hidden while a question is pending. */}
+      {notice && !ask ? (
+        <div className={`flex items-center gap-2 py-1.5 font-mono text-muted-foreground ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
+          <span className="italic opacity-80">{notice}</span>
+        </div>
+      ) : null}
+      {/* Statusline (the statusline plugin's toggles decide what shows; hidden when disabled). A leading
+          chevron collapses the whole row in-chat — the quick alternative to the plugin's settings, mainly
+          for a phone where the metrics crowd the composer. Collapsed leaves only the chevron to bring it
+          back. */}
+      {activeSurfaceGoal || hasStatuslineStats ? (
+        // Exactly ONE line, phone included: a second row here pushes the composer down and eats the little
+        // vertical room a phone has. The goal is the high-priority prefix; optional statistics give way as
+        // width tightens. Which statistic drops at which width is the `[data-stat]` ladder in chat.css.
+        <div data-testid="chat-statusline" className={`chat-statusline flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-muted-foreground sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
+          {hasStatuslineStats ? (
+            <button
+              type="button"
+              onClick={onToggleStatusline}
+              aria-expanded={statuslineShown}
+              aria-label={statuslineShown ? t.chat.hideStats : t.chat.showStats}
+              title={statuslineShown ? t.chat.hideStats : t.chat.showStats}
+              className="flex shrink-0 items-center rounded text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ChevronRight size={11} aria-hidden className={`opacity-60 transition-transform ${statuslineShown ? 'rotate-90' : ''}`} />
+            </button>
+          ) : null}
+          {activeSurfaceGoal ? <GoalStatusInline goal={activeSurfaceGoal} /> : null}
+          {hasStatuslineStats && statuslineShown && lineCfg ? (
+            <>
+              {/* The model is a CONTROL here, not a read-out: the same picker the top bar used to carry,
+                  opening the same grouped catalog. The bar gives its copy up while this one is on screen
+                  (see `useStatuslineOwnsModel`), so the conversation has exactly one model switcher.
+                  A conversation the controller has not adopted yet — a history entry being previewed — has
+                  no model to switch, so that case stays the plain label it always was. */}
+              {statuslineOwnsModel ? (
+                <ModelPicker variant="statusline" />
+              ) : lineCfg.showModel && active?.model ? (
+                <span
+                  data-stat="model"
+                  className="min-w-0 truncate"
+                  title={brainModelQualifiedLabel({ provider: active.provider ?? '', providerLabel: '', model: active.model })}
+                >
+                  {brainModelLabel({ provider: active.provider ?? '', providerLabel: '', model: active.model })}
+                </span>
+              ) : null}
+              {lineCfg.showContext && usage && usage.percent != null ? (
+                <span data-stat="context" className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
+              ) : null}
+              {lineCfg.showTokens && usage ? <span data-stat="tokens" className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
+              {/* Effective speed of the LATEST completed model call: output tokens (reasoning and
+                  tool-call tokens included) over the whole logical request from initiation — header
+                  waits, prompt processing, retries and backoff included. Absent until something has
+                  been measured, and hidden below 1 tok/s where the rounded figure would read as a
+                  stall rather than as too few samples. */}
+              {lineCfg.showSpeed && typeof usage?.effectiveTps === 'number' && usage.effectiveTps >= 1 ? (
+                <span data-stat="speed" className="shrink-0 whitespace-nowrap">{Math.round(usage.effectiveTps)} {t.brainChat.tokensPerSecond}</span>
+              ) : null}
+              {lineCfg.showCost && usage ? <span data-stat="cost" className="shrink-0 whitespace-nowrap">{formatCost(usage.cost, 2)}</span> : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Staged attachments. */}
+      {attachments.length > 0 ? (
+        <div className={`flex flex-wrap gap-2 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
+          {attachments.map((a, i) => (
+            /* No thumbnail: the file is already on the daemon, not held in the browser, so there is
+               nothing local to preview. The title names where it landed, which is what the user
+               actually needs — the file stays in their project after the conversation. */
+            <span key={i} title={a.relative} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted py-1 pl-1.5 pr-1 text-tiny text-foreground">
+              <FileText size={13} className="text-muted-foreground" aria-hidden />
+              <span className="max-w-[140px] truncate">{a.name}</span>
+              <button
+                type="button"
+                onClick={() => removeAttachment(i)}
+                aria-label={t.brainChat.attachRemove}
+                className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <X size={11} aria-hidden />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Pending mid-turn queue: messages sent while a turn streams, parked until it ends. Removable
+          until delivered; hidden while a focused session replaces the bound conversation's view (a
+          focused child's sends do not queue, and a read-only preview has no composer at all). */}
+      {!readOnly && !childFocus && queued.length > 0 ? (
+        <div className={`flex flex-col gap-1 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
+          {queued.map((q) => (
+            <div key={q.id} className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-tiny">
+              <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-primary">{t.brainChat.queued}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{q.text}</span>
+              <button
+                type="button"
+                onClick={() => onQueueRemove(q.id)}
+                aria-label={t.brainChat.removeFromQueue}
+                title={t.brainChat.removeFromQueue}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <X size={11} aria-hidden />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Composer — replaced by a read-only banner when viewing a channel/task session's history;
+          framed by a focused-child bar when the view is an OWN delegated child (sends/steers go to
+          that child, the way back is the bar's button). */}
+      {readOnly ? (
+        <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
+          <div className={`flex items-center justify-between gap-2 bg-muted/40 p-3 text-sm text-muted-foreground ${variant === 'full' ? 'rounded-xl border border-border' : ''}`}>
+            <span className="flex min-w-0 items-center gap-2"><FileText size={14} className="shrink-0" aria-hidden /><span className="truncate">{t.brainChat.readOnly}</span></span>
+            <button type="button" onClick={exitReadOnly} className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent">{t.brainChat.readOnlyExit}</button>
+          </div>
+        </div>
+      ) : (
+        <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
+          {childFocus ? (
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+              <span className="flex min-w-0 items-center gap-2"><Bot size={13} className="shrink-0 text-primary" aria-hidden /><span className="truncate" data-testid="chat-child-focus-hint">{t.brainChat.childFocusHint}</span></span>
+              <button type="button" onClick={exitChildFocus} data-testid="chat-child-focus-exit" className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent">{t.brainChat.childFocusExit}</button>
+            </div>
+          ) : null}
+          {/* In the full page the whole composer is ONE quiet rounded field (attach + textarea + send inside
+              it, Claude-style); the dock keeps its original three-control row. */}
+          <ChatComposer variant={variant} composerRef={composerRef} pinToNewest={pinToNewest} />
+        </div>
+      )}
+    </div>
+  );
+});
 
 /** The presentational brain chat surface, driven entirely by the shared controller (BrainChatProvider)
  *  read from context. It owns NO network or session state: only pure view affordances (the picker-open
@@ -1382,17 +1716,20 @@ function ChatComposer({ variant, composerRef, pinToNewest }: {
 export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemetryShown }: { variant?: 'compact' | 'full'; onOpenTelemetry?: () => void; telemetryShown?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const c = useBrainChat();
   const {
-    turns, busy, ready, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
+    agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen,
-    helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly, childFocus,
-    usage, goal, lineCfg, currentModel, subagents, attachments, removeAttachment, startNewConversation,
-    focusSubagentSession, exitReadOnly, exitChildFocus, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
-    ensureAttached, loadOlder, hasMoreHistory, showThoughts,
-    planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
-    registerSurface, openHistory,
-  } = c;
+    helpOpen, setHelpOpen, modelOpen, setModelOpen,
+    focusSubagentSession, onAnswer, sessions, activeSessionId, models,
+    ensureAttached, loadOlder, showThoughts, implementPlan, dismissPlan,
+    renameOpen, closeRename, renameSession, registerSurface,
+  } = useBrainChat();
+  const {
+    busy, ready, ask, cards, artifacts, subagents,
+    focusNonce, hasMoreHistory, planDecision, planSubmitting,
+  } = useBrainChatStatus();
+  // The per-token read, and the ONLY one in this file: the transcript is what a token changes.
+  const { turns, narration } = useBrainChatTranscript();
 
   // Tell the provider a chat is on screen. It sits above every route, so the reconnect overlay it owns
   // must only cover the app while there is actually a conversation to protect — not while the reader is
@@ -1424,28 +1761,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   // the quick alternative to the statusline plugin's settings toggles.
   const [statuslinePref, setStatuslinePref] = usePersistentState<'shown' | 'hidden'>('elowen.chat.statusline', 'shown', STATUSLINE_VALUES);
   const statuslineShown = statuslinePref === 'shown';
+  const toggleStatusline = useCallback(
+    () => setStatuslinePref(statuslineShown ? 'hidden' : 'shown'),
+    [statuslineShown, setStatuslinePref],
+  );
   // Running agents are reported in exactly ONE place. The docked rail lists them (and drills into them), so
   // while it is open the in-transcript chip is redundant — the same work was being announced twice.
   // `telemetryShown` is undefined wherever there is no docked rail (the compact dock, and a phone where the
   // rail is a drawer), so only an actually-visible rail takes ownership; hidden or absent hands the
   // reporting back to the transcript rather than dropping it.
   const railOwnsLiveWork = telemetryShown === true;
-  const activeSurfaceGoal = goal?.status === 'active' && !railOwnsLiveWork ? goal : null;
-  const hasStatuslineStats = !!lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost);
-  // The ONE answer to "who owns the model control". The daemon reports `statusline: null` when the plugin
-  // is disabled, so `lineCfg` is the plugin set as this surface sees it — no second source, no prop.
-  //
-  // It is not the plugin's presence alone. The statusline can be enabled while its model toggle is off, and
-  // the reader can collapse the whole row from its chevron; in either state the pill is not on screen, and
-  // a top bar that had already given up its picker would leave no way to change models at all. So the bar
-  // stands down exactly when the statusline is actually rendering the control, and takes it back otherwise.
-  //
-  // `currentModel` is part of that condition and not an extra: a conversation the controller has not
-  // adopted — a history entry being previewed — has no model to switch, so the statusline prints the name
-  // as a read-only span (see the model slot below) rather than the picker. Reading the plugin's toggles
-  // alone left that state with no switcher anywhere: not in the bar's wide controls, not in the compact
-  // dock, not in the phone's ⋯ menu.
-  const statuslineOwnsModel = Boolean(lineCfg?.showModel && hasStatuslineStats && statuslineShown && currentModel);
   // `undefined` until the viewport has actually been measured. Every branch below therefore tests `=== true`
   // or `=== false` and renders NOTHING in between: the boolean-returning hook reports `false` first, which
   // on a phone painted one frame of the desktop controls (inline picker, mode pill, reasoning button) before
@@ -1977,122 +2302,19 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     };
   }, [variant, pinToNewest]);
 
-  // A new conversation is created and then asked which project it runs in — the controller owns both
-  // halves, so this control and the switcher's do exactly the same thing.
-  const newChat = () => { void startNewConversation().catch(() => toast(t.brainChat.searchOpenError, 'error')); };
-
   return (
     <div
       ref={surfaceRootRef}
       className={`relative flex flex-col ${variant === 'full' ? 'chat-surface-full flex-1' : 'h-full min-h-0'}`}
       data-variant={variant}
     >
-      {/* Conversation bar. Compact (dock): title + new chat. Full (/chat): a light header. Both open the
-          ONE conversation switcher the provider owns — the dock's own popover list is gone, because two
-          lists of the same conversations is what the switcher replaced. */}
-      {variant === 'compact' ? (
-        <div className="relative flex items-center gap-1 border-b border-border px-2 py-1.5">
-          {/* The conversation's name is the switcher here too. `aria-label` is deliberately absent: the
-              visible label IS the conversation title, and an override would replace it in the accessible
-              name — hiding the one piece of information this control carries. `aria-haspopup="dialog"`
-              says what it opens, which is the shared modal rather than an anchored panel. */}
-          <button
-            type="button"
-            onClick={openHistory}
-            aria-haspopup="dialog"
-            data-testid="chat-dock-conversation-switcher"
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
-          >
-            <span className="truncate">{active?.title || t.brainChat.newChat}</span>
-            <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-          </button>
-          <ProjectPicker variant="compact" />
-          {/* The statusline under the conversation carries the picker when it is showing one. */}
-          {statuslineOwnsModel ? null : <ModelPicker variant="compact" />}
-          <ReasoningButton onOpen={() => setReasoningOpen(true)} />
-          <button
-            type="button"
-            onClick={newChat}
-            aria-label={t.brainChat.newChat}
-            title={t.brainChat.newChat}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Plus size={16} aria-hidden />
-          </button>
-        </div>
-      ) : (
-        <PageTopBarPortal>
-        <div className="chat-gutter chat-page-toolbar sticky top-0 z-10 flex min-w-0 shrink-0 items-center gap-1.5 bg-background py-2">
-          {/* These controls ride in the shell's top rule at every width that publishes one — a phone
-              included. Only the frameless design, which has no page slot, keeps this as its own local
-              sticky bar. */}
-          <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-background to-transparent" />
-          {/* The conversation's own name is the switcher: the one thing a reader looks for when they want
-              another conversation is the name of this one. It opens the shared switcher (own list with
-              search, rename and schedules; the register for an administrator) — no second list. */}
-          <button
-            type="button"
-            onClick={openHistory}
-            aria-haspopup="dialog"
-            aria-label={t.chat.openHistory}
-            title={t.chat.openHistory}
-            data-testid="chat-conversation-switcher"
-            className="chat-conversation-switcher flex h-8 min-w-0 max-w-[18rem] shrink items-center gap-1 rounded-md px-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            <span className="truncate">{active?.title || t.brainChat.newChat}</span>
-            <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-          </button>
-          {/* On a phone the model picker folds into the ⋯ menu below; on desktop it stays inline. The
-              work mode does not ride the toolbar any more: the composer's WorkModeSwitch is its single
-              indicator and control on every surface. */}
-          {mobile === false ? (
-            <div className="chat-page-toolbar__wide-controls flex shrink-0 items-center gap-1.5">
-              <ProjectPicker variant="full" />
-              {statuslineOwnsModel ? null : <ModelPicker variant="full" />}
-            </div>
-          ) : null}
-          {/* Reasoning and telemetry are one-tap actions at every width, beside the overflow. */}
-          <ReasoningButton full onOpen={() => setReasoningOpen(true)} />
-          {onOpenTelemetry ? (
-            <button
-              type="button"
-              onClick={onOpenTelemetry}
-              // `telemetryShown` is absent where the rail is a drawer (a phone), so the control is a plain
-              // opener; where the rail is a docked column it is a toggle, and the label has to say which
-              // way it goes or a hidden rail looks like a broken one.
-              aria-label={telemetryShown ? t.telemetry.close : t.telemetry.open}
-              title={telemetryShown ? t.telemetry.close : t.telemetry.open}
-              aria-pressed={telemetryShown}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <Activity size={18} aria-hidden />
-            </button>
-          ) : null}
-          {mobile !== true ? (
-          <button
-            type="button"
-            onClick={newChat}
-            aria-label={t.brainChat.newChat}
-            title={t.brainChat.newChat}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Plus size={18} aria-hidden />
-          </button>
-          ) : null}
-          {/* Phones and narrow desktops fold the wide pickers behind ⋯; roomy desktops keep them inline. */}
-          {mobile !== undefined ? (
-            <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
-              <BarOverflowMenu
-                folded={mobile}
-                modelOwnedElsewhere={statuslineOwnsModel}
-                onOpenTasks={() => setTasksOpen(true)}
-                onNewChat={newChat}
-              />
-            </div>
-          ) : null}
-        </div>
-        </PageTopBarPortal>
-      )}
+      <ChatConversationBar
+        variant={variant}
+        mobile={mobile}
+        telemetryShown={telemetryShown}
+        onOpenTelemetry={onOpenTelemetry}
+        statuslineShown={statuslineShown}
+      />
 
       {/* Messages. The full /chat variant flows full-width and lets the page scroll (no inner scroll box);
           turns stack with NO container gap — each segment carries its own margin, so tool rows keep one
@@ -2127,7 +2349,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
               key={key}
               tk={key}
               turn={turn}
-              models={c.models ?? undefined}
+              models={models ?? undefined}
               full={variant === 'full'}
               showRole={i === 0 || turns[i - 1].role !== turn.role}
               showThoughts={showThoughts}
@@ -2217,154 +2439,15 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
       </div>
       </ChatArtifactScope>
 
-      {/* Composer footer (statusline + staged attachments + queue + composer). In the full page it sticks
-          to the bottom of the visible band — the page scrolls behind it, and while a soft keyboard is up
-          that band ends above the keyboard; the compact dock keeps it in normal flow at the bottom of its
-          own scroll box.
-
-          `.chat-composer-dock` (chat.css) owns ALL of that: the stickiness, the visual-viewport inset it
-          rests on, and the bottom safe-area inset that keeps the send button clear of a phone's home
-          indicator. Deliberately no position utility here — two declarations of one element's position is
-          how a `sticky` utility came to be silently overridden by the stylesheet. */}
-      {/* No hairline and NO fade above the footer: a gradient over the transcript's last lines read as
-          "there is more below" and had readers scrolling for text that was never hidden. The dock's own
-          opaque background is the only edge. */}
-      <div ref={composerDockRef} data-testid="chat-composer-dock" className={variant === 'full' ? 'chat-composer-dock z-10 bg-background' : ''}>
-      {/* One-line server status notice when the daemon sends one. The running state itself is signalled by
-          the composer's Stop button (no separate "thinking" spinner). Hidden while a question is pending. */}
-      {notice && !ask ? (
-        <div className={`flex items-center gap-2 py-1.5 font-mono text-muted-foreground ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
-          <span className="italic opacity-80">{notice}</span>
-        </div>
-      ) : null}
-      {/* Statusline (the statusline plugin's toggles decide what shows; hidden when disabled). A leading
-          chevron collapses the whole row in-chat — the quick alternative to the plugin's settings, mainly
-          for a phone where the metrics crowd the composer. Collapsed leaves only the chevron to bring it
-          back. */}
-      {activeSurfaceGoal || hasStatuslineStats ? (
-        // Exactly ONE line, phone included: a second row here pushes the composer down and eats the little
-        // vertical room a phone has. The goal is the high-priority prefix; optional statistics give way as
-        // width tightens. Which statistic drops at which width is the `[data-stat]` ladder in chat.css.
-        <div data-testid="chat-statusline" className={`chat-statusline flex min-w-0 items-center gap-x-2 overflow-hidden py-1 font-mono text-muted-foreground sm:gap-x-3 ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
-          {hasStatuslineStats ? (
-            <button
-              type="button"
-              onClick={() => setStatuslinePref(statuslineShown ? 'hidden' : 'shown')}
-              aria-expanded={statuslineShown}
-              aria-label={statuslineShown ? t.chat.hideStats : t.chat.showStats}
-              title={statuslineShown ? t.chat.hideStats : t.chat.showStats}
-              className="flex shrink-0 items-center rounded text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <ChevronRight size={11} aria-hidden className={`opacity-60 transition-transform ${statuslineShown ? 'rotate-90' : ''}`} />
-            </button>
-          ) : null}
-          {activeSurfaceGoal ? <GoalStatusInline goal={activeSurfaceGoal} /> : null}
-          {hasStatuslineStats && statuslineShown && lineCfg ? (
-            <>
-              {/* The model is a CONTROL here, not a read-out: the same picker the top bar used to carry,
-                  opening the same grouped catalog. The bar gives its copy up while this one is on screen
-                  (see `statuslineOwnsModel`), so the conversation has exactly one model switcher.
-                  A conversation the controller has not adopted yet — a history entry being previewed — has
-                  no model to switch, so that case stays the plain label it always was. */}
-              {lineCfg.showModel && currentModel ? (
-                <ModelPicker variant="statusline" />
-              ) : lineCfg.showModel && active?.model ? (
-                <span
-                  data-stat="model"
-                  className="min-w-0 truncate"
-                  title={brainModelQualifiedLabel({ provider: active.provider ?? '', providerLabel: '', model: active.model })}
-                >
-                  {brainModelLabel({ provider: active.provider ?? '', providerLabel: '', model: active.model })}
-                </span>
-              ) : null}
-              {lineCfg.showContext && usage && usage.percent != null ? (
-                <span data-stat="context" className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
-              ) : null}
-              {lineCfg.showTokens && usage ? <span data-stat="tokens" className="shrink-0 whitespace-nowrap">Σ {formatTokens(usage.totalTokens)} {t.sessionsPanel.tok}</span> : null}
-              {/* Effective speed of the LATEST completed model call: output tokens (reasoning and
-                  tool-call tokens included) over the whole logical request from initiation — header
-                  waits, prompt processing, retries and backoff included. Absent until something has
-                  been measured, and hidden below 1 tok/s where the rounded figure would read as a
-                  stall rather than as too few samples. */}
-              {lineCfg.showSpeed && typeof usage?.effectiveTps === 'number' && usage.effectiveTps >= 1 ? (
-                <span data-stat="speed" className="shrink-0 whitespace-nowrap">{Math.round(usage.effectiveTps)} {t.brainChat.tokensPerSecond}</span>
-              ) : null}
-              {lineCfg.showCost && usage ? <span data-stat="cost" className="shrink-0 whitespace-nowrap">{formatCost(usage.cost, 2)}</span> : null}
-            </>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Staged attachments. */}
-      {attachments.length > 0 ? (
-        <div className={`flex flex-wrap gap-2 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
-          {attachments.map((a, i) => (
-            /* No thumbnail: the file is already on the daemon, not held in the browser, so there is
-               nothing local to preview. The title names where it landed, which is what the user
-               actually needs — the file stays in their project after the conversation. */
-            <span key={i} title={a.relative} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted py-1 pl-1.5 pr-1 text-tiny text-foreground">
-              <FileText size={13} className="text-muted-foreground" aria-hidden />
-              <span className="max-w-[140px] truncate">{a.name}</span>
-              <button
-                type="button"
-                onClick={() => removeAttachment(i)}
-                aria-label={t.brainChat.attachRemove}
-                className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <X size={11} aria-hidden />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      {/* Pending mid-turn queue: messages sent while a turn streams, parked until it ends. Removable
-          until delivered; hidden while a focused session replaces the bound conversation's view (a
-          focused child's sends do not queue, and a read-only preview has no composer at all). */}
-      {!readOnly && !childFocus && queued.length > 0 ? (
-        <div className={`flex flex-col gap-1 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
-          {queued.map((q) => (
-            <div key={q.id} className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1 text-tiny">
-              <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-primary">{t.brainChat.queued}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{q.text}</span>
-              <button
-                type="button"
-                onClick={() => onQueueRemove(q.id)}
-                aria-label={t.brainChat.removeFromQueue}
-                title={t.brainChat.removeFromQueue}
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <X size={11} aria-hidden />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {/* Composer — replaced by a read-only banner when viewing a channel/task session's history;
-          framed by a focused-child bar when the view is an OWN delegated child (sends/steers go to
-          that child, the way back is the bar's button). */}
-      {readOnly ? (
-        <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
-          <div className={`flex items-center justify-between gap-2 bg-muted/40 p-3 text-sm text-muted-foreground ${variant === 'full' ? 'rounded-xl border border-border' : ''}`}>
-            <span className="flex min-w-0 items-center gap-2"><FileText size={14} className="shrink-0" aria-hidden /><span className="truncate">{t.brainChat.readOnly}</span></span>
-            <button type="button" onClick={exitReadOnly} className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent">{t.brainChat.readOnlyExit}</button>
-          </div>
-        </div>
-      ) : (
-      <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
-      {childFocus ? (
-        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-          <span className="flex min-w-0 items-center gap-2"><Bot size={13} className="shrink-0 text-primary" aria-hidden /><span className="truncate" data-testid="chat-child-focus-hint">{t.brainChat.childFocusHint}</span></span>
-          <button type="button" onClick={exitChildFocus} data-testid="chat-child-focus-exit" className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent">{t.brainChat.childFocusExit}</button>
-        </div>
-      ) : null}
-      {/* In the full page the whole composer is ONE quiet rounded field (attach + textarea + send inside
-          it, Claude-style); the dock keeps its original three-control row. */}
-      <ChatComposer variant={variant} composerRef={composerRef} pinToNewest={pinToNewest} />
-      </div>
-      )}
-      </div>
+      <ChatFooterDock
+        variant={variant}
+        dockRef={composerDockRef}
+        composerRef={composerRef}
+        pinToNewest={pinToNewest}
+        telemetryShown={telemetryShown}
+        statuslineShown={statuslineShown}
+        onToggleStatusline={toggleStatusline}
+      />
       {renameOpen ? (
         <RenameDialog
           current={active?.title ?? ''}

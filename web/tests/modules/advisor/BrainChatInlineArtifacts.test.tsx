@@ -7,7 +7,7 @@ import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import type { BrainInlineArtifact } from '../../../lib/types';
-import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatStatus } from '../../../modules/advisor/BrainChatProvider';
 
 class FakeES {
   static instances: FakeES[] = [];
@@ -64,7 +64,8 @@ afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
 function ArtifactProbe() {
-  const { artifacts, ensureAttached } = useBrainChat();
+  const { ensureAttached } = useBrainChat();
+  const { artifacts } = useBrainChatStatus();
   useEffect(() => { ensureAttached(); }, [ensureAttached]);
   return <output data-testid="artifacts">{JSON.stringify(artifacts)}</output>;
 }

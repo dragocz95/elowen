@@ -6,7 +6,7 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatStatus } from '../../../modules/advisor/BrainChatProvider';
 class FakeES {
   static instances: FakeES[] = [];
   static OPEN = 1;
@@ -93,7 +93,7 @@ afterEach(() => {
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
 function Harness() {
-  const chat = useBrainChat();
+  const chat = { ...useBrainChat(), ...useBrainChatStatus() };
   useEffect(() => { chat.ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
     <button onClick={() => { void chat.focusSubagentSession('brain-child'); }}>focus child</button>

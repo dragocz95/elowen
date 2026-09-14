@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
-import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChatStatus } from '../../../modules/advisor/BrainChatProvider';
 
 // The stream's first frame is the hydration: durable history plus the running turn's tail, captured
 // atomically server-side. It is what closes the transcript gap a phone lock opens, and it is why the
@@ -62,7 +62,7 @@ afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
 function UsageProbe() {
-  const { usage, telemetry } = useBrainChat();
+  const { usage, telemetry } = useBrainChatStatus();
   return (
     <>
       <output data-testid="usage-tokens">{usage?.tokens ?? 'none'}</output>

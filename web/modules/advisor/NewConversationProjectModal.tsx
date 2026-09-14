@@ -13,7 +13,7 @@ import { OperationProgressDialog } from '../../components/ui/OperationProgressDi
 import { useEnvironmentOperationWindow, type EnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
 import { executionRefKey, executionRefOf, type Project, type ProjectExecutionRef } from '../../lib/types';
-import { useBrainChat } from './BrainChatProvider';
+import { useBrainChat, useBrainChatStatus } from './BrainChatProvider';
 
 /** One offered destination: a project this account may reach, or — for an administrator — the host
  *  itself with no project behind it. `key` is what the roving selection addresses; a nameless host ref
@@ -92,7 +92,8 @@ function NewConversationProjectDialog({ environment, onClose }: { environment: E
   const { t } = useTranslation();
   const s = t.projects;
   const { toast } = useToast();
-  const { telemetry, activeSessionId, selectProjectExecution } = useBrainChat();
+  const { activeSessionId, selectProjectExecution } = useBrainChat();
+  const { telemetry } = useBrainChatStatus();
   const projects = useProjects();
   const me = useMe();
   const phone = useMobileViewport() === true;

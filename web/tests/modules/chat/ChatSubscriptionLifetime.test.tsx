@@ -6,7 +6,7 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, type BrainChatActions } from '../../../modules/advisor/BrainChatProvider';
 import { ChatView } from '../../../modules/chat/ChatView';
 import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailState';
 
@@ -73,8 +73,21 @@ class FakeVisualViewport extends EventTarget {
   offsetTop = 0;
 }
 
+/** Every send and abort the surface makes, so an action captured at mount can be checked against what it
+ *  actually asked the daemon to do. */
+const sends: { text: string; session?: string; mode?: string }[] = [];
+const aborts: (string | undefined)[] = [];
+
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
+  http.post('*/api/brain/send', async ({ request }) => {
+    sends.push(await request.json() as { text: string; session?: string; mode?: string });
+    return HttpResponse.json({ ok: true }, { status: 202 });
+  }),
+  http.post('*/api/brain/abort', async ({ request }) => {
+    aborts.push((await request.json() as { session?: string }).session);
+    return HttpResponse.json({ ok: true });
+  }),
   http.post('*/api/brain/visibility', () => HttpResponse.json({ ok: true })),
   http.get('*/api/brain/messages', ({ request }) => new URL(request.url).searchParams.has('limit')
     ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
@@ -127,6 +140,8 @@ afterEach(() => {
   Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalViewport });
   server.resetHandlers();
   FakeES.instances.length = 0;
+  sends.length = 0;
+  aborts.length = 0;
   localStorage.clear();
 });
 
@@ -232,5 +247,90 @@ describe('the chat surface leaves exactly one live copy of everything it attache
     expect(live().resizeObservers).toBe(before.resizeObservers);
     expect(live().mutationObservers).toBe(before.mutationObservers);
     expect(live().viewportListeners).toEqual(before.viewportListeners);
+  });
+});
+
+/** The actions value is the one thing in the split that is deliberately FROZEN: it keeps a single identity
+ *  for the provider's lifetime so a memoized consumer can rest on it. That is exactly the shape a stale
+ *  closure hides in — a handler that never changes identity is easy to leave holding the state it was
+ *  created with. Every test below calls an action captured at MOUNT and checks the daemon was asked to do
+ *  the CURRENT thing. */
+describe('the actions value is stable without going stale', () => {
+  /** Captures the first render's actions object and every identity the value has ever had. */
+  function CaptureActions({ box }: { box: { first?: BrainChatActions; identities: Set<unknown>; submits: Set<unknown> } }) {
+    const actions = useBrainChat();
+    box.first ??= actions;
+    box.identities.add(actions);
+    box.submits.add(actions.submit);
+    return null;
+  }
+
+  const capture = () => ({ identities: new Set<unknown>(), submits: new Set<unknown>() } as { first?: BrainChatActions; identities: Set<unknown>; submits: Set<unknown> });
+
+  it('keeps one identity through a StrictMode mount and a streamed turn', async () => {
+    const box = capture();
+    renderChat(<StrictMode><CaptureActions box={box} /><main><ChatView /></main></StrictMode>);
+    await screen.findByTestId('chat-composer');
+    await waitFor(() => expect(FakeES.open.length).toBe(1));
+
+    // Booting the conversation legitimately moves this value: the session id, the model and the command
+    // catalog all land after mount. What must not move it is the stream.
+    const settled = box.identities.size;
+    const stream = FakeES.instances.find((s) => !s.closed)!;
+    for (let i = 0; i < 5; i++) stream.emit('text', { delta: 'token ' });
+    expect(box.identities.size, 'a streamed token changed the actions value').toBe(settled);
+    // StrictMode renders every component twice and runs every effect twice. A wrapper built in a render
+    // body rather than held in state would hand out a new identity on each of those passes — including
+    // across the boot renders above, which this set has been watching the whole time.
+    expect(box.submits.size, 'an action changed identity').toBe(1);
+  });
+
+  it('sends the draft as it is now, not as it was when the handler was created', async () => {
+    const box = capture();
+    renderChat(<><CaptureActions box={box} /><main><ChatView /></main></>);
+    const composer = await screen.findByTestId('chat-composer');
+    await waitFor(() => expect(FakeES.open.length).toBe(1));
+
+    fireEvent.change(composer, { target: { value: 'ahoj' } });
+    fireEvent.change(composer, { target: { value: 'ahoj, jak to jde' } });
+    // The action captured on the FIRST render — before any of that text existed.
+    await act(async () => { await box.first!.submit(); });
+    await waitFor(() => expect(sends.length).toBe(1));
+    expect(sends[0]!.text, 'the captured send held a stale draft').toBe('ahoj, jak to jde');
+  });
+
+  it('sends in the work mode chosen after the handler was created', async () => {
+    const box = capture();
+    renderChat(<><CaptureActions box={box} /><main><ChatView /></main></>);
+    const composer = await screen.findByTestId('chat-composer');
+    await waitFor(() => expect(FakeES.open.length).toBe(1));
+
+    act(() => { box.first!.setWorkMode('plan'); });
+    fireEvent.change(composer, { target: { value: 'navrhni plán' } });
+    await act(async () => { await box.first!.submit(); });
+    await waitFor(() => expect(sends.length).toBe(1));
+    expect(sends[0]!.mode, 'the captured send held the work mode it was created with').toBe('plan');
+  });
+
+  it('acts on the conversation the surface is bound to now, after a switch', async () => {
+    const box = capture();
+    renderChat(<><CaptureActions box={box} /><main><ChatView /></main></>);
+    const composer = await screen.findByTestId('chat-composer');
+    await waitFor(() => expect(FakeES.open.length).toBe(1));
+
+    // The daemon rolls the conversation over on the open stream; the controller rebinds in place.
+    FakeES.instances[0]!.emit('session', { sessionId: 'brain-2' });
+    FakeES.instances[0]!.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-2', history: [], events: [], hasMore: false, nextBefore: null,
+    });
+
+    fireEvent.change(composer, { target: { value: 'druhá konverzace' } });
+    await act(async () => { await box.first!.submit(); });
+    await waitFor(() => expect(sends.length).toBe(1));
+    expect(sends[0]!.session, 'the captured send held the previous conversation').toBe('brain-2');
+
+    act(() => { box.first!.abort(); });
+    await waitFor(() => expect(aborts.length).toBe(1));
+    expect(aborts[0], 'the captured abort held the previous conversation').toBe('brain-2');
   });
 });

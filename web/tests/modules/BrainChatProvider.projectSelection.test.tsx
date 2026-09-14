@@ -43,12 +43,12 @@ vi.mock('../../lib/elowenClient', () => ({
     getConfig: async () => ({}),
   },
 }));
-import { BrainChatProvider, useBrainChat } from '../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatStatus } from '../../modules/advisor/BrainChatProvider';
 import { NewConversationProjectModal } from '../../modules/advisor/NewConversationProjectModal';
 import { ProjectPicker } from '../../modules/advisor/ProjectPicker';
 
 function Harness() {
-  const chat = useBrainChat();
+  const chat = { ...useBrainChat(), ...useBrainChatStatus() };
   useEffect(() => { chat.ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
     <NewConversationProjectModal /><ProjectPicker />
