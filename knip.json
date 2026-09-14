@@ -2,6 +2,10 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
+      "ignoreUnresolved": [
+        "/usr/bin/certbot",
+        "/usr/bin/machinectl"
+      ],
       "entry": [
         "plugins/**/index.mjs",
         "plugins/*/web-src/index.tsx"
