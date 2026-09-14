@@ -133,6 +133,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   publishedSitesGateway: [
     'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
   ],
+  browserCapture: ['available', 'capture'],
   skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
   skillResources: ['resolveResource'],
 };
@@ -153,6 +154,11 @@ const PICKER_SURFACES: readonly SlashSurface[] = ['cli', 'web'];
 const CONTROL_CONSUMERS: Partial<Record<keyof KnownControls, readonly string[]>> = {
   github: ['sandbox'],
   publishedSitesGateway: ['sites'],
+  // Launches a browser process and navigates it to a URL the CALLER chose. That is process-launch
+  // authority plus an outbound request, so it is allowlisted to the one plugin that derives its targets
+  // from its own server-side configuration. Anything else wanting a picture of a page has BrowserScreenshot,
+  // which runs inside an account's own session and is governed by that session's ownership.
+  browserCapture: ['sites'],
   // Returns a host path core then reads on the caller's behalf, for a guest that cannot read it itself.
   // Only the plugin that owns the managed read path needs it. `skillCatalog` stays off this list: listing
   // the skills a turn may use is not the same authority and several loaders legitimately read it.

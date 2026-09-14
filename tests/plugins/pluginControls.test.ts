@@ -22,6 +22,10 @@ const fakeSandbox = (): KnownControls['sandbox'] => Object.fromEntries(
   [...SANDBOX_LAUNCH_METHODS, ...ENVIRONMENT_CONTROL_METHODS]
     .map((name) => [name, () => undefined]),
 ) as unknown as KnownControls['sandbox'];
+const fakeCapture = (): KnownControls['browserCapture'] => ({
+  available: () => true,
+  capture: async () => ({ image: new Uint8Array(1), mimeType: 'image/webp', width: 1, height: 1 }),
+});
 const fakeWorkflow = (): KnownControls['workflow'] => ({
   cancelForSession: () => ({ cancelled: 0 }),
   detachForeground: () => ({ detached: 0 }),
@@ -99,6 +103,30 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     expect(files.control('skillResources')?.resolveResource('/pinned/skill/refs/reference.md')).toBe('/pinned/skill/refs/reference.md');
     // Declaring the capability is not the grant: the name comes from the loader, not the manifest.
     expect(contextOver(merged, { reads: ['controls'] }, undefined, 'files-helper').control('skillResources')).toBeUndefined();
+  });
+
+  /** `browserCapture` launches a browser process and navigates it to a URL the CALLER chose, so it carries
+   *  process-launch authority AND an outbound request. It is allowlisted to the one plugin that derives its
+   *  targets from its own server-side configuration; every other plugin — the browser plugin that OWNS it
+   *  included — resolves undefined, because owning a control is not the same as consuming one. */
+  it('restricts browser capture to the one plugin that derives its own targets', () => {
+    const merged = new PluginRegistry();
+    const control = fakeCapture();
+    ownerMerges(merged, 'browser', 'browserCapture', control);
+    const warnings: string[] = [];
+
+    expect(contextOver(merged, { reads: ['controls'] }, (message) => warnings.push(message)).control('browserCapture')).toBeUndefined();
+    expect(contextOver(merged, { reads: ['controls'] }, undefined, 'browser').control('browserCapture')).toBeUndefined();
+    expect(warnings.join('\n')).toContain('not an approved consumer');
+    expect(contextOver(merged, { reads: ['controls'] }, undefined, 'sites').control('browserCapture')).toBe(control);
+    // The capability is still required: the allowlist narrows who may ask, it does not answer for them.
+    expect(contextOver(merged, {}, undefined, 'sites').control('browserCapture')).toBeUndefined();
+  });
+
+  it('refuses a browser capture control missing half its contract', () => {
+    const merged = new PluginRegistry();
+    ownerMerges(merged, 'browser', 'browserCapture', { capture: async () => undefined } as unknown as PluginControl);
+    expect(contextOver(merged, { reads: ['controls'] }, undefined, 'sites').control('browserCapture')).toBeUndefined();
   });
 
   it('refuses an incomplete known control', () => {
