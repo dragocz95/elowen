@@ -948,10 +948,10 @@ describe('privileged helper: host artefacts and readiness', () => {
       expect(rowFor(reported, rule.id).detail).toContain(firewallRuleCommand(rule));
     }
 
-    // Serving a request never mutates the packet filter: it reads the ordered chain rules only.
+    // Serving a request never mutates the packet filter: it reads the ordered chain and checks semantics.
     const served = fixture.calls.filter((call) => call.file.endsWith('tables'));
     expect(served.length).toBeGreaterThan(0);
-    expect(served.every((call) => call.args[0] === '-S')).toBe(true);
+    expect(served.every((call) => call.args[0] === '-S' || call.args[0] === '-C')).toBe(true);
 
     // Provisioning is the operator-invoked path, and it does act: the unit is installed, enabled so the
     // rules come back after a reboot, and started so they are in place now. It still touches the tables
@@ -959,7 +959,8 @@ describe('privileged helper: host artefacts and readiness', () => {
     const applied = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
     expect(fixture.state.firewallUnit).toBe(MACHINE_FIREWALL_UNIT);
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/systemctl', args: ['enable', '--now', MACHINE_FIREWALL_UNIT_NAME] });
-    expect(fixture.calls.filter((call) => call.file.endsWith('tables')).every((call) => call.args[0] === '-S')).toBe(true);
+    expect(fixture.calls.filter((call) => call.file.endsWith('tables'))
+      .every((call) => call.args[0] === '-S' || call.args[0] === '-C')).toBe(true);
     for (const rule of NSPAWN_FIREWALL_RULES) expect(rowFor(applied, rule.id).ok, rule.id).toBe(true);
     expect(rowFor(applied, 'unit:elowen-machine-firewall')).toMatchObject({ ok: true, detail: 'installed, enabled and applied' });
 
@@ -1078,6 +1079,27 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(ordinaryReported.items.some((item) => item.id.startsWith('firewall:resolver-azure-dns-'))).toBe(false);
     expect(rowFor(ordinaryReported, 'firewall:egress-azure-platform').detail).toContain('/usr/sbin/iptables -I FORWARD 2');
     expect(rowFor(ordinaryReported, 'firewall:forward-out').detail).toContain('/usr/sbin/iptables -I FORWARD 3');
+  });
+
+  it('accepts the canonical option ordering printed by real iptables while preserving rule positions', async () => {
+    const azure = runnerFixture({ firewall: false, resolver: 'nameserver 168.63.129.16\n' });
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, azure.options) as Readiness;
+    expect(provisioned.ready).toBe(true);
+    const runner = (file: string, args: string[]) => {
+      const result = azure.runner(file, args);
+      if ((file === '/usr/sbin/iptables' || file === '/usr/sbin/ip6tables') && args[0] === '-S' && result.ok) {
+        const stdout = String('stdout' in result ? result.stdout : '')
+          .replaceAll('-i ve-+ -d 169.254.0.0/16', '-d 169.254.0.0/16 -i ve-+')
+          .replaceAll('-i ve-+ -d 168.63.129.16/32', '-d 168.63.129.16/32 -i ve-+')
+          .replaceAll('-i ve-+ -d fe80::/10', '-d fe80::/10 -i ve-+');
+        return { ...result, stdout };
+      }
+      return result;
+    };
+
+    const reported = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, { ...azure.options, runner }) as Readiness;
+
+    expect(reported.ready, reported.items.filter((item) => !item.ok).map((item) => `${item.id}: ${item.detail}`).join('; ')).toBe(true);
   });
 
   it('puts the host guard where a machine-to-host packet actually arrives', () => {

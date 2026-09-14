@@ -2284,7 +2284,20 @@ function firewallRulePresent(runner, rule) {
   if (!result.ok) return false;
   const rules = String(result.stdout || '').split('\n').map((line) => line.trim())
     .filter((line) => line.startsWith(`-A ${rule.chain} `));
-  return rules[rule.insertAt - 1] === `-A ${rule.chain} ${rule.spec.join(' ')}`;
+  const commentAt = rule.spec.indexOf('--comment');
+  const comment = commentAt >= 0 ? rule.spec[commentAt + 1] : null;
+  if (!comment) return false;
+  const lineComment = (line) => {
+    const tokens = line.split(' ').filter(Boolean);
+    const at = tokens.indexOf('--comment');
+    return at >= 0 ? tokens[at + 1] : null;
+  };
+  // iptables canonicalizes option order in `-S` output (`-i … -d …` is printed as `-d … -i …`),
+  // so textual equality rejects rules the kernel actually has. The fixed unique comment identifies the
+  // rule at its security-sensitive position; `-C` independently proves that rule's complete semantics.
+  const matching = rules.filter((line) => lineComment(line) === comment);
+  return matching.length === 1 && rules[rule.insertAt - 1] === matching[0]
+    && runner(rule.binary, ['-C', rule.chain, ...rule.spec]).ok;
 }
 
 /** systemd cannot be asked about a template by its own name, only through an instance of it, so the
