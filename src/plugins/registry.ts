@@ -136,7 +136,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   ],
   browserCapture: ['available', 'capture'],
   skillCatalog: ['visibleSkills', 'visibleEntries', 'canonicalBaseDir'],
-  skillManagement: ['catalogForAccount', 'setPluginSkillEnabled']
+  skillManagement: ['catalogForAccount', 'setPluginSkillEnabled'],
   skillResources: ['resolveResource'],
 };
 

@@ -905,12 +905,19 @@ describe('durable managed environment lifecycle', () => {
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const real = async (...args: any[]) => {
       const argv = args[2]; const options = args[3];
-      const result = spawnSync(argv[0], argv.slice(1), { input: options.input, encoding: 'utf8', maxBuffer: 2 ** 21,
+      const request = JSON.parse(options.input);
+      const inputJson = JSON.stringify({
+        ...request,
+        root,
+        path: request.path.replace('/sales-dashboard', root),
+        ...(request.resolvedPath ? { resolvedPath: request.resolvedPath.replace('/sales-dashboard', root) } : {}),
+      });
+      const result = spawnSync(argv[0], argv.slice(1), { input: inputJson, encoding: 'utf8', maxBuffer: 2 ** 21,
         env: { ...process.env, ELOWEN_UPLOAD_ROOT: join(root, 'uploads') } });
       return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr, truncated: false };
     };
     nspawn.exec.mockImplementation(real);
-    const path = join(root, 'uploaded');
+    const path = '/sales-dashboard/uploaded';
     const files = (operation: any) => runtime.projectFiles({ ...input, accountUserId: 1, operation });
     const { uploadId } = await files({ kind: 'write-begin', path, expectedVersion: null, size: 4 });
 
@@ -980,12 +987,20 @@ describe('durable managed environment lifecycle', () => {
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     nspawn.exec.mockImplementation(async (...args: any[]) => {
       const argv = args[2]; const options = args[3];
-      const result = spawnSync(argv[0], argv.slice(1), { input: options.input, encoding: 'utf8', maxBuffer: 2 ** 21,
+      const request = JSON.parse(options.input);
+      const inputJson = JSON.stringify({
+        ...request,
+        root,
+        path: request.path.replace('/sales-dashboard', root),
+        ...(request.resolvedPath ? { resolvedPath: request.resolvedPath.replace('/sales-dashboard', root) } : {}),
+      });
+      const result = spawnSync(argv[0], argv.slice(1), { input: inputJson, encoding: 'utf8', maxBuffer: 2 ** 21,
         env: { ...process.env, ELOWEN_UPLOAD_ROOT: join(root, 'uploads') } });
       if (result.error) throw result.error;
       return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr, truncated: false };
     });
-    const path = join(root, 'uploaded');
+    const path = '/sales-dashboard/uploaded';
+    const hostPath = join(root, 'uploaded');
     const files = (operation: any, accountUserId = 1) => runtime.projectFiles({ ...input, accountUserId, operation });
     const begin = await files({ kind: 'write-begin', path, expectedVersion: null, size: 524289 });
     expect(begin.kind).toBe('write-begin');
@@ -1001,13 +1016,13 @@ describe('durable managed environment lifecycle', () => {
     await files({ kind: 'write-chunk', path, uploadId, offset: 0, base64: Buffer.alloc(524288).toString('base64') });
     const done = await files({ kind: 'write-commit', path, uploadId });
     expect(done.entry.size).toBe(524289);
-    expect(readFileSync(path).length).toBe(524289);
+    expect(readFileSync(hostPath).length).toBe(524289);
     expect(await files({ kind: 'write-commit', path, uploadId })).toEqual(done);
     const next = await files({ kind: 'write-begin', path, expectedVersion: done.entry.version, size: 0 });
     expect(next.uploadId).not.toBe(uploadId);
-    writeFileSync(path, 'concurrent');
+    writeFileSync(hostPath, 'concurrent');
     await expect(files({ kind: 'write-commit', path, uploadId: next.uploadId })).rejects.toThrow(/version/);
-    expect(readFileSync(path, 'utf8')).toBe('concurrent');
+    expect(readFileSync(hostPath, 'utf8')).toBe('concurrent');
     await runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 });
     expect(sql.prepare('SELECT id FROM p_sandbox_file_uploads').all()).toEqual([]);
   });
