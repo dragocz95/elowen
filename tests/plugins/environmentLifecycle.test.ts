@@ -161,40 +161,162 @@ function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unr
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, nspawn, storage, members, users, project, stores, root, containers, diskFiles, warn, forwarders, publicationSocket, staleSocket, endForwarders };
+  return { runtime, fork, db, sql, ctx, nspawn, storage, members, users, project, stores, root, containers, diskFiles, warn, forwarders, publicationSocket, staleSocket, endForwarders, dependencies };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
+const runningResources = (cpuPercent = 50) => ({
+  cpu: { state: 'ready', usedCpus: cpuPercent / 100, percent: cpuPercent, model: 'AMD EPYC 7B13 64-Core Processor' },
+  memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
+  disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
+});
 
 describe('durable managed environment lifecycle', () => {
-  it('batches resource usage only after fresh Project authorization', async () => {
+  it('authorizes the whole resource batch before reading or refreshing any row', async () => {
     const { runtime, nspawn, members } = setup();
-    const cold = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 });
-    expect(cold.projects).toEqual([expect.objectContaining({
-      projectId: 7,
-      environment: expect.objectContaining({ state: 'unprovisioned', limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } }),
-      resources: expect.objectContaining({
-        cpu: { state: 'stopped', usedCpus: null, percent: null, model: 'AMD EPYC 7B13 64-Core Processor' },
-        disk: { state: 'ready', usedBytes: 0, limitBytes: null },
-      }),
-    })]);
-    expect(nspawn.resourceUsageBatch).not.toHaveBeenCalled();
+    members.delete(2);
 
+    await expect(runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 }))
+      .rejects.toMatchObject({ code: 'project_forbidden', status: 403 });
+    expect(nspawn.resourceUsageBatch).not.toHaveBeenCalled();
+  });
+
+  it('returns one persisted generation snapshot immediately, refreshes single-flight and survives a runtime restart', async () => {
+    const { runtime, nspawn, db, dependencies } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'usage-start', action: { kind: 'start' } });
     await runtime.reconcile();
-    const live = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 });
-    expect(live.projects[0]).toMatchObject({
-      environment: { state: 'running' },
-      resources: {
-        cpu: { state: 'ready', usedCpus: 0.5, percent: 50, model: 'AMD EPYC 7B13 64-Core Processor' },
-        memory: { state: 'ready', usedBytes: 256 * 1024 * 1024, limitBytes: 1024 * 1024 * 1024 },
-        disk: { state: 'ready', usedBytes: 512 * 1024 * 1024, limitBytes: null },
-      },
-    });
-    expect(nspawn.resourceUsageBatch).toHaveBeenCalledWith([expect.objectContaining({ state: 'running', spec: expect.objectContaining({ name: 'elowen-project-7-g1' }) })]);
+    nspawn.resourceUsageBatch.mockClear();
 
-    members.delete(2);
-    await expect(runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 })).rejects.toMatchObject({ code: 'project_forbidden', status: 403 });
-    expect(nspawn.resourceUsageBatch).toHaveBeenCalledTimes(1);
+    const row = db.prepare("SELECT generation,resource_refresh_epoch FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const previous = runningResources(25);
+    db.prepare("UPDATE p_sandbox_runtimes SET resource_snapshot_json=?,resource_sampled_at=? WHERE kind='project' AND resource_id='7'")
+      .run(JSON.stringify({ generation: row.generation, epoch: row.resource_refresh_epoch, resources: previous }), Date.now() - 60_000);
+
+    let release!: (resources: any[]) => void;
+    const measured = new Promise<any[]>((resolve) => { release = resolve; });
+    nspawn.resourceUsageBatch.mockImplementationOnce(async () => await measured);
+
+    const [first, second] = await Promise.all([
+      runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 1 }),
+      runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 2 }),
+    ]);
+    for (const response of [first, second]) {
+      expect(response.projects[0]).toMatchObject({ sampledAt: expect.any(String), stale: true, refreshing: true,
+        environment: { state: 'running', generation: 1 }, resources: previous });
+    }
+    expect(nspawn.resourceUsageBatch).toHaveBeenCalledOnce();
+
+    release([runningResources(75)]);
+    await vi.waitFor(() => {
+      const stored = db.prepare("SELECT resource_snapshot_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+      expect(JSON.parse(stored.resource_snapshot_json).resources.cpu.percent).toBe(75);
+    });
+
+    await runtime.dispose();
+    nspawn.resourceUsageBatch.mockClear();
+    const restarted = createEnvironmentRuntime({ ...dependencies, daemon: true });
+    const persisted = await restarted.environmentUsageBatch({ projectIds: [7], accountUserId: 1 });
+    expect(persisted.projects[0]).toMatchObject({ stale: false, refreshing: false, resources: runningResources(75) });
+    expect(nspawn.resourceUsageBatch).not.toHaveBeenCalled();
+    await restarted.dispose();
+  });
+
+  it('retains the last values and marks them stale when a background refresh fails', async () => {
+    const { runtime, nspawn, db, warn } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'usage-error-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    nspawn.resourceUsageBatch.mockClear();
+
+    const row = db.prepare("SELECT generation,resource_refresh_epoch FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const previous = runningResources(40);
+    const encoded = JSON.stringify({ generation: row.generation, epoch: row.resource_refresh_epoch, resources: previous });
+    db.prepare("UPDATE p_sandbox_runtimes SET resource_snapshot_json=?,resource_sampled_at=?,resource_refresh_epoch=resource_refresh_epoch+1 WHERE kind='project' AND resource_id='7'")
+      .run(encoded, Date.now());
+    nspawn.resourceUsageBatch.mockRejectedValueOnce(new Error('cgroup unavailable'));
+
+    const response = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 1 });
+    expect(response.projects[0]).toMatchObject({ stale: true, refreshing: true, resources: previous });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('resource usage refresh failed')));
+    expect((db.prepare("SELECT resource_snapshot_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).resource_snapshot_json).toBe(encoded);
+  });
+
+  it('reports a failed first sample as stale without inventing zero values', async () => {
+    const { runtime, nspawn, warn } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'usage-first-error-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    nspawn.resourceUsageBatch.mockReset();
+    nspawn.resourceUsageBatch.mockRejectedValueOnce(new Error('sampling unavailable'));
+
+    const first = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 1 });
+    expect(first.projects[0]).toMatchObject({ sampledAt: null, stale: false, refreshing: true,
+      resources: { cpu: { usedCpus: null, percent: null }, memory: { usedBytes: null }, disk: { usedBytes: null } } });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('resource usage refresh failed')));
+
+    let release!: (resources: any[]) => void;
+    nspawn.resourceUsageBatch.mockImplementationOnce(async () => await new Promise<any[]>((resolve) => { release = resolve; }));
+    const retry = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 1 });
+    expect(retry.projects[0]).toMatchObject({ sampledAt: null, stale: true, refreshing: true,
+      resources: { cpu: { usedCpus: null, percent: null }, memory: { usedBytes: null }, disk: { usedBytes: null } } });
+    release([runningResources()]);
+    await runtime.dispose();
+  });
+
+  it('persists retained per-resource values when one probe is unavailable', async () => {
+    const { runtime, nspawn, db, dependencies } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'usage-partial-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    nspawn.resourceUsageBatch.mockClear();
+
+    const row = db.prepare("SELECT generation,resource_refresh_epoch FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const previous = runningResources(55);
+    db.prepare("UPDATE p_sandbox_runtimes SET resource_snapshot_json=?,resource_sampled_at=?,resource_refresh_epoch=resource_refresh_epoch+1 WHERE kind='project' AND resource_id='7'")
+      .run(JSON.stringify({ generation: row.generation, epoch: row.resource_refresh_epoch, resources: previous }), Date.now());
+    nspawn.resourceUsageBatch.mockResolvedValueOnce([{ ...runningResources(65), disk: { state: 'unavailable', usedBytes: null, limitBytes: null } } as any]);
+
+    await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 1 });
+    await vi.waitFor(() => {
+      const stored = JSON.parse((db.prepare("SELECT resource_snapshot_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).resource_snapshot_json);
+      expect(stored).toMatchObject({ stale: true, resources: { cpu: { percent: 65 }, disk: previous.disk } });
+    });
+
+    await runtime.dispose();
+    let release!: (resources: any[]) => void;
+    nspawn.resourceUsageBatch.mockImplementationOnce(async () => await new Promise<any[]>((resolve) => { release = resolve; }));
+    const restarted = createEnvironmentRuntime({ ...dependencies, daemon: true });
+    const persisted = await restarted.environmentUsageBatch({ projectIds: [7], accountUserId: 1 });
+    expect(persisted.projects[0]).toMatchObject({ stale: true, refreshing: true,
+      resources: { cpu: { percent: 65 }, disk: previous.disk } });
+    release([runningResources(70)]);
+    await restarted.dispose();
+  });
+
+  it('fences a late resource refresh from an obsolete runtime generation', async () => {
+    const { runtime, nspawn, db } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'usage-fence-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    nspawn.resourceUsageBatch.mockClear();
+
+    let release!: (resources: any[]) => void;
+    let completed!: () => void;
+    const done = new Promise<void>((resolve) => { completed = resolve; });
+    nspawn.resourceUsageBatch.mockImplementationOnce(async () => {
+      const resources = await new Promise<any[]>((resolve) => { release = resolve; });
+      completed();
+      return resources;
+    });
+    const response = await runtime.environmentUsageBatch({ projectIds: [7], accountUserId: 1 });
+    expect(response.projects[0]).toMatchObject({ sampledAt: null, refreshing: true });
+
+    const stored = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const next = JSON.parse(stored.spec_json);
+    next.input.generation = 2;
+    db.prepare("UPDATE p_sandbox_runtimes SET generation=2,spec_json=?,resource_refresh_epoch=resource_refresh_epoch+1 WHERE kind='project' AND resource_id='7'")
+      .run(JSON.stringify(next));
+    release([runningResources(90)]);
+    await done;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(db.prepare("SELECT resource_snapshot_json,resource_sampled_at FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get())
+      .toEqual({ resource_snapshot_json: null, resource_sampled_at: null });
   });
 
   it('keeps one rootfs disk across envelope recreation and limit changes, then deletes it after handles', async () => {

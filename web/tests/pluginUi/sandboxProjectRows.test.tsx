@@ -281,6 +281,22 @@ describe('sandbox contribution to the Project register cards', () => {
     expect(usageRequests).toEqual([[3, 5]]);
   });
 
+  it('renders persisted values with the server background refresh metadata after the response settles', async () => {
+    server.use(http.post('*/api/plugins/sandbox/api/environments/usage', async ({ request }) => {
+      const { projectIds } = await request.json() as { projectIds: number[] };
+      return HttpResponse.json({ sampledAt: '2026-01-01T00:00:00.000Z', projects: projectIds.map((projectId) => ({
+        ...usageOf(projectId, projectId === 3 ? 'running' : 'stopped'),
+        sampledAt: '2026-01-01T00:00:00.000Z', refreshing: true, stale: true,
+      })) });
+    }));
+    mount();
+    const card = (await screen.findByRole('button', { name: 'Open project analysis' })).closest('[data-project-card]') as HTMLElement;
+
+    await waitFor(() => expect(card.querySelector('[data-project-row-metrics]')).toHaveAttribute('data-refreshing', 'true'));
+    expect(card.querySelector('[data-project-row-metrics]')).toHaveAttribute('data-stale', 'true');
+    expect(within(card).getByRole('progressbar', { name: strings.usageCpu })).toHaveAttribute('aria-valuenow', '50');
+  });
+
   // A revalidation keeps every figure it already has. A FAILED one keeps them too and marks the card stale:
   // replacing a real measurement with "Unavailable" because one poll missed is how a populated environment
   // kept reporting nothing.

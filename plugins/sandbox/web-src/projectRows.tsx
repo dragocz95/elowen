@@ -22,9 +22,12 @@ interface UsageMetric {
 interface ProjectUsage {
   projectId: number;
   environment: ProjectEnvironment;
+  sampledAt?: string | null;
+  refreshing?: boolean;
+  stale?: boolean;
   resources: { cpu: UsageMetric; memory: UsageMetric; disk: UsageMetric };
 }
-interface UsageBatch { sampledAt: string; projects: ProjectUsage[] }
+interface UsageBatch { sampledAt: string | null; projects: ProjectUsage[] }
 interface RowMetric { id: string; label: string; value: string; valueText?: string; description?: string; percent?: number; state: 'ready' | 'absolute' | 'unknown' | 'stopped' | 'unavailable' }
 /** The snapshot shape the host draws in the Project register. The figures are always the last ones actually
  *  measured; `refreshing` and `stale` describe the read around them. */
@@ -159,8 +162,8 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   // replaced measured CPU, memory and disk with the word "Unavailable" the moment one poll missed, so a
   // running environment reported nothing until the next poll happened to succeed.
   const usageByProject = new Map((refused ? [] : usage.data?.projects ?? []).map((item) => [item.projectId, item]));
-  const refreshing = usage.isFetching && !usage.isLoading;
-  const stale = usage.isError && !refused && usageByProject.size > 0;
+  const queryRefreshing = usage.isFetching && !usage.isLoading;
+  const queryStale = usage.isError && !refused && usageByProject.size > 0;
 
   // The last figure actually MEASURED for one resource of one project, keyed
   // `<projectId>:<generation>:<kind>`.
@@ -203,11 +206,11 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
 
   /** Stamps the shared read state onto one project's figures. `keeping` is this project's own reason to be
    *  marked stale: the request succeeded, but part of what came back carried no figure. */
-  const snapshot = (items: RowMetric[], keeping = false): RowMetrics => ({
+  const snapshot = (project: ProjectUsage, items: RowMetric[], keeping = false): RowMetrics => ({
     label: s.resources,
     items,
-    ...(refreshing ? { refreshing: true } : {}),
-    ...(stale || keeping ? { stale: true, staleLabel: s.usageStale } : {}),
+    ...(queryRefreshing || project.refreshing ? { refreshing: true } : {}),
+    ...(queryStale || project.stale || keeping ? { stale: true, staleLabel: s.usageStale } : {}),
   });
 
   // A refusal fences the ACTIVE read by dropping its data above. A cache entry left behind by an earlier
@@ -268,7 +271,7 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
       metrics[project.id] = {
         ...placeholderMetrics(s, failed ? 'unavailable' : 'unknown',
           failed ? (refusedStatus === 403 ? s.error_project_forbidden : s.usageUnavailable) : UNKNOWN_VALUE),
-        ...(refreshing ? { refreshing: true } : {}),
+        ...(queryRefreshing ? { refreshing: true } : {}),
       };
       continue;
     }
@@ -298,7 +301,9 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
       processMetric('memory'),
       recall(project.id, environment.generation, 'disk', item.resources.disk),
     ];
-    metrics[project.id] = snapshot(readings.map((reading) => reading.item), readings.some((reading) => reading.kept));
+    metrics[project.id] = item.sampledAt === null && item.refreshing
+      ? snapshot(item, placeholderMetrics(s, 'unknown', UNKNOWN_VALUE).items)
+      : snapshot(item, readings.map((reading) => reading.item), readings.some((reading) => reading.kept));
     actions[project.id] = ACTIONS.map((action) => ({
       id: action.kind,
       label: s[action.label] || action.kind,
