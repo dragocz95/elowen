@@ -220,9 +220,8 @@ export class ChatPage {
    *  Assert on `historySentinel` afterwards. A programmatic offset write must not count as reader intent:
    *  that distinction prevents entering /chat from loading history and opening mid-conversation. */
   async scrollToTopForOlder(): Promise<void> {
-    const main = this.page.locator('main');
-    await main.hover();
+    await this.transcript.hover();
     await this.page.mouse.wheel(0, -100_000);
-    await expect.poll(() => main.evaluate((node) => node.scrollTop)).toBeLessThan(120);
+    await expect.poll(() => this.transcript.evaluate((node) => node.scrollTop)).toBeLessThan(120);
   }
 }

@@ -9,16 +9,6 @@
     "tests/plugins/environmentNspawnProof.test.ts",
     "tests/plugins/managedToolCallers.nspawn.test.ts"
   ],
-  "registryRealGuestSuites": {
-    "repository": "github.com/dragocz95/elowen-plugins",
-    "note": "Consumer-side guest acceptance for plugins that live in the registry. Their files are not part of this repository, so this repository cannot assert that they exist: a checkout of this repo alone (CI, or any worktree) has no sibling registry beside it. The registry runs them itself and guards their presence in tests/registryGuestSuites.test.mjs, which is where a deletion has to be noticed. Paths are relative to that repository root.",
-    "suites": [
-      "tests/lspManagedGuest.podman.test.ts",
-      "tests/editorManagedGuest.podman.test.ts",
-      "tests/codebaseManagedGuest.podman.test.ts",
-      "tests/cronManagedGuest.podman.test.ts"
-    ]
-  },
   "rows": [
     {
       "area": "lifecycle",
@@ -83,9 +73,10 @@
     {
       "area": "execution",
       "capability": "argv launch with PATH resolved inside the guest",
-      "evidence": "real-guest",
-      "suite": "lspManagedGuest.podman",
-      "negative": "unit"
+      "evidence": "unit",
+      "suite": "lspManaged",
+      "negative": "unit",
+      "notes": "lspManaged covers argv launch and guest PATH resolution through an in-process project provider; no nspawn guest suite covers it yet."
     },
     {
       "area": "execution",
@@ -121,8 +112,8 @@
     {
       "area": "guest-files",
       "capability": "read bounded by the guest transfer limit",
-      "evidence": "real-guest",
-      "suite": "lspManagedGuest.podman",
+      "evidence": "unit",
+      "suite": "lspManaged",
       "negative": "unit",
       "notes": "Managed LSP asked for 2 MiB against a 512 KiB bound and every check silently degraded."
     },
@@ -132,7 +123,7 @@
       "evidence": "unit",
       "suite": "environmentLifecycle",
       "negative": "unit",
-      "notes": "Covered by environmentLifecycle at protocol level: begin, chunked write, abort, commit, the actor and generation bounds on each, and the fixed answer a failing guest upload gets. The chunked WRITE path is also exercised against a real guest through the editor upload. The completion-metadata half of this row went with the container transport — a machine execution carries no completion-cwd capture and the client refuses to arm one, which nspawnRuntime pins."
+      "notes": "Covered by environmentLifecycle at protocol level: begin, chunked write, abort, commit, the actor and generation bounds on each, and the fixed answer a failing guest upload gets. A machine execution carries no completion-cwd capture and the client refuses to arm one, which nspawnRuntime pins."
     },
     {
       "area": "file-tools",
@@ -177,24 +168,26 @@
     {
       "area": "lsp",
       "capability": "install a language server into the guest and find it on PATH",
-      "evidence": "real-guest",
-      "suite": "lspManagedGuest.podman",
-      "negative": "unit"
+      "evidence": "unit",
+      "suite": "lspManaged",
+      "negative": "unit",
+      "notes": "lspManaged covers installation commands and PATH lookup through an in-process project provider; no nspawn guest suite covers it yet."
     },
     {
       "area": "lsp",
-      "capability": "real diagnostics: error reported, then clean after the fix",
-      "evidence": "real-guest",
-      "suite": "lspManagedGuest.podman",
-      "negative": "unit"
+      "capability": "diagnostics: error reported, then clean after the fix",
+      "evidence": "unit",
+      "suite": "lspManaged",
+      "negative": "unit",
+      "notes": "lspManaged covers diagnostic publication and clearing through an in-process project provider; no nspawn guest suite covers it yet."
     },
     {
       "area": "lsp",
       "capability": "server lifetime owned by the lease, not a host pid watchdog",
-      "evidence": "real-guest",
-      "suite": "lspManagedGuest.podman",
+      "evidence": "unit",
+      "suite": "lspManaged",
       "negative": "unit",
-      "notes": "A host pid is invisible in the guest namespace and the server exited(1) immediately."
+      "notes": "lspManaged covers the lease-owned server lifecycle and refuses host-pid ownership through an in-process project provider."
     },
     {
       "area": "browser",
@@ -207,10 +200,10 @@
     {
       "area": "editor",
       "capability": "upload/download/save/listing against a managed project",
-      "evidence": "real-guest",
-      "suite": "editorManagedGuest.podman",
-      "negative": "real-guest",
-      "notes": "Chunked upload, byte-identical raw download, range request, version-guarded save. Office converters are no longer outstanding: the 'office preview converters in a guest' row covers them in this same suite, against the guest's own LibreOffice."
+      "evidence": "unit",
+      "suite": "editorManaged",
+      "negative": "unit",
+      "notes": "Managed editor suites cover chunked upload, raw download, range requests and version-guarded saves through an in-process project provider."
     },
     {
       "area": "mcp",
@@ -223,10 +216,10 @@
     {
       "area": "cron",
       "capability": "scheduled turn scoping to a managed project",
-      "evidence": "real-guest",
-      "suite": "cronManagedGuest.podman",
-      "negative": "real-guest",
-      "notes": "The real projectCheck now runs in the selected project's environment: it reads a marker written into that guest, a failing check reports its exit rather than reading as a pass, the environment stays usable afterwards, and a job owned by a non-member is refused. Scheduling CADENCE stays with the cronjob suites; what is real here is where the check executes."
+      "evidence": "unit",
+      "suite": "cronManaged",
+      "negative": "unit",
+      "notes": "cronManaged covers projectCheck execution, failures and membership refusal through an in-process project provider. Scheduling cadence stays with the cronjob suites."
     },
     {
       "area": "subagent",
@@ -255,10 +248,10 @@
     {
       "area": "codebase",
       "capability": "codebase indexing/search inside a managed project",
-      "evidence": "real-guest",
-      "negative": "real-guest",
-      "notes": "Indexed through the provider's guest file operations (list/read) and keyed by the project's stable id (managed:<projectId>), never by /workspace, which every project shares; before this the index resolved /workspace against the host and then merely refused. Embedding stays central (the guest never sees provider credentials); a search re-checks membership through environmentFor before reading any chunk; host sessions, admin all-access included, never see managed rows; the scheduled indexer skips managed keys because a timer has no acting member; project removal prunes the rows. Real guest: reindex walks and reads the guest, search answers with guest-relative paths, an unchanged workspace costs no reads or embeddings, a non-member is denied at the project boundary, the host path guard is never consulted. Cost: one guest operation per directory listed and per 256 KiB read, each several seconds on this host, so a first index of a large project is slow and bounded by the 20,000-file cap rather than by the embedding budget.",
-      "suite": "codebaseManagedGuest.podman"
+      "evidence": "unit",
+      "negative": "unit",
+      "notes": "The codebase suite covers provider-backed list/read operations, stable managed project keys, membership checks, host isolation, scheduled-index skipping and project-removal pruning through an in-process project provider.",
+      "suite": "codebase"
     },
     {
       "area": "integrations",
@@ -287,10 +280,10 @@
     {
       "area": "editor",
       "capability": "office preview converters in a guest",
-      "evidence": "real-guest",
-      "negative": "real-guest",
-      "notes": "The project image now ships libreoffice-writer/calc/impress, so the managed preview runs soffice inside the guest: a docx uploaded through the editor's own upload route comes back as a PDF from the preview route, and the converter's scratch directory does not survive the request. A non-office file is refused with 415. An environment created from an earlier image keeps its root filesystem until rebuilt and still answers 501 naming the missing converter (unit: editorManagedOperations). Cost: a conversion takes tens of seconds end to end on this host because each guest operation, not only soffice, costs several seconds.",
-      "suite": "editorManagedGuest.podman"
+      "evidence": "unit",
+      "negative": "unit",
+      "notes": "editorManagedOperations covers converter dispatch, scratch cleanup, unsupported files and the missing-converter response through an in-process project provider.",
+      "suite": "editorManagedOperations"
     },
     {
       "area": "artifacts",

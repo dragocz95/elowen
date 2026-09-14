@@ -111,7 +111,10 @@ async function geometry(page: Page) {
       lastClearance: lastRect ? composerRect.top - lastRect.bottom : null,
       slotPadding: parseFloat(getComputedStyle(composer.parentElement!).paddingBottom) * scale,
       dockSafePadding: parseFloat(getComputedStyle(dock).paddingBottom),
-      surfaceTail: parseFloat(getComputedStyle(surface).paddingBottom) * scale,
+      surfaceInset: parseFloat(getComputedStyle(surface).paddingBottom) * scale,
+      pageScroll: document.scrollingElement?.scrollTop ?? 0,
+      mainScroll: main.scrollTop,
+      transcriptScroll: surface.querySelector<HTMLElement>('[data-testid="chat-transcript"]')!.scrollTop,
       horizontalOverflow: main.scrollWidth - main.clientWidth,
       innerHeight: window.innerHeight,
     };
@@ -155,9 +158,11 @@ for (const profile of PROFILES) {
     const closed = await geometry(app);
     expect(closed.keyboardOpen).toBe('false');
     expect(closed.inset).toBe(0);
-    expect(closed.dockPosition, 'the dock must be sticky, or the inset below becomes a second offset').toBe('sticky');
+    expect(closed.dockPosition, 'the composer must stay in normal flex flow').toBe('static');
     expect(closed.dockSafePadding).toBe(SAFE_BOTTOM);
-    expect(closed.surfaceTail).toBe(0);
+    expect(closed.surfaceInset).toBe(0);
+    expect(closed.pageScroll).toBe(0);
+    expect(closed.mainScroll).toBe(0);
 
     // ── The keyboard comes up ──────────────────────────────────────────────────────────────────────
     await chat.composer.focus();
@@ -175,8 +180,11 @@ for (const profile of PROFILES) {
     expect(open.composerGap).toBeLessThanOrEqual(16);
     // The visible band already ends above the home indicator: adding the safe area again is the blank band.
     expect(open.dockSafePadding).toBe(0);
-    // The tail is what lets the reader scroll the last turn clear of the risen dock.
-    expect(open.surfaceTail).toBeGreaterThan(0);
+    // The surface inset reduces only the transcript's content box. Page-level scroll owners stay fixed.
+    expect(open.surfaceInset).toBeGreaterThan(0);
+    expect(open.pageScroll).toBe(0);
+    expect(open.mainScroll).toBe(0);
+    expect(open.transcriptScroll).toBeGreaterThan(0);
     expect(open.lastClearance).toBeGreaterThanOrEqual(4);
     expect(open.horizontalOverflow).toBeLessThanOrEqual(0);
 
@@ -189,9 +197,11 @@ for (const profile of PROFILES) {
     await app.evaluate(() => (window as unknown as { __ios: { scrollBand(v: number): void } }).__ios.scrollBand(0));
     await expect.poll(async () => (await geometry(app)).inset).toBeCloseTo(profile.keyboard / profile.scale, 0);
 
-    // ── Reading history with the keyboard up: the dock sticks, it does not scroll away ─────────────
-    await app.locator('main').evaluate((main) => main.scrollTo({ top: Math.max(0, main.scrollHeight / 2) }));
+    // ── Reading history with the keyboard up: only the transcript scrolls ─────────────────────────
+    await page.getByTestId('chat-transcript').evaluate((transcript) => transcript.scrollTo({ top: Math.max(0, transcript.scrollHeight / 2) }));
     const scrolledUp = await geometry(app);
+    expect(scrolledUp.pageScroll).toBe(0);
+    expect(scrolledUp.mainScroll).toBe(0);
     expect(scrolledUp.dockGap).toBeGreaterThanOrEqual(-1);
     expect(scrolledUp.dockGap).toBeLessThanOrEqual(12);
 
@@ -201,14 +211,52 @@ for (const profile of PROFILES) {
     await expect.poll(async () => (await geometry(app)).keyboardOpen).toBe('false');
     const restored = await geometry(app);
     expect(restored.inset).toBe(0);
-    expect(restored.surfaceTail).toBe(0);
+    expect(restored.surfaceInset).toBe(0);
     expect(restored.dockSafePadding).toBe(SAFE_BOTTOM);
+    expect(restored.pageScroll).toBe(0);
+    expect(restored.mainScroll).toBe(0);
     expect(restored.dockGap).toBeGreaterThanOrEqual(-1);
     expect(restored.dockGap).toBeLessThanOrEqual(12 + SAFE_BOTTOM);
     expect(restored.horizontalOverflow).toBeLessThanOrEqual(0);
     await cdp.detach();
   });
 }
+
+test('focusing the composer leaves page scroll fixed and moves only the transcript', async ({ app, seed }) => {
+  test.setTimeout(120_000);
+  await emulateIosViewport(app);
+  await app.setViewportSize({ width: 390, height: 844 });
+  await seed.messages(seedTurns);
+
+  const chat = new ChatPage(app);
+  await chat.goto();
+  await expect(chat.lastTurn()).toContainText('Msg 59 (elowen)');
+
+  const resetAndRead = () => app.evaluate(() => {
+    const page = document.scrollingElement as HTMLElement;
+    const main = document.querySelector<HTMLElement>('main')!;
+    const transcript = document.querySelector<HTMLElement>('[data-variant="full"] [data-testid="chat-transcript"]')!;
+    page.scrollTop = 0;
+    main.scrollTop = 0;
+    transcript.scrollTop = 0;
+    return { page: page.scrollTop, main: main.scrollTop, transcript: transcript.scrollTop };
+  });
+  const before = await resetAndRead();
+
+  await chat.composer.focus();
+  await app.evaluate(() => (window as unknown as { __ios: { open(h: number): Promise<void> } }).__ios.open(336));
+  await expect.poll(async () => (await geometry(app)).keyboardOpen).toBe('true');
+
+  const after = await app.evaluate(() => {
+    const page = document.scrollingElement as HTMLElement;
+    const main = document.querySelector<HTMLElement>('main')!;
+    const transcript = document.querySelector<HTMLElement>('[data-variant="full"] [data-testid="chat-transcript"]')!;
+    return { page: page.scrollTop, main: main.scrollTop, transcript: transcript.scrollTop };
+  });
+  expect(after.page, 'composer focus scrolled the document').toBe(before.page);
+  expect(after.main, 'composer focus scrolled the shell page instead of the transcript').toBe(before.main);
+  expect(after.transcript, 'the transcript did not take ownership of follow-newest scrolling').toBeGreaterThan(before.transcript);
+});
 
 test('typing with the keyboard up survives high-frequency stream updates', async ({ app, seed, sse }) => {
   test.setTimeout(120_000);
@@ -240,9 +288,10 @@ test('typing with the keyboard up survives high-frequency stream updates', async
     const surface = main.querySelector<HTMLElement>('[data-variant="full"]')!;
     const ambient = surface.querySelector<HTMLElement>('[data-testid="chat-ambient-extras"]')!;
     const live = surface.querySelector<HTMLElement>('[data-tk^="live:"]')!;
+    const transcript = surface.querySelector<HTMLElement>('[data-testid="chat-transcript"]')!;
     const ambientRect = ambient.getBoundingClientRect();
     return {
-      topInScrollContent: ambientRect.top + main.scrollTop,
+      topInScrollContent: ambientRect.top + transcript.scrollTop,
       ambientBottom: ambientRect.bottom,
       liveTop: live.getBoundingClientRect().top,
       beforeLive: Boolean(ambient.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING),

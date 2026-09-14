@@ -112,7 +112,8 @@ async function resolveDocumentSkin(): Promise<SkinResolution> {
 // that reason — the skin is per account and per request, which a module-level constant cannot express.
 // `viewportFit: cover` lays the app edge-to-edge so `env(safe-area-inset-*)` resolves (notch / home
 // indicator, incl. the installed PWA); `interactiveWidget: resizes-content` shrinks the layout viewport
-// (and therefore `100dvh`) when the soft keyboard opens, so a sticky bottom composer stays above it.
+// (and therefore `100dvh`) where the browser supports it. iOS's visual-only shrink is handled by the fixed
+// chat surface without handing scroll ownership back to the document.
 export async function generateViewport() {
   const paint = documentPaint((await resolveDocumentSkin()).skin);
   return {
