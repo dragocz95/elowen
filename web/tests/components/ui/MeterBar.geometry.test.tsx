@@ -30,6 +30,16 @@ const trackDrawn = (): boolean => document.querySelector('.recharts-bar-backgrou
 /** Recharts drops a rectangle with nothing in it rather than emitting one, so presence IS the reading. */
 const fillDrawn = (): boolean => document.querySelector('.recharts-bar-rectangle path') !== null;
 
+/** The outline of the fill, which is the reading in pixels: Recharts draws the shape it is handed, so the
+ *  path's `d` is the only thing that tells a sliver widened to the floor from one drawn at its own width.
+ *  Presence alone cannot: any width above zero reaches the shape. */
+const fillOutline = (percent: number): string | null => {
+  const { unmount } = draw(percent);
+  const outline = document.querySelector('.recharts-bar-rectangle path')?.getAttribute('d') ?? null;
+  unmount();
+  return outline;
+};
+
 describe('MeterBar geometry', () => {
   it('draws the track and a fill for a reading with something in it', () => {
     draw(42);
@@ -49,9 +59,14 @@ describe('MeterBar geometry', () => {
   });
 
   /** The other half of the same rule: a real but tiny fraction still shows something, so a meter that is
-   *  barely used never reads as untouched. */
-  it('still draws a sliver for a fraction too small to be a whole pixel', () => {
-    draw(0.05);
-    expect(fillDrawn(), 'a real but tiny reading vanished').toBe(true);
+   *  barely used never reads as untouched. `minPointSize` is what makes that true — Recharts applies the
+   *  floor BEFORE it calls the shape, so 0.05 % is drawn as wide as the floor rather than as the 0.1 px
+   *  its share of a 200 px track comes to. Comparing it against a reading that fills the floor exactly
+   *  (1 % of this track IS the 2 px floor) is what pins the floor down: the shape's own `width > 0` draws
+   *  the tiny reading too, at a tenth of the width. */
+  it('widens a fraction too small to be a whole pixel to the same floor as one that fills it exactly', () => {
+    const tiny = fillOutline(0.05);
+    expect(tiny, 'a real but tiny reading vanished').not.toBeNull();
+    expect(fillOutline(1), 'a 1 % reading is exactly the 2 px floor').toBe(tiny);
   });
 });

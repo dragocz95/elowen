@@ -48,7 +48,7 @@ const openSection = (id: string) => {
 afterEach(() => { window.history.replaceState(null, '', '/account'); });
 
 describe('AccountView', () => {
-  it('carries no navigation of its own: the sections are rows of the menu outside it', async () => {
+  it('opens with the shell carrying no section navigation of its own', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
@@ -59,12 +59,12 @@ describe('AccountView', () => {
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
-    // The section rail and the phone tab strip are both gone. What used to be two menus — one in the
-    // chrome and one that only appeared once you had arrived — is one menu.
+    // The SHELL mounts no section navigation for the deck: no rail, no tab strip, no `data-section-layout`.
+    // The way between sections is the deck's own, covered by AccountNavigation.test.tsx.
     expect(screen.queryByRole('radiogroup')).toBeNull();
     expect(document.querySelector('.workspace-shell__section-navigation')).toBeNull();
     expect(document.querySelector('.workspace-shell')).not.toHaveAttribute('data-section-layout');
-    // Landing with no section named, the page writes the one it opened on, so the menu has a row to mark.
+    // Landing with no section named, the page writes the one it opened on, so the deck has a row to mark.
     await waitFor(() => expect(window.location.search).toBe('?cat=profile'));
     // The deck carries the hero's metric rail, with the account's own facts on it. Every one of them
     // comes from /auth/me and the model list the sections already load, so the rail renders for a plain

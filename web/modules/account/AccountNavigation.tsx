@@ -5,12 +5,13 @@ import { revealHorizontalItem } from '../../components/ui/horizontalScroll';
 import type { AccountSection, AccountSectionDescriptor } from './sections';
 import { accountSectionHref } from './sections';
 
-/** The account overlay's own section navigation.
+/** The account deck's own section navigation.
  *
- *  It exists only in the overlay presentation, for the same reason Settings' does: the shell's menu — the
- *  single place the sections are listed from — is inert while an overlay is up, so a page presented over
- *  another surface has to carry the way between its own sections. The canonical `/account` page keeps no
- *  navigation of its own (tests/modules/account/AccountView.test.tsx pins that).
+ *  Every surface that draws the deck carries it, the canonical `/account` page and the overlay alike: the
+ *  shell's menu lists the deck as ONE row and nothing inside it, so a hard-loaded `/account?cat=security`
+ *  would have no way to any other section without this. The overlay needs it for the further reason that
+ *  the menu is inert while an overlay is up, so a page presented over another surface could not reach the
+ *  menu at all.
  *
  *  Two shapes of ONE list, because the two viewports have room for different things and neither answer
  *  fits the other: a quiet secondary column beside the content where there is width for it, and a single

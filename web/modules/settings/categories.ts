@@ -1,8 +1,9 @@
 import { Boxes, BrainCircuit, LayoutDashboard, Puzzle, Server, Trash2, type LucideIcon } from 'lucide-react';
 import type { LocaleDict } from '../../lib/i18n/types';
 
-/** Single source of truth for the Settings sections. The order defines the sub-menu the sidebar draws
- *  under Settings and the panels the page mounts behind it. Plugin-owned
+/** Single source of truth for the Settings sections. The order defines the records the deck's own
+ *  navigation draws — the secondary column and the phone's line of tabs alike — and the panels the page
+ *  mounts behind them; the sidebar holds one row for the deck and nothing under it. Plugin-owned
  *  settings are contributed at runtime instead of being hard-coded here. A stale ?cat= deep-link to any
  *  removed section falls back to 'system' via the isSectionId validator, unless {@link SECTION_ALIASES}
  *  names a successor for it. */
@@ -37,7 +38,7 @@ export interface SettingsSectionDescriptor {
 }
 
 /** The sections with their translated names, resolved once for the two surfaces that show them: the
- *  sidebar's sub-menu and the page's own hero. The assistant's section is named after the assistant, so
+ *  deck's own navigation and the page's own hero. The assistant's section is named after the assistant, so
  *  its label arrives already interpolated — this module stays free of the brand. */
 export function settingsSections(t: LocaleDict, agentAiLabel: string): SettingsSectionDescriptor[] {
   const hints: Record<SettingsCategory, string> = {

@@ -377,8 +377,8 @@ export function AccountView({ surface = 'page' }: { surface?: 'page' | 'overlay'
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
-  // The same list, in the same order, that the sidebar draws its sub-items from — the menu is now the
-  // only way between sections, so a second copy here would offer a section this page cannot open.
+  // The deck's sections, in the one order both shapes of its own navigation draw. The sidebar holds one
+  // row for Account and nothing under it, so this list is the only place that order is stated.
   const spatialSections = accountSections(t, [
     ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     ...userConfigSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),

@@ -393,9 +393,9 @@ export function SettingsView({ surface = 'page' }: { surface?: 'page' | 'overlay
     system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave, retentionSave),
   };
   const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
-  // The same list, in the same order, that the sidebar draws its Settings sub-items from. Plugins do not
-  // appear in it: each owns a world in the main navigation and its settings sections are pages of that
-  // world.
+  // The same list, in the same order, that the deck's own navigation draws. The sidebar holds one row for
+  // Settings and nothing under it, so nothing else lists these sections. Plugins do not appear in it: each
+  // owns a world in the main navigation and its settings sections are pages of that world.
   const deckSections = settingsSections(t, agentAiLabel);
   const diagnostics = system.data?.diagnostics;
   const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;

@@ -54,13 +54,14 @@ afterEach(() => { server.resetHandlers(); localStorage.clear(); window.history.r
 afterAll(() => server.close());
 
 describe('SettingsPage', () => {
-  it('carries no section navigation of its own and renders real System diagnostics', async () => {
+  it('opens with the shell carrying no section navigation of its own, and renders real System diagnostics', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
-    // The six sections are rows of the sidebar's sub-menu now (tests/components/shell/deckSubMenus).
-    // Neither the desktop rail nor the phone tab strip is left behind in the page: one menu, one place.
+    // The SHELL mounts no section navigation for a deck: no rail, no tab strip, no `data-section-layout`.
+    // The six sections are addressed inside the deck's own navigation — a column beside the content, one
+    // line of tabs above it on a phone — which is the surface that marks them.
     expect(screen.queryByRole('radiogroup', { name: 'Settings sections' })).toBeNull();
     expect(container.querySelector('.workspace-shell__section-navigation')).toBeNull();
     expect(container.querySelector('.workspace-shell')).not.toHaveAttribute('data-section-layout');
@@ -458,7 +459,7 @@ describe('SettingsPage', () => {
     expect(row!.querySelector('.page-toolbar__slot')!.children).toHaveLength(0);
   });
 
-  it('renders the shared searchable category navigation only in the overlay presentation', async () => {
+  it('renders the shared searchable category navigation in the overlay presentation, without the module frame', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><ToastProvider><SettingsView surface="overlay" /></ToastProvider></Wrapper>);

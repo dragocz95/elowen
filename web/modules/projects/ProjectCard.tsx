@@ -23,6 +23,7 @@ import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu'
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { consumeHorizontalWheel } from '../../components/ui/horizontalScroll';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { MeterBar } from '../../components/ui/MeterBar';
 import { Spinner } from '../../components/ui/states';
@@ -272,24 +273,16 @@ function ProjectTeamStrip({ members, labels }: {
   };
 
   // React registers `wheel` passively at the root, so a handler that has to decide whether to take the
-  // event from the page cannot be a React prop. It is bound here, non-passively, on the strip itself.
+  // event from the page cannot be a React prop. It is bound here, non-passively, on the strip itself, and
+  // the decision is the shared one for every one-line track: `consumeHorizontalWheel` reserves ctrl+wheel
+  // for the browser's zoom, normalises the wheel's own units, and takes only a turn this strip can
+  // actually consume — at either end the event keeps travelling, so a pointer that happens to rest on a
+  // team never traps the register's own scroll. A swipe along the axis the strip already scrolls natively
+  // is not this handler's business.
   useEffect(() => {
     const node = strip.current;
     if (!node || !overflow) return undefined;
-    const onWheel = (event: WheelEvent) => {
-      // Ctrl+wheel (and the pinch gesture it stands in for) is the browser's zoom, not this strip's
-      // scroll. Consuming it would scroll the faces under a reader who asked to enlarge the page.
-      if (event.ctrlKey) return;
-      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-      if (delta === 0) return;
-      const limit = node.scrollWidth - node.clientWidth;
-      const next = Math.max(0, Math.min(limit, node.scrollLeft + delta));
-      // Only a turn this strip can actually consume is taken from the page. At either end the event keeps
-      // travelling, so a pointer that happens to rest on a team never traps the register's own scroll.
-      if (next === node.scrollLeft) return;
-      event.preventDefault();
-      node.scrollLeft = next;
-    };
+    const onWheel = (event: WheelEvent) => consumeHorizontalWheel(node, event);
     node.addEventListener('wheel', onWheel, { passive: false });
     return () => node.removeEventListener('wheel', onWheel);
   }, [overflow]);
