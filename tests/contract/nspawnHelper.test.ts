@@ -997,12 +997,44 @@ describe('privileged helper: host artefacts and readiness', () => {
     // A request leaves through the machine link and its reply returns to it. Both rules live directly in
     // the native chain so a host does not need Docker's private chain, and fixed leading positions keep a
     // framework jump or host DROP rule from intercepting either direction first.
-    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'FORWARD');
+    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'FORWARD' && rule.spec.includes('ACCEPT'));
     expect(forwarding.map((rule: { id: string }) => rule.id)).toEqual(['firewall:forward-out', 'firewall:forward-back']);
-    expect(forwarding.map((rule) => rule.insertAt)).toEqual([1, 2]);
+    expect(forwarding.map((rule: { binary: string }) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/iptables']);
     expect(forwarding.map((rule) => firewallRuleCommand(rule)).every((command) => command.includes('--comment elowen-machine-'))).toBe(true);
     // The return path is conntrack-scoped, so it opens nothing a machine did not ask for first.
     expect(forwarding[1]!.spec).toContain('RELATED,ESTABLISHED');
+  });
+
+  it('blocks a machine egress path to the cloud platform the host itself lives on, IPv4 and IPv6', () => {
+    // A machine routed through this host reaches the instance-metadata service and the platform's own
+    // virtual IP through FORWARD, which is where the HOST's credentials are served from. The block has to
+    // be in the native chain ahead of both accepts, and ahead is a POSITION, not an ordering within an
+    // array: a host or framework accept that lands above it would let the whole thing through.
+    const egress = NSPAWN_FIREWALL_RULES.filter((rule) => rule.id.startsWith('firewall:egress-'));
+    expect(egress.map((rule) => rule.id)).toEqual([
+      'firewall:egress-link-local', 'firewall:egress-azure-platform', 'firewall:egress-link-local6',
+    ]);
+    expect(egress.every((rule) => rule.chain === 'FORWARD' && rule.spec.includes('-j') && rule.spec.includes('DROP'))).toBe(true);
+    expect(egress.map((rule) => rule.spec[rule.spec.indexOf('-d') + 1])).toEqual(['169.254.0.0/16', '168.63.129.16/32', 'fe80::/10']);
+
+    const accepts = NSPAWN_FIREWALL_RULES.filter((rule) => rule.chain === 'FORWARD' && rule.spec.includes('ACCEPT'));
+    const v4 = NSPAWN_FIREWALL_RULES.filter((rule) => rule.binary === '/usr/sbin/iptables' && rule.chain === 'FORWARD');
+    const v6 = NSPAWN_FIREWALL_RULES.filter((rule) => rule.binary === '/usr/sbin/ip6tables' && rule.chain === 'FORWARD');
+    expect(v4.map((rule) => rule.id)).toEqual([
+      'firewall:egress-link-local', 'firewall:egress-azure-platform', 'firewall:forward-out', 'firewall:forward-back',
+    ]);
+    expect(v4.map((rule) => rule.insertAt)).toEqual([1, 2, 3, 4]);
+    expect(v6.map((rule) => rule.id)).toEqual(['firewall:egress-link-local6']);
+    expect(v6[0]!.insertAt).toBe(1);
+    // No accept may sit at or above an egress block on the same chain, in either direction. This is the
+    // property that would silently fail open if somebody renumbered the list for readability.
+    for (const rule of accepts) {
+      const sameChainDrops = NSPAWN_FIREWALL_RULES.filter((candidate) => candidate.binary === rule.binary
+        && candidate.chain === rule.chain && candidate.spec.includes('DROP'));
+      for (const drop of sameChainDrops) {
+        expect(drop.insertAt, `${drop.id} must precede ${rule.id}`).toBeLessThan(rule.insertAt);
+      }
+    }
   });
 
   it('puts the host guard where a machine-to-host packet actually arrives', () => {
@@ -1016,9 +1048,8 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(returns).toHaveLength(2);
     expect(returns.every((rule) => rule.chain === 'INPUT' && rule.spec.includes('RELATED,ESTABLISHED'))).toBe(true);
     expect(returns.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
-    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.spec.includes('DROP'));
+    const guards = NSPAWN_FIREWALL_RULES.filter((rule) => rule.chain === 'INPUT' && rule.spec.includes('DROP'));
     expect(guards).toHaveLength(2);
-    expect(guards.every((rule) => rule.chain === 'INPUT')).toBe(true);
     expect(guards.map((rule) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
     // IPv4 DHCP is first, then the native-port return path and guard. IPv6 starts with return then guard.
     const lease = NSPAWN_FIREWALL_RULES.find((rule) => rule.id === 'firewall:machine-dhcp')!;

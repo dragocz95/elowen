@@ -687,24 +687,64 @@ const MACHINE_INTERFACE = 've-+';
  *
  *  Forwarding needs both directions named in the native FORWARD chain. The request leaves through `ve-+`
  *  and its reply returns to `ve-+`; either direction can otherwise fall through to a host DROP policy or
- *  a later framework-owned chain. Fixed positions 1 and 2 keep both accepts ahead of those rules on hosts
+ *  a later framework-owned chain. Fixed positions keep both accepts ahead of those rules on hosts
  *  with or without Docker. The return path is conntrack-scoped, so it admits no connection the machine did
  *  not establish. The DHCP exception and stateful native-DNAT return path still have to precede the INPUT
  *  guard.
  *
- *  IPv6 needs the same stateful return rule before its guard. Measured, this host carries no global IPv6
- *  address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets nothing but a link-local address on
- *  its side of the link. There is no v6 path off the box to keep open, while a future native IPv6 port map
- *  still needs its established replies admitted without opening a new guest-to-host connection. If the
- *  host ever gains IPv6 connectivity this needs measuring again, because a global address would put v6
- *  forwarding in play and the set above would no longer be complete. */
+ *  Two DROPs precede both forwarding accepts, because a machine routed through this host can otherwise
+ *  reach the cloud platform the host itself lives on. `169.254.0.0/16` is IPv4 link-local, which is both
+ *  where the instance-metadata service answers (169.254.169.254) and where nspawn already puts the host
+ *  side of the link; 168.63.129.16 is Azure's platform virtual IP, which serves WireServer, the health
+ *  probe and the host's own DNS. A machine on the host's own default route reaches both through FORWARD,
+ *  and what it can fetch there is credential material belonging to the host, not to the environment.
+ *  Positions 1 and 2 are what keep them ahead of the accepts. Nothing legitimate crosses them: the
+ *  resolver a machine is given is the host's UPLINK server, which `machineResolver` refuses unless it is
+ *  a real off-box address, and link-local traffic between a machine and its own link is delivered into
+ *  INPUT rather than forwarded.
+ *
+ *  IPv6 needs the same stateful return rule before its guard, and the same egress block. Measured, this
+ *  host carries no global IPv6 address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets
+ *  nothing but a link-local address on its side of the link. There is no v6 path off the box to keep
+ *  open, while a future native IPv6 port map still needs its established replies admitted without opening
+ *  a new guest-to-host connection. `fe80::/10` is IPv6 link-local, which is also where the platform's
+ *  IPv6 endpoints live, so one DROP covers both. If the host ever gains IPv6 connectivity this needs
+ *  measuring again, because a global address would put v6 forwarding in play and the set above would no
+ *  longer be complete. */
 export const NSPAWN_FIREWALL_RULES = Object.freeze([
+  Object.freeze({
+    id: 'firewall:egress-link-local',
+    label: 'Machine egress to link-local',
+    binary: '/usr/sbin/iptables',
+    chain: 'FORWARD',
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', '169.254.0.0/16', '-m', 'comment', '--comment', 'elowen-machine-egress-link-local', '-j', 'DROP']),
+    why: 'a machine on the host default route reaches the instance-metadata service at 169.254.169.254 through FORWARD, where the host instance credentials are served',
+  }),
+  Object.freeze({
+    id: 'firewall:egress-azure-platform',
+    label: 'Machine egress to the cloud platform',
+    binary: '/usr/sbin/iptables',
+    chain: 'FORWARD',
+    insertAt: 2,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', '168.63.129.16/32', '-m', 'comment', '--comment', 'elowen-machine-egress-azure-platform', '-j', 'DROP']),
+    why: 'the Azure platform virtual IP answers WireServer and the host health probe, so a forwarded machine could read the host platform credentials',
+  }),
+  Object.freeze({
+    id: 'firewall:egress-link-local6',
+    label: 'Machine egress to link-local (IPv6)',
+    binary: '/usr/sbin/ip6tables',
+    chain: 'FORWARD',
+    insertAt: 1,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-d', 'fe80::/10', '-m', 'comment', '--comment', 'elowen-machine-egress-link-local6', '-j', 'DROP']),
+    why: 'IPv6 link-local is where the platform answers over v6 as well, and the guest link carries a link-local address of its own',
+  }),
   Object.freeze({
     id: 'firewall:forward-out',
     label: 'Machine forwarding',
     binary: '/usr/sbin/iptables',
     chain: 'FORWARD',
-    insertAt: 1,
+    insertAt: 3,
     spec: Object.freeze(['-i', MACHINE_INTERFACE, '-m', 'comment', '--comment', 'elowen-machine-forward-out', '-j', 'ACCEPT']),
     why: 'without the native forwarding rule a host policy or later framework chain can block every machine request',
   }),
@@ -713,7 +753,7 @@ export const NSPAWN_FIREWALL_RULES = Object.freeze([
     label: 'Machine return path',
     binary: '/usr/sbin/iptables',
     chain: 'FORWARD',
-    insertAt: 2,
+    insertAt: 4,
     spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'elowen-machine-forward-back', '-j', 'ACCEPT']),
     why: 'without the conntrack-scoped native return rule a machine can send traffic but never receive its replies',
   }),
