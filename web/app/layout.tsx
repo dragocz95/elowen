@@ -127,9 +127,10 @@ export async function generateViewport() {
 // briefly playing entrance or ambient motion while React hydrates. Theme is fixed in the markup.
 const NO_FLASH_EFFECTS = `(function(){try{var m=localStorage.getItem('elowen:effects');m=m==='full'||m==='reduced'||m==='off'?m:'auto';var r=m==='auto'?(window.matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'full'):m;document.documentElement.setAttribute('data-effects-mode',m);document.documentElement.setAttribute('data-effects',r);}catch(e){}})();`;
 
-// `pageOverlay` is the parallel slot in `app/@pageOverlay`: the intercepted presentation of a page the
-// shell links to (`/settings`, `/account`). It is null on a hard load or an external link, where the
-// canonical page under `app/` is the whole screen.
+// `pageOverlay` is the parallel slot in `app/@pageOverlay`: THE presentation of a page the shell links to
+// (`/settings`, `/account`). The slot answers both arrivals — an intercepted client navigation and a
+// plain one (cold load, refresh, external link) — so the canonical page under `app/` owns the address and
+// draws nothing. It is null for every other route.
 export default async function RootLayout({ children, pageOverlay = null }: { children: ReactNode; pageOverlay?: ReactNode }) {
   // Server-rendered theme overrides: the values are in the markup before first paint (no FOUC), and the
   // login screen — rendered before any token exists — already carries the instance brand.

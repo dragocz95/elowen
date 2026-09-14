@@ -3,14 +3,15 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 
-const state = vi.hoisted(() => ({ back: vi.fn(), mobile: false as boolean | undefined }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ back: state.back }) }));
+const state = vi.hoisted(() => ({ back: vi.fn(), replace: vi.fn(), mobile: false as boolean | undefined }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ back: state.back, replace: state.replace }) }));
 vi.mock('../../../lib/useMobile', () => ({ useMobileViewport: () => state.mobile }));
 vi.mock('../../../modules/settings/SettingsView', () => ({ SettingsView: () => <div>Settings content</div> }));
 vi.mock('../../../modules/account/AccountView', () => ({ AccountView: () => <div>Account content</div> }));
 
 import { AccountOverlay } from '../../../modules/account/AccountOverlay';
 import { SettingsOverlay } from '../../../modules/settings/SettingsOverlay';
+import { PAGE_OVERLAY_FALLBACK_ROUTE, noteAppNavigation } from '../../../lib/pageOverlayReturn';
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   return <LanguageProvider>{children}</LanguageProvider>;
@@ -32,6 +33,7 @@ const frameOf = (dialog: HTMLElement) => ({
 
 afterEach(() => {
   state.back.mockReset();
+  state.replace.mockReset();
   state.mobile = false;
 });
 
@@ -90,12 +92,34 @@ describe('PageOverlay', () => {
     expect(screen.getByRole('dialog', { name: en.account.title })).not.toHaveClass('max-w-[90rem]');
   });
 
-  it('closes both by walking back through history rather than by dropping the route', () => {
+  /** THE COLD-LOAD CLOSE. This document has not navigated anywhere: the overlay IS the arrival, so there
+   *  is no entry of this app's to step back to. `history.back()` would either do nothing — leaving the
+   *  close control looking broken with the reader stuck on a page that draws nothing but the overlay — or
+   *  hand them whatever the tab held before the app. So the close goes to a real page of the app instead.
+   *
+   *  This case runs FIRST because the navigation count belongs to the document: once a navigation has been
+   *  noted, this module cannot un-note it. */
+  it('closes to a real page when nothing of the app is behind the overlay', () => {
     for (const [overlay, name] of [[<SettingsOverlay key="s" />, en.page.settings], [<AccountOverlay key="a" />, en.account.title]] as const) {
       state.back.mockReset();
+      state.replace.mockReset();
+      const { unmount } = render(overlay, { wrapper: Wrapper });
+      fireEvent.keyDown(screen.getByRole('dialog', { name }), { key: 'Escape' });
+      expect(state.back, `${name} stepped back out of the app`).not.toHaveBeenCalled();
+      expect(state.replace, `${name} did not land anywhere`).toHaveBeenCalledWith(PAGE_OVERLAY_FALLBACK_ROUTE);
+      unmount();
+    }
+  });
+
+  it('closes both by walking back through history once the app has a surface behind them', () => {
+    noteAppNavigation();
+    for (const [overlay, name] of [[<SettingsOverlay key="s" />, en.page.settings], [<AccountOverlay key="a" />, en.account.title]] as const) {
+      state.back.mockReset();
+      state.replace.mockReset();
       const { unmount } = render(overlay, { wrapper: Wrapper });
       fireEvent.keyDown(screen.getByRole('dialog', { name }), { key: 'Escape' });
       expect(state.back, `${name} does not close through history`).toHaveBeenCalledOnce();
+      expect(state.replace, `${name} dropped the route instead of stepping back`).not.toHaveBeenCalled();
       unmount();
     }
   });

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT, advisorOpenTarget } from '../../lib/brainDock';
 import { useMobileViewport } from '../../lib/useMobile';
@@ -30,6 +30,7 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import { UiScaleProvider } from '../../lib/useUiScale';
 import { ThemeProvider } from '../../lib/useTheme';
 import { PageHeaderProvider } from '../../lib/pageHeader';
+import { noteAppNavigation } from '../../lib/pageOverlayReturn';
 import { RouteTransition } from './RouteTransition';
 import { DocumentTitle } from './DocumentTitle';
 import { EffectsProvider } from '../../lib/useEffects';
@@ -384,6 +385,15 @@ function ShellLayout({ children }: { children: ReactNode }) {
  *  the chromeless pop-out terminal window (`/terminal/*`) — still inside the providers + auth gate. */
 function ShellBody({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  // Every route change this document makes, counted once. It is what a page overlay's close reads to
+  // know whether stepping back returns to a surface of this app's or out of it — see
+  // lib/pageOverlayReturn.ts. The arrival itself is not a navigation, so the first pathname is skipped.
+  const arrival = useRef(pathname);
+  useEffect(() => {
+    if (pathname === arrival.current) return;
+    arrival.current = pathname;
+    noteAppNavigation();
+  }, [pathname]);
   if (pathname?.startsWith('/terminal/')) return <>{children}</>;
   return <ShellLayout>{children}</ShellLayout>;
 }

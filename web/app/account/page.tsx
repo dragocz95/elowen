@@ -1,12 +1,7 @@
-'use client';
 export const dynamic = 'force-dynamic';
-import { ModuleShell } from '../../components/shell/ModuleShell';
-import { AccountView } from '../../modules/account/AccountView';
 
+/** `/account` is PRESENTED by the `@pageOverlay` slot, exactly as `/settings` is — see the sibling
+ *  `app/settings/page.tsx` for why the canonical page draws nothing itself. */
 export default function AccountPage() {
-  return (
-    <ModuleShell moduleId="account">
-      <AccountView />
-    </ModuleShell>
-  );
+  return null;
 }

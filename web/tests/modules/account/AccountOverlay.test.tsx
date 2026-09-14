@@ -1,21 +1,28 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 
-const state = vi.hoisted(() => ({ back: vi.fn(), mobile: false as boolean | undefined }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ back: state.back }) }));
+const state = vi.hoisted(() => ({ back: vi.fn(), replace: vi.fn(), mobile: false as boolean | undefined }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ back: state.back, replace: state.replace }) }));
 vi.mock('../../../lib/useMobile', () => ({ useMobileViewport: () => state.mobile }));
 vi.mock('../../../modules/account/AccountView', () => ({ AccountView: () => <div>Account content</div> }));
 
 import { AccountOverlay } from '../../../modules/account/AccountOverlay';
+import { noteAppNavigation } from '../../../lib/pageOverlayReturn';
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   return <LanguageProvider>{children}</LanguageProvider>;
 }
 
+/** These assert the close of an overlay the reader OPENED from somewhere — the ordinary case, where a
+ *  surface of the app is behind it. The cold-load close, which has none, is pinned in
+ *  tests/components/ui/PageOverlay.test.tsx. */
+beforeAll(() => { noteAppNavigation(); });
+
 afterEach(() => {
   state.back.mockReset();
+  state.replace.mockReset();
   state.mobile = false;
 });
 
