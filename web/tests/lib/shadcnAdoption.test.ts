@@ -20,6 +20,7 @@ const primitives = {
   'checkbox.tsx': { radix: '@radix-ui/react-checkbox', cva: true },
   'collapsible.tsx': { radix: '@radix-ui/react-collapsible', cva: false },
   // cmdk, not Radix: the palette's listbox/combobox plumbing is cmdk's, the overlay stays the app's.
+  'calendar.tsx': { radix: null, cva: false },
   'command.tsx': { radix: null, cva: false },
   'context-menu.tsx': { radix: '@radix-ui/react-context-menu', cva: true },
   'dialog.tsx': { radix: '@radix-ui/react-dialog', cva: true },
@@ -88,5 +89,14 @@ describe('shadcn adoption contract', () => {
       expect(text, `${file} must import class-variance-authority`).toContain("from 'class-variance-authority'");
       expect(text, `${file} must declare variants through cva()`).toContain('cva(');
     }
+  });
+
+  it('owns the calendar to react-day-picker, not Radix', () => {
+    // The month grid is NOT a Radix primitive: shadcn's Calendar is a themed wrapper around
+    // react-day-picker, and a contributor who "reuses the Radix pattern" instead of that library ships a
+    // second date engine next to the one every real calendar behaviour (locale, DST, outside days,
+    // modifiers) lives in. Asserted on the import because the wrapper alone proves nothing.
+    expect(source('calendar.tsx'), 'calendar must be built on react-day-picker')
+      .toContain("from 'react-day-picker'");
   });
 });

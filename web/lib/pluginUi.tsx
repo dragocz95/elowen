@@ -65,6 +65,7 @@ import { ProgressRibbon } from '../components/ui/ProgressRibbon';
 import { PatchView } from '../components/ui/PatchView';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { OperationProgressDialog } from '../components/ui/OperationProgressDialog';
+import { Calendar } from '../components/ui/shadcn/calendar';
 import { ManageSelectionModal } from '../components/ui/ManageSelectionModal';
 import { SelectionSummary, SummaryChip } from '../components/ui/SelectionSummary';
 import { LinkedAccountRow } from '../components/ui/LinkedAccountRow';
@@ -132,10 +133,12 @@ import { renderMarkdown } from './markdown';
  *  kit without updating this value is a type error, not a silent drift. */
 // NOT bumped for `DataTableSelectCell` below, deliberately. The version is a compatibility CEILING
 // (`entry.apiVersion <= host`), so a bundle that has not heard of the primitive is unaffected either
-// way, and one that DOES require it declares 17 and renders its placeholder against a host stamped 16 —
-// safe, not broken. The bump belongs with the kit release that publishes the new contract; raising it
-// here alone would tell bundles the host supports a version the published kit does not describe.
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 16;
+// way, and one that DOES require it declares its version and renders its placeholder against a host
+// stamped lower — safe, not broken. The bump belongs with the kit release that publishes the new
+// contract; raising it here alone would tell bundles the host supports a version the published kit
+// does not describe. It DID move for 17: `Calendar` is the first primitive a bundle REQUIRES a host
+// for that it cannot shim itself, because the date engine behind it ships with the host app only.
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 17;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -321,6 +324,11 @@ export function ensurePluginUiRuntime(): void {
       // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin
       // showing a managed selection reads as the same thing rather than an approximation of it.
       ManageSelectionModal, SelectionSummary, DetailBlock, BrainModelField, MarkdownAssetEditor,
+      // The canonical month/date grid (API 17), the real shadcn Calendar on react-day-picker. A bundle
+      // cannot rebuild one without shipping a second copy of React or a second date engine; what a
+      // plugin composes from props is only its own pressing: which month is open, which days are
+      // selected/enabled, and what a day renders inside itself.
+      Calendar,
       // A connector identity, shaped like the chat platforms it sits between. Both are here so a plugin
       // cannot approximate either one: the drawer row it hangs in and the chip it contributes to the
       // closed summary are the SAME components the host draws for Discord and friends, so "looks the

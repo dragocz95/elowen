@@ -38,7 +38,9 @@ describe('plugin UI runtime', () => {
     // covers, and deliberately contentless — the app's own translated line plus a callback that brings the
     // real card back, so nothing about the question crosses into a bundle. 16 publishes the canonical
     // ProjectIcon so plugins render project identity through the same cached image and fallback path.
-    expect(PLUGIN_UI_API_VERSION).toBe(16);
+    // 17 publishes the shadcn Calendar, backed by react-day-picker — the one date-grid primitive a bundle
+    // cannot approximate without shipping a second date engine, and the reason libraries do not ride along.
+    expect(PLUGIN_UI_API_VERSION).toBe(17);
     expect(PLUGIN_UI_API_VERSION).toBe(KIT_PLUGIN_UI_API_VERSION);
     expect(window.ElowenUiRuntime?.apiVersion).toBe(KIT_PLUGIN_UI_API_VERSION);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({
@@ -68,6 +70,9 @@ describe('plugin UI runtime', () => {
     // cannot subscribe to the host's SSE bus on its own. The API version deliberately does not move: it
     // is a compatibility CEILING, so an addition is safe for every bundle that has not heard of it.
     expect(window.ElowenUiRuntime?.components).toHaveProperty('OperationProgressDialog');
+    expect(window.ElowenUiRuntime?.components).toHaveProperty('OperationProgressDialog');
+    // The API 17 date grid: present on the runtime surface a bundle reads, not just the app's tree.
+    expect(window.ElowenUiRuntime?.components).toHaveProperty('Calendar');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useEnvironmentOperation');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useTranslation');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('usePluginConfigDraft');
@@ -167,7 +172,7 @@ describe('plugin UI runtime', () => {
  *  repository that consumes this runtime first — and the version number cannot warn anyone in advance. */
 const FROZEN_COMPONENTS = [
   'ActionMenu', 'AutoSaveStatus', 'Avatar', 'BackendPicker', 'Badge', 'BrainModelField', 'Button',
-  'ChangeStrip', 'Checkbox', 'ChoiceField', 'CompactWorkspaceHeader', 'ConfirmDialog', 'ContextMenu',
+  'Calendar', 'ChangeStrip', 'Checkbox', 'ChoiceField', 'CompactWorkspaceHeader', 'ConfirmDialog', 'ContextMenu',
   'ControlSurfaceDocument', 'ControlSurfaceRegister', 'ControlSurfaceState', 'ControlSurfaceToolbar',
   'DataTable', 'DataTableCell', 'DataTableChevronCell', 'DataTableRow', 'DateRangeFilter', 'DetailBlock',
   'DirectoryPicker', 'EmptyState', 'EntityList', 'EntityRow', 'ErrorState', 'ExecutorPicker', 'Field', 'HelpTip',
