@@ -15,6 +15,9 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRealDaemon } from '../brain-e2e/spawn-daemon.mjs';
 import { MARKERS, startRecoveryModel } from './model.mjs';
+// The CLI's own event fold, from the same dist/ the daemon under test runs out of: scenario 9 asserts what
+// an ATTACHED client actually renders, and a hand-written stand-in reducer would prove nothing about it.
+import { TranscriptModel } from '../../../dist/brain/transcriptModel.js';
 
 const DEADLINE_MS = 60_000;
 /** The pause's exit bound. Production target is 5 s; the harness SIGKILLs at 3 s, so a clean exit here
@@ -697,10 +700,145 @@ async function scenarioOwnerStopsRecoveringChild() {
   }
 }
 
+/** A CLI-shaped client: `/brain/stream?snapshot=1`, reconnecting on its own exactly as BrainClient.stream
+ *  does, with every frame folded through the real TranscriptModel. `workflows()` is then literally what the
+ *  workflow modal renders, and `events` records the live deltas so a scenario can tell a fresh snapshot
+ *  apart from progress that actually reached the open client. */
+function attachClient(baseUrl, token, sessionId) {
+  const transcript = new TranscriptModel();
+  const events = [];
+  let closed = false;
+  const loop = (async () => {
+    while (!closed) {
+      const controller = new AbortController();
+      try {
+        const res = await fetch(`${baseUrl}/brain/stream?surface=cli&snapshot=1&session=${encodeURIComponent(sessionId)}`, {
+          headers: { authorization: `Bearer ${token()}`, accept: 'text/event-stream' },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) { await pause(200); continue; }
+        const decoder = new TextDecoder();
+        let buffer = '';
+        for await (const chunk of res.body) {
+          if (closed) break;
+          buffer += decoder.decode(chunk, { stream: true });
+          let sep;
+          while ((sep = buffer.indexOf('\n\n')) !== -1) {
+            const raw = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            const data = raw.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
+            if (!data) continue;
+            let frame;
+            try { frame = JSON.parse(data); } catch { continue; }
+            if (frame.type === 'snapshot') {
+              transcript.replaceHistory(frame.history);
+              for (const event of frame.events) transcript.apply(event);
+              continue;
+            }
+            if (frame.type === 'workflow') events.push({ at: Date.now(), nodes: frame.nodes.map((node) => `${node.id}:${node.status}`), status: frame.status });
+            transcript.apply(frame);
+          }
+        }
+      } catch { /* the restart tears the transport down; reconnect like the CLI does */ }
+      await pause(200);
+    }
+  })();
+  return {
+    events,
+    /** The workflow projection the modal reads, flattened. */
+    view: () => transcript.workflows().map((wf) => ({ id: wf.id, status: wf.status, nodes: wf.nodes.map((n) => `${n.id}:${n.status}`) })),
+    close: async () => { closed = true; await Promise.race([loop, pause(500)]); },
+  };
+}
+
+async function scenarioAttachedClientAcrossRestart() {
+  console.log('\n— 9: a CLI attached across the restart keeps seeing the resumed workflow advance —');
+  const model = await startRecoveryModel({
+    task: MARKERS.workflowTask,
+    result: MARKERS.workflowNodeTwoResult,
+    workflow: true,
+  });
+  let daemon = null;
+  let client = null;
+  try {
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-attached' }); currentDaemon = daemon;
+    let token = daemon.token;
+    const nodesFile = join(daemon.dataDir, 'attached-workflow.json');
+    writeFileSync(nodesFile, JSON.stringify({
+      title: 'attached chain',
+      nodes: [
+        { id: 'one', task: MARKERS.workflowNodeOneTask },
+        { id: 'two', task: MARKERS.workflowNodeTwoTask, deps: ['one'] },
+      ],
+    }));
+    const parentSessionId = await startParent(daemon.baseUrl, token);
+    const sent = await post(daemon.baseUrl, token, '/brain/send', {
+      text: `Start this recovery scenario: ${MARKERS.workflowTask} nodesFile=${nodesFile}`,
+      session: parentSessionId,
+      mode: 'build',
+    });
+    if (sent?.accepted === false) throw new Error('parent turn was not accepted');
+    const nodeState = (state, id) => JSON.parse(state).nodes.find((node) => node.id === id);
+    const wf = await waitFor('a durable running workflow row with node one running', () => {
+      const found = row(daemon.dataDir, 'SELECT workflow_id, tool_call_id, state FROM brain_workflows WHERE parent_session_id = ?', [parentSessionId]);
+      return found && nodeState(found.state, 'one')?.status === 'running' && nodeState(found.state, 'one')?.sessionId ? found : null;
+    });
+
+    // The CLI opens its workflow modal here and never closes it again.
+    client = attachClient(daemon.baseUrl, () => token, parentSessionId);
+    await waitFor('the attached client to project the running DAG', () =>
+      client.view().some((view) => view.nodes.includes('one:running')) ? client.view() : null);
+    await model.initialChildArrived;
+    const nodeOneSession = nodeState(wf.state, 'one').sessionId;
+    await waitFor('the persisted unanswered Bash call of node one', () => rows(daemon.dataDir,
+      'SELECT content FROM brain_messages WHERE session_id = ? AND pending = 1 ORDER BY rowid', [nodeOneSession])
+      .find((entry) => String(entry.content).includes('Bash')) ?? null);
+
+    token = await daemon.restart();
+    const bootAt = daemon.lastRestart().bootAt;
+    const done = await waitFor('the workflow to finish with both nodes done in the store', () => {
+      const found = row(daemon.dataDir, 'SELECT state FROM brain_workflows WHERE parent_session_id = ? AND tool_call_id = ?', [parentSessionId, wf.tool_call_id]);
+      const state = found ? JSON.parse(found.state) : null;
+      return state?.status === 'done' && state.nodes.every((node) => node.status === 'done') ? state : null;
+    });
+    checkPause('attached-client', daemon, model.requests.find((request) => request.at > bootAt)?.at);
+
+    // The origin conversation has NO live brain after the restart (the background DAG outlived its turn),
+    // so this is the fan-out that used to be dropped: without it the client below stays frozen at whatever
+    // its reconnect snapshot caught, however long it waits.
+    const progressed = await waitFor('the attached client to catch up with the store', () =>
+      client.view().some((view) => view.nodes.join() === 'one:done,two:done') ? client.view() : null, 20_000,
+    () => [
+      `store: ${done.nodes.map((node) => `${node.id}:${node.status}`).join()}`,
+      `client: ${JSON.stringify(client.view())}`,
+      `live workflow events after the restart: ${JSON.stringify(client.events.filter((event) => event.at > bootAt))}`,
+    ].join('\n'));
+
+    check('the client that stayed open reaches the store\'s state without being restarted',
+      progressed.some((view) => view.status === 'done' && view.nodes.join() === 'one:done,two:done'), JSON.stringify(progressed));
+    const afterRestart = client.events.filter((event) => event.at > bootAt);
+    // Proof it was PROGRESS and not just a reconnect snapshot: the node transitions arrived as live events.
+    check('the resumed run\'s node transitions reached the open client as live events',
+      afterRestart.some((event) => event.nodes.join() === 'one:done,two:running')
+      && afterRestart.some((event) => event.nodes.join() === 'one:done,two:done'),
+      JSON.stringify(afterRestart));
+    // And the DAG's own finish is recorded for the conversation, not lost with the dead live session.
+    check('the workflow finish marker is durable in the origin conversation',
+      rows(daemon.dataDir, "SELECT kind, detail FROM brain_session_events WHERE session_id = ? AND kind = 'workflow'", [parentSessionId])
+        .some((event) => String(event.detail).includes(wf.workflow_id)),
+      JSON.stringify(rows(daemon.dataDir, 'SELECT kind, detail FROM brain_session_events WHERE session_id = ?', [parentSessionId])));
+  } finally {
+    if (client) await client.close();
+    if (daemon) await daemon.stop();
+    await model.close();
+  }
+}
+
 /** `RECOVERY_E2E_ONLY=1,7` runs a subset while iterating on one scenario; the default is the whole suite. */
 const SCENARIOS = [
   scenarioBackgroundRecovery, scenarioForegroundRecovery, scenarioInterruptedToolRecovery, scenarioLegacyMigration,
   scenarioOwnerTurnPause, scenarioNestedRecovery, scenarioWorkflowRecovery, scenarioOwnerStopsRecoveringChild,
+  scenarioAttachedClientAcrossRestart,
 ];
 const only = new Set((process.env.RECOVERY_E2E_ONLY ?? '').split(',').map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0));
 

@@ -945,7 +945,15 @@ export class BrainService {
   /** Publish a resumed workflow's progress to whoever is attached to its origin conversation — exactly
    *  what emitWorkflow does inside a live turn (turnContextBuilder / channels), which a boot resume has
    *  none of. Without this the store learned every step and no client did: a CLI that reconnected in the
-   *  boot window kept the failed card it had been shown until its next reconnect. */
+   *  boot window kept the failed card it had been shown until its next reconnect.
+   *
+   *  A resumed workflow usually has NO live brain at all: the origin turn ended before the restart (a
+   *  background DAG outlives it) and attaching a client stream deliberately does not spawn one — tapSession
+   *  only registers a listener. Publishing solely through the replay journal therefore dropped EVERY node
+   *  transition after a restart for a CLI that stayed open, which froze its workflow modal at the state the
+   *  reconnect snapshot happened to catch until the whole CLI was relaunched. So the attached client streams
+   *  are the fallback sink. The durable row written above remains the authority every later hydration reads;
+   *  these events only keep an already-attached client in step with it. */
   private publishWorkflowUpdate(parentSessionId: string, update: WorkflowUpdate): void {
     const prevStatus = update.status === 'done' || update.status === 'error' || update.status === 'cancelled'
       ? this.d.store.workflowStatus(parentSessionId, update.id)
@@ -953,9 +961,15 @@ export class BrainService {
     if (!this.d.store.upsertWorkflowRun(parentSessionId, update)) return;
     const live = this.sessions.get(parentSessionId)
       ?? (isChannelSession(parentSessionId) ? this.sessions.channelGet(channelIdOf(parentSessionId)) : undefined);
-    if (!live) return;
-    live.replay.publish({ type: 'workflow', ...update });
-    recordWorkflowFinishMarker(this.d.store, parentSessionId, (event) => live.replay.publish(event), prevStatus, update);
+    const publish = live
+      ? (event: BrainEvent): void => { live.replay.publish(event); }
+      : (event: BrainEvent): void => {
+        for (const tap of this.attachments.sessionTaps.get(parentSessionId) ?? []) tap(event);
+      };
+    publish({ type: 'workflow', ...update });
+    // Recorded on both paths: the marker is a durable session event, so skipping it without a live brain
+    // left a workflow that finished after a restart with no record of finishing in its transcript.
+    recordWorkflowFinishMarker(this.d.store, parentSessionId, publish, prevStatus, update);
   }
 
   private async resumeClaimedWorkflow(wf: RecoverableWorkflow): Promise<RecoveryOutcome> {
