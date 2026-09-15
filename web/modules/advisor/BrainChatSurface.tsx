@@ -2122,10 +2122,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   }, [focusNonce]);
 
 
-  // Mobile keyboards have two viewport policies. Chromium honours `interactive-widget=resizes-content`,
-  // so the layout viewport itself shrinks; iOS keeps the layout viewport tall and shrinks only
-  // `visualViewport`. The measured VISUAL bottom offset reduces the fixed chat surface's content box once;
-  // the composer remains a normal flex child and the transcript is the only element that scrolls.
+  // Keyboard policies can resize the visual viewport and rendered shell independently. Measure their
+  // actual overlap once as surface padding, without assuming that innerHeight equals the shell's edge.
+  // The composer remains a normal flex child and the transcript is the only element that scrolls.
   // Safe-area padding is disabled while the keyboard is open because the visual viewport already ends above
   // the keyboard/home indicator.
   useLayoutEffect(() => {

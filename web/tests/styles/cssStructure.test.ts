@@ -186,9 +186,8 @@ const EXTERNALLY_SET: Record<string, string> = {
   '--data-table-columns': 'components/ui/DataTable.tsx, inline style per table',
   '--data-table-compact-columns': 'components/ui/DataTable.tsx, inline style per table',
   '--data-table-mobile-columns': 'components/ui/DataTable.tsx, inline style per table',
-  // Viewport/composer measurements owned by BrainChatSurface's layout effect, not global design tokens.
+  // Viewport overlap owned by BrainChatSurface's layout effect, not a global design token.
   '--chat-visual-bottom-offset': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
-  '--chat-composer-height': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
   // A docked plugin live view (today the browser monitor) publishes its own measured height on the chat
   // surface. The core only ever READS this one — the plugin is the setter — and it is absent whenever
   // nothing is docked, which is what the 0px fallback at every read site is for.
