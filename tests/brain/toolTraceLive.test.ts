@@ -30,18 +30,33 @@ function reducer(isCodeModeTool?: (name: string) => boolean) {
   return { run: (e: unknown) => run(e as AgentSessionEvent), published };
 }
 
-const toolEvents = (name: string): unknown[] => [
-  { type: 'tool_execution_start', toolName: name, toolCallId: 'c1', args: { command: 'ls' } },
-  { type: 'tool_execution_end', toolName: name, toolCallId: 'c1', result: { content: [{ type: 'text', text: 'ok' }] }, isError: false },
+const toolEvents = (name: string, args: unknown = { command: 'ls' }, details?: unknown): unknown[] => [
+  { type: 'tool_execution_start', toolName: name, toolCallId: 'c1', args },
+  { type: 'tool_execution_end', toolName: name, toolCallId: 'c1', isError: false,
+    result: { content: [{ type: 'text', text: 'ok' }], ...(details ? { details } : {}) } },
 ];
 
+/** One recorded row, in the shape a code-mode result carries it. */
+const recordedRow = { toolTrace: [{ kind: 'call', name: 'Read', row: 'c1:0' }] };
+
 describe('the wrapper row is hidden where the recorded rows are drawn', () => {
-  it('drops the display events of a code-mode tool', () => {
+  it('drops the display events of a code-mode tool whose script drew its own rows', () => {
     const { run, published } = reducer((name) => name === 'exec' || name === 'wait');
 
-    for (const event of toolEvents('exec')) run(event);
+    for (const event of toolEvents('exec', { source: 'x' }, recordedRow)) run(event);
 
     expect(published).toEqual([]);
+  });
+
+  it('keeps the wrapper row when the call recorded none — the same verdict hydration reaches', () => {
+    // A `wait` on a cell that has not produced output yet reports no rows. Hiding it too left the turn
+    // streaming as empty space, and then growing a row out of nowhere on reload.
+    const { run, published } = reducer((name) => name === 'exec' || name === 'wait');
+
+    for (const event of toolEvents('wait', { _reason: 'Čekám na volbu…', cell_id: '2' })) run(event);
+
+    expect(published.map((e) => e.type)).toEqual(['tool', 'tool_output']);
+    expect(published[0]).toMatchObject({ type: 'tool', name: 'wait', id: 'c1', reason: 'Čekám na volbu…' });
   });
 
   it('leaves every other tool alone, and leaves everything alone outside code mode', () => {

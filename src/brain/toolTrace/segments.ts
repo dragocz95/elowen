@@ -9,7 +9,17 @@
  * `messageView` can import this file without a cycle.
  */
 import type { BrainSegment, ToolOutputView } from '../../shared/wireContract.js';
-import type { ToolTrace } from './types.js';
+import { parseToolTraces, type ToolTrace } from './types.js';
+
+/** Whether a reported payload draws rows of its own, read straight off a tool result's `details`. The
+ *  live reducer asks this at the end of a wrapper call to decide whether to publish the wrapper's own
+ *  row; hydration reaches the same verdict through `segmentsForTraces`, which it calls anyway because it
+ *  needs the rows. Both therefore rest on one rule — and they must, because when they disagreed a `wait`
+ *  that yielded nothing streamed as empty space and then grew a row on reload. */
+export function hasTraceRows(details: unknown): boolean {
+  const trace = (details as { toolTrace?: unknown } | undefined)?.toolTrace;
+  return segmentsForTraces(parseToolTraces(trace)).length > 0;
+}
 
 /** The rows in one reported payload, in order. Empty when the payload recorded no call — the reporting
  *  call then keeps its own row, because a turn that renders nothing is worse than a wrapper row. */

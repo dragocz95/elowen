@@ -1329,8 +1329,6 @@ export interface CodeModeTraceSink {
   note(text: string): void;
   /** The records not yet reported. Put them on the reporting result's `details.toolTrace`. */
   drain(): unknown[];
-  /** Whether any call was recorded, i.e. whether the reporting call's own row is redundant. */
-  hasCalls(): boolean;
 }
 
 /** NOT IMPLEMENTED YET, and deliberately so rather than by oversight: Codex withholds an `exec` result
