@@ -1,10 +1,9 @@
 // The iOS soft-keyboard geometry of the /chat composer, in a real browser.
 //
-// Chromium's own soft keyboard resizes the LAYOUT viewport (`interactive-widget=resizes-content`), so a
-// `setViewportSize` "keyboard" publishes an inset of zero and can never show what iOS does — which is why
-// the double-applied inset shipped. iOS keeps the layout viewport at full height and shrinks (and scrolls)
-// only `visualViewport`, so this spec installs a controllable `visualViewport` before the app boots and
-// drives it the way iOS does. Everything else is the real page: real CSS, real layout, real rects.
+// Resizing Chromium's layout viewport alone cannot exercise independent visual-viewport occlusion.
+// A controllable VisualViewport drives both fixed-layout profiles and a lifecycle with divergent
+// innerHeight, rendered shell size and visual metrics, including missing final visual events.
+// The page still uses real CSS, layout and rects; the event sequences are deterministic simulations.
 //
 // NOT a real iPhone. Linux Chrome cannot reproduce WebKit's keyboard, its scroll-into-view or its rubber
 // banding, so this proves the geometry CONTRACT (the inset is consumed exactly once, and the composer comes
@@ -31,7 +30,7 @@ const PROFILES: Profile[] = [
   { name: 'tablet portrait 820x1180', layout: { width: 820, height: 1180 }, keyboard: 400, scale: 1 },
 ];
 
-/** Install an iOS-shaped `visualViewport`: the layout viewport never changes, the visible band does. */
+/** Install a controllable visual viewport without tying its updates to a layout resize. */
 async function emulateIosViewport(page: Page): Promise<void> {
   await page.addInitScript(() => {
     class IosVisualViewport extends EventTarget {
@@ -80,7 +79,7 @@ async function emulateIosViewport(page: Page): Promise<void> {
         if (notify) viewport.dispatchEvent(new Event('resize'));
       },
       band() {
-        return { top: viewport.offsetTop, bottom: viewport.offsetTop + viewport.height, height: viewport.height };
+        return { top: viewport.offsetTop, bottom: viewport.offsetTop + viewport.height };
       },
     };
   });
@@ -89,7 +88,7 @@ async function emulateIosViewport(page: Page): Promise<void> {
 /** Everything the assertions need, read from the live layout in one pass. */
 async function geometry(page: Page) {
   return page.evaluate(() => {
-    const ios = (window as unknown as { __ios: { band(): { top: number; bottom: number; height: number } } }).__ios;
+    const ios = (window as unknown as { __ios: { band(): { top: number; bottom: number } } }).__ios;
     const band = ios.band();
     const main = document.querySelector<HTMLElement>('main')!;
     // The page's own surface. A roomy window can also carry the advisor dock, which mounts a second chat
@@ -109,7 +108,6 @@ async function geometry(page: Page) {
       inset: parseFloat(surface.style.getPropertyValue('--chat-visual-bottom-offset')) || 0,
       dockPosition: getComputedStyle(dock).position,
       // Visual px, so they compare directly with the visual-viewport band.
-      dockBottom: dockRect.bottom,
       dockGap: band.bottom - dockRect.bottom,
       composerGap: band.bottom - composerRect.bottom,
       composerTop: composerRect.top,

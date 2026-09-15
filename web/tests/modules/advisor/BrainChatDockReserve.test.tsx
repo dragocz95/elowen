@@ -193,9 +193,9 @@ describe('the transcript wraps its last prose block around a docked plugin card'
     publishCardHeight(surface, CARD_HEIGHT);
 
     await waitFor(() => expect(spacerTopOf(prose)).toBe('100px'));
-    // Drive several more measurements: the answer must not move.
-    act(() => { surface.style.setProperty('--chat-composer-height', '90px'); });
-    act(() => { surface.style.setProperty('--chat-composer-height', '92px'); });
+    // Drive the surface style observer through the live viewport inset: the answer must not move.
+    act(() => { surface.style.setProperty('--chat-visual-bottom-offset', '90px'); });
+    act(() => { surface.style.setProperty('--chat-visual-bottom-offset', '92px'); });
     await settle();
     expect(spacerTopOf(prose)).toBe('100px');
     expect(reserveOf(transcript)).toBe('');
