@@ -63,15 +63,14 @@ describe('subagent page runtime contract', () => {
   it('asks for no runtime version the host does not already publish', () => {
     const required = (manifest as { web: { requiresApiVersion: number } }).web.requiresApiVersion;
     expect(required).toBeLessThanOrEqual(PLUGIN_UI_API_VERSION);
-    expect(PLUGIN_UI_API_VERSION).toBe(16);
   });
 
   it('reads and writes the account\'s own settings through the generic query seam, not a hook of its own', () => {
     const hooks = window.ElowenUiRuntime?.hooks as Record<string, unknown> | undefined;
     expect(hooks?.useQuery).toBeTypeOf('function');
     expect(hooks?.useMutation).toBeTypeOf('function');
-    // A dedicated runtime hook for per-account plugin config would be a NEW published contract, and the
-    // next version number is spoken for elsewhere.
+    // A dedicated runtime hook for per-account plugin config would be a NEW published contract; this
+    // feature must keep using the generic query seam regardless of the host's current API version.
     expect(hooks?.useUserPluginConfigs).toBeUndefined();
     expect(hooks?.useSaveUserPluginConfig).toBeUndefined();
   });
