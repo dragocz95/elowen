@@ -22,7 +22,8 @@ import { buttonVariants } from '../shadcn/button';
  *  the week, PageUp/PageDown across months).
  *
  *  Everything a workspace needs is a plain prop: a controlled `month`, `selected`/`modifiers`,
- *  `components.DayContent` for custom day content, a `locale` object for the localized week labels,
+ *  `components.DayButton` for custom day BUTTON content (v9 has no `DayContent` — the day cell's
+ *  interactive element itself is what gets replaced), a `locale` object for the localized week labels,
  *  `hidden`/`disabled` for the window the caller plans around, and `numberOfMonths` when the caller
  *  wants the range view.
  *

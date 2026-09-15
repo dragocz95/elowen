@@ -39,7 +39,9 @@ export interface ProjectIconProps {
 
 /** `ElowenUiRuntime.components.Calendar` (API 17) is the host's shadcn Calendar, built on
  *  `react-day-picker` v9, and its props ARE that library's: a controlled `month`, `selected`,
- *  `modifiers`, `components.DayContent`, `locale`, `hidden`/`disabled`, `onSelect`. Deliberately not
+ *  `modifiers`, `components.DayButton`, `locale`, `hidden`/`disabled`, `onSelect`. v9 has NO
+ *  `DayContent`: a caller replaces the day's own button, and has to forward every prop the library
+ *  computed and honour `modifiers.focused`, or the grid's arrow keys stop moving. Deliberately not
  *  re-declared here as a second interface: the truth is one `import type { DayPicker } from
  *  'react-day-picker'` away in the bundle's own runtime type, while dragging the dependency into this
  *  kit would make every plugin build install it just to host-render one grid. A bundle types the
