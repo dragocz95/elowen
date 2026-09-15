@@ -110,7 +110,11 @@ describe('loadAgentRegistry', () => {
     // User overrides the built-in explore (description, source and tools all come from the user file).
     expect(reg.get('explore')).toMatchObject({ description: 'user explore', source: 'user', toolsSpec: 'all' });
     expect(reg.get('plan')?.source).toBe('builtin');
-    expect(subagentCatalog(reg)).toContainEqual({ name: 'custom', description: 'my custom' });
+    // The catalog carries provenance: the subagent plugin pins a fixed model only to a SHIPPED type, so a
+    // user file — including the one shadowing built-in explore — has to be distinguishable there.
+    expect(subagentCatalog(reg)).toContainEqual({ name: 'custom', description: 'my custom', source: 'user' });
+    expect(subagentCatalog(reg)).toContainEqual({ name: 'explore', description: 'user explore', source: 'user' });
+    expect(subagentCatalog(reg)).toContainEqual({ name: 'plan', description: 'builtin plan', source: 'builtin' });
   });
 
   it('returns an empty map when the dirs do not exist', () => {

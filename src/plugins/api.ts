@@ -2147,10 +2147,12 @@ export interface PluginContext {
   /** Pickable brain models across every configured provider (feeds the Discord /model dropdown).
    *  Empty when nothing is wired. */
   listModels(): Promise<PluginModelOption[]>;
-  /** The available typed sub-agents (built-in explore/plan + user `.md` types) — name + one-line
-   *  description. SYNCHRONOUS on purpose: the subagent plugin composes its Delegate tool description from
-   *  this at register time. Empty when nothing is wired (e.g. direct-contextFor unit tests). */
-  subagentTypes(): { name: string; description: string }[];
+  /** The available typed sub-agents (built-in explore/plan + user `.md` types) — name, one-line
+   *  description and provenance. SYNCHRONOUS on purpose: the subagent plugin composes its Delegate tool
+   *  description from this at register time. `source` is what makes a SHIPPED type pinnable to a fixed
+   *  per-account model; a user `.md` type (including one shadowing a built-in name) is never pinned.
+   *  Empty when nothing is wired (e.g. direct-contextFor unit tests). */
+  subagentTypes(): { name: string; description: string; source: 'builtin' | 'user' }[];
   /** Resolve a configured brain provider's credentials (baseUrl + apiKey) by id — lets a plugin reuse
    *  the operator's central provider key (voice STT/TTS, image gen) instead of its own secret field.
    *  Null when the id is unknown. Reads live config, so a key change applies on the next call.

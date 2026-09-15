@@ -149,7 +149,7 @@ export interface LoadPluginsOptions {
   timezone?: () => string;
   /** The typed sub-agent catalog exposed to plugins as ctx.subagentTypes() (built-in explore/plan + user
    *  `.md` types). Read at plugin register time to compose the Delegate tool description. */
-  subagentTypes?: () => { name: string; description: string }[];
+  subagentTypes?: () => { name: string; description: string; source: 'builtin' | 'user' }[];
   /** Host reloader exposed to plugins as ctx.requestReload() — a plugin that writes a skill/agent to disk
    *  asks the host to re-scan + apply it live (deferred to the end of the current turn). */
   requestReload?: () => void;
