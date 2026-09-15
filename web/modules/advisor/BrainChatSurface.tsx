@@ -1,6 +1,6 @@
 'use client';
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, Bot, type LucideIcon } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, Compass, Hammer, Workflow, Bot, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { renderMarkdown } from '../../lib/markdown';
 import { langForPath, parseDiffRow } from '../../lib/codeDiff';
@@ -708,14 +708,18 @@ function SessionEvents({ events, tk }: { events: SessionEventItem[]; tk?: string
  *  they sit in one turn or across a turn boundary; only a speaker change opens a real block break. The
  *  compact dock keeps the tight look: a small accent bubble for the user, bubble-free markdown for the
  *  assistant. */
-/** A user turn's surviving attachments. The daemon kept the files next to its database, so these render
+/** The pictures a turn carries. The daemon kept the files next to its database, so these render
  *  identically from the live stream and from reloaded history — the whole point of storing them. The
  *  `<img>` hits the same-origin proxy, which turns the session cookie into the daemon bearer, so no
- *  signed link is involved. Clicking opens the picture in the app's own dialog. */
-function Attachments({ images, full }: { images: BrainMessageImage[]; full?: boolean }) {
+ *  signed link is involved. Clicking one opens the picture full size, in the conversation. */
+function Attachments({ images, full, attached }: { images: BrainMessageImage[]; full?: boolean; attached?: boolean }) {
+  const { t } = useTranslation();
+  // Whose picture it is, said in the description the picture carries: "Attached image" is only true of a
+  // turn this reader sent, and a shared room shows everybody's pictures through this one control.
+  const description = attached ? t.brainChat.attachmentAlt : t.brainChat.imageAttached;
   return (
     <div className={`flex flex-wrap gap-2 ${full ? 'my-1.5' : 'mt-1.5'}`}>
-      {images.map((image) => <AttachmentThumb key={image.url} image={image} />)}
+      {images.map((image) => <AttachmentThumb key={image.url} image={image} description={description} />)}
     </div>
   );
 }
@@ -725,8 +729,8 @@ function Attachments({ images, full }: { images: BrainMessageImage[]; full?: boo
  *  read-only asks for an image the daemon will only serve to its owner (a 404 by design, so the request
  *  cannot be used to probe what other conversations hold). The browser's own reply to that is a broken
  *  image glyph, which reads as "the chat is buggy" rather than "this picture is no longer here". State it
- *  instead, and drop the click-through: a link to a 404 is worse than no link. */
-function AttachmentThumb({ image }: { image: BrainMessageImage }) {
+ *  instead, and drop the click-through: a surface that can only fail to open is worse than no control. */
+function AttachmentThumb({ image, description }: { image: BrainMessageImage; description: string }) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -744,7 +748,7 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        title={t.brainChat.attachmentOpen}
+        title={description}
         aria-label={t.brainChat.attachmentOpen}
         // The width cap sits on the FRAME, not the picture. A percentage max-width on the <img> is ignored
         // while the flex item measures its content, so a wide picture capped only by height left the
@@ -753,54 +757,72 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
       >
         <img
           src={`/api${image.url}`}
-          alt={t.brainChat.attachmentAlt}
+          alt={description}
           onError={() => setFailed(true)}
           className="block max-h-48 max-w-full object-contain"
         />
       </button>
-      {open ? <ImageLightbox image={image} onClose={() => setOpen(false)} /> : null}
+      {open ? <ImageLightbox image={image} description={description} onClose={() => setOpen(false)} /> : null}
     </>
   );
 }
 
 /** The full-size view of any picture in the conversation — a user's attachment, one the agent shared, one
- *  it generated, one it read. It is the shared {@link Modal}, so the focus trap, Escape, the overlay stack
- *  and the return of focus to the thumbnail all come from the one implementation the rest of the app uses,
- *  and the page behind it never scrolls.
+ *  it generated, one it read. It is the app's own `Modal` with the frameless chrome, so what the reader gets
+ *  is a scrim and the picture: no header, no title drawn over the image, no edge, no ground, no cast shadow,
+ *  no close button. A dialog's frame holds a title row, controls and a body of text, and an enlarged picture
+ *  is the one surface in the app that has no use for any of them.
  *
- *  The picture itself is `object-contain` inside the dialog's own frame, so a panorama and a tall
- *  screenshot both fit whole on a phone and on a desktop without the dialog growing past the viewport.
- *  Opening the raw file stays available as a named action in the header rather than as the click on the
- *  image: that request is the same authenticated proxy fetch it always was, and it leaves the app. */
-function ImageLightbox({ image, onClose }: { image: BrainMessageImage; onClose: () => void }) {
+ *  Everything the frame used to CARRY is still there, and still comes from the shared seam, which is exactly
+ *  why this is a `Modal` rather than a second overlay beside it: the portal, the overlay stack and its
+ *  `inert` isolation, the body scroll lock, the focus trap, Escape, the one backdrop rule that decides a
+ *  dismissal, and the return of focus to the thumbnail the picture was opened from. A bare surface is not a
+ *  thing a pointer hits (see `chrome` on `DialogContent`), so a press anywhere that is not the picture falls
+ *  through to the backdrop that closes the view, and a press on the picture is a press on the picture.
+ *
+ *  Geometry belongs to the backdrop: it pads itself to the safe area on every edge, and one
+ *  `object-contain` picture inside that box is what keeps a panorama and a tall screenshot whole on a phone
+ *  in either orientation and on a desktop. While the full-size bytes are in flight the wait is said quietly
+ *  on the surface, and bytes that cannot be had at all are stated in place of the picture rather than left
+ *  as a broken glyph. */
+function ImageLightbox({ image, description, onClose }: {
+  image: BrainMessageImage;
+  description: string;
+  onClose: () => void;
+}) {
   const { t } = useTranslation();
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
   return (
     <Modal
       title={t.brainChat.imageViewerTitle}
       onClose={onClose}
-      size="lg"
+      chrome="bare"
       presentation="center"
       intent="inspect"
-      headerActions={(
-        <a
-          href={`/api${image.url}`}
-          target="_blank"
-          rel="noreferrer"
-          className={buttonClassName('outline', 'sm')}
-        >
-          <ExternalLink size={14} aria-hidden />
-          {t.brainChat.imageOpenInTab}
-        </a>
-      )}
     >
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
+      {failed ? (
+        <span data-testid="image-lightbox-gone" className="pointer-events-auto inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <ImageOff size={16} className="shrink-0" aria-hidden />
+          {t.brainChat.imageGone}
+        </span>
+      ) : (
         <img
           src={`/api${image.url}`}
-          alt={t.brainChat.attachmentAlt}
+          alt={description}
           data-testid="image-lightbox"
-          className="max-h-full max-w-full object-contain"
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          // The picture opts back in: it is the one thing on this surface a click belongs to, and a click
+          // that lands on it must not reach the rule that closes the view.
+          className="pointer-events-auto block max-h-full max-w-full object-contain"
         />
-      </div>
+      )}
+      {loaded || failed ? null : (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <Spinner size="lg" label={t.common.loading} />
+        </div>
+      )}
     </Modal>
   );
 }
@@ -944,7 +966,7 @@ export const Message = memo(function Message({ turn, models, full, showRole, sho
   const body = turn.role === 'you'
     ? <div data-testid="chat-user-bubble" className="chat-user-message">
         {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
-        {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
+        {turn.images?.length ? <Attachments images={turn.images} full={full} attached /> : null}
         <MessageMeta turn={turn} models={models} />
       </div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
@@ -982,7 +1004,7 @@ export const Message = memo(function Message({ turn, models, full, showRole, sho
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
         <div data-testid="chat-user-bubble" className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
           {turn.role === 'you' ? turn.text : null}
-          {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
+          {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} attached /> : null}
           <MessageMeta turn={turn} models={models} />
         </div>
       </div>

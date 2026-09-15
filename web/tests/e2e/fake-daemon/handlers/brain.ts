@@ -105,6 +105,13 @@ function messagesPage(source: readonly BrainMessage[], limit: number, before?: n
   return { items, hasMore, nextBefore: hasMore ? start : null };
 }
 
+/** The fixture picture every transcript image in the E2E harness points at: 2000×1200, with a frame drawn
+ *  at its own edge so a screenshot shows where the picture ends. */
+const PICTURE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1200" viewBox="0 0 2000 1200">'
+  + '<rect width="2000" height="1200" fill="#1f6feb"/>'
+  + '<rect x="20" y="20" width="1960" height="1160" fill="none" stroke="#f8fafc" stroke-width="40"/>'
+  + '</svg>';
+
 export function registerBrainRoutes(app: Hono): void {
   app.get('/brain/status', (c) => {
     const session = c.req.query('session');
@@ -139,6 +146,16 @@ export function registerBrainRoutes(app: Hono): void {
     const rawBefore = c.req.query('before');
     const before = rawBefore === undefined ? undefined : Number(rawBefore);
     return c.json(messagesPage(source, Math.floor(limit), before !== undefined && Number.isFinite(before) ? Math.floor(before) : undefined));
+  });
+
+  /** The bytes behind a transcript picture, so a real `<img>` has something to decode. SVG rather than a
+   *  raster: the payload stays a readable line, the browser honours its INTRINSIC size (2000×1200, bigger
+   *  than any viewport the suite measures, so the lightbox is exercised on the path where it must SHRINK),
+   *  and the drawn edge makes the picture's own box legible in a screenshot. */
+  app.get('/brain/chat-images/:file', (c) => {
+    c.header('Content-Type', 'image/svg+xml');
+    c.header('Cache-Control', 'no-store');
+    return c.body(PICTURE_SVG);
   });
 
   app.post('/brain/start', async (c) => {
