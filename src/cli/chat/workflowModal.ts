@@ -41,6 +41,19 @@ const glyphOf = (node: WorkflowNode, spinner: string): string =>
   node.status === 'running' ? spinner : STATUS_GLYPH[node.status];
 const firstLine = (s: string): string => terminalInlineText(s.split('\n')[0] ?? '');
 
+/** The node the modal follows while the reader has not taken the selection over: the work happening NOW.
+ *  With several nodes running in parallel it is the one that started LAST — the step the DAG has just
+ *  moved to — and the DAG's own order breaks a tie (or answers a snapshot carrying no `startedAt` at all).
+ *  Undefined when nothing runs, which is what leaves a settled DAG's selection exactly where it was. */
+function activeNode(nodes: readonly WorkflowNode[]): WorkflowNode | undefined {
+  let active: WorkflowNode | undefined;
+  for (const node of nodes) {
+    if (node.status !== 'running') continue;
+    if (!active || (node.startedAt ?? 0) > (active.startedAt ?? 0)) active = node;
+  }
+  return active;
+}
+
 interface WorkflowModalOpts {
   tui: TUI;
   /** Live source of truth — read fresh every render so the modal tracks the workflow as its nodes run.
@@ -63,6 +76,12 @@ class WorkflowModal implements Component, Focusable {
   /** Selection is the node ID, not an index: nodes can be appended mid-run (WorkflowAddNodes) and the
    *  wave layout reorders as statuses change — the id keeps the selection pinned to the same node. */
   private selectedId: string | null = null;
+  /** Whether the selection is still FOLLOWING the running node rather than pinned by the reader. A modal
+   *  opened mid-run starts on the work in flight and keeps up with it as the DAG advances — which is the
+   *  whole point of watching one — while the first arrow key pins the selection where the reader put it,
+   *  so a finished node they deliberately opened is never yanked away under them. Landing back on the node
+   *  that is currently running re-arms following: your selection IS the active node again. */
+  private followActive = true;
   private dock: 'detail' | 'activity' = 'detail';
   /** Transient footer message (e.g. Enter on a node that has not started). Cleared by any navigation, so
    *  it lives exactly as long as the state it describes. */
@@ -96,8 +115,14 @@ class WorkflowModal implements Component, Focusable {
     return this.opts.getWorkflow()?.nodes ?? [];
   }
 
-  /** The selected node's id, revalidated against the live snapshot (the node may have gone). */
+  /** The selected node's id, revalidated against the live snapshot (the node may have gone). While
+   *  following, it is recomputed from the snapshot on every read, so a node finishing and its dependent
+   *  starting moves the highlight and the dock with no key press, no remount and no reconnect. */
   private selection(nodes: readonly WorkflowNode[]): string | null {
+    if (this.followActive) {
+      const active = activeNode(nodes);
+      if (active) { this.selectedId = active.id; return active.id; }
+    }
     if (this.selectedId && nodes.some((n) => n.id === this.selectedId)) return this.selectedId;
     this.selectedId = nodes[0]?.id ?? null;
     return this.selectedId;
@@ -116,8 +141,11 @@ class WorkflowModal implements Component, Focusable {
     return modalGeometry(this.opts.tui.terminal).width - FRAME_COLS - 4 >= MIN_CANVAS_BODY;
   }
 
+  /** Every navigation lands here, so this is the one place that decides whether the modal is still
+   *  following the run: a deliberate selection pins it, unless the reader navigated ONTO the running node. */
   private select(id: string | undefined): void {
     if (id !== undefined) this.selectedId = id;
+    this.followActive = this.selectedId !== null && this.selectedId === activeNode(this.nodes())?.id;
     this.notice = '';
     this.opts.tui.requestRender();
   }

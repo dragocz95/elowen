@@ -134,9 +134,10 @@ describe('workflow canvas modal', () => {
     expect(flat).toContain('▶');    // dependency edges end in an arrowhead
     expect(flat).toMatch(SPIN);     // a running node spins
     expect(flat).toContain('38 t/s');
-    // The first node starts selected: its dock names it, calls it a root, and offers the drill-in.
-    expect(flat).toMatch(/─ gather ─/);
-    expect(flat).toMatch(/deps\s+root/);
+    // A modal opened mid-run starts on the node that is RUNNING, not on a root that finished long ago:
+    // its dock names it, lists what it waited for, and offers the drill-in.
+    expect(flat).toMatch(/─ analyze ─/);
+    expect(flat).toMatch(/deps\s+gather/);
     expect(flat).toContain('enter open node transcript');
   });
 
@@ -155,6 +156,12 @@ describe('workflow canvas modal', () => {
     const dockOf = (): string => strip(modal.render(110).join('\n'));
     show('modal — diamond canvas', modal.render(110));
 
+    // The modal opens on the running node; ← then ↑ walks back to the first wave's top deliberately,
+    // which also pins the selection for the rest of the run.
+    expect(dockOf()).toMatch(/─ parse ─/);
+    modal.handleInput(LEFT);
+    modal.handleInput(UP);
+    expect(dockOf()).toMatch(/─ gather ─/);
     modal.handleInput(DOWN);                       // column 1: gather → audit
     expect(dockOf()).toMatch(/─ audit ─/);
     modal.handleInput(DOWN);                       // bottom of the column: clamps, no wrap
@@ -175,6 +182,66 @@ describe('workflow canvas modal', () => {
     expect(dockOf()).toMatch(/─ report ─/);
   });
 
+  // The modal reads the live snapshot every frame, so a node finishing and its dependent starting must
+  // move the highlight and the dock on its own — no key press, no reopening the modal, no CLI restart.
+  it('follows the run: when a node finishes and its dependent starts, the focus moves with it', () => {
+    let wf: WorkflowState = WF;
+    const { modal } = openModal(() => wf);
+    const flat = (): string => strip(modal.render(96).join('\n'));
+    expect(flat()).toMatch(/─ analyze ─/);
+
+    wf = {
+      ...WF,
+      nodes: [
+        { ...WF.nodes[0]! },
+        { ...WF.nodes[1]!, status: 'done', detail: undefined, result: 'found 3 edge cases' },
+        { ...WF.nodes[2]!, status: 'running', sessionId: 's-write', detail: 'Write src/fix.ts', startedAt: Date.now() },
+      ],
+    };
+    const advanced = flat();
+    expect(advanced).toMatch(/─ write ─/);            // focus followed the work
+    expect(advanced).toContain('▸ Write src/fix.ts'); // and so did the detail dock
+    // The node that just finished repaints as done in the same frame — no stale spinner left behind.
+    expect(advanced).toContain('✓ analyze');
+    expect(advanced).toMatch(/2\/3 · ✓2 ●1/);
+  });
+
+  it('keeps a node the reader deliberately selected while the run moves on, and follows again on return', () => {
+    let wf: WorkflowState = WF;
+    const { modal } = openModal(() => wf);
+    const flat = (): string => strip(modal.render(96).join('\n'));
+
+    modal.handleInput(LEFT);                          // an explicit choice: the finished root
+    expect(flat()).toMatch(/─ gather ─/);
+    wf = {
+      ...WF,
+      nodes: [
+        { ...WF.nodes[0]! },
+        { ...WF.nodes[1]!, status: 'done', detail: undefined, result: 'found 3 edge cases' },
+        { ...WF.nodes[2]!, status: 'running', sessionId: 's-write', detail: 'Write src/fix.ts' },
+      ],
+    };
+    expect(flat()).toMatch(/─ gather ─/);             // the run advanced; the reader's selection did not
+    expect(flat()).toContain('▸ grammar has 14 token kinds');
+
+    // Walking back onto the running node re-arms following, so the reader can hand the modal back to the
+    // run without closing it.
+    modal.handleInput(RIGHT);
+    modal.handleInput(RIGHT);
+    expect(flat()).toMatch(/─ write ─/);
+    wf = {
+      ...wf,
+      status: 'running',
+      nodes: [
+        { ...wf.nodes[0]! },
+        { ...wf.nodes[1]! },
+        { ...wf.nodes[2]!, status: 'done', detail: undefined, result: 'fix written' },
+        { id: 'verify', task: 'run the suite', status: 'running', deps: ['write'], sessionId: 's-verify', detail: 'Bash npm test' },
+      ],
+    };
+    expect(flat()).toMatch(/─ verify ─/);
+  });
+
   it('drills into a started node and explains an unstarted one', () => {
     const { modal, onDrill } = openModal(() => WF);
     modal.handleInput(RIGHT);
@@ -192,11 +259,11 @@ describe('workflow canvas modal', () => {
   it('keeps the selection pinned to its node when the snapshot grows mid-run', () => {
     let wf: WorkflowState = WF;
     const { modal } = openModal(() => wf);
-    modal.handleInput(RIGHT);                      // select 'analyze'
-    expect(strip(modal.render(96).join('\n'))).toMatch(/─ analyze ─/);
+    modal.handleInput(LEFT);                       // deliberately select the finished root
+    expect(strip(modal.render(96).join('\n'))).toMatch(/─ gather ─/);
     // WorkflowAddNodes prepends nothing in practice, but the selection must survive any reshuffle.
     wf = { ...WF, nodes: [{ id: 'extra', task: 'later', status: 'pending', deps: [] }, ...WF.nodes] };
-    expect(strip(modal.render(96).join('\n'))).toMatch(/─ analyze ─/);
+    expect(strip(modal.render(96).join('\n'))).toMatch(/─ gather ─/);
   });
 
   it('previews result, error and live elapsed time in the dock', () => {
@@ -210,6 +277,8 @@ describe('workflow canvas modal', () => {
     };
     const { modal } = openModal(() => outcome);
     const flat = (): string => strip(modal.render(96).join('\n'));
+    modal.handleInput(UP);                         // off the followed running node…
+    modal.handleInput(UP);                         // …up to the finished one
     expect(flat()).toContain('▸ 31 pages fetched');
     expect(flat()).not.toContain('second line');
     modal.handleInput(DOWN);
@@ -229,7 +298,7 @@ describe('workflow canvas modal', () => {
     expect(activity).toContain('Read src/lexer.ts');            // the running node's live tool
     expect(activity).toContain('grammar has 14 token kinds');   // the finished node's result
     modal.handleInput('\t');
-    expect(strip(modal.render(96).join('\n'))).toMatch(/─ gather ─/);
+    expect(strip(modal.render(96).join('\n'))).toMatch(/─ analyze ─/);
   });
 
   it('lists every node even when the DAG is malformed', () => {
@@ -281,7 +350,7 @@ describe('workflow canvas modal', () => {
       expect(row.slice(1, -1)).not.toContain('│'); // no card borders inside the list body
     }
     modal.handleInput(RIGHT);        // ←→ still navigates: jumps to the next wave
-    expect(strip(modal.render(62).join('\n'))).toMatch(/─ analyze ─/);
+    expect(strip(modal.render(62).join('\n'))).toMatch(/─ write ─/);
   });
 
   it('keeps the footer inside the row budget on a short terminal', () => {
