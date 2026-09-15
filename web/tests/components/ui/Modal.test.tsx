@@ -3,6 +3,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { Modal, ModalFooter } from '../../../components/ui/Modal';
+import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/shadcn/popover';
 import { WorkspaceDetailRail } from '../../../components/ui/WorkspacePrimitives';
 import { PHONE_MAX_WIDTH } from '../../../lib/breakpoints';
 
@@ -61,6 +62,31 @@ describe('Modal', () => {
     fireEvent.pointerDown(backdrop);
     fireEvent.click(backdrop);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  /** The other half of the same rule, and the one that regressed: a press inside the surface must still
+   *  reach the DOCUMENT. Radix dismisses an open popover from an outside press by waiting for the matching
+   *  `click` on the document — a click it never sees counts as intercepted and the popover stays open. The
+   *  surface used to call `stopPropagation` on its click, which stops the native event too, so every menu
+   *  inside a modal could only be closed by pressing its own trigger a second time. */
+  it('lets a press inside it dismiss a popover opened within it', async () => {
+    render(
+      <Modal title="Nastavení" onClose={vi.fn()}>
+        <Popover>
+          <PopoverTrigger>tool execution</PopoverTrigger>
+          <PopoverContent>code mode</PopoverContent>
+        </Popover>
+        <span>elsewhere</span>
+      </Modal>,
+      { wrapper: W },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'tool execution' }));
+    expect(await screen.findByText('code mode')).toBeInTheDocument();
+
+    const elsewhere = screen.getByText('elsewhere');
+    fireEvent.pointerDown(elsewhere, { button: 0, pointerType: 'mouse' });
+    fireEvent.click(elsewhere);
+    await waitFor(() => expect(screen.queryByText('code mode')).not.toBeInTheDocument());
   });
 
   it('exposes a labelled modal dialog', () => {
