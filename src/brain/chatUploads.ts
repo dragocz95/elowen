@@ -47,6 +47,8 @@ export interface UploadProject {
   id: number;
   path: string;
   slug: string;
+  /** Where the project's files actually live. Only a `host` project has a root on this filesystem. */
+  executionKind: 'host' | 'managed';
 }
 
 /** Which projects an account may write an upload into. An admin with no explicit assignment administers
@@ -55,7 +57,7 @@ export interface UploadProject {
  *  platform-room path so a file dropped into a Discord thread lands exactly where the same person's
  *  browser upload would. */
 export function uploadCandidates(input: { all: readonly UploadProject[]; assigned: readonly number[]; isAdmin: boolean }): UploadProject[] {
-  const pick = (p: UploadProject): UploadProject => ({ id: p.id, slug: p.slug, path: p.path });
+  const pick = (p: UploadProject): UploadProject => ({ id: p.id, slug: p.slug, path: p.path, executionKind: p.executionKind });
   if (input.assigned.length > 0) {
     const wanted = new Set(input.assigned);
     return input.all.filter((p) => wanted.has(p.id)).map(pick);
@@ -71,10 +73,14 @@ export function uploadCandidates(input: { all: readonly UploadProject[]; assigne
  * assumed — the daemon's own `project` is hardcoded to id 1 while its PATH comes from the environment,
  * and on a deployment where those disagree, trusting the id drops uploads into the source checkout.
  *
- * So: the caller's own projects decide. One project is unambiguous. Several are resolved by preferring
- * the instance's configured workspace, which is the shared folder everyone is assigned to. Anything
- * still ambiguous FAILS rather than guessing — writing somebody's file into the wrong project is not
- * something they would notice, and silently picking the lowest id would put it in the sources.
+ * This is the FALLBACK, not the authority: a conversation that has selected a project answers the
+ * question itself (`brain_sessions.execution_ref`), and the route resolves that first. Only a
+ * conversation with no project of its own reaches here.
+ *
+ * So: the caller's own projects decide. One project is unambiguous — managed or host, because a managed
+ * project is an ordinary destination now and its files simply live in the guest. Several are resolved by
+ * preferring the instance's configured workspace. Anything still ambiguous FAILS rather than guessing:
+ * writing somebody's file into the wrong project is not something they would notice.
  */
 export function chooseUploadProject(candidates: readonly UploadProject[], preferredPath: string): UploadProject {
   if (candidates.length === 0) {
@@ -85,10 +91,15 @@ export function chooseUploadProject(candidates: readonly UploadProject[], prefer
   const preferred = candidates.find((p) => samePath(p.path, preferredPath));
   if (preferred) return preferred;
   const names = candidates.map((p) => p.slug).join(', ');
-  throw new Error(`several projects could hold this upload (${names}) and none is the shared workspace — ask an administrator to set one`);
+  throw new Error(`this conversation has no project selected, and several could hold the upload (${names}) — pick one for the conversation and try again`);
 }
 
+/** Host-root comparison. A MANAGED project has no host root and reports `path` as the empty string, which
+ *  `resolve('')` would turn into the DAEMON'S OWN working directory — making an unrelated managed project
+ *  compare equal to the configured workspace whenever the daemon happens to run there. An empty path is
+ *  therefore never a match, rather than a match against the process's cwd. */
 function samePath(a: string, b: string): boolean {
+  if (!a || !b) return false;
   const strip = (v: string): string => (v.length > 1 && v.endsWith(sep) ? v.slice(0, -1) : v);
   return strip(resolve(a)) === strip(resolve(b));
 }
@@ -133,8 +144,10 @@ export function sanitizeUploadName(raw: string): string {
   return `${stem || FALLBACK_NAME}${ext}`;
 }
 
-/** `name (2).pdf` — the suffix goes BEFORE the extension so the file keeps opening in the right app. */
-function suffixed(name: string, n: number): string {
+/** `name (2).pdf` — the suffix goes BEFORE the extension so the file keeps opening in the right app.
+ *  Exported because the managed branch walks the same collision sequence inside the guest, and two
+ *  numbering rules would mean the same file gets a different name depending on where the project lives. */
+export function suffixedUploadName(name: string, n: number): string {
   const ext = extname(name);
   return `${name.slice(0, name.length - ext.length)} (${n})${ext}`;
 }
@@ -194,7 +207,7 @@ export function createUploadTarget(
 
   const base = sanitizeUploadName(rawName);
   for (let n = 1; n <= MAX_COLLISIONS; n += 1) {
-    const name = n === 1 ? base : suffixed(base, n);
+    const name = n === 1 ? base : suffixedUploadName(base, n);
     const path = join(dir, name);
     if (path !== resolve(path) || name.includes(sep)) {
       throw new Error('upload name escapes its directory');

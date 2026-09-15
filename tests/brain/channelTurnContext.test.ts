@@ -307,7 +307,7 @@ describe('a room attachment reaches the turn as a real path', () => {
   afterEach(() => { for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
   const uploadsFor = (root: string) => ({
-    projects: { list: () => [{ id: 1, slug: 'workspace', path: root }] },
+    projects: { list: () => [{ id: 1, slug: 'workspace', path: root, executionKind: 'host' as const }] },
     userProjects: { forUser: () => [1] },
     users: { get: () => ({ username: 'patricie', is_admin: false }) },
     projectPath: () => root,

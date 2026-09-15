@@ -32,7 +32,7 @@ function projectRoot(): string {
 /** A deps shape with one project the writer (account 7) is assigned to. */
 function deps(root: string, overrides: Record<string, unknown> = {}) {
   return {
-    projects: { list: () => [{ id: 1, slug: 'workspace', path: root }] },
+    projects: { list: () => [{ id: 1, slug: 'workspace', path: root, executionKind: 'host' as const }] },
     userProjects: { forUser: () => [1] },
     users: { get: () => ({ username: 'patricie', is_admin: false }) },
     projectPath: () => root,
@@ -152,7 +152,7 @@ describe('storeChannelAttachments refuses loudly rather than dropping the file',
  *  degrade to the note. They are deliberately NOT in the same catch as the refusals above. */
 describe('storeChannelAttachments degrades a placement problem instead of costing the turn', () => {
   const ambiguous = (root: string) => deps(root, {
-    projects: { list: () => [{ id: 1, slug: 'one', path: join(root, 'one') }, { id: 2, slug: 'two', path: join(root, 'two') }] },
+    projects: { list: () => [{ id: 1, slug: 'one', path: join(root, 'one'), executionKind: 'host' as const }, { id: 2, slug: 'two', path: join(root, 'two'), executionKind: 'host' as const }] },
     userProjects: { forUser: () => [1, 2] },
     projectPath: () => '/somewhere/else',
   });
@@ -173,7 +173,7 @@ describe('storeChannelAttachments degrades a placement problem instead of costin
     const root = projectRoot();
     const { stored, unstored } = storeChannelAttachments(ambiguous(root), 7, [file('a.txt')], AT);
     expect(stored).toEqual([]);
-    expect(unstored[0]!.reason).toMatch(/several projects/);
+    expect(unstored[0]!.reason).toMatch(/several could hold the upload/);
     expect(readdirSync(root)).toEqual([]);
   });
 

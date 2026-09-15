@@ -2,10 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { closeSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { chooseUploadProject, createUploadTarget, sanitizeUploadName, uploadRelativeDir } from '../../src/brain/chatUploads.js';
+import { chooseUploadProject, createUploadTarget, sanitizeUploadName, uploadCandidates, uploadRelativeDir } from '../../src/brain/chatUploads.js';
 
-const SOURCES = { id: 1, slug: 'chetty', path: '/opt/elowen' };
-const SHARED = { id: 2, slug: 'sdilene', path: '/data/project' };
+const SOURCES = { id: 1, slug: 'chetty', path: '/opt/elowen', executionKind: 'host' as const };
+const SHARED = { id: 2, slug: 'sdilene', path: '/data/project', executionKind: 'host' as const };
+/** A managed project as the store really reports one: its files live in the guest, so it has NO host
+ *  path at all and `path` is the empty string. */
+const MANAGED = { id: 3, slug: 'marketing', path: '', executionKind: 'managed' as const };
+
+describe('which projects can hold an upload', () => {
+  it('offers a managed project like any other — its files simply live in the guest', () => {
+    expect(uploadCandidates({ all: [SOURCES, MANAGED], assigned: [1, 3], isAdmin: false })).toEqual([SOURCES, MANAGED]);
+    expect(uploadCandidates({ all: [SOURCES, MANAGED], assigned: [], isAdmin: true })).toEqual([SOURCES, MANAGED]);
+  });
+
+  it('confines a member to their assignment, and gives an unassigned member nothing', () => {
+    expect(uploadCandidates({ all: [SOURCES, SHARED], assigned: [2], isAdmin: false })).toEqual([SHARED]);
+    expect(uploadCandidates({ all: [SOURCES, SHARED], assigned: [], isAdmin: false })).toEqual([]);
+  });
+});
 
 describe('which project an upload belongs in', () => {
   it('refuses when the caller has no project at all', () => {
@@ -14,6 +29,16 @@ describe('which project an upload belongs in', () => {
 
   it('takes the only project without consulting the preference', () => {
     expect(chooseUploadProject([SHARED], '/somewhere/else')).toBe(SHARED);
+    // Including a managed one: a single candidate is unambiguous wherever its files live.
+    expect(chooseUploadProject([MANAGED], '/somewhere/else')).toBe(MANAGED);
+  });
+
+  it('never lets a managed project’s empty root match the configured workspace', () => {
+    // `resolve('')` is the DAEMON'S working directory, so an empty path once compared equal to the
+    // workspace whenever the daemon happened to run there — silently electing an unrelated project.
+    const daemonCwd = process.cwd();
+    expect(() => chooseUploadProject([SOURCES, MANAGED], daemonCwd)).toThrow(/pick one for the conversation/);
+    expect(() => chooseUploadProject([SOURCES, MANAGED], '')).toThrow(/pick one for the conversation/);
   });
 
   it('prefers the shared workspace over a source checkout', () => {
@@ -29,8 +54,10 @@ describe('which project an upload belongs in', () => {
 
   it('fails loudly rather than guessing when nothing matches', () => {
     // Guessing would be invisible: the file lands somewhere real and nobody notices until they look
-    // for it. The message has to name the candidates so an admin can act on it.
+    // for it. The message names the candidates AND the one action that resolves it — choosing a project
+    // for the conversation, which is what the route consults first.
     expect(() => chooseUploadProject([SOURCES, SHARED], '/data/nothing')).toThrow(/chetty, sdilene/);
+    expect(() => chooseUploadProject([SOURCES, SHARED], '/data/nothing')).toThrow(/pick one for the conversation/);
   });
 });
 
