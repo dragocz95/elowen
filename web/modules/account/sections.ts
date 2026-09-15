@@ -96,7 +96,10 @@ export function userPluginConfigSectionEntries(
   locale: string,
   fallbackDescription: string,
 ): UserPluginConfigSectionEntry[] {
-  return configs.map((detail) => ({
+  // A plugin whose own page already presents these values (manifest `userConfigPlacement: 'pluginPage'`)
+  // gets no rail entry here: two editors for one setting is how the two drift, and the plugin's page can
+  // show what a schema-driven form cannot — what each value belongs to, and when a stored pick went stale.
+  return configs.filter((detail) => detail.placement !== 'pluginPage').map((detail) => ({
     id: pluginUserConfigSectionId(detail.name),
     detail,
     icon: Settings2,

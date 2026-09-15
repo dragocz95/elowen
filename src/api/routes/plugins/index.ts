@@ -565,6 +565,9 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!user || !store) return c.json([]);
     return c.json(userConfigurablePlugins(user).map((p) => ({
       ...(() => { const snapshot = store.snapshot(user.id, p.manifest.name); return userConfigView(p.manifest.name, p.manifest.userConfigSchema ?? [], snapshot.config, snapshot.revision); })(),
+      // Where these values are EDITED. Presentation metadata, so the listing still carries every plugin
+      // the account may configure — a plugin page reads its OWN values from exactly this response.
+      ...(p.manifest.userConfigPlacement ? { placement: p.manifest.userConfigPlacement } : {}),
       // Two distinct strings, deliberately: `label` is the short name the Account rail shows, `description`
       // the sentence the selected panel carries. Collapsing them is what put a whole English paragraph in
       // the rail. Both are English here; `i18n` holds the per-locale overrides the client resolves.
