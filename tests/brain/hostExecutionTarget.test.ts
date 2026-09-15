@@ -203,6 +203,15 @@ describe('selecting a managed project does not wait for its container', () => {
     return { ...h, project, service, sessionId, sandbox: h.d.plugins.peek()!.control('sandbox') as never as Record<string, ReturnType<typeof vi.fn>> };
   };
 
+  it('does not start a managed environment for the model selection path', async () => {
+    const h = await managedFixture();
+    h.sandbox.environmentFor.mockResolvedValue({ state: 'stopped' });
+    const result = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId, { startEnvironment: false });
+    expect(result.operationId).toBeUndefined();
+    expect(h.sandbox.environmentFor).not.toHaveBeenCalled();
+    expect(h.sandbox.requestEnvironment).not.toHaveBeenCalled();
+  });
+
   it('returns the enqueued operation instead of blocking on the environment', async () => {
     const h = await managedFixture();
     h.sandbox.environmentFor.mockResolvedValue({ state: 'unprovisioned' });
