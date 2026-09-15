@@ -319,11 +319,15 @@ export const usePluginContributions = (name: string | null) =>
 
 /** The contributions of the WHOLE loaded registry, unfiltered — read by a control that must ask whether any
  *  plugin provides something before offering a knob that depends on it. `enabled` is passed by the caller so
- *  the request happens when that control can actually use the answer, not on every visit to the page; it is
- *  deliberately left uncached, because toggling the plugin that provides the contribution IS how the control
- *  behind it is switched off and a stale answer would keep offering (or hiding) the knob after that. */
+ *  the request happens when that control can actually use the answer, not on every visit to the page.
+ *
+ *  `gcTime: 0` is what makes "uncached" true rather than aspirational. Toggling the plugin that provides the
+ *  contribution IS how the control behind it is switched off, and the default cache would hand a re-opened
+ *  control the PREVIOUS answer to paint with while the refetch is still in flight — briefly offering a knob
+ *  that no longer does anything. Dropping the entry the moment the control closes means the next open starts
+ *  from `undefined`, which every caller already reads as "not known yet, withhold the control". */
 export const useRuntimeContributions = (enabled = true) =>
-  useQuery({ queryKey: ['plugin-runtime-contributions'], queryFn: elowenClient.runtimeContributions, enabled });
+  useQuery({ queryKey: ['plugin-runtime-contributions'], queryFn: elowenClient.runtimeContributions, enabled, gcTime: 0 });
 
 /** The tail of one plugin's log ring buffer plus derived health (the Logs detail section). Polled every
  *  3 s while a detail is open so logs + the health badge stay live without a manual refresh; the query is
