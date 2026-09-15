@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "plugins/code-mode/src",
+    "outDir": "dist/plugins/code-mode/src",
+    "tsBuildInfoFile": "dist/plugins/code-mode/.tsbuildinfo",
+    "composite": true
+  },
+  "include": [
+    "plugins/code-mode/src/**/*.ts"
+  ]
+}
