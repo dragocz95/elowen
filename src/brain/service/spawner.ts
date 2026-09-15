@@ -27,6 +27,7 @@ import { currentContributionUserId, currentWorkDir, currentToolPolicy, currentPo
 import { createProjectExecutionBoundary } from '../session/projectExecutionBoundary.js';
 import { buildProjectTool } from '../tools/projectTool.js';
 import { codeModeApplies, codeModeVisibilityFor } from '../session/codeModeRoute.js';
+import { personaTemplatesFor } from '../session/personaRoute.js';
 import { CodeModeCardFeed } from '../session/codeModeCard.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
@@ -725,15 +726,27 @@ export class LiveSessionSpawner {
     // The per-user prompt OVERRIDE is a personal preference like the advisor style rendered into it, so it
     // reads from the same composing account — otherwise a room would render the writer's style through the
     // opener's edited template, one line away from the style itself.
-    const persona = opts.scheduled
-      ? this.d.prompts.render('scheduled', { userName, personality, agentName }, settingsUserId)
-      : ownerChatShape
-        ? this.d.prompts.render('elowen', { userName, personality, agentName, productName }, settingsUserId)
-        // A FORK child takes the owner-chat branch above: the overlay tells a session it is answering OTHER
-        // people in a shared room, which is false for a fork and — being system-prompt bytes — would move
-        // the whole cached prefix out from under the parent's cache.
-        : this.d.prompts.render('elowen', { userName, personality, agentName, productName }, settingsUserId)
-          + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName, productName }, settingsUserId);
+    //
+    // WHICH templates apply is decided in one named place (`personaTemplatesFor`), because the answer now
+    // depends on the model too; only the RENDERING stays here, with the same variables per template as
+    // before. A FORK child takes the owner-chat shape: the overlay tells a session it is answering OTHER
+    // people in a shared room, which is false for a fork and — being system-prompt bytes — would move the
+    // whole cached prefix out from under the parent's cache.
+    const templates = personaTemplatesFor({ scheduled: opts.scheduled === true, ownerChatShape, provider: providerEntry, modelId: model.id });
+    const basePersona = templates.base === 'scheduled'
+      ? this.d.prompts.render(templates.base, { userName, personality, agentName }, settingsUserId)
+      : this.d.prompts.render(templates.base, { userName, personality, agentName, productName }, settingsUserId);
+    const renderedPersona = templates.overlay === undefined
+      ? basePersona
+      : basePersona + '\n\n' + this.d.prompts.render(templates.overlay, { ownerName: userName, agentName, productName }, settingsUserId);
+    // A plugin holding `mutates:['prompt']` may replace the persona for THIS session (it can already
+    // replace the template globally through `registerPrompts`; this is the narrower, per-session form).
+    // Fail-open and first-writer-wins, like every other hook patch.
+    const persona = (toolHookBus
+      ? await toolHookBus.emitPersona('brain.session.beforeSpawn', {
+        sessionId, provider: providerEntry.id, model: model.id, persona: renderedPersona,
+      })
+      : undefined) ?? renderedPersona;
 
     // Create the image-carrying queue mirrors before the PI session. The boundary compaction adapter reads
     // these exact arrays just before every next-turn provider request, so queued text AND attachments are

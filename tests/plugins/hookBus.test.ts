@@ -16,6 +16,37 @@ describe('PluginHookBus', () => {
 
   beforeEach(() => { logger = makeLogger(); });
 
+  // A persona replacement is the narrower form of a reach `mutates:['prompt']` already grants through
+  // `registerPrompts` (which shadows a template globally). First writer wins: two plugins rewriting one
+  // system prompt have no meaningful merge.
+  it('accepts a persona replacement only from a plugin granted mutates:[prompt]', async () => {
+    const hooks: PluginHook[] = [
+      { name: 'brain.session.beforeSpawn', run: () => ({ patch: { persona: 'I am the plugin persona' } }) },
+    ];
+    const capabilities = new Map<string, PluginCapabilities>();
+    const records: HookExecutionRecord[] = [];
+    const bus = () => new PluginHookBus({ hooks, hookOwners: ['themer'], capabilities, logger, audit: (r) => records.push(r) });
+
+    expect(await bus().emitPersona('brain.session.beforeSpawn', {})).toBeUndefined();
+    expect(records.at(-1)?.outcome).toBe('rejected');
+
+    capabilities.set('themer', { mutates: ['prompt'] });
+    expect(await bus().emitPersona('brain.session.beforeSpawn', {})).toBe('I am the plugin persona');
+    expect(records.at(-1)).toMatchObject({ outcome: 'ok', changed: 'prompt' });
+  });
+
+  it('ignores an empty persona and lets a later hook answer, and never fails the spawn', async () => {
+    const hooks: PluginHook[] = [
+      { name: 'brain.session.beforeSpawn', run: () => ({ patch: { persona: '   ' } }) },
+      { name: 'brain.session.beforeSpawn', run: () => { throw new Error('boom'); } },
+      { name: 'brain.session.beforeSpawn', run: () => ({ patch: { persona: 'second wins' } }) },
+    ];
+    const capabilities = new Map<string, PluginCapabilities>([['a', { mutates: ['prompt'] }], ['b', { mutates: ['prompt'] }], ['c', { mutates: ['prompt'] }]]);
+    const bus = new PluginHookBus({ hooks, hookOwners: ['a', 'b', 'c'], capabilities, logger });
+
+    expect(await bus.emitPersona('brain.session.beforeSpawn', {})).toBe('second wins');
+  });
+
   it('runs every hook for the emitted name and none for other names', async () => {
     const calls: string[] = [];
     const hooks: PluginHook[] = [

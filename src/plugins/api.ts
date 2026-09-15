@@ -96,6 +96,11 @@ export type PluginSkill = Skill;
  *  (create if absent) to annotate the transcript — e.g. the formatters plugin formats files written by
  *  the files plugin and notes "formatted <file> with <name>".
  *
+ *  `brain.session.beforeSpawn` fires while a session is being assembled, with
+ *  `{ sessionId, provider, model, persona }` — the resolved system prompt the host is about to use. A
+ *  subscriber whose plugin declared `mutates:['prompt']` may return `patch.persona` to replace it for
+ *  that session; anything else it returns is observational.
+ *
  *  `brain.session.afterSpawn` fires once a live session is assembled, with `{ sessionId, messages }`
  *  where `messages` is its REHYDRATED history, and is AWAITED before the caller may run a turn. It is
  *  the seam for per-conversation state that lives in daemon memory while its evidence lives in the
@@ -117,7 +122,7 @@ export type PluginHookName =
   | 'memory.write.before' | 'memory.write.after'
   | 'plugin.reload.before' | 'plugin.reload.after';
 
-/** A patch a hook may return to change the live turn. Two are wired:
+/** A patch a hook may return to change the live turn. Three are wired:
  *
  *  `appendContext` (needs `mutates:['turnContext']`) — the string is appended, UNTRUSTED-framed, to the
  *  live prompt in owner chat; never persisted, never the system prompt.
@@ -127,8 +132,12 @@ export type PluginHookName =
  *  instead of retrying blindly. Deliberately runs AFTER the permission gate: permissions are the
  *  user's own policy and no plugin may widen or override them — a hook may only refuse further.
  *
- *  `prompt`/`memory` remain declarable capability VALUES without a patch shape yet. */
-export interface HookPatch { appendContext?: string; denyToolCall?: string }
+ *  `persona` (needs `mutates:['prompt']`) — returned from a `brain.session.beforeSpawn` hook, it replaces
+ *  the session's SYSTEM PROMPT, whose default the host resolves per surface and per model. The same grant
+ *  already lets a plugin shadow a prompt template globally through `registerPrompts`, so this is the
+ *  narrower per-session form of a reach it holds anyway. First writer wins; an empty string is ignored,
+ *  because a session with no system prompt has no identity. */
+export interface HookPatch { appendContext?: string; denyToolCall?: string; persona?: string }
 
 /** What a hook may return. `patch` is the runtime-wired mutation (gated by the owner's declared
  *  capabilities); `annotations`/`audit` are free-form observability the host may record. A hook that
@@ -157,7 +166,11 @@ export interface PluginHook { name: PluginHookName; run: (payload: unknown) => H
  *  a hardcoded plugin name so ownership of the workflow surface can move, be renamed or be replaced
  *  without core knowing who holds it. */
 export interface PluginCapabilities {
-  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events' | 'workflow-dag' | 'users')[];
+  // `memory` is deliberately absent: it gated NOTHING — no enforcement site ever read it — while sitting
+  // in CONSENT_REQUIRED_MUTATES, so declaring it cost an operator a consent prompt and bought the plugin
+  // no capability at all. The four `memory.*` hook names are likewise unwired; the value is re-added the
+  // day one of them fires and a patch shape needs a grant.
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'events' | 'workflow-dag' | 'users')[];
   reads?: string[];
   network?: boolean;
 }
@@ -168,10 +181,15 @@ export interface PluginCapabilities {
  *  the keys it means. A red badge in the settings UI is not consent — nothing forces a reader to see it,
  *  and a marketplace install is one POST away from never showing it at all.
  *
- *  `prompt` and `turnContext` are deliberately absent: they ride the ephemeral prompt of a single turn
- *  and leave nothing behind, which is the reach any instruction in the chat already has. */
+ *  `turnContext` is deliberately absent: it rides the ephemeral prompt of a single turn and leaves
+ *  nothing behind, which is the reach any instruction in the chat already has.
+ *
+ *  `prompt` IS required, and used not to be. The exemption was written for that same one-turn reach, but
+ *  `prompt` does not have it: `registerPrompts` installs a persistent template overlay that is resolved
+ *  ahead of the core file on every render, and `patch.persona` replaces a session's system prompt — so
+ *  the grant can rewrite who the agent is, for every conversation, until the plugin is removed. */
 export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
-  ['tools', 'memory', 'events', 'workflow-dag', 'users'];
+  ['prompt', 'tools', 'events', 'workflow-dag', 'users'];
 
 export interface PlatformHistoryMessage {
   /** Stable platform message id when the API exposes one. */

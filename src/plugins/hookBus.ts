@@ -127,6 +127,33 @@ export class PluginHookBus {
     return accepted.length > 0 ? { appendContext: accepted.join('') } : {};
   }
 
+  /** Fire every hook registered for `name` SEQUENTIALLY until one replaces the session's PERSONA (its
+   *  system prompt), returning that replacement.
+   *
+   *  Honoured only when the owning plugin declared `mutates:['prompt']` — the same grant that already
+   *  lets it shadow a prompt template through `registerPrompts`, so this is the narrower per-session form
+   *  of a reach it holds anyway. First writer wins: two plugins rewriting one prompt have no meaningful
+   *  merge, and concatenating them would produce a prompt neither asked for.
+   *
+   *  Fail-open like every other hook path: a throwing, timing-out or empty answer changes nothing. */
+  async emitPersona(name: PluginHookName, payload: unknown): Promise<string | undefined> {
+    for (let i = 0; i < this.hooks.length; i++) {
+      const hook = this.hooks[i];
+      if (hook === undefined || hook.name !== name) continue;
+      const plugin = this.hookOwners?.[i] ?? '<unknown>';
+      const { outcome, result, durationMs } = await this.runTraced(name, hook, payload);
+      const persona = outcome === 'ok' ? asPersona(result) : undefined;
+      if (persona === undefined) {
+        this.audit?.({ plugin, hook: name, durationMs, outcome });
+        continue;
+      }
+      const allowed = this.capabilities?.get(plugin)?.mutates?.includes('prompt') === true;
+      this.audit?.({ plugin, hook: name, durationMs, outcome: allowed ? 'ok' : 'rejected', changed: allowed ? 'prompt' : undefined });
+      if (allowed) return persona;
+    }
+    return undefined;
+  }
+
   /** Fire every hook registered for `name` SEQUENTIALLY until one VETOES the operation, returning that
    *  hook's reason. A veto is honoured only when the owning plugin declared `mutates:['tools']`; without
    *  it the veto is dropped and audited as 'rejected', exactly as `emitMutating` treats an unearned
@@ -194,6 +221,15 @@ export class PluginHookBus {
 function asAppendContext(outcome: HookOutcome): string | undefined {
   if (!outcome || typeof outcome !== 'object') return undefined;
   return (outcome).patch?.appendContext;
+}
+
+/** Extract a hook's `patch.persona` replacement prompt if it returned one, else undefined. An empty or
+ *  whitespace-only persona is NOT a replacement: a session with no system prompt would lose its identity,
+ *  which is never what a plugin means to ask for. */
+function asPersona(outcome: HookOutcome): string | undefined {
+  if (!outcome || typeof outcome !== 'object') return undefined;
+  const persona = (outcome).patch?.persona;
+  return typeof persona === 'string' && persona.trim() ? persona : undefined;
 }
 
 /** Extract a hook's `patch.denyToolCall` veto reason if it returned one, else undefined. An empty or
