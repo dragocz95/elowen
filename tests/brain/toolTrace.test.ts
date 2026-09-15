@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { traceForCall, ToolTraceLog } from '../../src/brain/toolTrace/record.js';
 import { segmentsForTraces, traceNotes } from '../../src/brain/toolTrace/segments.js';
 import { openEventsForCall, settleEventsForTrace } from '../../src/brain/toolTrace/liveEvents.js';
-import { MAX_TRACE_BYTES, MAX_TRACE_RECORDS, parseToolTraces, traceRowId, type ToolTrace } from '../../src/brain/toolTrace/types.js';
+import { MAX_TRACE_BYTES, MAX_TRACE_RECORDS, parseToolTraces, traceRowId } from '../../src/brain/toolTrace/types.js';
 
 /** A console tool result in the exact framing the terminal plugin produces. */
 const bashResult = (out: string, exitCode = 0) => ({

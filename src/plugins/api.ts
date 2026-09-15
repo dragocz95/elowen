@@ -188,6 +188,28 @@ export interface PluginCapabilities {
  *  `prompt` does not have it: `registerPrompts` installs a persistent template overlay that is resolved
  *  ahead of the core file on every render, and `patch.persona` replaces a session's system prompt — so
  *  the grant can rewrite who the agent is, for every conversation, until the plugin is removed. */
+/** Capability values that used to exist and no longer grant anything. A manifest may still declare one —
+ *  it was written against an older daemon — so the loader drops it and warns instead of refusing to load
+ *  a plugin whose only sin is naming a dead power. */
+const RETIRED_MUTATES: readonly string[] = ['memory'];
+
+/** Drop retired `mutates` values from a manifest's declared capabilities, reporting each one once.
+ *  Returns the capabilities unchanged when there is nothing to strip, so the common path allocates
+ *  nothing and `undefined` stays the deny-by-default empty claim. */
+export function stripRetiredMutates(
+  capabilities: PluginCapabilities | undefined,
+  onRetired?: (value: string) => void,
+): PluginCapabilities {
+  const declared: readonly string[] = capabilities?.mutates ?? [];
+  const retired = declared.filter((value) => RETIRED_MUTATES.includes(value));
+  if (retired.length === 0) return capabilities ?? {};
+  for (const value of retired) onRetired?.(value);
+  return {
+    ...capabilities,
+    mutates: declared.filter((value) => !RETIRED_MUTATES.includes(value)) as NonNullable<PluginCapabilities['mutates']>,
+  };
+}
+
 export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
   ['prompt', 'tools', 'events', 'workflow-dag', 'users'];
 

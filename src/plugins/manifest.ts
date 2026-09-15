@@ -355,6 +355,10 @@ const ManifestSchema = Type.Object({
     mutates: Type.Optional(Type.Array(Type.Union([
       Type.Literal('prompt'), Type.Literal('turnContext'),
       Type.Literal('tools'), Type.Literal('events'),
+      // RETIRED, still accepted so a manifest written against an older daemon keeps loading: the loader
+      // strips it and warns. Rejecting the whole manifest over a capability that never gated anything
+      // would take a working plugin offline for nothing.
+      Type.Literal('memory'),
       Type.Literal('workflow-dag'), Type.Literal('users'),
     ]))),
     reads: Type.Optional(Type.Array(Type.String())),

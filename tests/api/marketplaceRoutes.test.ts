@@ -141,22 +141,22 @@ describe('marketplace routes', () => {
   it('refuses to enable an installed plugin whose declared powers were not acknowledged', async () => {
     const base = tmpDir('mp-grants');
     const user = join(base, 'user');
-    writePlugin(user, 'weather', { capabilities: { mutates: ['prompt', 'memory', 'workflow-dag'] } });
+    writePlugin(user, 'weather', { capabilities: { mutates: ['prompt', 'memory', 'turnContext', 'workflow-dag'] } });
     const install = vi.fn(async () => {});
     const { app, config, adminTok } = setup({ install }, [user]);
 
     const bare = await app.request('/plugins/marketplace/weather/install', post(adminTok));
     expect(bare.status).toBe(409);
     // `installed: true` is the honest part: the folder IS on disk, it just is not switched on.
-    expect(await bare.json()).toEqual({ error: 'grants require consent', grants: ['memory', 'workflow-dag'], installed: true });
+    expect(await bare.json()).toEqual({ error: 'grants require consent', grants: ['prompt', 'workflow-dag'], installed: true });
     expect(install).toHaveBeenCalledWith('weather', { enable: false });
     expect(config.get().plugins.enabled).not.toContain('weather');
 
-    const partial = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { acknowledgeGrants: ['memory'] }));
+    const partial = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { acknowledgeGrants: ['prompt'] }));
     expect(partial.status).toBe(409);
     expect(config.get().plugins.enabled).not.toContain('weather');
 
-    const full = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { acknowledgeGrants: ['memory', 'workflow-dag'] }));
+    const full = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { acknowledgeGrants: ['prompt', 'workflow-dag'] }));
     expect(full.status).toBe(200);
     expect(config.get().plugins.enabled).toContain('weather');
   });
