@@ -632,7 +632,7 @@ describe('plugin contributions + logs + data routes', () => {
     const ok = await app.request('/plugins/discord/contributions', auth(adminTok));
     expect(ok.status).toBe(200);
     // No registry provider wired in this test → empty report (never a 500).
-    expect(await ok.json()).toEqual({ tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], hooks: [] });
+    expect(await ok.json()).toEqual({ tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], stepContexts: [], hooks: [] });
     expect((await app.request('/plugins/discord/contributions', auth(amyTok))).status).toBe(403);
     expect((await app.request('/plugins/ghost/contributions', auth(adminTok))).status).toBe(404);
   });

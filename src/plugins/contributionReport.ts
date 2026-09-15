@@ -7,18 +7,22 @@ interface ToolContribution extends NamedContribution {
   description?: string;
   schema?: string;
 }
-/** Unnamed contribution (prompt fragments / turn-context providers) — only the owning plugin is known. */
+/** Unnamed contribution (prompt fragments / turn- and step-context providers) — only the owning plugin
+ *  is known. */
 interface AnonContribution { plugin: string }
 
 /** The ACTUAL loaded contributions of the merged plugin registry, each tagged with the plugin that
  *  registered it. Distinct from the manifests' declarative `provides` (that's what a plugin CLAIMS on
- *  disk); this is what ended up live after load. Powers the admin runtime-introspection endpoint. */
+ *  disk); this is what ended up live after load. Powers the admin runtime-introspection endpoint — and
+ *  one web control: the mid-turn reminder knob is offered only when `stepContexts` is non-empty, because
+ *  a cadence with no provider is a dead control. */
 export interface PluginContributionReport {
   tools: ToolContribution[];
   skills: NamedContribution[];
   platforms: NamedContribution[];
   promptFragments: AnonContribution[];
   turnContexts: AnonContribution[];
+  stepContexts: AnonContribution[];
   hooks: NamedContribution[];
 }
 
@@ -51,13 +55,14 @@ export function buildContributionReport(registry: PluginRegistry): PluginContrib
     platforms: registry.platforms.map((p, i) => ({ name: p.name, plugin: registry.platformOwners[i] ?? UNKNOWN })),
     promptFragments: registry.promptFragments.map((_, i) => ({ plugin: registry.promptFragmentOwners[i] ?? UNKNOWN })),
     turnContexts: registry.turnContexts.map((_, i) => ({ plugin: registry.turnContextOwners[i] ?? UNKNOWN })),
+    stepContexts: registry.stepContexts.map((_, i) => ({ plugin: registry.stepContextOwners[i] ?? UNKNOWN })),
     hooks: registry.hooks.map((h, i) => ({ name: h.name, plugin: registry.hookOwners[i] ?? UNKNOWN })),
   };
 }
 
 /** The empty report returned when no plugin registry is wired (keeps the endpoint from 500-ing). */
 export function emptyContributionReport(): PluginContributionReport {
-  return { tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], hooks: [] };
+  return { tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], stepContexts: [], hooks: [] };
 }
 
 /** Project the merged registry down to just the contributions OWNED BY `name`. Same shape as
@@ -84,6 +89,9 @@ export function pluginContributions(registry: PluginRegistry, name: string): Plu
       .map(() => ({ plugin: name })),
     turnContexts: registry.turnContexts
       .filter((_, i) => registry.turnContextOwners[i] === name)
+      .map(() => ({ plugin: name })),
+    stepContexts: registry.stepContexts
+      .filter((_, i) => registry.stepContextOwners[i] === name)
       .map(() => ({ plugin: name })),
     hooks: registry.hooks
       .filter((_, i) => registry.hookOwners[i] === name)

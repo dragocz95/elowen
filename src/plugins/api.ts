@@ -5,6 +5,7 @@ import type { AskAnswer, AskQuestion, BrainCard, BrainInlineArtifact, PluginChat
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface } from '../brain/slashCommands.js';
+import type { StepContextInfo, StepContextRenderer } from '../brain/session/stepContext.js';
 import type { PlatformSurface } from '../shared/platformIdentity.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -24,6 +25,7 @@ export { GUEST_FILE_CHUNK_BYTES } from './environmentTypes.js';
 export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedProjectFileRoot, ManagedWorktreeAction, ProjectPreviewBinding } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
+export type { StepContextInfo, StepContextRenderer };
 
 /** The host's bridge to the DURABLE side of delegation: which sub-agents a conversation already ran,
  *  reading their stored final replies, and continuing one of them. Every operation is keyed on the parent
@@ -1714,6 +1716,13 @@ export interface TurnContextContribution {
   placement: TurnContextPlacement;
 }
 
+/** One registered mid-turn provider, plus nothing else: the step seam has no placement to choose (its
+ *  position is fixed, after the last tool result) and no per-provider cadence (the operator's knob is
+ *  one number for the whole session, so two plugins cannot drift into two reminder rhythms). */
+export interface StepContextContribution {
+  render: StepContextRenderer;
+}
+
 /** One notification target returned by a platform plugin. `id` is the platform's opaque delivery id;
  * core adds the encoded `value` used by config and cron storage before serving the row to the web UI. */
 export interface NotificationDestination {
@@ -1833,6 +1842,29 @@ export interface PluginContext {
    *  a live subsystem before reporting); it is awaited in registration order, and a rejected render is
    *  isolated exactly like a throwing sync one: the provider contributes nothing and the turn still runs. */
   registerTurnContext(fn: () => string | Promise<string>, options?: TurnContextOptions): void;
+  /** Register a provider of EPHEMERAL PER-STEP context — the mid-turn sibling of `registerTurnContext`.
+   *
+   *  A turn-context provider runs once, while a fresh prompt is composed, so everything it says is frozen
+   *  for the rest of that turn even when the turn runs an hour. A step provider runs again INSIDE the
+   *  turn: core calls it after the last tool result, every N tool calls, where N is the operator's
+   *  "mid-turn reminders" knob in Settings → Runtime. `info.toolCalls` says how many calls this turn has
+   *  made so far.
+   *
+   *  What it returns is EGRESS-ONLY: it reaches the model on the next request and is never persisted —
+   *  not into the transcript, the CLI, the web chat or a platform message. Nothing renders it to a human,
+   *  so if a reminder seems to do nothing, check the `brain-step-context` log line.
+   *
+   *  Its bytes are then FROZEN and append-only for the life of the turn, because rewriting anything
+   *  already sent is what drops the provider's prompt cache. So: keep it SHORT (a few hundred bytes; the
+   *  block accumulates one entry per reminder, it is never replaced), and do not depend on the wall clock
+   *  changing between calls — an already-sent reminder is never re-rendered.
+   *
+   *  Read `ctx.currentSessionId()` / `ctx.currentIdentity()` SYNCHRONOUSLY, before the first `await`: the
+   *  provider runs inside the turn's async scope and that scope does not survive your own suspension. A
+   *  key resolved after an await silently renders another conversation's state, or none. Must be
+   *  READ-ONLY — it sits on the request path of a working turn, so no writes and no network; returning
+   *  `''` contributes nothing, which is how a conversation this reminder does not apply to stays silent. */
+  registerStepContext(fn: StepContextRenderer): void;
   /** STUB: record a platform adapter (not started by the foundation). */
   registerPlatform(adapter: PlatformAdapter): void;
   /** Contribute admin-selectable proactive-notification targets for this platform. Deny-by-default: the
