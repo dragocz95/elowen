@@ -4,6 +4,7 @@ import type { ManagedProjectRef } from '../shared/projectExecution.js';
 import { currentAccountUserId, currentProjectRef, currentSessionId } from '../plugins/policyContext.js';
 import { fsSafeSegment } from '../shared/paths.js';
 import { planSlug } from '../shared/planSlug.js';
+import { suffixedUploadName } from './chatUploads.js';
 
 /** The `projectFiles` seam the guest artifact consumers call — the canonical contract, narrowed with a
  *  Pick rather than a hand-maintained parallel. environmentTypes is cycle-free (it reaches only
@@ -324,6 +325,138 @@ export async function writeGuestFile(
     return result.entry;
   } catch (error) {
     return `cannot write ${posix.basename(destination)}: ${(error as Error).message}`;
+  }
+}
+
+/** How many times a colliding upload name is suffixed inside the guest before it is refused — the same
+ *  bound the host path uses, for the same reason. */
+const GUEST_UPLOAD_MAX_COLLISIONS = 200;
+
+/** One uploaded file as it landed in the guest. `path` is an ABSOLUTE GUEST path: it is meaningful only
+ *  inside this project's environment, which is exactly where the turn that reads it runs. */
+export interface GuestUploadResult {
+  path: string;
+  name: string;
+  /** Path relative to the project's guest root — what the UI shows. */
+  relative: string;
+  size: number;
+}
+
+/** Regroup an arbitrary byte stream into buffers of at most `chunkSize`, WITHOUT ever holding more than
+ *  one chunk: the point of the upload path is that it is not bounded by what fits in memory, so a
+ *  regrouping that concatenated first would reinstate exactly the ceiling this feature removed. */
+async function* guestChunks(stream: AsyncIterable<Uint8Array>, chunkSize: number): AsyncGenerator<Buffer> {
+  let held: Buffer[] = [];
+  let heldBytes = 0;
+  for await (const piece of stream) {
+    let offset = 0;
+    while (offset < piece.length) {
+      const take = Math.min(chunkSize - heldBytes, piece.length - offset);
+      held.push(Buffer.from(piece.subarray(offset, offset + take)));
+      heldBytes += take;
+      offset += take;
+      if (heldBytes === chunkSize) {
+        yield Buffer.concat(held, heldBytes);
+        held = [];
+        heldBytes = 0;
+      }
+    }
+  }
+  if (heldBytes > 0) yield Buffer.concat(held, heldBytes);
+}
+
+/**
+ * Stream one upload into a managed project through the guest transport's chunked durable upload
+ * (`write-begin` → `write-chunk`* → `write-commit`, `write-abort` on any failure).
+ *
+ * `write-begin` with `expectedVersion: null` is CREATE-ONLY and resolves the target inside the guest, so
+ * the collision walk and the no-follow guarantee are the transport's own rather than a host-side check
+ * with a gap in it; an `already_exists` refusal simply means the next suffix. There is no type allow-list
+ * and no product size cap — `size` is the transport's own handle parameter, and the commit must account
+ * for exactly the bytes that were sent or the upload is aborted rather than reported short.
+ */
+export async function streamGuestUpload(
+  guest: GuestAccess,
+  input: {
+    /** The project's authoritative guest root (`managedGuestRoot`). */
+    root: string;
+    /** Directory under the root, e.g. `uploads/<account>/<YYYY-MM-DD>`. */
+    relativeDir: string;
+    /** The already-sanitized file name. */
+    baseName: string;
+    /** The client's declared byte count, already validated as a bounded non-negative integer. */
+    declaredSize: number;
+    body: AsyncIterable<Uint8Array>;
+  },
+): Promise<GuestUploadResult | string> {
+  const dir = posix.join(input.root, input.relativeDir);
+  const parents = await ensureGuestParents(guest, posix.join(dir, input.baseName));
+  if (parents !== true) return parents;
+
+  let begun: { uploadId: string; chunkSize: number; path: string } | undefined;
+  let name = input.baseName;
+  for (let n = 1; n <= GUEST_UPLOAD_MAX_COLLISIONS && !begun; n += 1) {
+    name = n === 1 ? input.baseName : suffixedUploadName(input.baseName, n);
+    const path = posix.join(dir, name);
+    try {
+      const result = await runOperation(guest, { kind: 'write-begin', path, expectedVersion: null, size: input.declaredSize });
+      if (result.kind !== 'write-begin') return `unexpected ${result.kind} response starting the upload of ${name}.`;
+      if (!result.uploadId || !Number.isSafeInteger(result.chunkSize) || result.chunkSize <= 0) {
+        return `managed filesystem returned an unusable upload handle for ${name}.`;
+      }
+      // The transport resolved the target itself, which is what makes the create-only claim atomic.
+      begun = { uploadId: result.uploadId, chunkSize: Math.min(result.chunkSize, GUEST_WRITE_OP_BYTES), path: result.resolvedPath || path };
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'already_exists') continue;
+      return `cannot start the upload of ${name}: ${(error as Error).message}`;
+    }
+  }
+  if (!begun) return `too many files named "${input.baseName}" in this folder today.`;
+
+  const handle = begun;
+  const abort = async (): Promise<void> => {
+    // A half-written upload is worse than none, and the handle holds guest-side state until it is told
+    // otherwise. Best effort: the failure already being reported is the one that matters.
+    try { await runOperation(guest, { kind: 'write-abort', path: handle.path, uploadId: handle.uploadId }); } catch { /* the original failure stands */ }
+  };
+
+  let sent = 0;
+  try {
+    for await (const chunk of guestChunks(input.body, handle.chunkSize)) {
+      const result = await runOperation(guest, {
+        kind: 'write-chunk', path: handle.path, uploadId: handle.uploadId, offset: sent, base64: chunk.toString('base64'),
+      });
+      if (result.kind !== 'write-chunk') { await abort(); return `unexpected ${result.kind} response uploading ${name}.`; }
+      sent += chunk.length;
+      if (typeof result.received !== 'number' || result.received !== sent) {
+        await abort();
+        return `managed filesystem lost track of ${name} while it was being uploaded.`;
+      }
+    }
+  } catch (error) {
+    await abort();
+    return `cannot upload ${name}: ${(error as Error).message}`;
+  }
+
+  // The declared size is the client's claim and the handle was opened against it; a stream that did not
+  // match it is a truncated or overlong upload, never a success worth committing.
+  if (sent !== input.declaredSize) {
+    await abort();
+    return `${name} arrived as ${sent} bytes where ${input.declaredSize} were declared.`;
+  }
+
+  try {
+    const result = await runOperation(guest, { kind: 'write-commit', path: handle.path, uploadId: handle.uploadId });
+    if (result.kind !== 'write-commit') { await abort(); return `unexpected ${result.kind} response finishing ${name}.`; }
+    // The commit is what proves the size: reporting the byte count we happened to send would report a
+    // number nothing on the far side ever confirmed.
+    if (!Number.isSafeInteger(result.entry.size) || result.entry.size !== sent) {
+      return `${name} was stored as ${result.entry.size} bytes where ${sent} were sent.`;
+    }
+    return { path: handle.path, name, relative: posix.join(input.relativeDir, name), size: result.entry.size };
+  } catch (error) {
+    await abort();
+    return `cannot finish the upload of ${name}: ${(error as Error).message}`;
   }
 }
 

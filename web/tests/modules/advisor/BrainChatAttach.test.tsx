@@ -6,6 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatProvider, useBrainChat, useBrainChatStatus } from '../../../modules/advisor/BrainChatProvider';
+import { uploadAttachment } from '../../../modules/advisor/brainChatAttachments';
 
 // An attachment is uploaded into the user's project and the message carries its PATH. That replaces the
 // base64 staging this file used to cover, and with it every reason the composer had to judge a file:
@@ -25,11 +26,15 @@ class FakeES {
 
 let sent: { text: string } | null = null;
 let uploaded: string[] = [];
+/** Every upload's query, so a test can assert WHAT the browser is allowed to tell the server. */
+let uploadQueries: URLSearchParams[] = [];
 let uploadStatus = 200;
 
 const server = setupServer(
   http.post('*/api/brain/uploads', ({ request }) => {
-    const name = new URL(request.url).searchParams.get('name') ?? '';
+    const query = new URL(request.url).searchParams;
+    uploadQueries.push(query);
+    const name = query.get('name') ?? '';
     uploaded.push(name);
     if (uploadStatus !== 200) return new HttpResponse(null, { status: uploadStatus });
     return HttpResponse.json({
@@ -59,7 +64,7 @@ afterEach(() => { server.resetHandlers(); localStorage.clear(); vi.unstubAllGlob
 afterAll(() => server.close());
 beforeEach(() => {
   (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES;
-  sent = null; uploaded = []; uploadStatus = 200;
+  sent = null; uploaded = []; uploadQueries = []; uploadStatus = 200;
 });
 
 let addFiles: (files: Iterable<File>) => Promise<void>;
@@ -135,5 +140,44 @@ describe('attaching a file', () => {
     await act(async () => { await addFiles([fileOf('x.bin')]); });
     expect(staged).toEqual([]);
     expect(await screen.findByText(/nepodařilo nahrát|could not be uploaded|nepodarilo nahrať/i)).toBeTruthy();
+  });
+
+  it('sends the conversation id and the declared size, and never a project or a path', async () => {
+    // Where a file lands is the conversation's business: the browser hands over an opaque session id and
+    // the file's length, and the server resolves the project and the destination itself. A client that
+    // could name a project — or a filesystem path — would be choosing somebody's storage for them.
+    const file = fileOf('01-kava.png');
+    Object.defineProperty(file, 'size', { value: 1586902 });
+    await uploadAttachment(file, 'brain-1-mu2h35tfzipb');
+
+    const query = uploadQueries[0]!;
+    expect(query.get('session')).toBe('brain-1-mu2h35tfzipb');
+    expect(query.get('size')).toBe('1586902');
+    expect(query.get('name')).toBe('01-kava.png');
+    // Nothing else is the client's to say — no project id, no execution kind, no path.
+    expect([...query.keys()].sort()).toEqual(['name', 'session', 'size']);
+  });
+
+  it('carries the declared size through the composer, where the conversation supplies the id', async () => {
+    await mount();
+    const file = fileOf('smlouva.pdf');
+    Object.defineProperty(file, 'size', { value: 4096 });
+    await act(async () => { await addFiles([file]); });
+    expect(uploadQueries[0]!.get('size')).toBe('4096');
+    expect(uploadQueries[0]!.has('path')).toBe(false);
+  });
+
+  it('shows the server’s own refusal, which is the half the user can act on', async () => {
+    // A placement refusal names what to do — "ask an administrator to assign you one". Reporting it as
+    // the generic transfer failure is what left a company instance unable to attach anything for days
+    // with nothing on screen to explain why.
+    server.use(http.post('*/api/brain/uploads', () => HttpResponse.json(
+      { error: 'no project to upload into — ask an administrator to assign you one' },
+      { status: 409 },
+    )));
+    await mount();
+    await act(async () => { await addFiles([fileOf('01-kava.png')]); });
+    expect(staged).toEqual([]);
+    expect(await screen.findByText(/ask an administrator to assign you one/i)).toBeTruthy();
   });
 });

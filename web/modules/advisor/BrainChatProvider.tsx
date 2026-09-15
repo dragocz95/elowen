@@ -1199,8 +1199,12 @@ function useBrainChatController(): BrainChatSlices {
     // Uploaded on attach rather than on send, so a large file is already on disk by the time the user
     // finishes typing instead of stalling the send, and a failure is reported while they can still act.
     for (const f of files) {
-      const a = await uploadAttachment(f).catch((): AttachRefusal => 'failed');
-      if (a === 'failed') { toast(t.brainChat.attachFailed, 'error'); continue; }
+      // The conversation decides where the file lands, so the upload carries its id — opaque, and
+      // re-authorized server-side against this account before anything is written.
+      const a = await uploadAttachment(f, boundSessionRef.current).catch((): AttachRefusal => ({ failed: true }));
+      // The server's own words when it sent any: "ask an administrator to assign you one" is the half a
+      // user can act on, and the generic copy is what kept a one-line configuration fault unexplained.
+      if ('failed' in a) { toast(a.reason ?? t.brainChat.attachFailed, 'error'); continue; }
       setAttachments((cur) => [...cur, a]);
     }
   };
