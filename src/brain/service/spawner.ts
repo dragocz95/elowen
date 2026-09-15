@@ -23,8 +23,9 @@ import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
 import { randomUUID } from 'node:crypto';
-import { currentCardEmitter, currentContributionUserId, currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
 import { codeModeApplies, codeModeVisibilityFor } from '../session/codeModeRoute.js';
+import { CodeModeCardFeed } from '../session/codeModeCard.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
@@ -459,6 +460,8 @@ export class LiveSessionSpawner {
     // plugin is not loaded, which reads as "code mode unavailable" and leaves the direct tool surface.
     const codeModeControl = codeModeApplies(providerEntry, model.id) ? plugins?.control('codeMode') : undefined;
     let codeModeToolNames: string[] = [];
+    // The only window the user has into a running script: nested calls emit no PI tool events.
+    const codeModeCard = new CodeModeCardFeed(sessionId);
     const allTools = composeSessionTools({
       kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
@@ -544,22 +547,30 @@ export class LiveSessionSpawner {
               // that does will throw — which reaches the script as a rejected promise, never as a silent
               // success. That failure mode is the reason this is a cast and not a fabricated context.
               invoke: async (input: unknown) => {
-                const result = await tool.execute(
-                  `code-mode-${randomUUID()}`,
-                  input,
-                  undefined,
-                  undefined,
-                  undefined as never,
-                );
-                // A refusal RESOLVES like any other result, which is right for the model and wrong for a
-                // script: JavaScript would read the refusal sentence as the tool's output and carry on.
-                // Turned back into a rejection so the failure is impossible to miss inside the cell.
-                const refusal = refusedToolResultText(result);
-                if (refusal !== undefined) throw new Error(refusal);
-                return result;
+                // A nested call emits no PI tool event, so the panel is the only place the user sees it.
+                const row = codeModeCard.callStarted(tool.name);
+                try {
+                  const result = await tool.execute(
+                    `code-mode-${randomUUID()}`,
+                    input,
+                    undefined,
+                    undefined,
+                    undefined as never,
+                  );
+                  // A refusal RESOLVES like any other result, which is right for the model and wrong for a
+                  // script: JavaScript would read the refusal sentence as the tool's output and carry on.
+                  // Turned back into a rejection so the failure is impossible to miss inside the cell.
+                  const refusal = refusedToolResultText(result);
+                  if (refusal !== undefined) throw new Error(refusal);
+                  codeModeCard.callSettled(row);
+                  return result;
+                } catch (err) {
+                  codeModeCard.callSettled(row, err instanceof Error ? err.message : String(err));
+                  throw err;
+                }
               },
             })),
-            notify: (text) => { currentCardEmitter()?.({ id: `code-mode-${sessionId}`, title: 'exec', items: [{ text }] }); },
+            notify: (text) => { codeModeCard.note(text); },
           });
           codeModeToolNames = tools.map((tool) => tool.name);
           return tools;
