@@ -33,6 +33,7 @@ import { installOpenAIHostedToolSearch } from './openAiHostedToolSearch.js';
 import { installAnthropicHostedToolSearch } from './anthropicHostedToolSearch.js';
 import { createAnthropicHostedToolReplay, type AnthropicHostedToolReplay } from './anthropicHostedToolReplay.js';
 import type { HostedToolSearchProvider } from './hostedToolSearch.js';
+import { codexDeveloperPlacement } from './codexDeveloperPlacement.js';
 import { logger } from '../../shared/logger.js';
 import { ProviderRequestRecorder } from './providerRequestRecorder.js';
 import { wrapFastModeRuntime, type FastModeRoute } from '../fastMode.js';
@@ -129,6 +130,9 @@ export interface SessionSpec {
    *  (they stay in the registry so ToolSearch can activate them), and the live session is wired onto it
    *  after creation so ToolSearch can change the active slice. Undefined → every tool starts active. */
   toolSearch?: ToolSearchHandle;
+  /** Whether this session sends Codex's `use_responses_lite` request shape. Decided by the caller from
+   *  the same code-mode predicate that composes the `exec` tool surface. */
+  codexDeveloperPlacement?: boolean;
   /** Explicitly AUTH-BOUND hosted route resolved from BrainProviderEntry.type by the caller. The factory
    *  never infers OAuth from a model/provider label; compaction may route requests elsewhere. */
   hostedToolSearch?: HostedToolSearchProvider;
@@ -195,6 +199,10 @@ export interface BrainResourceLoaderOptions {
   prompts?: PromptTemplate[];
   contextFiles?: boolean;
   codexReasoningFix?: boolean;
+  /** Send the request in Codex's `use_responses_lite` shape: `instructions` emptied, the prompt and the
+   *  tools spliced into `input` as developer items, `parallel_tool_calls` off. Set for code-mode sessions
+   *  only — it moves the whole cached prefix, so every other codex session keeps today's body. */
+  codexDeveloperPlacement?: boolean;
   /** Log the NAMES of the response headers Kimi returns, to learn whether it exposes a rate-limit/quota
    *  signal (the CLI rail already renders one for ChatGPT). A measurement step, not a feature. */
   kimiHeaderProbe?: boolean;
@@ -464,6 +472,7 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
     promptsOverride: () => ({ prompts, diagnostics: [] }),
     extensionFactories: [
       ...(o.codexReasoningFix ? [codexReasoningSummary] : []),
+      ...(o.codexDeveloperPlacement ? [codexDeveloperPlacement] : []),
       ...(o.kimiHeaderProbe ? [kimiHeaderProbe] : []),
       ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
       ...(o.compactionCircuitBreakerExtension ? [o.compactionCircuitBreakerExtension] : []),
@@ -616,6 +625,7 @@ export class BrainSessionFactory {
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
       skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
       codexReasoningFix: spec.model.provider === 'openai-codex',
+      codexDeveloperPlacement: spec.codexDeveloperPlacement === true,
       kimiHeaderProbe: spec.model.provider === 'kimi-coding',
       compactionModelRouteExtension: compactionModelRoute?.extension,
       inSessionCompactionExtension: inSessionCompaction?.extension,

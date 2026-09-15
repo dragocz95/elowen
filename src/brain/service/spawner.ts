@@ -833,6 +833,9 @@ export class LiveSessionSpawner {
         }),
       } : {}),
       tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,
+      // The same predicate that composed the `exec` surface also chooses the request SHAPE, so a session
+      // never gets one half of Codex's arrangement without the other.
+      codexDeveloperPlacement: codeModeControl !== undefined,
       thinkingLevel: opts.thinkingLevel, requestProfile,
       fastMode: { enabled: fastEnabled, routeFor: fastRouteFor },
       autoCompact: opts.autoCompact, autoCompactAtPct,

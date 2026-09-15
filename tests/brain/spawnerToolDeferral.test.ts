@@ -196,6 +196,9 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     expect(names).toEqual(expect.arrayContaining(['exec', 'wait']));
     expect(names).not.toContain('ToolSearch');
     expect((withCodeMode.create.mock.calls.at(-1)?.[0] as { hostedToolSearch?: unknown }).hostedToolSearch).toBeUndefined();
+    // The same predicate also selects Codex's request shape, so the tool surface and the wire arrangement
+    // can never disagree.
+    expect((withCodeMode.create.mock.calls.at(-1)?.[0] as { codexDeveloperPlacement?: unknown }).codexDeveloperPlacement).toBe(true);
     // The prize: the tools that WOULD have been withheld reach the script API undeferred, so the exec
     // catalogue declares their full signature instead of hiding them behind a search the model cannot use.
     expect(composed.filter((tool) => tool.deferred)).toEqual([]);
@@ -206,6 +209,7 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     const withoutCodeMode = makeSpawner(registryWithMcpTools(6), () => runtime(5), codexConfig(false));
     await withoutCodeMode.spawn();
     expect((withoutCodeMode.create.mock.calls.at(-1)?.[0] as { hostedToolSearch?: unknown }).hostedToolSearch).toBe('openai');
+    expect((withoutCodeMode.create.mock.calls.at(-1)?.[0] as { codexDeveloperPlacement?: unknown }).codexDeveloperPlacement).toBe(false);
   });
 
   it('wires the production ToolSearch handle with plugin ownership and wildcard permission semantics', async () => {
