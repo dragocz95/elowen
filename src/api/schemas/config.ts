@@ -69,6 +69,7 @@ export const runtimeLimitsPatchSchema = z.object({
   memoryVitalityWeightPerMille: z.number().optional(),
   memoryCuratorMaxOps: z.number().optional(),
   toolDeferThreshold: z.number().optional(),
+  stepContextEveryToolCalls: z.number().optional(),
   eventRetentionDays: z.number().optional(),
   providerRequestRetentionDays: z.number().optional(),
   providerRequestRetentionMiB: z.number().optional(),
