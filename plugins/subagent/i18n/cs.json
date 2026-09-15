@@ -72,8 +72,10 @@
       "helpBody": "Systémový prompt agenta: jeho role, omezení a způsob reportování.",
       "workspaceEyebrow": "Agenti",
       "workspaceReady": "Agenti načteni",
-      "pinsTitle": "Modely vestavěných agentů",
-      "pinsHint": "Vyberte model, na kterém poběží každý vestavěný agent. Volba platí pouze pro vaše delegace; při volbě Automaticky zvolí model asistent podle úkolu.",
+      "identityTitle": "Agent",
+      "builtinReadOnly": "Je součástí Elowenu a nelze jej upravit",
+      "pinLabel": "Model",
+      "pinHint": "Model, na kterém vám poběží každý nový subagent tohoto typu. Volba platí pouze pro vaše delegace; při volbě Automaticky zvolí model asistent podle úkolu.",
       "pinsUnavailable": "Nastavení agentů pro tento účet není k dispozici.",
       "pinAutomatic": "Automaticky",
       "pinUnavailable": "Již není nakonfigurován"

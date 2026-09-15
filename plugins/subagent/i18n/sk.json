@@ -72,8 +72,10 @@
       "helpBody": "Systémový prompt agenta — jeho rola, mantinely a ako má reportovať.",
       "workspaceEyebrow": "Agenti",
       "workspaceReady": "Agenti načítaní",
-      "pinsTitle": "Modely vstavaných agentov",
-      "pinsHint": "Vyberte model, na ktorom pobeží každý vstavaný agent. Voľba platí iba pre vaše delegácie; pri voľbe Automaticky zvolí model asistent podľa úlohy.",
+      "identityTitle": "Agent",
+      "builtinReadOnly": "Je súčasťou Elowenu a nedá sa upraviť",
+      "pinLabel": "Model",
+      "pinHint": "Model, na ktorom vám pobeží každý nový subagent tohto typu. Voľba platí iba pre vaše delegácie; pri voľbe Automaticky zvolí model asistent podľa úlohy.",
       "pinsUnavailable": "Nastavenie agentov pre tento účet nie je k dispozícii.",
       "pinAutomatic": "Automaticky",
       "pinUnavailable": "Už nie je nakonfigurovaný"
