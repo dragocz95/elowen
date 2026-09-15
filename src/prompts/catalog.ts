@@ -18,13 +18,17 @@ export interface PromptCatalogEntry {
 }
 
 export const EDITABLE_PROMPTS: PromptCatalogEntry[] = [
+  // The persona is composed from ordered PARTS (see `personaTemplatesFor`): identity, then the harness,
+  // then one of the two sets of work rules. Each part is editable on its own and they all declare the same
+  // vars, so an override written against any of them renders the same way. `elowen` is the identity part
+  // and keeps the name every stored account override is keyed by.
   { name: 'elowen', group: 'advisor', vars: ['userName', 'personality', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
+  { name: 'elowen-harness', group: 'advisor', vars: ['userName', 'personality', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
+  { name: 'elowen-work', group: 'advisor', vars: ['userName', 'personality', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
+  // OpenAI Codex's own work rules, selected when code mode is active: those models are trained against
+  // this exact text, so it is carried verbatim rather than paraphrased.
+  { name: 'codex-work', group: 'advisor', vars: ['userName', 'personality', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
   { name: 'elowen-platform', group: 'advisor', vars: ['ownerName', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
-  // The codex-family variant of the base template, selected by `personaTemplatesFor` when code mode is
-  // active: the same identity, memory, permission and language rules, with the work rules written in the
-  // vocabulary those models were trained against. Same vars as `elowen`, so an override written for one
-  // renders in the other.
-  { name: 'elowen-codex', group: 'advisor', vars: ['userName', 'personality', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
   // A scheduled/unattended turn (any plugin that fires timer-driven work — the bundled cronjob today)
   // gets its OWN focused system prompt instead of the coding-agent base: identity, channel-only delivery,
   // and outcome-reporting rules. Selected by the generic `scheduled` access flag, not any plugin name.
