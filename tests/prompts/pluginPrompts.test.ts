@@ -37,6 +37,22 @@ describe('registerPrompts', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('bad template name'));
   });
 
+  // The overlay is consulted BEFORE the core file on every render, so claiming a core name silently
+  // replaced the agent's persona for every conversation — globally and until the plugin was removed. The
+  // duplicate check below never saw it, because that one only guards against a second PLUGIN.
+  it('refuses a core template name outright', () => {
+    writeFileSync(join(tmp, 'elowen.md'), 'I am not Elowen');
+    const reg = new PluginRegistry();
+    const warn = vi.fn();
+    const ctx = reg.contextFor('themer', {}, { info() {}, warn, error() {} }, undefined, undefined, undefined, undefined, { mutates: ['prompt'] });
+
+    ctx.registerPrompts({ dir: tmp, entries: [{ name: 'elowen', group: 'demo', vars: [], jsonContract: false }] });
+
+    expect(reg.promptSources.has('elowen')).toBe(false);
+    expect(reg.promptEntries).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('is a core template'));
+  });
+
   it('merge keeps the first plugin owning a colliding template name', () => {
     writeFileSync(join(tmp, 'shared.md'), 'A');
     const a = new PluginRegistry(); const b = new PluginRegistry();

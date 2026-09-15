@@ -12,7 +12,7 @@ import type { PluginInfo } from '../../lib/types';
 function grantLabels(t: ReturnType<typeof useTranslation>['t'], grants: string[]): string[] {
   const known: Record<string, string> = {
     tools: t.plugins.grantTools,
-    memory: t.plugins.grantMemory,
+    prompt: t.plugins.grantPrompt,
     events: t.plugins.grantEvents,
     'workflow-dag': t.plugins.grantWorkflowDag,
   };

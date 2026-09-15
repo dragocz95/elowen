@@ -1515,7 +1515,7 @@ export const en = {
     grantsIntro: 'This plugin asks for access that outlives a single reply. Enabling it grants:',
     grantsConfirm: 'Enable and grant',
     grantTools: 'Change the tools available to the agent, including replacing existing ones',
-    grantMemory: 'Read and write your stored memories',
+    grantPrompt: 'Replace the system prompt and prompt templates',
     grantEvents: 'Write to the activity log',
     grantWorkflowDag: 'Change running sub-agent workflows',
     dependencyOn: 'This add-on needs {plugin} switched on first — that is what provides {control}.',
