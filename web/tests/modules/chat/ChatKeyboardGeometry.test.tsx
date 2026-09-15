@@ -194,6 +194,66 @@ describe('iOS soft keyboard geometry on /chat', () => {
     await waitFor(() => expect(published()).toEqual({ inset: 336, open: 'true' }));
   });
 
+  it('preserves the resting baseline across blur and refocus after the surface shrinks to the keyboard', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published()).toEqual({ inset: 336, open: 'true' }));
+    resizeSurface(508);
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'true' }));
+
+    composer.blur();
+    await settle();
+    // An additional close-animation resize with the same metrics must not poison the baseline either.
+    viewport.dispatchEvent(new Event('resize'));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    composer.focus();
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'true' }));
+
+    // The retained-focus close still ends the keyboard lifecycle when the real resting band returns.
+    viewport.height = PHONE.height;
+    resizeSurface(PHONE.height);
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'false' }));
+    expect(document.activeElement).toBe(composer);
+  });
+
+  it('projects the preserved baseline through rotation while a blurred keyboard is closing', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published().open).toBe('true'));
+    resizeSurface(508);
+    await waitFor(() => expect(published().inset).toBe(0));
+    composer.blur();
+    await settle();
+
+    // The layout and visible band rotate before focus returns, with the keyboard still taking room.
+    window.innerWidth = 844;
+    window.innerHeight = 390;
+    resizeSurface(220);
+    viewport.set({ width: 844, height: 220 });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    composer.focus();
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'true' }));
+    viewport.height = 390;
+    resizeSurface(390);
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'false' }));
+
+    // A completed close releases the baseline for an ordinary unfocused viewport resize.
+    composer.blur();
+    await settle();
+    resizeSurface(300);
+    viewport.set({ height: 300 });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    composer.focus();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(published()).toEqual({ inset: 0, open: 'false' });
+  });
+
   it('reads offsetTop on window scroll and converts the overlap to CSS pixels once', async () => {
     renderChat(<main><ChatView /></main>);
     const composer = await screen.findByTestId('chat-composer');

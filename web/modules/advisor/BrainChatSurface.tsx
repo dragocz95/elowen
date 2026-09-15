@@ -2139,7 +2139,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     const viewportWidth = () => window.visualViewport?.width ?? window.innerWidth;
     let restingHeight = viewportHeight();
     let restingWidth = viewportWidth();
-    let keyboardWasOpen = false;
+    let keyboardSessionOpen = false;
     let frame = 0;
 
     const setPx = (name: string, value: number) => {
@@ -2158,29 +2158,30 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         const surfaceBottom = root.getBoundingClientRect().bottom;
         const visibleBottom = (currentViewport?.offsetTop ?? 0) + currentHeight;
         const overlap = Math.max(0, surfaceBottom - visibleBottom);
-        // A blur may precede the closing animation and its last resize may still carry keyboard-sized
-        // metrics. Learn only a band tall enough to contain the surface without panning, never after
-        // an arbitrary number of "stable" frames. The next real layout/viewport change samples again.
-        if (!focused && currentHeight >= surfaceBottom - 1) {
-          restingHeight = currentHeight;
-          restingWidth = currentWidth;
-          keyboardWasOpen = false;
-        }
         const restingLandscape = restingWidth > restingHeight;
         const currentLandscape = currentWidth > currentHeight;
-        const layoutRotated = focused && keyboardWasOpen
+        const layoutRotated = keyboardSessionOpen
           && Math.abs(currentWidth - restingWidth) >= 1
           && currentLandscape !== restingLandscape;
         if (layoutRotated) {
-          // A focused keyboard survives rotation. Project the new resting height from the previous layout's
-          // width (the axes exchanged) instead of comparing the new portrait/landscape viewport against a
-          // baseline from the old orientation, which can falsely close the keyboard in one direction.
+          // A pending close after blur also survives rotation. Project the resting height from the old
+          // layout's width (the axes exchanged), rather than comparing the new viewport to a baseline
+          // from the old orientation, which can falsely close the keyboard in one direction.
           const previousRestingWidth = restingWidth;
           restingWidth = currentWidth;
           restingHeight = previousRestingWidth;
         }
+        // Blur ends the composer's inset, not the keyboard's viewport lifecycle. The surface itself
+        // may already be keyboard-sized, so fitting inside it is NOT proof of a resting viewport.
+        // Keep the original baseline until the visible height returns, even across repeated blur/resize
+        // events. Rotation projects that baseline first; it must never learn the reduced visual height.
+        if (currentHeight >= restingHeight - 1) keyboardSessionOpen = false;
+        if (!focused && !keyboardSessionOpen && currentHeight >= surfaceBottom - 1) {
+          restingHeight = currentHeight;
+          restingWidth = currentWidth;
+        }
         const keyboardOpen = focused && (overlap > 1 || currentHeight < restingHeight - 1 || layoutRotated);
-        keyboardWasOpen = keyboardOpen;
+        keyboardSessionOpen ||= keyboardOpen;
         // Padding may only remove the part of THIS surface below the visible band. Its border box
         // stays fixed, so measuring it cannot feed the padding back into the next calculation.
         const visualBottomOffset = keyboardOpen && currentViewport ? overlap / uiZoom() : 0;
