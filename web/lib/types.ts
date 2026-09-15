@@ -716,8 +716,10 @@ export interface PluginHookExecutions {
 
 /** The server-derived next fire of one scheduled job. Every field of it is the scheduler's own
  *  reading of its configured timezone, active hours and catch-up rules; the browser never expands a
- *  schedule itself. Null (or absent, from an older daemon) for a paused job and a spent one-shot. */
-export interface CronNextOccurrence {
+ *  schedule itself. Null (or absent, from an older daemon) for a paused job and a spent one-shot.
+ *  Kept unexported for now: only `CronJob.nextOccurrence` carries it, and knip holds the module for
+ *  a consumer — the calendar DTO types live in the registry plugin's own runtime types. */
+interface CronNextOccurrence {
   occurrenceId: string;
   scheduledAt: string;
   expectedAt: string;
