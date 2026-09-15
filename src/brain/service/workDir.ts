@@ -154,6 +154,34 @@ export function switchableProjects(policy: Policy, projects?: { list(): Project[
     .map(({ project }) => ({ id: project.id, slug: project.slug, path: project.path }));
 }
 
+export interface SelectableProjectTarget {
+  id: number;
+  slug: string;
+  executionRef: ProjectExecutionRef;
+}
+
+/** Project execution targets visible to the current session. Managed targets are resolved by registry
+ * identity and live ACL only; host filesystem validation is deliberately never applied to them. */
+export function selectableProjectTargets(
+  policy: Policy,
+  projects?: { list(): Project[] },
+): SelectableProjectTarget[] {
+  if (!projects) return [];
+  return projects.list()
+    .filter((project) => project.lifecycle === 'active')
+    .flatMap((project): SelectableProjectTarget[] => {
+      if (project.executionKind === 'managed') {
+        const ref: ProjectExecutionRef = { kind: 'managed', projectId: project.id };
+        const allowed = policy.allowedProjectIds === 'all' || policy.allowedProjectIds.has(project.id);
+        return liveManagedProject(projects, ref) && allowed && policy.canAccessProject?.(project.id) === true
+          ? [{ id: project.id, slug: project.slug, executionRef: ref }]
+          : [];
+      }
+      const target = projectMoveTarget(policy, projects, project.id);
+      return target ? [{ id: project.id, slug: project.slug, executionRef: { kind: 'host', projectId: project.id } }] : [];
+    });
+}
+
 export interface MoveSessionWorkDirInput {
   store: Pick<BrainStore, 'getSession' | 'setWorkDir' | 'lastMessageAt' | 'appendSessionEvent'>;
   policy: Policy;

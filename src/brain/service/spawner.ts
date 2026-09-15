@@ -22,7 +22,9 @@ import { estimateTokens, formatSkillsForPrompt } from '@earendil-works/pi-coding
 import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '../session/forkPrefix.js';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
-import { currentContributionUserId, currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentWorkDir, currentToolPolicy, currentPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
+import { createProjectExecutionBoundary } from '../session/projectExecutionBoundary.js';
+import { buildProjectTool } from '../tools/projectTool.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
@@ -81,6 +83,8 @@ interface SpawnerDeps {
   /** Registered projects — the write path resolves the current turn's project id to a slug for the
    *  lazily created project category (see MemoryToolDeps.projects). */
   projects?: BrainDeps['projects'];
+  /** Existing BrainService selection writer, with model calls opting out of environment startup. */
+  selectProjectExecution?: (userId: number, ref: import('../../shared/projectExecution.js').ProjectExecutionRef, session?: string, opts?: { startEnvironment?: boolean }) => Promise<unknown>;
   policy?: BrainDeps['policy'];
   /** The daemon-wide plugin registry (undefined when plugins aren't wired at all). */
   plugins(): Promise<PluginRegistry | undefined>;
@@ -452,6 +456,15 @@ export class LiveSessionSpawner {
     const planSafeToolNames = new Set([...BUILTIN_TOOL_PLAN_SAFE, ...(plugins?.toolPlanSafe ?? [])]);
     let toolSearchHandle: ToolSearchHandle | undefined;
     const sessionKind = ownerChatShape ? 'owner-chat' : (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel');
+    const projectCurrent = () => this.d.store.getProjectExecution(sessionId) ?? execution.projectRef;
+    const projectBoundary = this.d.selectProjectExecution
+      ? createProjectExecutionBoundary({
+          current: projectCurrent,
+          commit: async (ref) => {
+            await this.d.selectProjectExecution!(ownerUserId, ref, sessionId, { startEnvironment: false });
+          },
+        })
+      : undefined;
     const allTools = composeSessionTools({
       kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
@@ -506,6 +519,15 @@ export class LiveSessionSpawner {
         buildShareFileTool({ imagesDir: this.d.chatImagesDir, sandbox }),
       ],
       sandbox,
+      project: () => [buildProjectTool(projectBoundary && this.d.selectProjectExecution ? {
+        sessionId,
+        ownerUserId,
+        policy: () => currentPolicy() ?? opts.policy,
+        projects: this.d.projects,
+        current: projectCurrent,
+        request: (target) => projectBoundary.request(target),
+        canSwitch: () => !opts.delegatedAccess && !isChannelSession(sessionId),
+      } : undefined)],
       pluginTools,
       // …and, in a room, which of them belong to ONE account. Absent everywhere else, where the whole
       // composed set already belongs to whoever the session was composed for.
@@ -696,6 +718,7 @@ export class LiveSessionSpawner {
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
       ...(opts.spawnOrigin ? { spawnOrigin: opts.spawnOrigin } : {}),
       executionRef: execution.initialRef,
+      projectExecutionBoundary: projectBoundary,
       ...(managed ? { contextFiles: false } : {}),
       seedMessages: opts.seedMessages,
       ...(opts.forkSeed ? { forkSeed: opts.forkSeed } : {}),

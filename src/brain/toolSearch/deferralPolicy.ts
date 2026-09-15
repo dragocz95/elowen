@@ -8,7 +8,7 @@ const NEVER_DEFER: readonly string[] = [
   'ToolSearch',
   'Read', 'Edit', 'Write', 'Search', 'Grep', 'Glob', 'ListDir', 'FileInfo', 'GitStatus',
   'Bash', 'ListProcesses', 'ProcessOutput', 'KillProcess',
-  'AskUserQuestion', 'ShareImage', 'ShareFile', 'ExitPlanMode', 'Todo*',
+  'AskUserQuestion', 'ShareImage', 'ShareFile', 'ExitPlanMode', 'Project', 'Todo*',
   'Elowen*', 'Memory*', 'Lsp*', 'Delegate*', 'Workflow*',
 ];
 

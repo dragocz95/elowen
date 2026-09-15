@@ -1,6 +1,7 @@
 import { createToolSearchHandle, toolSearchTool } from '../toolSearch/toolSearchTool.js';
 import { buildExitPlanModeTool } from './exitPlanMode.js';
 import { buildMemoryTools } from './memoryTools.js';
+import { buildProjectTool } from './projectTool.js';
 import { buildShareFileTool } from './shareFileTool.js';
 import { buildShareImageTool } from './shareImageTool.js';
 export type BuiltinToolGroup = 'memory' | 'image' | 'core';
@@ -20,6 +21,7 @@ export const BUILTIN_TOOL_ICONS: Record<string, string> = {
   'ShareImage': '🖼',
   'ShareFile': '📎',
   'ExitPlanMode': '📋',
+  'Project': '📁',
 };
 
 /** Output-visibility policy for the brain's BUILT-IN tools (the co-located equivalent of a plugin
@@ -78,6 +80,7 @@ export function builtinToolMetas(): { name: string; label: string; description?:
   const sharing = [buildShareImageTool(undefined as never), buildShareFileTool(undefined as never)].map(meta('image'));
   const session = [
     toolSearchTool(createToolSearchHandle(new Set())),
+    buildProjectTool(undefined),
     buildExitPlanModeTool(),
   ].map(meta('core'));
   return [...memory, ...sharing, ...session];

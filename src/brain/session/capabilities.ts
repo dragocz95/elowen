@@ -83,6 +83,8 @@ export interface CapabilitySpec {
    *  central store. Resolved live per call; absent ⇒ managed plan turns refuse honestly (host turns
    *  are unaffected). Wired by the session spawner at composition time. */
   sandbox?: SandboxResolver;
+  /** Session-local Project list/switch control. */
+  project?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
   /** name → the accounts a composed plugin tool belongs to. Set only where a session composes several
    *  accounts' owner-scoped tools — a shared room (see PluginRegistry.sharedRoomToolOwners). Every other
@@ -351,13 +353,14 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // owner rather than only while planning, mirroring the reference: the tool is what REFUSES outside plan
   // mode, and a tool that vanishes cannot explain itself to a model that reaches for it.
   const planTools = ownerChat ? [buildExitPlanModeTool({ sandbox: spec.sandbox })] : [];
+  const projectTools = spec.project?.() ?? [];
   const pluginTools = spec.pluginTools.map((t) =>
     gateToolAccess(t, spec.onToolResult, spec.onToolCall, spec.personalToolOwners?.get(t.name)));
 
   // Build every real group exactly once BEFORE policy evaluation. This is deliberately the same ordered
   // sequence as the legacy composition with ToolSearch removed: policy observes the full registered set,
   // while an empty deferred result leaves every existing definition and byte position untouched.
-  const withoutToolSearch = [...memoryTools, ...shareImageTools, ...pluginTools, ...planTools];
+  const withoutToolSearch = [...memoryTools, ...shareImageTools, ...projectTools, ...pluginTools, ...planTools];
   const deferred = spec.toolDeferral
     ? computeDeferredToolNames(
         toolDeferralCandidates(withoutToolSearch, spec.toolDeferral, spec.personalToolOwners),
@@ -374,7 +377,7 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // `description`, while the others use optional leading `_reason` (ToolSearch/mcp__* pass through).
   // The tools then take the deny and granular permission gates before the status field is stripped from
   // the arguments the inner handler receives.
-  const tools = [...memoryTools, ...toolSearchTools, ...shareImageTools, ...pluginTools, ...planTools]
+  const tools = [...memoryTools, ...toolSearchTools, ...shareImageTools, ...projectTools, ...pluginTools, ...planTools]
     .map((tool) => capExternalToolSchema(tool, (cap) => capped.push(cap)))
     .map(withReason).map(gateDeniedTools).map(gatePermissions).map(stripReason);
   if (capped.length > 0) {

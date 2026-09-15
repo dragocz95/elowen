@@ -34,7 +34,7 @@ function decisions(
 
 describe('eligibility safety', () => {
   it('pins core tools, ExitPlanMode, and Todo tools', () => {
-    for (const name of ['ToolSearch', 'Read', 'Bash', 'ExitPlanMode', 'TodoWrite', 'TodoRead']) {
+    for (const name of ['ToolSearch', 'Read', 'Bash', 'ExitPlanMode', 'Project', 'TodoWrite', 'TodoRead']) {
       expect(isNeverDeferred(name)).toBe(true);
       expect(isDeferrable(name)).toBe(false);
     }

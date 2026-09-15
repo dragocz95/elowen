@@ -74,6 +74,8 @@ export interface SessionSpec {
   spawnOrigin?: SpawnOrigin;
   /** Trusted initial target, persisted atomically with a new personal conversation. */
   executionRef?: ProjectExecutionRef;
+  /** Model-only Project switch commit, installed at the awaited next-step boundary. */
+  projectExecutionBoundary?: { install(session: AgentSession): void };
   /** Imported platform transcript rows inserted atomically before history rehydration. */
   seedMessages?: { id: string; role: 'user' | 'assistant'; content: unknown }[];
   /** What a FORK child needs to report whether it actually read its parent's prompt cache, measured on its
@@ -883,6 +885,8 @@ export class BrainSessionFactory {
     // Outermost turn-boundary owner: a submitted plan must skip compaction and every other next-step
     // preparer before PI emits the normal terminal lifecycle for the run.
     installExitPlanModeTermination(session);
+    // Project travel runs after compaction and after plan termination has had a chance to cancel the step.
+    spec.projectExecutionBoundary?.install(session);
 
     // Count compaction outcomes for the circuit breaker installed above. Its cancel gate reads this
     // count on the next `session_before_compact`, so a session that cannot summarize stops trying.

@@ -328,6 +328,7 @@ export class BrainService {
       get toolSearchIndex() { return d.toolSearchIndex; },
       get projects() { return d.projects; },
       get policy() { return d.policy; },
+      selectProjectExecution: (userId, ref, session, opts) => this.selectProjectExecution(userId, ref, session, opts),
       plugins: () => this.resolvePlugins(),
       factory: this.factory,
       sessionTaps: (sessionId) => this.attachments.sessionTaps.get(sessionId) ?? [],
@@ -1630,10 +1631,10 @@ export class BrainService {
    *
    *  Nothing may be running. A turn, a child session or a tracked job in flight would keep executing
    *  against the target it was launched with while the conversation claimed to be somewhere else. */
-  async selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string): Promise<{ projectRef: ProjectExecutionRef; workDir: string; operationId?: string }> {
+  async selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string, opts: { startEnvironment?: boolean } = {}): Promise<{ projectRef: ProjectExecutionRef; workDir: string; operationId?: string }> {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
     const live = this.sessions.get(sessionId);
-    if (live && (live.session.isStreaming || this.sessions.hasActiveChildren(sessionId) || processRegistry.runningJobCountForSession(sessionId) > 0)) throw new Error('conversation still has active work');
+    if (live && ((live.session.isStreaming && opts.startEnvironment !== false) || this.sessions.hasActiveChildren(sessionId) || processRegistry.runningJobCountForSession(sessionId) > 0)) throw new Error('conversation still has active work');
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
     // A conversation nobody has spoken in yet has no live record, and its target is still the person's to
     // choose: the selection is durable state on the row, and the spawn that follows reads it. Only the
@@ -1667,7 +1668,11 @@ export class BrainService {
       const slug = managed ? this.d.projects?.list().find((p) => p.id === managed.projectId)?.slug : undefined;
       recordSessionEvent(this.d.store, sessionId, live, 'cwd', slug ?? effective.workDir);
     }
-    return { projectRef: effective.projectRef, workDir: effective.workDir, ...(await this.ensureSelectedEnvironment(userId, effective.projectRef)) };
+    return {
+      projectRef: effective.projectRef,
+      workDir: effective.workDir,
+      ...(opts.startEnvironment === false ? {} : await this.ensureSelectedEnvironment(userId, effective.projectRef)),
+    };
   }
 
   /** Record the intent to have the selected environment running, and hand back the operation that will
