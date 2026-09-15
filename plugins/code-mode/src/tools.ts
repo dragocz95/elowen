@@ -123,9 +123,23 @@ function toCellBindings(nested: readonly NestedToolBinding[]): CellToolBinding[]
   }));
 }
 
-/** The live sink of each open cell, keyed by cell id, so a `wait` reports the rows its cell recorded
- *  since the last report. Cleared when the cell settles: only a YIELDED cell can be waited on again. */
-const traces = new Map<string, CodeModeTraceSink>();
+/** The live sink of each open cell, so a `wait` reports the rows its cell recorded since the last
+ *  report. Cleared when the cell settles: only a YIELDED cell can be waited on again.
+ *
+ *  Keyed by SESSION first, because a cell id is a per-session counter (`session.ts`, `nextCellId`): a
+ *  flat map would hand one sender's recorded tool names, commands and diffs to whoever else reached
+ *  cell "1" first. The session object is the isolation boundary `wait` already resolves against, so
+ *  holding it weakly ties a trace's lifetime to the session that owns the cell. */
+const traces = new WeakMap<CodeModeSession, Map<string, CodeModeTraceSink>>();
+
+/** The per-session cell→sink map, created on first use. */
+function tracesOf(session: CodeModeSession): Map<string, CodeModeTraceSink> {
+  const existing = traces.get(session);
+  if (existing !== undefined) return existing;
+  const created = new Map<string, CodeModeTraceSink>();
+  traces.set(session, created);
+  return created;
+}
 
 export function buildCodeModeTools(options: CodeModeToolsOptions): ToolDefinition[] {
   return [buildExecTool(options), buildWaitTool(options)];
@@ -197,10 +211,11 @@ function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
       }
 
       // Remembered by cell id so a later `wait` on the same cell reports the rows recorded since.
-      traces.set(cell.cellId, trace);
+      const sessionTraces = tracesOf(session);
+      sessionTraces.set(cell.cellId, trace);
       const observation = await cell.observe(session.resolveYieldTime(parsed.yieldTimeMs ?? defaultYieldTimeMs));
       session.settleInitialObservation(cell.cellId, observation);
-      if (observation.kind !== 'yielded') traces.delete(cell.cellId);
+      if (observation.kind !== 'yielded') sessionTraces.delete(cell.cellId);
 
       return observationResult(observation, cell.cellId, parsed.maxOutputTokens, Date.now() - startedAt, trace);
     },
@@ -224,14 +239,17 @@ function buildWaitTool(options: CodeModeToolsOptions): ToolDefinition {
     ): Promise<ToolResult> => {
       const cellId = typeof p?.cell_id === 'string' ? p.cell_id : '';
       const startedAt = Date.now();
-      const outcome = await options.session().wait(cellId, {
+      // The same session object the cell was started on, so a foreign cell id finds no trace at all.
+      const session = options.session();
+      const outcome = await session.wait(cellId, {
         yieldTimeMs: p?.yield_time_ms ?? DEFAULT_EXEC_YIELD_TIME_MS,
         ...(p?.terminate === true ? { terminate: true } : {}),
       });
       const wallTimeMs = Date.now() - startedAt;
 
-      const trace = traces.get(cellId);
-      if (outcome.kind !== 'yielded') traces.delete(cellId);
+      const sessionTraces = tracesOf(session);
+      const trace = sessionTraces.get(cellId);
+      if (outcome.kind !== 'yielded') sessionTraces.delete(cellId);
       if (outcome.kind === 'missing') {
         return resultFrom({ kind: 'failed' }, [], outcome.errorText, p?.max_tokens, wallTimeMs, false, trace);
       }

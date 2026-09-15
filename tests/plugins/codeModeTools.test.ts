@@ -218,6 +218,26 @@ describe('exec yielding and wait', () => {
     expect(textOf(resumed)[1]).toBe('second');
   });
 
+  it('does not hand one sender the rows another sender\'s cell recorded', async () => {
+    // Cell ids are a PER-SESSION counter, so both senders own a cell called "1". A trace store keyed by
+    // cell id alone would report A's tool names, arguments and diffs inside B's result.
+    const a = harness();
+    const b = harness();
+    const yielded = await a.exec.execute('call-a', {
+      // The nested call happens AFTER the yield, so its row is still unreported while B waits.
+      source: `// @exec: {"yield_time_ms": 60}\ntext('up');\nawait new Promise((r) => setTimeout(r, 300));\nawait tools.read_file({path:'/secret'});`,
+    }) as { content: { type: string; text?: string }[]; details: Record<string, unknown> };
+    const cellId = (textOf(yielded)[0] ?? '').slice('Script running with cell ID '.length).split('\n')[0]!;
+
+    const foreign = await b.wait.execute('call-b', { cell_id: cellId }) as { details: Record<string, unknown> };
+    expect(rowsOf(foreign)).toEqual([]);
+    // B's own session never started that cell, so the wait is honestly a miss.
+    expect(JSON.stringify(foreign)).not.toContain('/secret');
+
+    const own = await a.wait.execute('call-a2', { cell_id: cellId, yield_time_ms: 5_000 }) as { details: Record<string, unknown> };
+    expect(rowsOf(own).map((r) => r.row)).toEqual(['call-a:0']);
+  });
+
   it('reports an unknown cell with the Codex wording and marks the result failed', async () => {
     const { wait } = harness();
     const result = await wait.execute('call-2', { cell_id: '42' });
