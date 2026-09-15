@@ -11,8 +11,13 @@
 // server actually returns this. A plugin that changes its wire format still has to be caught by its own
 // repository's tests.
 //
-// Row counts are deliberate: the registers page at 20 (`PAGE_SIZE` in stats and cronjob), so the lists
-// here are longer than that — a pager that is never rendered cannot be measured for reachability.
+// Row counts are deliberate: the mcp/skills/stats registers page at ~20 (`PAGE_SIZE`), so those lists
+// are longer than that — a pager that is never rendered cannot be measured for reachability.
+// `cronjob` is no longer a register: its jobs fixture is a small, deliberately heterogeneous set
+// (recurring, paused, guarded, one-shot pending, one-shot late, two overlapping, a dense interval) the
+// calendar surface projects, and `/plugins/cronjob/api/calendar` answers with the summary/agenda shapes
+// its page reads. Every cron field is a wall-clock string in the scheduler timezone, mirroring what the
+// real route returns — nothing here is a browser-converted instant.
 import type { Hono } from 'hono';
 import type { Project } from '../../../../lib/types.ts';
 
@@ -26,6 +31,143 @@ export const EDITOR_PROJECT: Project = {
 
 /** The file the editor opens. Long enough that Monaco renders a real surface, short enough to stay cheap. */
 const FILE_CONTENT = rows(40, (i) => `export const line${i} = ${i};`).join('\n');
+
+// --- cron fixtures: scheduled jobs and the calendar projection over them. ------------------------------
+
+/** The scheduler timezone the cron fixtures project in. */
+const SCHEDULER_TZ = 'Europe/Prague';
+const pad = (n: number, w = 2): string => String(n).padStart(w, '0');
+/** `YYYY-MM-DD` offsetDays days after today, on the scheduler's wall clock. The browser READS these
+ *  as labels and formats them; it never converts anything itself. */
+const localDate = (offsetDays: number): string => {
+  const d = new Date(Date.now() + offsetDays * 86_400_000 + 2 * 3_600_000);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+};
+const hhmm = (h: number, m: number): string => `${pad(h)}:${pad(m)}`;
+
+/** Minimal structural mirrors of the plugin's public job projection (web/lib/types.ts CronJob) and
+ *  its calendar response. Fixture shapes on purpose: the exact recurrence engine is the plugin's own
+ *  repository to test — these make the browser surface measurable. */
+type FixturesOccurrence = {
+  occurrenceId: string;
+  scheduledAt: string;
+  expectedAt: string;
+  localDate: string;
+  localTime: string;
+  timezone: string;
+  disposition: 'onTime' | 'deferredByHours' | 'catchUp' | 'dueNow' | 'late';
+  precisionMs: number;
+  guarded: boolean;
+};
+type FixturesJob = {
+  id: string; name: string; schedule: string; prompt: string;
+  /** The cheap shell check a GUARDED job runs before the prompt — the calendar may say the AI turn
+   *  can be skipped, never promised. */
+  check?: string;
+  enabled: boolean;
+  ownerUserId: number | null;
+  createdAt: string;
+  lastRun: string;
+  lastResult: string;
+  /** The scheduler projection. Null = cannot fire (paused, spent) and projects into NOTHING — the job
+   *  stays discoverable in `jobs` only. */
+  nextOccurrence: FixturesOccurrence | null;
+};
+type FixturesCalendarDay = { date: string; total: number; samples: FixturesOccurrence[]; overflow: number; omittedByHours: number; truncated: boolean };
+
+/** The local slot a projected job fires at on `date`, with its instants filled in from the wall-clock
+ *  strings. `guarded`/`disposition` ride through so an agenda card can state them textually. */
+function fixtureOccurrence(date: string, time: string, over: Partial<FixturesOccurrence> = {}): FixturesOccurrence {
+  const at = `${date}T${time}+02:00`;
+  return {
+    occurrenceId: `fixture:${date}:${time}`,
+    scheduledAt: at,
+    expectedAt: at,
+    localDate: date,
+    localTime: time,
+    timezone: SCHEDULER_TZ,
+    disposition: 'onTime',
+    precisionMs: 60_000,
+    guarded: false,
+    ...over,
+  };
+}
+
+const job = (over: Partial<FixturesJob> & Pick<FixturesJob, 'id' | 'name' | 'schedule' | 'nextOccurrence'>): FixturesJob => ({
+  prompt: 'Summarize what changed since the last run.',
+  enabled: true, ownerUserId: null,
+  createdAt: '2026-01-01T00:00:00.000Z', lastRun: '', lastResult: '',
+  ...over,
+});
+
+/** The calendar's visible jobs, each projecting its own next planned run. Deliberately heterogeneous:
+ *  recurring daily, a guarded one (shell check, deferred-by-hours shape), a paused one, two jobs that
+ *  fire at the SAME moment, a dense interval job, a future one-shot, and a past one-shot still pending
+ *  — projected fire `late`, planned time kept. */
+function cronJobs(): FixturesJob[] {
+  return [
+    job({ id: 'job-daily', name: 'Morning digest', schedule: 'daily 07:30',
+      nextOccurrence: fixtureOccurrence(localDate(1), hhmm(7, 30)) }),
+    job({ id: 'job-guarded', name: 'Verify deployment', schedule: 'daily 09:00',
+      check: 'systemctl is-active elowen',
+      nextOccurrence: { ...fixtureOccurrence(localDate(1), hhmm(9, 0)), guarded: true, disposition: 'deferredByHours' } }),
+    job({ id: 'job-paused', name: 'Archived feeds', schedule: 'daily 05:00', enabled: false, nextOccurrence: null }),
+    job({ id: 'job-overlap-a', name: 'Mirror repos', schedule: 'daily 18:00',
+      nextOccurrence: fixtureOccurrence(localDate(1), hhmm(18, 0)) }),
+    job({ id: 'job-overlap-b', name: 'Rotate logs', schedule: 'daily 18:00',
+      nextOccurrence: fixtureOccurrence(localDate(1), hhmm(18, 0)) }),
+    job({ id: 'job-dense', name: 'Fleet pulse', schedule: 'every 1h',
+      nextOccurrence: fixtureOccurrence(localDate(0), hhmm(14, 0)) }),
+    job({ id: 'job-oneshot', name: 'Check invoices', schedule: 'one-shot',
+      nextOccurrence: { ...fixtureOccurrence(localDate(2), hhmm(11, 15)), occurrenceId: 'job-oneshot:once' } }),
+    job({ id: 'job-late', name: 'Reopen note', schedule: 'one-shot', nextOccurrence: {
+      ...fixtureOccurrence(localDate(-1), hhmm(8, 0)),
+      occurrenceId: 'job-late:once', disposition: 'late',
+    } }),
+  ];
+}
+
+/** One bounded window the calendar endpoint projects: for each requested local date, the occurrences
+ *  the fixture jobs land in it, capped the way the real route is — three samples per cell and an
+ *  honest overflow/truncated for a denser day. Paused jobs project into NOTHING (they remain in
+ *  `jobs`); a one-shot appears only on its own day. */
+function cronWindow(days: number, jobs: FixturesJob[]): { days: FixturesCalendarDay[]; occurrences: FixturesOccurrence[] } {
+  const list: FixturesCalendarDay[] = [];
+  const occurrences: FixturesOccurrence[] = [];
+  for (let d = 0; d < days; d++) {
+    const date = localDate(d);
+    const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+    const samples: FixturesOccurrence[] = [];
+    for (const j of jobs) {
+      if (!j.nextOccurrence) continue;
+      const planned = j.nextOccurrence;
+      if (/^daily /i.test(j.schedule)) {
+        samples.push(fixtureOccurrence(date, planned.localTime,
+          { guarded: planned.guarded, disposition: planned.disposition }));
+      } else if (/^every /i.test(j.schedule)) {
+        for (const hour of [6, 7, 8]) {
+          samples.push(fixtureOccurrence(date, hhmm(hour, 0), { occurrenceId: `${j.id}:hour:${hour}` }));
+        }
+      } else if (/^weekly /i.test(j.schedule) && weekday === 0) {
+        samples.push(fixtureOccurrence(date, planned.localTime, { occurrenceId: `${j.id}:slot:2000` }));
+      } else if (planned.localDate === date) {
+        samples.push(planned);
+      }
+    }
+    occurrences.push(...samples);
+    list.push({
+      date,
+      total: samples.length,
+      samples: samples.slice(0, 3),
+      overflow: Math.max(0, samples.length - 3),
+      omittedByHours: 0,
+      truncated: samples.length > 3,
+    });
+  }
+  return { days: list, occurrences };
+}
+
+// --- end cron fixtures. --------------------------------------------------------------------------------
 
 export function registerPluginSurfaceRoutes(app: Hono): void {
   // --- mcp: the register of bridged servers. `canManageInstance` gates the instance scope. -----------
@@ -91,18 +233,36 @@ export function registerPluginSurfaceRoutes(app: Hono): void {
     canDelete: i >= 2,
   }))));
 
-  // --- cronjob: scheduled jobs, past the 20-row page so the pager exists. ---------------------------
-  app.get('/plugins/cronjob/jobs', (c) => c.json(rows(26, (i) => ({
-    id: `job-${i}`,
-    name: `Scheduled job ${i}`,
-    schedule: i % 2 === 0 ? 'daily 07:30' : 'every 15m',
-    prompt: 'Summarize what changed since the last run.',
-    enabled: i % 3 !== 0,
-    ownerUserId: i % 2 === 0 ? 1 : null,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    lastRun: '2026-08-27T05:00:00.000Z',
-    lastResult: 'ok',
-  }))));
+  // --- cronjob: scheduled jobs as public projections, plus the calendar the page reads. --------------
+  const jobs = cronJobs();
+  app.get('/plugins/cronjob/jobs', (c) => c.json(jobs));
+  app.get('/plugins/cronjob/api/calendar', (c) => {
+    const start = c.req.query('start') ?? localDate(0);
+    const days = Math.min(Math.max(Number(c.req.query('days') ?? 35), 1), 42);
+    const detail = c.req.query('detail') === 'agenda' ? 'agenda' : 'summary';
+    const window = {
+      startLocalDate: start,
+      endLocalDateExclusive: localDate(days),
+      startAt: `${start}T00:00+02:00`,
+      endAt: `${localDate(days)}T00:00+02:00`,
+    };
+    const common = {
+      generatedAt: new Date().toISOString(),
+      timezone: SCHEDULER_TZ,
+      precisionMs: 60_000,
+      snapshot: 'fixtures-1',
+      window,
+      scheduler: { ready: true },
+      jobs,
+    };
+    const { days: projected, occurrences } = cronWindow(days, jobs);
+    if (detail === 'agenda') {
+      // Agenda: every occurrence in the window in stable order — the paginated list the phone and the
+      // `+N more` path read. The fixture projects no cursor: a full window fits one page.
+      return c.json({ ...common, truncated: false, occurrences });
+    }
+    return c.json({ ...common, truncated: projected.some((day) => day.truncated), days: projected });
+  });
 
   // --- stats: model consumption, likewise past the page size. ---------------------------------------
   app.get('/usage/by-model', (c) => c.json(rows(27, (i) => ({

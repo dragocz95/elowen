@@ -113,6 +113,10 @@ function readPlugin(dir: string, name: string): RealPlugin | null {
       url: `/plugins/${name}/web/${jsHash}.js`,
       ...(cssUrl ? { cssUrl } : {}),
       apiVersion: typeof web.requiresApiVersion === 'number' ? web.requiresApiVersion : 1,
+    // The measure the shell frames the plugin's pages at (web/lib/types.ts PluginUiListing.layout).
+    // Without it the harness could not tell a declared workbench page (`cronjob`) apart from a
+    // document one, and the /p/* frame-width contract went unmeasured where it changed.
+    ...(typeof web.layout === 'string' ? { layout: web.layout } : {}),
       ...(typeof web.label === 'string' ? { label: web.label } : {}),
       // The harness always browses as the admin, so `user` panels are listed the way the real route
       // lists them for an administrator, and no visibility probe narrows account/project.
