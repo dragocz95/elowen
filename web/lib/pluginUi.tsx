@@ -108,12 +108,12 @@ import {
   useCronJobs, useNotificationDestinations, usePluginSkills, usePluginSubagents, usePluginDetail,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
-  useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin,
+  useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin, useUserPluginConfigs,
 } from './queries';
 import {
   useUpdateConfig, useSaveCronJob, useDeleteCronJob,
   useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
-  useSavePluginSubagent, useDeletePluginSubagent, useSavePluginConfig,
+  useSavePluginSubagent, useDeletePluginSubagent, useSavePluginConfig, useSaveUserPluginConfig,
   useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
   useResetUsage,
 } from './mutations';
@@ -130,12 +130,16 @@ import { renderMarkdown } from './markdown';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-// NOT bumped for `DataTableSelectCell` below, deliberately. The version is a compatibility CEILING
+// NOT bumped for `DataTableSelectCell`, deliberately. The version is a compatibility CEILING
 // (`entry.apiVersion <= host`), so a bundle that has not heard of the primitive is unaffected either
-// way, and one that DOES require it declares 17 and renders its placeholder against a host stamped 16 —
-// safe, not broken. The bump belongs with the kit release that publishes the new contract; raising it
-// here alone would tell bundles the host supports a version the published kit does not describe.
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 16;
+// way, and one that DOES require it declares a higher number and renders its placeholder against a
+// lower host — safe, not broken. The bump belongs with the kit release that publishes the new contract;
+// raising it here alone would tell bundles the host supports a version the published kit does not describe.
+//
+// 17 DOES publish a new contract: `useUserPluginConfigs` / `useSaveUserPluginConfig`, the account's own
+// per-plugin values. A bundle that reads or writes them (the subagent page's agent model pins) cannot run
+// on a host without them, so it declares 17 and the kit describes 17.
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 17;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -361,6 +365,10 @@ export function ensurePluginUiRuntime(): void {
       useUsers, usePlugins, usePluginConfigDraft,
       useCronJobs, useNotificationDestinations, useSaveCronJob, useDeleteCronJob,
       usePluginDetail, useSavePluginConfig,
+      // The ACCOUNT's own values for a plugin — the seam behind a per-person setting a plugin page owns
+      // (the subagent page's agent model pins). Same store, same revision CAS and same validation the
+      // Account form writes through, so the two surfaces cannot disagree about what is saved.
+      useUserPluginConfigs, useSaveUserPluginConfig,
       usePluginSkills, useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
       usePluginSubagents, useSavePluginSubagent, useDeletePluginSubagent,
       useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
