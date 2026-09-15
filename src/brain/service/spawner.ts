@@ -27,7 +27,7 @@ import { currentContributionUserId, currentWorkDir, currentToolPolicy, currentPo
 import { createProjectExecutionBoundary } from '../session/projectExecutionBoundary.js';
 import { buildProjectTool } from '../tools/projectTool.js';
 import { codeModeApplies, codeModeVisibilityFor } from '../session/codeModeRoute.js';
-import { personaTemplatesFor } from '../session/personaRoute.js';
+import { personaTemplatesFor, PERSONA_SCHEDULED } from '../session/personaRoute.js';
 import { createToolTraceSink } from '../toolTrace/sink.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
@@ -501,8 +501,9 @@ export class LiveSessionSpawner {
       // The callback creates the one shared handle only when something is actually withheld and returns
       // ToolSearch to its historical stable position in the ordered definitions.
       // Omitted entirely under code mode — both of them, so nothing is withheld and no search tool is
-      // composed. Leaving the deferral spec in with search removed would be worse than either: the tools
-      // would be hidden from the model AND unreachable, because the exec catalogue skips a deferred tool.
+      // composed. Leaving the deferral spec in with search removed would be worse than either: a withheld
+      // tool would be missing from the exec catalogue the script is written against, with no search left
+      // to bring it back. Code mode therefore knows no deferred tool at all.
       ...(codeModeControl ? {} : {
         toolDeferral: {
           toolOwner: plugins?.toolOwner ?? new Map(),
@@ -577,15 +578,12 @@ export class LiveSessionSpawner {
       // script's call carries the identical enforcement chain; there is deliberately no second path.
       codeMode: codeModeControl
         ? (nested) => {
-          const deferred = toolSearchHandle?.deferred ?? new Set<string>();
           const tools = codeModeControl.compose({
             sessionId,
-            codeModeOnly: true,
             nested: nested.map((tool) => ({
               name: tool.name,
               description: tool.description,
               inputSchema: tool.parameters,
-              deferred: deferred.has(tool.name),
               // PI supplies an ExtensionContext as the fifth argument when IT calls a tool; a nested call
               // has none to pass. No Elowen core or bundled-plugin tool reads it, and a third-party tool
               // that does will throw — which reaches the script as a rejected promise, never as a silent
@@ -752,7 +750,7 @@ export class LiveSessionSpawner {
     // Every part takes the same variables: an unreferenced placeholder is simply not substituted, and one
     // variable set keeps a per-user override of any part rendering the same way it did as one file. The
     // scheduled template is the exception it always was — it names no product on purpose.
-    const vars: Record<string, string> = templates.parts.includes('scheduled')
+    const vars: Record<string, string> = templates.parts.includes(PERSONA_SCHEDULED)
       ? { userName, personality, agentName }
       : { userName, personality, agentName, productName };
     const basePersona = templates.parts
@@ -761,8 +759,8 @@ export class LiveSessionSpawner {
     const renderedPersona = templates.overlay === undefined
       ? basePersona
       : basePersona + '\n\n' + this.d.prompts.render(templates.overlay, { ownerName: userName, agentName, productName }, settingsUserId);
-    // A plugin holding `mutates:['prompt']` may replace the persona for THIS session (it can already
-    // replace the template globally through `registerPrompts`; this is the narrower, per-session form).
+    // A plugin holding `mutates:['prompt']` may replace the persona for THIS session. It is the only way
+    // it can: `registerPrompts` overlays templates the plugin itself registered and refuses a core name.
     // Fail-open and first-writer-wins, like every other hook patch.
     const persona = (toolHookBus
       ? await toolHookBus.emitPersona('brain.session.beforeSpawn', {

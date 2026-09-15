@@ -17,7 +17,7 @@ export type TranscriptEvent =
   | { type: 'text'; delta: string }
   | { type: 'reasoning'; delta: string }
   | { type: 'tool_authoring'; name?: string; detail?: string; reason?: string }
-  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string }
+  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string; reason?: string }
   /** Live rolling tail of a running `Bash` (mirror of the daemon `tool_progress` event). Attaches
    *  to the in-progress tool row by id; the final `tool_output`/`diff` supersedes it (no doubled dump). */
   | { type: 'tool_progress'; id: string; text: string }
@@ -62,7 +62,10 @@ export interface ToolItem { name: string; detail?: string; diff?: string; icon?:
   plan?: string;
   /** Live rolling tail of a still-running `Bash` (from the `tool_progress` event), rendered under
    *  the tool pill while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
-  progress?: string }
+  progress?: string;
+  /** The status note the model authored for the call (`_reason`). Carried live on the `tool` event and
+   *  durably on the segment, so `toolRowLabel` reads the same value in both. */
+  reason?: string }
 
 /** Live progress of a delegated sub-agent, attached to its `delegate` tool item by call id — powers the
  *  agents table + the `↳` drill-in. Mirror of the daemon `SubagentState`. */
@@ -201,7 +204,7 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
       } else if (seg.kind === 'file') {
         segments.push({ kind: 'file', file: seg.file, ...(seg.caption ? { caption: seg.caption } : {}) });
       } else {
-        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub, wf: seg.wf, plan: seg.plan };
+        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub, wf: seg.wf, plan: seg.plan, reason: seg.reason };
         const tail = segments[segments.length - 1];
         if (tail?.kind === 'tools') tail.items.push(item);
         else segments.push({ kind: 'tools', items: [item] });
@@ -338,7 +341,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       t.composingTool = undefined;
       t.composingDetail = undefined;
       t.composingReason = undefined;
-      const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon, ...(e.id ? { id: e.id } : {}), ...(e.command ? { command: e.command } : {}) };
+      const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon, ...(e.id ? { id: e.id } : {}), ...(e.command ? { command: e.command } : {}), ...(e.reason ? { reason: e.reason } : {}) };
       const tail = t.segments[t.segments.length - 1];
       if (tail?.kind === 'tools') t.segments[t.segments.length - 1] = { kind: 'tools', items: [...tail.items, item] };
       else t.segments.push({ kind: 'tools', items: [item] });

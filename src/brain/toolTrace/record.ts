@@ -91,12 +91,6 @@ export class ToolTraceLog {
     return [...fresh, { kind: 'note', text: `… ${newlyDropped} further call(s) not recorded` }];
   }
 
-  /** Whether this producer has recorded any CALL at all. A caller uses it to decide whether its own row
-   *  is redundant (the rows below it tell the story) or the only thing the user would see. */
-  hasCalls(): boolean {
-    return this.entries.some((entry) => entry.kind === 'call');
-  }
-
   private append(trace: ToolTrace): string | undefined {
     if (this.entries.length >= MAX_TRACE_RECORDS) { this.dropped += 1; return undefined; }
     if (this.bytes + sizeOf(trace) > MAX_TRACE_BYTES) { this.dropped += 1; return undefined; }

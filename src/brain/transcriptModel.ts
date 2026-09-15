@@ -382,6 +382,7 @@ export class TranscriptModel implements TranscriptRead {
       icon: event.icon,
       ...(event.id ? { id: event.id } : {}),
       ...(event.command ? { command: event.command } : {}),
+      ...(event.reason ? { reason: event.reason } : {}),
     };
     const tailIndex = turn.segments.length - 1;
     const tail = turn.segments[tailIndex];

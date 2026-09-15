@@ -3,7 +3,9 @@ import type { Model, Api } from '@earendil-works/pi-ai';
 import { isRetryableAssistantError } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
 import { logger } from '../../shared/logger.js';
+import type { BrainEvent } from '../events.js';
 import { isErroredContextOverflow, sessionUsageSnapshot, toBrainEvent } from '../events.js';
+import { hasTraceRows } from '../toolTrace/segments.js';
 import { extractText, lastAssistant } from '../messageView.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
@@ -123,6 +125,10 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
   // different pictures may share. `messageView` applies the same first-occurrence-wins rule when it
   // rebuilds the transcript, so a reload shows what the live stream showed.
   const shownImages = new Set<string>();
+  // Code-mode wrapper rows built at `tool_execution_start` and published (or dropped) at the matching end
+  // — see the decision below. Per session and short-lived: an entry exists only while its call runs, and a
+  // turn aborted mid-call leaves at most its in-flight calls behind, cleared on the next agent_start.
+  const heldCodeModeRows = new Map<string, Extract<BrainEvent, { type: 'tool' }>>();
   return (e: AgentSessionEvent): void => {
     const live = getLive();
     if (e.type === 'auto_retry_start') {
@@ -181,7 +187,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
     // ceiling the run is aborted so a wedged agent can't loop forever — it settles into agent_end/idle
     // like a normal stop. `maxSteps ≤ 0` means unlimited (no counter emitted, no enforcement).
     if (raw === 'agent_start') {
-      replay.beginRun(); steps = 0; agentRunOpen = true;
+      replay.beginRun(); steps = 0; agentRunOpen = true; heldCodeModeRows.clear();
       turnStartedAt = (e as AgentSessionEvent & { turnStartedAt?: number }).turnStartedAt;
     } else if (raw === 'turn_start') {
       steps += 1;
@@ -273,11 +279,33 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       const message = (e as unknown as { message: Parameters<typeof extractText>[0] }).message;
       deliverQueuedUserEcho(store, live, extractText(message));
     }
-    // Drop the wrapper's own live row — see `isCodeModeTool`. Only the DISPLAY events are dropped; the
-    // durable rows are written from `message_end` as usual, which is what lets the hydration decide the
-    // same thing again on reload (and keep the wrapper row when the script called nothing).
+    // A code-mode wrapper's own row — see `isCodeModeTool`. The decision is the SAME one hydration makes
+    // (`messageView`, on `details.toolTrace`), taken here at the END of the call because that is when the
+    // recorded rows are known: a call whose script recorded rows is drawn by the trace sink and its
+    // wrapper would sit above them saying nothing, while a call that recorded none keeps its own row.
+    // Deciding it at the start instead is what made a `wait` stream as empty space live and then grow a
+    // row out of nowhere on F5. Only the DISPLAY events are held; persistence is untouched.
     const toolName = (e as { toolName?: unknown }).toolName;
-    if (typeof toolName === 'string' && deps.isCodeModeTool?.(toolName) === true && raw !== undefined && TOOL_DISPLAY_EVENTS.has(raw)) return;
+    if (typeof toolName === 'string' && deps.isCodeModeTool?.(toolName) === true && raw !== undefined && TOOL_DISPLAY_EVENTS.has(raw)) {
+      const callId = (e as { toolCallId?: unknown }).toolCallId;
+      if (raw !== 'tool_execution_end') {
+        // The start event is the only one carrying the arguments, so the row (with its `_reason`) is built
+        // now and held; the update events are progress for a row that may never exist.
+        if (raw === 'tool_execution_start' && typeof callId === 'string') {
+          const row = toBrainEvent(e, Date.now(), deps.chatImagesDir);
+          if (row?.type === 'tool') heldCodeModeRows.set(callId, row);
+        }
+        return;
+      }
+      const held = typeof callId === 'string' ? heldCodeModeRows.get(callId) : undefined;
+      if (typeof callId === 'string') heldCodeModeRows.delete(callId);
+      if (hasTraceRows((e as { result?: { details?: unknown } }).result?.details)) return;
+      if (held && !live.discardingUserTurn) {
+        held.icon = iconOf(held.name);
+        live.turnProducedOutput = true;
+        replay.publish(held);
+      }
+    }
     const be = toBrainEvent(e, Date.now(), deps.chatImagesDir);
     if (!be) return;
     if (be.type === 'image') {

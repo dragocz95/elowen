@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { traceForCall, ToolTraceLog } from '../../src/brain/toolTrace/record.js';
-import { segmentsForTraces, traceNotes } from '../../src/brain/toolTrace/segments.js';
+import { hasTraceRows, segmentsForTraces, traceNotes } from '../../src/brain/toolTrace/segments.js';
 import { openEventsForCall, settleEventsForTrace } from '../../src/brain/toolTrace/liveEvents.js';
 import { MAX_TRACE_BYTES, MAX_TRACE_RECORDS, parseToolTraces, traceRowId } from '../../src/brain/toolTrace/types.js';
 
@@ -94,13 +94,15 @@ describe('ToolTraceLog', () => {
     expect(log.settle(row, full)).toEqual({ ...full, row });
   });
 
-  it('reports whether any call was recorded, which decides the wrapper row', () => {
-    const log = new ToolTraceLog('cell_1');
-    expect(log.hasCalls()).toBe(false);
-    log.note('working…');
-    expect(log.hasCalls()).toBe(false);
-    log.open('Read');
-    expect(log.hasCalls()).toBe(true);
+});
+
+describe('hasTraceRows', () => {
+  it('decides the wrapper row from a result payload: rows replace it, notes and nothing do not', () => {
+    expect(hasTraceRows(undefined)).toBe(false);
+    expect(hasTraceRows({ success: true })).toBe(false);
+    expect(hasTraceRows({ toolTrace: [] })).toBe(false);
+    expect(hasTraceRows({ toolTrace: [{ kind: 'note', text: 'working…' }] })).toBe(false);
+    expect(hasTraceRows({ toolTrace: [{ kind: 'call', name: 'Read', row: 'call_1:0' }] })).toBe(true);
   });
 });
 

@@ -2,9 +2,10 @@
  * The durable record of TOOL ACTIVITY THE PROVIDER NEVER SAW.
  *
  * A tool the model called itself arrives as a PI tool event and every surface already renders it. Work
- * the agent performed WITHOUT such an event — a code-mode script calling `tools.*`, a plugin doing a
- * batch behind one call, a future runtime — produces no event, so without this module it leaves the user
- * watching a single opaque row.
+ * the agent performed WITHOUT such an event produces none, so without this module it leaves the user
+ * watching a single opaque row. Today the one producer is a code-mode script calling `tools.*`; the
+ * module is shaped for the class rather than for that caller, and a second one reaches it the same way
+ * code mode does — through a sink core hands to the control it owns.
  *
  * This file is the contract only: the record shape, the budget and the id rule. It imports nothing from
  * the view layer on purpose, so the record can be read by `messageView` (hydration) while the builder in
@@ -35,7 +36,8 @@ import type { ToolOutputView } from '../../shared/wireContract.js';
  *  time here, where a direct call re-derives them at render. */
 export interface ToolTraceCall {
   kind: 'call';
-  /** The row this record is, minted by the producer. Absent only on a record built for a comparison. */
+  /** The row this record is, minted by the producer. `traceForCall` builds the record without it and
+   *  `ToolTraceLog.settle` stamps the id the call was opened with, so it is absent only before that. */
   row?: string;
   name: string;
   detail?: string;

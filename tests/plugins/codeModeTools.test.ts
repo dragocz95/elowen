@@ -24,7 +24,7 @@ function rowsOf(result: { details: Record<string, unknown> }): { kind: string; n
   return (result.details.toolTrace as { kind: string; name?: string; row?: string; text?: string }[] | undefined) ?? [];
 }
 
-function harness(overrides: { nested?: NestedToolBinding[]; codeModeOnly?: boolean } = {}): Harness {
+function harness(overrides: { nested?: NestedToolBinding[] } = {}): Harness {
   const session = new CodeModeSession();
   sessions.push(session);
   const nested = overrides.nested ?? [
@@ -35,14 +35,12 @@ function harness(overrides: { nested?: NestedToolBinding[]; codeModeOnly?: boole
       kind: 'function',
       inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
       outputSchema: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] },
-      deferred: false,
       invoke: async (input) => ({ content: `contents of ${(input as { path: string }).path}` }),
     },
   ];
   const [exec, wait] = buildCodeModeTools({
     session: () => session,
     nested,
-    codeModeOnly: overrides.codeModeOnly ?? true,
     // The REAL core sink, so this exercises the contract the daemon passes in rather than a stub.
     trace: (producerId) => createToolTraceSink(producerId),
   });
@@ -122,7 +120,6 @@ describe('exec execution', () => {
         globalName: 'Bash',
         description: 'Runs a command',
         kind: 'function',
-        deferred: false,
         invoke: async () => {
           throw new Error('Tool Bash is not permitted in this conversation.');
         },

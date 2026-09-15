@@ -327,9 +327,9 @@ A request carries `providerId`, `model`, `prompt`, and optional `size`, `quality
 ### Rows for work the model did not call
 
 A tool the model calls produces a provider tool event, and every surface already draws it. Work performed
-without such an event draws nothing: a code-mode script calling `tools.*`, or a plugin doing a batch
-behind one call, leaves the user with a single opaque row. `src/brain/toolTrace/` turns that work into
-ordinary tool rows, and the `codeMode` control is its first consumer.
+without such an event draws nothing: a code-mode script calling `tools.*` leaves the user with a single
+opaque row. `src/brain/toolTrace/` turns that work into ordinary tool rows, and the `codeMode` control is
+its first consumer.
 
 Two halves, and a producer owes both:
 
@@ -341,8 +341,9 @@ Two halves, and a producer owes both:
   user is watching.
 - **Durable.** `sink.drain()` returns the records not yet reported; put them on the reporting tool
   result's `details.toolTrace`. The host expands them in place of that call's own row on reload, and
-  keeps the call's own row when it recorded nothing. `details` never reaches the model, so the payload
-  costs no tokens and no prompt-cache churn.
+  keeps the call's own row when it recorded nothing — live and after a reload alike, decided from that
+  same payload. A row kept that way is titled by the model's own `_reason` where the tool name says
+  nothing. `details` never reaches the model, so the payload costs no tokens and no prompt-cache churn.
 
 Three invariants a producer must honour, all three of them enforced by the host but easy to defeat:
 

@@ -34,9 +34,6 @@ export interface CodeModeToolDefinition {
   outputSchema?: JsonValue;
 }
 
-const DEFERRED_NESTED_TOOLS_GUIDANCE = `Some deferred nested tools may be omitted from this description. They are still available on the global \`tools\` object and listed in \`ALL_TOOLS\`.
-To find one, filter \`ALL_TOOLS\` by \`name\` and \`description\`.`;
-
 const EXEC_DESCRIPTION_TEMPLATE = `Run JavaScript code to orchestrate/compose tool calls
 - Evaluates the provided JavaScript code in a fresh V8 isolate as an async module.
 - All nested tools are available on the global \`tools\` object, for example \`await tools.exec_command(...)\`. Tool names are exposed as normalized JavaScript identifiers, for example \`await tools.mcp__ologs__get_profile(...)\`.
@@ -76,23 +73,17 @@ export function buildWaitToolDescription(): string {
 }
 
 /**
- * Renders the full `exec` description: the generic template, the deferred-tools hint when any tool
- * is withheld, and under `codeModeOnly` a per-tool catalogue of TypeScript declarations. In the
- * non-only mode the catalogue is skipped because the tools are still in the request themselves.
+ * Renders the full `exec` description: the generic template plus a per-tool catalogue of TypeScript
+ * declarations. The catalogue is what the model writes its script against, and it is complete —
+ * a code-mode session composes no tool deferral and no search, so no nested tool is ever withheld.
  */
 export function buildExecToolDescription(options: {
   enabledTools: readonly CodeModeToolDefinition[];
-  deferredTools: readonly CodeModeToolDefinition[];
   defaultExecYieldTimeMs: number;
-  codeModeOnly: boolean;
 }): string {
   const sections: string[] = [
     EXEC_DESCRIPTION_TEMPLATE.replace('Defaults to 10000 ms.', `Defaults to ${options.defaultExecYieldTimeMs} ms.`),
   ];
-
-  if (options.deferredTools.length > 0) sections.push(DEFERRED_NESTED_TOOLS_GUIDANCE);
-
-  if (!options.codeModeOnly) return sections.join('\n\n');
 
   if (options.enabledTools.length > 0) {
     const toolSections = options.enabledTools.map((tool) => {

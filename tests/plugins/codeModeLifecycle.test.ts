@@ -155,7 +155,6 @@ function toolsFor(control: Control, sessionId: string, principal: () => string) 
   const [exec, wait] = control.compose({
     sessionId,
     nested: [],
-    codeModeOnly: true,
     trace: (producerId) => createToolTraceSink(producerId),
     principal,
   });

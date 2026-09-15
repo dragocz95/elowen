@@ -38,7 +38,7 @@ import type { CellToolBinding } from './runtime/protocolTypes.js';
 
 /** One tool the script may reach through `tools.<globalName>`. */
 export interface NestedToolBinding {
-  /** The registered tool name, kept for dispatch and for the card shown to the user. */
+  /** The registered tool name, kept for dispatch and for the row each nested call draws. */
   name: string;
   /** The normalised JavaScript identifier. */
   globalName: string;
@@ -46,8 +46,6 @@ export interface NestedToolBinding {
   kind: 'function' | 'freeform';
   inputSchema?: JsonValue;
   outputSchema?: JsonValue;
-  /** Deferred tools stay callable and stay in `ALL_TOOLS`, but cost no tokens in the description. */
-  deferred: boolean;
   /** Runs the tool. MUST be the composed, fully gated definition's execute, never a bypass.
    *  The signal aborts when the cell dies, so the call cannot outlive the script that made it. */
   invoke: (input: unknown, signal: AbortSignal, callId?: string) => Promise<unknown>;
@@ -58,8 +56,6 @@ export interface CodeModeToolsOptions {
    *  gets its own cells and `store` values. */
   session: () => CodeModeSession;
   nested: NestedToolBinding[];
-  /** True when the nested tools are hidden from the model and `exec` is the only way to reach them. */
-  codeModeOnly: boolean;
   defaultYieldTimeMs?: number;
   /** A transcript sink per CELL, from core. Every nested call becomes a row, `notify()` becomes a
    *  progress line, and the records it hands back ride the result that reports for that cell. */
@@ -147,8 +143,7 @@ export function buildCodeModeTools(options: CodeModeToolsOptions): ToolDefinitio
 
 function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
   const defaultYieldTimeMs = options.defaultYieldTimeMs ?? DEFAULT_EXEC_YIELD_TIME_MS;
-  const enabled = sortAndDedupeToolDefinitions(toDefinitions(options.nested.filter((tool) => !tool.deferred)));
-  const deferred = sortAndDedupeToolDefinitions(toDefinitions(options.nested.filter((tool) => tool.deferred)));
+  const enabled = sortAndDedupeToolDefinitions(toDefinitions(options.nested));
   const byGlobalName = new Map(options.nested.map((tool) => [tool.globalName, tool]));
   const bindings = toCellBindings(options.nested);
 
@@ -157,9 +152,7 @@ function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
     label: 'Run JavaScript',
     description: buildExecToolDescription({
       enabledTools: enabled,
-      deferredTools: deferred,
       defaultExecYieldTimeMs: defaultYieldTimeMs,
-      codeModeOnly: options.codeModeOnly,
     }),
     // Exactly one required string property: pi-ai infers the grammar's input property from it, and a
     // model without grammar support still sees a usable function tool.

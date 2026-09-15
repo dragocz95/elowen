@@ -18,6 +18,7 @@ import { collapseWhitespace } from '../shared/text.js';
 // `record.ts`: the builder reads the formatters in THIS file, so importing it back would form a cycle.
 import { segmentsForTraces, traceNotes, withNotes } from './toolTrace/segments.js';
 import { parseToolTraces } from './toolTrace/types.js';
+import { extractReason } from './toolReason.js';
 // Only these two have daemon consumers that import them from here; BrainSubagentView/BrainWorkflowView/
 // BrainSegment are used internally by the shaping code below, and anything else that needs them imports
 // straight from wireContract.
@@ -610,10 +611,15 @@ export function shapeBrainMessages(
         const diff = p.id ? diffs.get(p.id) : undefined;
         const command = toolCommand(p.arguments);
         const plan = submittedPlan(p.name, res?.result);
+        // The note the model authored for this call, read from the stored arguments exactly as the live
+        // `tool` event reads them from the streaming ones — so a row a client labels with the note reads
+        // the same after F5 as it did while it ran.
+        const reason = extractReason(p.arguments, p.name);
         segments.push({
           kind: 'tool', name: display.name,
           ...(p.id ? { id: p.id } : {}),
           ...(display.detail ? { detail: display.detail } : {}),
+          ...(reason ? { reason } : {}),
           ...(diff ? { diff } : {}),
           ...(output ? { output } : {}),
           ...(command ? { command } : {}),

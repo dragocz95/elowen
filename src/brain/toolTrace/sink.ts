@@ -26,8 +26,6 @@ export interface ToolTraceSink {
   note(text: string): void;
   /** The records not yet reported, for the reporting tool result's `details.toolTrace`. */
   drain(): ToolTrace[];
-  /** Whether this producer recorded any call, i.e. whether its own row is redundant. */
-  hasCalls(): boolean;
 }
 
 /** A sink for one producer (a code-mode cell). `iconOf` resolves the same tool→icon map the reducer
@@ -66,6 +64,5 @@ export function createToolTraceSink(producerId: string, iconOf?: (name: string) 
       if (row !== undefined) publish(settleEventsForTrace({ kind: 'note', text }, row));
     },
     drain: () => log.drain(),
-    hasCalls: () => log.hasCalls(),
   };
 }

@@ -155,7 +155,10 @@ export interface BrainWorkflowView {
  *  while merely discussing plan mode is indistinguishable from one proposing a plan. */
 export type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: BrainSubagentView; wf?: BrainWorkflowView; plan?: string }
+  /** `reason` is the status note the model authored for the call (`_reason`, or Bash's canonical
+   *  `description`) — the same note the live `tool` event carries, kept on the durable row so the label a
+   *  client shows survives F5. Clients decide where it wins over the tool name (`toolRowLabel`). */
+  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: BrainSubagentView; wf?: BrainWorkflowView; plan?: string; reason?: string }
   /** An image the agent shared on purpose (`ShareImage`). Its own segment rather than a field on the tool
    *  row, because the picture IS the message here — a reader wants to see it, not a pill saying a tool
    *  ran. A failed share stays an ordinary tool row so the error is still visible. `preview` marks the
