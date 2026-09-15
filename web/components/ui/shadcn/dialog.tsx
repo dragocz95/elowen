@@ -146,7 +146,7 @@ const dialogSurfaceVariants = cva('flex flex-col focus:outline-none', {
     // takes exactly what its content takes.
     { presentation: 'center', chrome: 'card', class: 'rounded-lg border' },
     { presentation: 'fullscreen', chrome: 'card', class: 'border' },
-    { presentation: 'center', chrome: 'bare', class: 'h-full w-full items-center justify-center' },
+    { presentation: 'center', chrome: 'bare', class: 'relative h-full w-full items-center justify-center' },
     { presentation: 'center', chrome: 'card', size: 'lg', class: 'h-[88dvh] w-[92vw] max-w-[90rem]' },
     // The READING frame, taken by an intercepted page that is a stack of records rather than a data
     // surface — both Settings and Account ask for `PageOverlay frame="reading"`. `lg` beside it is the DATA
@@ -174,11 +174,13 @@ function DialogContent({
   // Whether this surface IS a panel. `card` is every dialog, drawer and sheet in the app. `bare` is one
   // whose content is the whole frame — the chat image lightbox, where a ground, an edge, a cast shadow and
   // the room a panel reserves for a title would all be a card drawn over the picture the reader clicked.
-  // What `bare` keeps is everything that was never visual: the same primitive, the same focus trap,
-  // Escape, layer order, inert isolation and scroll lock.
+  // `bare` therefore also declines the drawn edge and the size caps (see `dialogSurfaceVariants`) and stops
+  // being a click target itself (see `style` below). What it keeps is everything that was never visual: the
+  // same primitive, the same focus trap, Escape, layer order, inert isolation and scroll lock.
   chrome = 'card',
   size = 'md',
   width = 'default',
+  style,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & VariantProps<typeof dialogSurfaceVariants>) {
   return (
@@ -189,14 +191,22 @@ function DialogContent({
       // is a modal one and says so.
       aria-modal="true"
       data-presentation={presentation}
-      // Stated on the DOM as well as in the class list, so a browser test can see which of the two the
-      // surface was built as.
+      // Stated on the DOM as well as in the class list, so a reader inspecting the surface can see which
+      // of the two it was built as.
       data-chrome={chrome}
       // `focus:outline-none` on the surface itself: the overlay focuses this element on open so the focus
       // trap and screen readers have an anchor, but it is `tabIndex={-1}` and not interactive, so the
       // browser's ring around the whole window says nothing. Opening a dialog from the keyboard — a slash
       // command, for instance — made `:focus-visible` match and drew a bright outline around the entire
       // dialog that vanished on the first click inside. Controls INSIDE keep their own rings.
+      //
+      // A bare surface takes the whole padded viewport, and it must not swallow the presses that belong to
+      // the backdrop behind it. This has to be inline because Radix states `pointer-events: auto` inline on
+      // a modal content element (`@radix-ui/react-dismissable-layer`), which a utility class cannot beat;
+      // the class silently losing that fight is what made a click beside the picture do nothing. A surface
+      // whose content opts back in is then exactly the split the reader expects: the picture is clickable,
+      // the space around it is the scrim.
+      style={chrome === 'bare' ? { pointerEvents: 'none', ...style } : style}
       className={cn(dialogSurfaceVariants({ presentation, chrome, size, width }), className)}
       {...props}
     />

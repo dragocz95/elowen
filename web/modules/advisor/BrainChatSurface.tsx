@@ -1,6 +1,5 @@
 'use client';
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { createPortal } from 'react-dom';
 import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, Compass, Hammer, Workflow, Bot, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { renderMarkdown } from '../../lib/markdown';
@@ -16,8 +15,6 @@ import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainModelOption, 
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
-import { Dialog, DialogContent, DialogOverlay } from '../../components/ui/shadcn/dialog';
-import { focusOverlaySurface, useOverlayIsolation } from '../../components/ui/overlayStack';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
@@ -771,28 +768,23 @@ function AttachmentThumb({ image, description }: { image: BrainMessageImage; des
 }
 
 /** The full-size view of any picture in the conversation — a user's attachment, one the agent shared, one
- *  it generated, one it read. There is nothing drawn around it: the picture, on a calm backdrop.
+ *  it generated, one it read. It is the app's own `Modal` with the frameless chrome, so what the reader gets
+ *  is a scrim and the picture: no header, no title drawn over the image, no edge, no ground, no cast shadow,
+ *  no close button. A dialog's frame holds a title row, controls and a body of text, and an enlarged picture
+ *  is the one surface in the app that has no use for any of them.
  *
- *  It used to be the app's own `Modal`, which put a header, an edge, a ground and a cast shadow between
- *  the reader and the thing they clicked. The frame is what a dialog is FOR — it holds a title, controls
- *  and a body of text — and an enlarged picture has none of those, so the surface now declines the shared
- *  material (`chrome="bare"`) and renders the picture alone. The accessible name is stated rather than
- *  shown, which is the same move the command palette makes: a screen reader still hears "Image preview,
- *  dialog", a sighted reader sees nothing but the picture.
+ *  Everything the frame used to CARRY is still there, and still comes from the shared seam, which is exactly
+ *  why this is a `Modal` rather than a second overlay beside it: the portal, the overlay stack and its
+ *  `inert` isolation, the body scroll lock, the focus trap, Escape, the one backdrop rule that decides a
+ *  dismissal, and the return of focus to the thumbnail the picture was opened from. A bare surface is not a
+ *  thing a pointer hits (see `chrome` on `DialogContent`), so a press anywhere that is not the picture falls
+ *  through to the backdrop that closes the view, and a press on the picture is a press on the picture.
  *
- *  What is NOT declined is everything the seam carries that was never visual: Radix's focus trap, Escape
- *  and layer order, the overlay stack's `inert` isolation and body scroll lock, and focus going back to
- *  the thumbnail the surface was opened from. Dismissal is the app's one backdrop rule, restated here
- *  because it lives in the wrapper that was taken away — a press must BEGIN on the backdrop, so a drag
- *  that starts on the picture and ends in the scrim keeps it open (see `Modal.tsx`).
- *
- *  The picture is capped by the padded backdrop, not by anything it draws: `DialogOverlay` carries the
- *  safe-area padding on every edge, the surface takes that whole box, and `object-contain` inside it is
- *  what keeps a panorama and a tall screenshot whole on a phone in either orientation and on a desktop.
- *
- *  The surface covers the viewport but is not a thing that can be clicked: pointer events are off on it
- *  and back on the picture, so hit-testing falls through the empty area onto the backdrop that closes
- *  the lightbox, while a click that lands on the picture stays a click on the picture. */
+ *  Geometry belongs to the backdrop: it pads itself to the safe area on every edge, and one
+ *  `object-contain` picture inside that box is what keeps a panorama and a tall screenshot whole on a phone
+ *  in either orientation and on a desktop. While the full-size bytes are in flight the wait is said quietly
+ *  on the surface, and bytes that cannot be had at all are stated in place of the picture rather than left
+ *  as a broken glyph. */
 function ImageLightbox({ image, description, onClose }: {
   image: BrainMessageImage;
   description: string;
@@ -801,77 +793,37 @@ function ImageLightbox({ image, description, onClose }: {
   const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const layerRef = useRef<HTMLDivElement>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  /** Whether the press that is about to produce a click started on the backdrop itself. */
-  const pressedBackdrop = useRef(false);
-  // Mounted for the length of one opening, like every overlay here: the stack captures the thumbnail to
-  // hand focus back to on its FIRST render, and the scroll lock ends with the surface.
-  const { restoreFocus } = useOverlayIsolation({ enabled: true, rootRef: layerRef });
-
-  return createPortal(
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogOverlay
-        ref={layerRef}
-        presentation="center"
-        layer="modal"
-        onPointerDown={(event) => { pressedBackdrop.current = event.target === event.currentTarget; }}
-        onClick={(event) => {
-          if (event.target !== event.currentTarget || !pressedBackdrop.current) return;
-          pressedBackdrop.current = false;
-          // Portal events bubble through the React tree; stop at this backdrop so a surface raised over
-          // another cannot close both with one click.
-          event.stopPropagation();
-          onClose();
-        }}
-      >
-        <DialogContent
-          ref={surfaceRef}
-          presentation="center"
-          chrome="bare"
-          // `relative` is this surface's own layout: the loading status is centred on it.
-          className="pointer-events-none relative"
-          aria-label={t.brainChat.imageViewerTitle}
-          // Clicks that land on the picture itself must not reach the rule above.
-          onClick={(event) => event.stopPropagation()}
-          // Radix would dismiss on any press outside the surface: that is the same decision the backdrop
-          // already makes, and it is declined here exactly as `Modal.tsx` declines it.
-          onInteractOutside={(event) => event.preventDefault()}
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            restoreFocus();
-          }}
-        >
-          {failed ? (
-            // The bytes can be gone by the time full size is asked for, and a broken-image glyph in the
-            // middle of a dark screen explains nothing. Say what happened; the backdrop still closes it.
-            <span data-testid="image-lightbox-gone" className="pointer-events-auto inline-flex items-center gap-2 text-sm text-muted-foreground">
-              <ImageOff size={16} className="shrink-0" aria-hidden />
-              {t.brainChat.imageGone}
-            </span>
-          ) : (
-            <img
-              src={`/api${image.url}`}
-              alt={description}
-              data-testid="image-lightbox"
-              onLoad={() => setLoaded(true)}
-              onError={() => setFailed(true)}
-              className="pointer-events-auto block max-h-full max-w-full object-contain"
-            />
-          )}
-          {loaded || failed ? null : (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <Spinner size="lg" label={t.common.loading} />
-            </div>
-          )}
-        </DialogContent>
-      </DialogOverlay>
-    </Dialog>,
-    document.body,
+  return (
+    <Modal
+      title={t.brainChat.imageViewerTitle}
+      onClose={onClose}
+      chrome="bare"
+      presentation="center"
+      intent="inspect"
+    >
+      {failed ? (
+        <span data-testid="image-lightbox-gone" className="pointer-events-auto inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <ImageOff size={16} className="shrink-0" aria-hidden />
+          {t.brainChat.imageGone}
+        </span>
+      ) : (
+        <img
+          src={`/api${image.url}`}
+          alt={description}
+          data-testid="image-lightbox"
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          // The picture opts back in: it is the one thing on this surface a click belongs to, and a click
+          // that lands on it must not reach the rule that closes the view.
+          className="pointer-events-auto block max-h-full max-w-full object-contain"
+        />
+      )}
+      {loaded || failed ? null : (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <Spinner size="lg" label={t.common.loading} />
+        </div>
+      )}
+    </Modal>
   );
 }
 

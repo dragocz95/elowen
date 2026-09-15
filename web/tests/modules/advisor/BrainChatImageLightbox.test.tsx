@@ -119,6 +119,13 @@ describe('a picture in the transcript', () => {
     expect(dialog.className).not.toContain('rounded-lg');
     expect(dialog.className).not.toContain('max-w-lg');
     expect(dialog.getAttribute('data-chrome')).toBe('bare');
+    // The fall-through that turns a press beside the picture into a press on the scrim has to be INLINE:
+    // Radix states `pointer-events: auto` inline on a modal content element, and a class loses to it. The
+    // class version compiled, linted and passed every other assertion here while a click in the band around
+    // the picture quietly did nothing, so the style itself is pinned and the browser spec clicks it.
+    expect(dialog.style.pointerEvents).toBe('none');
+    // And the picture takes the pointer back, because a click on it is not a dismissal.
+    expect(image.className).toContain('pointer-events-auto');
   });
 
   it('is operable and visible from the keyboard, with a name that says what it does', async () => {

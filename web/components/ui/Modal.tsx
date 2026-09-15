@@ -38,6 +38,18 @@ interface ModalProps {
    *  the reader is inspecting (for example a selected node in the memory brain). Geometry, focus isolation
    *  and dismissal stay identical; only the shared scrim token changes. */
   scrim?: 'default' | 'soft';
+  /** Whether the surface is a panel. `card` — the default — is every dialog, drawer and sheet in the app:
+   *  the header with its title, subtitle, actions and close control, and the shared material drawn around
+   *  a scrolling body.
+   *
+   *  `bare` is a surface whose content IS the frame. The header is not rendered, so `title` names the
+   *  dialog to a screen reader without being drawn above it (`icon`, `description`, `headerActions` and
+   *  `closeLabel` are header parts and have nowhere to go), and `children` are the surface's own content
+   *  rather than a body inside one. The portal, the overlay stack, the focus trap, Escape, the backdrop
+   *  rule and the return of focus are the same code, which is the entire reason a frameless overlay is a
+   *  presentation of this component instead of a second implementation beside it. Today: the chat image
+   *  lightbox, where a card around a picture is the thing the reader clicked past. */
+  chrome?: 'card' | 'bare';
   /** Accessible name of the header's close control. Defaults to the app's own "Close"; passed only by
    *  callers that already hold a translated label of their own. */
   closeLabel?: string;
@@ -77,11 +89,14 @@ interface ModalProps {
  *   - the backdrop press, which must stop at the backdrop it was aimed at so a nested dialog cannot also
  *     close its parent. Radix's own outside-press dismissal is turned off for that reason, rather than
  *     left running as a second way to close the same dialog. */
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', standsInForPage = false, drawerWidth, closeLabel, closeDisabled = false, 'aria-busy': busy, 'data-testid': testId }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', chrome = 'card', standsInForPage = false, drawerWidth, closeLabel, closeDisabled = false, 'aria-busy': busy, 'data-testid': testId }: ModalProps) {
   const requestClose = () => { if (!closeDisabled) onClose(); };
   const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
   const automatic = useOverlayPresentation(intent);
   const resolved = presentation === 'auto' ? automatic : presentation;
+  // The headerless presentation. Everything below the header stays shared, which is the point of raising
+  // a frameless surface through this component rather than beside it.
+  const bare = chrome === 'bare';
   // The resolved SHAPE owns the z-band. Only a top-level drawer belongs under modal dialogs; an inspect
   // surface forced or nested into a centered/fullscreen presentation must stay on the modal band, or it
   // paints underneath the dialog that opened it. A page stand-in is the exception the shape cannot state:
@@ -133,10 +148,14 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         <DialogContent
           ref={dialogRef}
           presentation={resolved}
+          chrome={chrome}
           size={size}
           width={wide ? 'wide' : 'default'}
-          aria-labelledby={titleId}
-          aria-describedby={description ? descriptionId : undefined}
+          // A header names a dialog by showing a heading and pointing at it; a bare surface has no heading
+          // to point at, so the very same title is stated as the surface's label instead — heard, not drawn.
+          aria-label={bare ? title : undefined}
+          aria-labelledby={bare ? undefined : titleId}
+          aria-describedby={!bare && description ? descriptionId : undefined}
           aria-busy={busy}
           data-elowen-modal
           data-testid={testId}
@@ -157,20 +176,30 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <DialogHeader
-            title={title}
-            titleId={titleId}
-            description={description}
-            descriptionId={description ? descriptionId : undefined}
-            icon={Icon}
-            actions={headerActions}
-            closeLabel={closeLabel ?? t.common.close}
-            closeDisabled={closeDisabled}
-            onClose={requestClose}
-          />
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* One branch, and it is only about what is DRAWN: a bare surface has no header to draw and no
+              body region to scroll, because its content is the surface. Everything above this — portal,
+              overlay stack, focus trap, Escape, the backdrop rule — is shared by both, and the card branch
+              is exactly what it was. */}
+          {bare ? (
             <OverlayDepthProvider standsInForPage={standsInForPage}>{children}</OverlayDepthProvider>
-          </div>
+          ) : (
+            <>
+              <DialogHeader
+                title={title}
+                titleId={titleId}
+                description={description}
+                descriptionId={description ? descriptionId : undefined}
+                icon={Icon}
+                actions={headerActions}
+                closeLabel={closeLabel ?? t.common.close}
+                closeDisabled={closeDisabled}
+                onClose={requestClose}
+              />
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <OverlayDepthProvider standsInForPage={standsInForPage}>{children}</OverlayDepthProvider>
+              </div>
+            </>
+          )}
         </DialogContent>
       </DialogOverlay>
     </Dialog>,

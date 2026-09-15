@@ -245,6 +245,59 @@ describe('Modal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  /** The headerless presentation the chat image lightbox uses. The surface takes the whole padded viewport,
+   *  so a press on the empty part of it belongs to the backdrop behind — which has to be said as an INLINE
+   *  `pointer-events: none`, because Radix states `pointer-events: auto` inline on a modal content element
+   *  and a utility class cannot beat it. A class was the first attempt and it silently lost. */
+  it('renders a bare surface with no header, named by its title, that lets the pointer through', () => {
+    const onClose = vi.fn();
+    render(
+      <Modal title="Image preview" onClose={onClose} chrome="bare" presentation="center">
+        <img alt="picture" className="pointer-events-auto" data-testid="bare-content" />
+      </Modal>,
+      { wrapper: W },
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'Image preview' });
+    // Nothing drawn: no title row and no close control, because the name is stated rather than shown.
+    expect(screen.queryByRole('heading')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    // No card material and none of the room a panel reserves for a title and a body of text: the size axis
+    // belongs to `card` alone, and a bare surface is sized by the padded viewport it fills.
+    expect(dialog.className).not.toContain('overlay-surface');
+    expect(dialog.className).not.toContain('rounded-lg');
+    expect(dialog.className).not.toMatch(/max-w-|max-h-|h-\[/);
+    expect(dialog.className).toContain('h-full');
+    expect(dialog.style.pointerEvents).toBe('none');
+    // The content is the surface's own child, not a body inside a frame.
+    expect(screen.getByTestId('bare-content').parentElement).toBe(dialog);
+
+    // A press that begins and ends on the backdrop still dismisses, because the surface cannot swallow it.
+    const backdrop = dialog.parentElement!;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  /** The compatibility claim: adding the second chrome changed nothing about the first one. */
+  it('keeps the card presentation it always had: header, drawn edge, a surface that owns its own area', () => {
+    const onClose = vi.fn();
+    render(
+      <Modal title="Test Modal" onClose={onClose} presentation="center">
+        <span>content</span>
+      </Modal>,
+      { wrapper: W },
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Test Modal' });
+    expect(screen.getByRole('heading', { name: 'Test Modal' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(dialog.className).toContain('overlay-surface');
+    expect(dialog.className).toContain('rounded-lg');
+    expect(dialog.style.pointerEvents).not.toBe('none');
+    fireEvent.click(screen.getByText('content'));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('does NOT call onClose when clicking inside the modal box', () => {
     const onClose = vi.fn();
     render(

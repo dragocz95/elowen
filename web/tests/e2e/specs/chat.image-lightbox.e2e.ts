@@ -103,7 +103,23 @@ for (const viewport of VIEWPORTS) {
     await app.mouse.click(box.x + box.width - 6, box.y + box.height - 6);
     await expect(surface).toBeVisible();
     await expect(image).toBeVisible();
-    // …and a press on the scrim beside it closes it.
+
+    // …and a press on the empty band BESIDE the picture closes it. The band has to be inside the surface's
+    // own box, not on the scrim ring: that is precisely where the click used to die, because Radix states
+    // `pointer-events: auto` INLINE on the dialog content, a class on the surface cannot beat it, and the
+    // surface then captured the press and stopped it from reaching the backdrop. A click at (2,2) is
+    // outside the surface and passed even while that was broken, so it proves nothing on its own.
+    const surfaceBox = (await surface.boundingBox())!;
+    const beside = middleOfBand(surfaceBox, box);
+    expect(beside.x >= surfaceBox.x && beside.x <= surfaceBox.x + surfaceBox.width).toBe(true);
+    expect(beside.y >= surfaceBox.y && beside.y <= surfaceBox.y + surfaceBox.height).toBe(true);
+    expect(beside.x < box.x || beside.x > box.x + box.width || beside.y < box.y || beside.y > box.y + box.height).toBe(true);
+    await app.mouse.click(beside.x, beside.y);
+    await expect(surface).toHaveCount(0);
+
+    // The scrim outside the surface closes it the same way.
+    await thumb.click();
+    await expect(surface).toBeVisible();
     await app.mouse.click(2, 2);
     await expect(surface).toHaveCount(0);
 
@@ -116,6 +132,19 @@ for (const viewport of VIEWPORTS) {
       .poll(() => app.evaluate(() => document.activeElement?.matches('button:has(img[src])') ?? false))
       .toBe(true);
   });
+}
+
+/** The middle of the empty band beside the picture, inside the surface's own box. The picture is capped by
+ *  whichever axis the viewport is short on, so the band is on the other one. */
+function middleOfBand(
+  surface: { x: number; y: number; width: number; height: number },
+  picture: { x: number; y: number; width: number; height: number },
+): { x: number; y: number } {
+  const gapX = picture.x - surface.x;
+  const gapY = picture.y - surface.y;
+  return gapX > gapY
+    ? { x: surface.x + gapX / 2, y: surface.y + surface.height / 2 }
+    : { x: surface.x + surface.width / 2, y: surface.y + gapY / 2 };
 }
 
 /** The box the reader finally sees. Measuring the first one is not enough here for two reasons: the shared
