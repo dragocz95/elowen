@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { useMemo } from 'react';
 import { currentMonthBounds, trailingDays } from './metrics';
 import { buildUsageSummary } from '../../lib/usageBars';
-import { nextCronRun } from '../../lib/cron';
 import { formatCost, formatTokens } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import { useCronJobs, useMe, useModelUsage, usePluginPresent, usePulse, useUsageByDay } from '../../lib/queries';
@@ -49,14 +48,20 @@ export function MetricsTile({ now }: { now: number }) {
   // The month figure is core usage and renders either way; only its LINK belongs to the plugin's page.
   const stats = usePluginPresent('stats');
   const jobs = useCronJobs(cron && (me.data?.user?.is_admin ?? false));
+  // The schedule's next fire is the scheduler's own projection (`nextOccurrence.expectedAt` on each
+  // job): it already carries the configured timezone, active hours and catch-up rules. The browser
+  // never expands a schedule itself — that second reading of the grammar silently disagreed with what
+  // the scheduler actually does, e.g. a guarded or deferred run, or a wall clock in another zone.
+  // `null` (paused/spent jobs) and an older daemon missing the field both read as "no known run".
   const next = useMemo(() => {
     let best: { at: number; name: string } | null = null;
     for (const job of jobs.data ?? []) {
-      const at = nextCronRun(job, now);
-      if (at != null && (!best || at < best.at)) best = { at, name: job.name };
+      const at = job.nextOccurrence ? Date.parse(job.nextOccurrence.expectedAt) : NaN;
+      if (Number.isNaN(at)) continue;
+      if (!best || at < best.at) best = { at, name: job.name };
     }
     return best;
-  }, [jobs.data, now]);
+  }, [jobs.data]);
 
   const monthBounds = useMemo(() => currentMonthBounds(now), [now]);
   const monthly = useModelUsage(monthBounds);

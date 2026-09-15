@@ -714,6 +714,21 @@ export interface PluginHookExecutions {
   entries: PluginHookExecution[];
 }
 
+/** The server-derived next fire of one scheduled job. Every field of it is the scheduler's own
+ *  reading of its configured timezone, active hours and catch-up rules; the browser never expands a
+ *  schedule itself. Null (or absent, from an older daemon) for a paused job and a spent one-shot. */
+export interface CronNextOccurrence {
+  occurrenceId: string;
+  scheduledAt: string;
+  expectedAt: string;
+  localDate: string;
+  localTime: string;
+  timezone: string;
+  disposition: 'onTime' | 'deferredByHours' | 'catchUp' | 'dueNow' | 'late';
+  precisionMs: number;
+  guarded: boolean;
+}
+
 /** One scheduled job of the cronjob plugin (the raw jobs.json shape). `enabled: false` = paused;
  *  a one-shot job carries `runAt` instead of a recurring schedule. */
 export interface CronJob {
@@ -750,6 +765,9 @@ export interface CronJob {
   createdAt?: string;
   lastRun?: string;
   lastResult?: string;
+  /** The scheduler's projection of when this job next fires, null when it cannot fire (paused or a
+   *  spent one-shot). Server-derived and read-only; a client never computes it. */
+  nextOccurrence?: CronNextOccurrence | null;
 }
 
 /** One recurring job shown as a navigation row under the conversation it is organized under — the

@@ -2,11 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { isValidSchedule } from '../../lib/cronSchedule';
 import { isValidSchedule as isValidScheduleDirect } from '../../lib/cron';
 
-/** The web's two cron-schedule predicates used to be hand-synced copies of the same grammar (this file
- *  and `lib/cron.ts`'s parser). This characterization test pins the accepted/rejected corpus of BOTH —
- *  it was written against the pre-merge behaviour and must keep passing after the merge unchanged, as
- *  proof the merge altered nothing. Expected values mirror the plugin's authoritative `parseSchedule`
- *  (tests/contract/cronParity.test.ts pins that separately). */
+/** The web's two cron-schedule predicates are one file's views of the same grammar (`lib/cron.ts`'s
+ *  parser, re-exported validation-only through `lib/cronSchedule.ts`). This characterization test pins
+ *  the accepted/rejected corpus of BOTH views — unchanged from the pre-merge behaviour, as proof the
+ *  merge altered nothing. Expected values mirror the plugin's authoritative `parseSchedule`
+ *  (tests/contract/cronParity.test.ts pins that separately against the frozen shared corpus).
+ *
+ *  Both exports are COMPATIBILITY-ONLY now: the browser's next-run expansion was removed, so the new
+ *  cronjob UI never parses a schedule itself — the plugin's `schedule-preview` route does, with the
+ *  engine that will actually run it. These tests exist so the retained helper cannot silently change
+ *  agreement under the still-released bundles that read it. */
 
 const CASES: Array<[string, boolean]> = [
   // human-readable recurring forms

@@ -123,19 +123,52 @@ describe('MetricsTile — figures', () => {
     expect(screen.queryByText(en.dashboard.nextRunLabel)).toBeNull();
   });
 
-  it('shows the nearest enabled run when the scheduler is available', async () => {
+  it('shows the nearest server-projected run when the scheduler is available', async () => {
     server.use(
       http.get('*/api/plugins/ui', () => HttpResponse.json([
         { name: 'cronjob', title: 'Schedules', nav: [], settings: [] },
       ])),
       http.get('*/api/plugins/cronjob/jobs', () => HttpResponse.json([
-        { id: 'daily-check', name: 'Daily check', schedule: 'daily 11:00', prompt: 'Check it', enabled: true },
+        // The schedule's next fire is the scheduler's own projection; the browser never expands a
+        // schedule itself, so a job without `nextOccurrence` must not contribute a time either way.
+        { id: 'daily-check', name: 'Daily check', schedule: 'daily 11:00', prompt: 'Check it', enabled: true,
+          nextOccurrence: { occurrenceId: 'daily-check:slot:202608301300', scheduledAt: '2026-08-30T13:00:00+02:00',
+            expectedAt: new Date(NOW + 3_600_000).toISOString(), localDate: '2026-08-30', localTime: '13:00',
+            timezone: 'Europe/Prague', disposition: 'onTime', precisionMs: 60_000, guarded: false } },
+        { id: 'paused', name: 'Paused job', schedule: 'daily 07:00', prompt: 'Skip', enabled: false,
+          nextOccurrence: null },
       ])),
     );
     mount([person()]);
 
     expect(await screen.findByText(en.dashboard.nextRunLabel)).toBeInTheDocument();
     expect(await screen.findByText('Daily check')).toBeInTheDocument();
+  });
+
+  it('renders no run the server has not projected, rather than inventing one', async () => {
+    // A paused/spent job (nextOccurrence null), an older daemon that does not send the field, and a
+    // malformed timestamp all land here. The figure stays on screen and reads as no known run — never
+    // as a schedule the browser guessed at itself.
+    server.use(
+      http.get('*/api/plugins/ui', () => HttpResponse.json([
+        { name: 'cronjob', title: 'Schedules', nav: [], settings: [] },
+      ])),
+      http.get('*/api/plugins/cronjob/jobs', () => HttpResponse.json([
+        { id: 'careful', name: 'Careful job', schedule: 'every 15m', prompt: 'b', enabled: true, nextOccurrence: null },
+        { id: 'legacy', name: 'Legacy job', schedule: 'every 15m', prompt: 'b', enabled: true },
+        { id: 'broken', name: 'Broken job', schedule: 'daily 09:00', prompt: 'b', enabled: true,
+          nextOccurrence: { occurrenceId: 'x', scheduledAt: 'x', expectedAt: 'not-a-date', localDate: 'x',
+            localTime: 'x', timezone: 'Europe/Prague', disposition: 'onTime', precisionMs: 60000, guarded: false } },
+      ])),
+    );
+    mount([person()]);
+
+    expect(await screen.findByText(en.dashboard.nextRunLabel)).toBeInTheDocument();
+    for (const name of ['Careful job', 'Legacy job', 'Broken job']) {
+      expect(screen.queryByText(name)).toBeNull();
+    }
+    // The figure itself stays, stating its emptiness, and keeps the link to the management page.
+    expect(await screen.findByText(en.dashboard.noCron)).toBeInTheDocument();
   });
 });
 
