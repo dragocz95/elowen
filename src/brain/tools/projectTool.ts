@@ -12,15 +12,39 @@ export const projectToolInputSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('switch'), target: projectExecutionRefSchema }).strict(),
 ]);
 
-const projectExecutionRefType = Type.Union([
-  Type.Object({ kind: Type.Literal('host'), projectId: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false }),
-  Type.Object({ kind: Type.Literal('managed'), projectId: Type.Integer({ minimum: 1 }) }, { additionalProperties: false }),
-]);
+/** The PUBLIC (provider-facing) shape. It is deliberately a single top-level object with plain string
+ *  enums, not the discriminated union the arguments actually satisfy.
+ *
+ *  A union renders as a top-level `anyOf`, and an OpenAI-compatible Responses endpoint that is not
+ *  OpenAI itself rejects the whole request over it: Alibaba's compatible-mode endpoint answers
+ *  `InternalError.Algo.InvalidParameter: The parameters, when provided as a dict, must confirm to a
+ *  valid openai-compatible JSON schema … for tool: Project` and the turn cannot run at all. The same
+ *  applies to the nested target union, so `kind` is an enum and `projectId` is optional here.
+ *
+ *  Loosening the ADVERTISED schema loosens nothing that matters: `projectToolInputSchema` below is the
+ *  authoritative validator and still rejects `list` with a target, `switch` without one, and a managed
+ *  target with no `projectId`. The description states those invariants for the model. */
+const projectExecutionRefType = Type.Object({
+  kind: Type.Unsafe<ProjectExecutionRef['kind']>({
+    type: 'string', enum: ['host', 'managed'],
+    description: 'Execution target kind, as reported by action list.',
+  }),
+  projectId: Type.Optional(Type.Integer({
+    minimum: 1,
+    description: 'Required for kind managed; may be omitted for kind host to mean plain host administration.',
+  })),
+}, {
+  additionalProperties: false,
+  description: 'Required with action switch and rejected with action list.',
+});
 
-const projectToolInputType = Type.Union([
-  Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
-  Type.Object({ action: Type.Literal('switch'), target: projectExecutionRefType }, { additionalProperties: false }),
-]);
+const projectToolInputType = Type.Object({
+  action: Type.Unsafe<'list' | 'switch'>({
+    type: 'string', enum: ['list', 'switch'],
+    description: 'list takes no target; switch requires one.',
+  }),
+  target: Type.Optional(projectExecutionRefType),
+}, { additionalProperties: false });
 
 const result = (details: object) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(details) }],
