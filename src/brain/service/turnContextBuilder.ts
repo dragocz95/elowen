@@ -456,7 +456,10 @@ export class TurnContextBuilder {
     // map at all, so this is normally `undefined`; a session that DOES carry one is narrowed to the account
     // it was composed against rather than being handed the whole superset. Rooms run their own pass in
     // channels.ts today, and this is what keeps the guarantee if a routing condition ever sends one here.
-    applyToolVisibility(live.session, live.pluginToolNames, visibility, live.toolSearch,
+    // Code mode REPLACES the deferral narrowing rather than stacking with it: `exec` already carries a
+    // declaration for every tool that is not deferred, so running both would answer the same question
+    // twice and the wider answer would win.
+    applyToolVisibility(live.session, live.pluginToolNames, visibility, live.codeModeVisibility ?? live.toolSearch,
       live.personalToolOwners ? { owners: live.personalToolOwners, contributionUserId: live.contributionUserId } : undefined);
     // The account's GRANT rides along unchanged: plan mode only ever adds denials, so carrying `allow`
     // through keeps the enforcement policy a superset of the visible one rather than a second opinion.

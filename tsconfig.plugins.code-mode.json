@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.json",
+  // A project REFERENCE, not an include: the plugin imports core types (PluginContext, the control
+  // contract) TYPE-ONLY, and a reference resolves them through the daemon project's declarations rather
+  // than pulling the whole `src/` tree into this program and emitting a second copy of it.
+  "references": [{ "path": "./tsconfig.json" }],
   "compilerOptions": {
     "rootDir": "plugins/code-mode/src",
     "outDir": "dist/plugins/code-mode/src",

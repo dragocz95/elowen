@@ -15,14 +15,16 @@ import type { SandboxResolver } from '../managedArtifacts.js';
 import { setManagedSandboxResolver } from '../session/toolResultClearing.js';
 import { buildShareImageTool } from '../tools/shareImageTool.js';
 import { makeToolIconResolver } from '../toolIcons.js';
-import { composeSessionTools } from '../session/capabilities.js';
+import { composeSessionTools, refusedToolResultText } from '../session/capabilities.js';
 import { createToolSearchHandle, toolSearchTool, formatDeferredToolsBlock, formatHostedToolCatalogBlock, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { buildPromptTemplates } from '../slashCommands.js';
 import { estimateTokens, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '../session/forkPrefix.js';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
-import { currentContributionUserId, currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
+import { randomUUID } from 'node:crypto';
+import { currentCardEmitter, currentContributionUserId, currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
+import { codeModeApplies, codeModeVisibilityFor } from '../session/codeModeRoute.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
@@ -452,6 +454,11 @@ export class LiveSessionSpawner {
     const planSafeToolNames = new Set([...BUILTIN_TOOL_PLAN_SAFE, ...(plugins?.toolPlanSafe ?? [])]);
     let toolSearchHandle: ToolSearchHandle | undefined;
     const sessionKind = ownerChatShape ? 'owner-chat' : (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel');
+    // CODE MODE. Resolved once per spawn from the same snapshot every other route decision reads, so a
+    // config change applies on the next respawn and never mid-turn. The control is absent whenever the
+    // plugin is not loaded, which reads as "code mode unavailable" and leaves the direct tool surface.
+    const codeModeControl = codeModeApplies(providerEntry, model.id) ? plugins?.control('codeMode') : undefined;
+    let codeModeToolNames: string[] = [];
     const allTools = composeSessionTools({
       kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
@@ -518,6 +525,45 @@ export class LiveSessionSpawner {
       // waits through in FRONT of every call, not after it.
       onToolCall: toolHookBus
         ? async (e) => (await toolHookBus.emitBlocking('tools.call.before', e)).deny
+        : undefined,
+      // Hands the plugin the FINISHED, gated definitions. `invoke` is each tool's own `execute`, so a
+      // script's call carries the identical enforcement chain; there is deliberately no second path.
+      codeMode: codeModeControl
+        ? (nested) => {
+          const deferred = toolSearchHandle?.deferred ?? new Set<string>();
+          const tools = codeModeControl.compose({
+            sessionId,
+            codeModeOnly: true,
+            nested: nested.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.parameters,
+              deferred: deferred.has(tool.name),
+              // PI supplies an ExtensionContext as the fifth argument when IT calls a tool; a nested call
+              // has none to pass. No Elowen core or bundled-plugin tool reads it, and a third-party tool
+              // that does will throw — which reaches the script as a rejected promise, never as a silent
+              // success. That failure mode is the reason this is a cast and not a fabricated context.
+              invoke: async (input: unknown) => {
+                const result = await tool.execute(
+                  `code-mode-${randomUUID()}`,
+                  input,
+                  undefined,
+                  undefined,
+                  undefined as never,
+                );
+                // A refusal RESOLVES like any other result, which is right for the model and wrong for a
+                // script: JavaScript would read the refusal sentence as the tool's output and carry on.
+                // Turned back into a rejection so the failure is impossible to miss inside the cell.
+                const refusal = refusedToolResultText(result);
+                if (refusal !== undefined) throw new Error(refusal);
+                return result;
+              },
+            })),
+            notify: (text) => { currentCardEmitter()?.({ id: `code-mode-${sessionId}`, title: 'exec', items: [{ text }] }); },
+          });
+          codeModeToolNames = tools.map((tool) => tool.name);
+          return tools;
+        }
         : undefined,
     });
     // WHOSE skills this session may see. The SAME list has to reach both the awareness block and the
@@ -832,6 +878,12 @@ export class LiveSessionSpawner {
       // The deferred-tool handle (undefined when nothing is deferred). Carried on the live so each turn's
       // visibility pass keeps already-fetched tools advertised and withheld ones hidden.
       toolSearch: toolSearchHandle,
+      // Under code mode the model sees `exec`, `wait` and the always-visible interaction tools; everything
+      // else stays REGISTERED and callable from a script, it is only withheld from the prompt. Expressed in
+      // the deferral shape because it is the same operation, and `activated` stays empty for its whole life.
+      ...(codeModeToolNames.length > 0
+        ? { codeModeVisibility: codeModeVisibilityFor(allTools.map((tool) => tool.name), codeModeToolNames) }
+        : {}),
       // Read-only-ness is declared with the tool, exactly like its icon above: the core co-locates its
       // own, a plugin states its own in the manifest. Assembled once per session so a plugin toggle
       // applies on the next spawn without a daemon restart.

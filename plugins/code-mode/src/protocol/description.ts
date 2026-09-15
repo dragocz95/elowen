@@ -4,10 +4,17 @@
  * Ported from Codex `code-mode-protocol/src/description.rs`. The wording is kept verbatim wherever
  * we implement the same behaviour, because gpt-5.6 and newer are trained against this exact text.
  *
- * ONE DELIBERATE DIVERGENCE: Codex advertises an `audio(...)` helper. Elowen tool results carry no
- * audio content items, so advertising it would promise the model a global we cannot honour. The
- * line is therefore omitted and the helper is not installed. Everything else, including the
- * `image`, `generatedImage`, `store`, `load`, `notify` and `yield_control` wording, is unchanged.
+ * TWO DELIBERATE DIVERGENCES, both of the same kind: we do not advertise what we cannot honour.
+ *
+ * 1. Codex advertises an `audio(...)` helper. Elowen tool results carry no audio content items, so the
+ *    line is omitted and the helper is not installed.
+ * 2. Codex's `notify()` injects an extra tool output into the RUNNING turn. Elowen has no equivalent of
+ *    that injection, so `notify()` here surfaces a progress line to the USER through the turn's card
+ *    emitter and the description says so. Describing it as an extra model-visible output would teach the
+ *    model to expect a message that never arrives.
+ *
+ * Everything else, including the `image`, `generatedImage`, `store`, `load` and `yield_control` wording,
+ * is unchanged.
  */
 import { normalizeCodeModeIdentifier } from './identifiers.js';
 import { renderJsonSchemaToTypescript, type JsonValue } from './jsonSchemaTypes.js';
@@ -49,7 +56,7 @@ const EXEC_DESCRIPTION_TEMPLATE = `Run JavaScript code to orchestrate/compose to
 - \`generatedImage(result: { image_url: string; output_hint?: string })\`: Appends an image-generation result and its optional output hint. HTTP(S) URLs are not supported.
 - \`store(key: string, value: any)\`: stores a serializable value under a string key for later \`exec\` calls in the same session.
 - \`load(key: string)\`: returns the stored value for a string key, or \`undefined\` if it is missing.
-- \`notify(value: string | number | boolean | undefined | null)\`: immediately injects an extra tool output for the current \`exec\` call. Values are stringified like \`text(...)\`.
+- \`notify(value: string | number | boolean | undefined | null)\`: shows a progress line to the USER while the script is still running. It is not returned to you and is not part of the script's output. Values are stringified like \`text(...)\`.
 - \`setTimeout(callback: () => void, delayMs?: number)\`: schedules a callback to run later and returns a timeout id. Pending timeouts do not keep \`exec\` alive by themselves; await an explicit promise if you need to wait for one.
 - \`clearTimeout(timeoutId?: number)\`: cancels a timeout created by \`setTimeout\`.
 - \`ALL_TOOLS\`: metadata for the enabled nested tools as \`{ name, description }\` entries.

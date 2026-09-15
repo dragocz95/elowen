@@ -1109,7 +1109,8 @@ export class ChannelSessionService {
           // this account, while ownership says whose personal MCP server is on the other end of a name the
           // room composed for everybody. Absent on every session composed for a single account.
           applyToolVisibility(
-            ch.session, ch.pluginToolNames, visibleToolPolicy, ch.toolSearch,
+            // Code mode replaces the deferral narrowing; see the same call in turnContextBuilder.ts.
+            ch.session, ch.pluginToolNames, visibleToolPolicy, ch.codeModeVisibility ?? ch.toolSearch,
             ch.personalToolOwners ? { owners: ch.personalToolOwners, contributionUserId: turnContributionUserId } : undefined,
           );
           // Granular permissions without an approval channel: ordinary platform turns read the verified

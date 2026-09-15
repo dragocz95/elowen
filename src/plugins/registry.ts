@@ -128,6 +128,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
+  codeMode: ['compose', 'shutdownSession'],
   sandbox: ['prepareExecution', ...ENVIRONMENT_CONTROL_METHODS],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
   github: ['sessionCredential'],

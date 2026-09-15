@@ -8,6 +8,7 @@ import type { DelegatedExecutionScope } from '../delegatedScope.js';
 import type { SpawnOrigin } from '../spawnOrigin.js';
 import type { TurnMode } from '../service/turnRequest.js';
 import type { ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
+import type { ToolDeferralState } from './capabilities.js';
 import type { AssessColdCompaction } from './coldStartCompaction.js';
 import type { StoredChatImage } from '../chatImages.js';
 import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
@@ -119,6 +120,13 @@ export interface LiveBrain {
    *  the withheld MCP tool names and the subset ToolSearch has fetched; consulted by applyToolVisibility so
    *  each turn advertises only the core plus already-fetched tools. */
   toolSearch?: ToolSearchHandle;
+  /** CODE MODE's visibility narrowing, or undefined when the session composes its tools normally (the
+   *  default). Deliberately the SAME shape deferral uses, because it is the same operation: the names are
+   *  registered and callable, they are simply not advertised. `activated` stays empty for its whole life —
+   *  a code-mode tool is reached from inside a script, never fetched into the prompt — and this replaces
+   *  the deferral state for the visibility pass rather than stacking with it, since `exec` already carries
+   *  a declaration for every non-deferred tool. */
+  codeModeVisibility?: ToolDeferralState;
   /** Names of the tools composed into this session that only READ. Assembled at spawn from the same two
    *  declarations icons come from — the core's `BUILTIN_TOOL_PLAN_SAFE` and each plugin manifest's
    *  `planSafe` — so a tool's plan-safety is stated once, by whoever owns the tool. Plan mode still

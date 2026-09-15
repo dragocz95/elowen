@@ -1,0 +1,3 @@
+{
+  "description": "Dáva modelu jediný nástroj `exec`, ktorého vstupom je čistý JavaScript; všetky ostatné nástroje volá skript cez objekt `tools`. Závislé volania tak prebehnú v jednom ťahu namiesto jedného kola modelu na každé volanie. Zapína sa prepínačom pri konkrétnom poskytovateľovi."
+}
