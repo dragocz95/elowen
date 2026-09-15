@@ -509,6 +509,12 @@ const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = {
   memoryVitalityWeightPerMille: 100,
   memoryCuratorMaxOps: 2,
   toolDeferThreshold: 10,
+  // A turn has to be genuinely long before interrupting it is worth the context. At 20 calls a 100-call
+  // turn carries about five frozen reminders, which is noise next to the per-turn task list the todo
+  // plugin already sends, and it costs no cache: each block is appended at its own canonical boundary
+  // and never rewritten. The floor of 10 is what keeps a focused task quiet; there is deliberately no
+  // off position on the slider — disabling the contributing plugin is the off switch.
+  stepContextEveryToolCalls: 20,
   eventRetentionDays: 30,
   // Exact provider bodies are useful for recent incident diagnosis, but they are large secondary data.
   // Two weeks spans normal investigation; 1 GiB remains generous after manifest V2 removes prefix repeats.
@@ -584,6 +590,9 @@ const RUNTIME_LIMIT_BOUNDS: Record<keyof RuntimeLimits, [min: number, max: numbe
   // Below 1 the threshold would defer a session holding a single MCP tool, which costs a prompt-cache
   // break for nothing; past 100 no realistic MCP surface would ever engage it.
   toolDeferThreshold: [1, 100],
+  // 10 calls is the shortest gap that still reads as "the turn has gone long" rather than as an
+  // interruption; 100 is past the point where a reminder is worth its accumulated frozen blocks.
+  stepContextEveryToolCalls: [10, 100],
   eventRetentionDays: [1, 365],
   providerRequestRetentionDays: [1, 90],
   // Small installations still need enough room for a few large exact requests; beyond 16 GiB the setting

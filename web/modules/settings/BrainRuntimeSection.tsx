@@ -10,6 +10,7 @@ import { MemoryRetentionModal, DEFAULT_MEMORY_RETENTION } from './MemoryRetentio
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useUpdateConfig } from '../../lib/mutations';
+import { useRuntimeContributions } from '../../lib/queries';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { combineSaveFeedback } from '../../lib/saveFeedback';
 import type { BrainLimits, ElowenConfig, RuntimeConfig, RuntimeLimits, MemoryRetentionConfig } from '../../lib/types';
@@ -110,6 +111,11 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
       setRuntimeSeeded(true);
     }
   }, [config, runtimeSeeded]);
+  // The mid-turn reminder row inside that editor is offered only when a loaded plugin actually registers a
+  // step-context provider — a cadence with no provider is a dead control. Read from the daemon's runtime
+  // report, and only while the editor is open: enabling the plugin that owns the reminders is the off
+  // switch, so the answer must be fresh at the moment the row is drawn rather than cached from a visit.
+  const { data: runtimeContributions } = useRuntimeContributions(runtimeOpen);
   const { status: runtimeStatus, retry: retryRuntime, flush: flushRuntime } = useAutoSaveStatus([runtime], async () => {
     if (!runtime) return;
     try {
@@ -243,6 +249,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
             <RuntimeLimitsModal
               runtime={runtime}
               applied={appliedRuntime}
+              stepContextAvailable={(runtimeContributions?.stepContexts.length ?? 0) > 0}
               onChange={(fn) => setRuntime((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setRuntimeOpen(false)}
               status={runtimeStatus}

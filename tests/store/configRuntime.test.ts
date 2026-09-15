@@ -19,6 +19,7 @@ describe('ConfigStore runtime limits', () => {
         memoryVitalityWeightPerMille: 100,   // W_VITALITY 0.1
         memoryCuratorMaxOps: 2,           // MAX_OPS_PER_TURN
         toolDeferThreshold: 10,           // DEFAULT_DEFER_THRESHOLD
+        stepContextEveryToolCalls: 20,    // mid-turn reminder cadence
         eventRetentionDays: 30,           // purgeOlderThan(days = 30)
         providerRequestRetentionDays: 14,
         providerRequestRetentionMiB: 1_024,
@@ -48,6 +49,7 @@ describe('ConfigStore runtime limits', () => {
       memoryDuplicatePerMille: 500, memoryParaphrasePerMille: 500,
       memoryImportanceWeightPerMille: 0, memoryVitalityWeightPerMille: 0, memoryCuratorMaxOps: 0,
       toolDeferThreshold: 1, eventRetentionDays: 1,
+      stepContextEveryToolCalls: 10,
       providerRequestRetentionDays: 1, providerRequestRetentionMiB: 64, originIpRetentionDays: 1,
       streamSilenceLimitMs: 35_000, streamReviveSilenceLimitMs: 35_000, toastDurationMs: 2_000,
     };
@@ -58,6 +60,7 @@ describe('ConfigStore runtime limits', () => {
       memoryDuplicatePerMille: 980, memoryParaphrasePerMille: 980,
       memoryImportanceWeightPerMille: 300, memoryVitalityWeightPerMille: 300, memoryCuratorMaxOps: 6,
       toolDeferThreshold: 100, eventRetentionDays: 365,
+      stepContextEveryToolCalls: 100,
       providerRequestRetentionDays: 90, providerRequestRetentionMiB: 16_384, originIpRetentionDays: 365,
       streamSilenceLimitMs: 300_000, streamReviveSilenceLimitMs: 300_000, toastDurationMs: 15_000,
     };
@@ -67,21 +70,23 @@ describe('ConfigStore runtime limits', () => {
 
   it('clamps a value past either end back into range', () => {
     const cs = new ConfigStore(openDb(':memory:'));
-    cs.update({ runtime: { limits: { localShellTimeoutMs: 1, memorySemanticFloorPerMille: 0, memoryDuplicatePerMille: 0, memoryParaphrasePerMille: 0, memoryImportanceWeightPerMille: -50, memoryVitalityWeightPerMille: -50, memoryCuratorMaxOps: -1, toolDeferThreshold: 0, eventRetentionDays: 0, providerRequestRetentionDays: 0, providerRequestRetentionMiB: 0, originIpRetentionDays: 0, streamSilenceLimitMs: 1_000, streamReviveSilenceLimitMs: 1_000, toastDurationMs: 100 } } });
+    cs.update({ runtime: { limits: { localShellTimeoutMs: 1, memorySemanticFloorPerMille: 0, memoryDuplicatePerMille: 0, memoryParaphrasePerMille: 0, memoryImportanceWeightPerMille: -50, memoryVitalityWeightPerMille: -50, memoryCuratorMaxOps: -1, toolDeferThreshold: 0, stepContextEveryToolCalls: 0, eventRetentionDays: 0, providerRequestRetentionDays: 0, providerRequestRetentionMiB: 0, originIpRetentionDays: 0, streamSilenceLimitMs: 1_000, streamReviveSilenceLimitMs: 1_000, toastDurationMs: 100 } } });
     expect(cs.get().runtime.limits).toEqual({
       localShellTimeoutMs: 10_000, memorySemanticFloorPerMille: 100,
       memoryDuplicatePerMille: 500, memoryParaphrasePerMille: 500,
       memoryImportanceWeightPerMille: 0, memoryVitalityWeightPerMille: 0, memoryCuratorMaxOps: 0,
       toolDeferThreshold: 1, eventRetentionDays: 1,
+      stepContextEveryToolCalls: 10,
       providerRequestRetentionDays: 1, providerRequestRetentionMiB: 64, originIpRetentionDays: 1,
       streamSilenceLimitMs: 35_000, streamReviveSilenceLimitMs: 35_000, toastDurationMs: 2_000,
     });
-    cs.update({ runtime: { limits: { localShellTimeoutMs: 9_000_000, memorySemanticFloorPerMille: 1_000, memoryDuplicatePerMille: 1_000, memoryParaphrasePerMille: 1_000, memoryImportanceWeightPerMille: 900, memoryVitalityWeightPerMille: 900, memoryCuratorMaxOps: 99, toolDeferThreshold: 5_000, eventRetentionDays: 10_000, providerRequestRetentionDays: 10_000, providerRequestRetentionMiB: 100_000, originIpRetentionDays: 10_000, streamSilenceLimitMs: 9_000_000, streamReviveSilenceLimitMs: 9_000_000, toastDurationMs: 9_000_000 } } });
+    cs.update({ runtime: { limits: { localShellTimeoutMs: 9_000_000, memorySemanticFloorPerMille: 1_000, memoryDuplicatePerMille: 1_000, memoryParaphrasePerMille: 1_000, memoryImportanceWeightPerMille: 900, memoryVitalityWeightPerMille: 900, memoryCuratorMaxOps: 99, toolDeferThreshold: 5_000, stepContextEveryToolCalls: 9_000_000, eventRetentionDays: 10_000, providerRequestRetentionDays: 10_000, providerRequestRetentionMiB: 100_000, originIpRetentionDays: 10_000, streamSilenceLimitMs: 9_000_000, streamReviveSilenceLimitMs: 9_000_000, toastDurationMs: 9_000_000 } } });
     expect(cs.get().runtime.limits).toEqual({
       localShellTimeoutMs: 300_000, memorySemanticFloorPerMille: 800,
       memoryDuplicatePerMille: 980, memoryParaphrasePerMille: 980,
       memoryImportanceWeightPerMille: 300, memoryVitalityWeightPerMille: 300, memoryCuratorMaxOps: 6,
       toolDeferThreshold: 100, eventRetentionDays: 365,
+      stepContextEveryToolCalls: 100,
       providerRequestRetentionDays: 90, providerRequestRetentionMiB: 16_384, originIpRetentionDays: 365,
       streamSilenceLimitMs: 300_000, streamReviveSilenceLimitMs: 300_000, toastDurationMs: 15_000,
     });

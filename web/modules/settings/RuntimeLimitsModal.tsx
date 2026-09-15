@@ -1,5 +1,5 @@
 'use client';
-import { Gauge, TerminalSquare, Radar, History, HardDrive, EyeOff, Activity, AlarmClock, MessageSquare, Copy, CopyCheck, Star, HeartPulse, PenLine, Cpu, type LucideIcon } from 'lucide-react';
+import { Gauge, TerminalSquare, Radar, History, HardDrive, EyeOff, Activity, AlarmClock, MessageSquare, Copy, CopyCheck, Star, HeartPulse, PenLine, Cpu, ListChecks, type LucideIcon } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -16,7 +16,7 @@ export const RUNTIME_LIMIT_DEFAULTS: RuntimeLimits = {
   localShellTimeoutMs: 30000, memorySemanticFloorPerMille: 200,
   memoryDuplicatePerMille: 930, memoryParaphrasePerMille: 700,
   memoryImportanceWeightPerMille: 100, memoryVitalityWeightPerMille: 100, memoryCuratorMaxOps: 2,
-  toolDeferThreshold: 10, eventRetentionDays: 30,
+  toolDeferThreshold: 10, stepContextEveryToolCalls: 20, eventRetentionDays: 30,
   providerRequestRetentionDays: 14, providerRequestRetentionMiB: 1024, originIpRetentionDays: 30,
   streamSilenceLimitMs: 75000, streamReviveSilenceLimitMs: 45000, toastDurationMs: 4500,
 };
@@ -66,6 +66,10 @@ const RUNTIME_LIMIT_FIELDS: RuntimeLimitField[] = [
   { key: 'streamSilenceLimitMs', kind: 'seconds', min: 35000, max: 300000, step: 5000, icon: Activity },
   { key: 'streamReviveSilenceLimitMs', kind: 'seconds', min: 35000, max: 300000, step: 5000, icon: AlarmClock },
   { key: 'toastDurationMs', kind: 'seconds', min: 2000, max: 15000, step: 500, icon: MessageSquare },
+  // Appended last on purpose, and filtered out unless a loaded plugin actually contributes a step-context
+  // provider (see `stepContextAvailable`): a cadence nobody listens to would be a dead control. `step` is
+  // web-only — nobody tunes a reminder gap one call at a time.
+  { key: 'stepContextEveryToolCalls', kind: 'count', min: 10, max: 100, step: 5, icon: ListChecks },
 ];
 
 const DISPLAY_DIVISORS: Record<RuntimeLimitKind, number> = {
@@ -85,11 +89,15 @@ function toCanonicalValue(field: RuntimeLimitField, displayValue: number): numbe
 /** Modal editor for the operator-tunable runtime knobs (the sibling of the brain Limits editor). Edits
  *  flow straight back into the caller's state, which auto-saves through the shared status controller, so
  *  there is no Save button. */
-export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, status = 'idle', retry, flush, presentation }: {
+export function RuntimeLimitsModal({ runtime, applied, stepContextAvailable, onChange, onClose, status = 'idle', retry, flush, presentation }: {
   runtime: RuntimeConfig;
   /** Fields the daemon clamped on the last save, each carrying the value actually in force — otherwise a
    *  refused value would look to the operator like it had taken effect. */
   applied?: Partial<RuntimeLimits>;
+  /** Whether a loaded plugin contributes a step-context provider, i.e. whether anything obeys the reminder
+   *  cadence at all. Off (and while the caller has not learned it yet — the query is still loading) the row
+   *  is withheld: a knob that changes nothing is worse than one that appears a moment late. */
+  stepContextAvailable?: boolean;
   onChange: (next: (cur: RuntimeConfig) => RuntimeConfig) => void;
   onClose: () => void;
   status?: SaveStatus;
@@ -99,6 +107,7 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, status
 }) {
   const { t } = useTranslation();
   const closeDisabled = status === 'saving' || status === 'error';
+  const fields = RUNTIME_LIMIT_FIELDS.filter((field) => field.key !== 'stepContextEveryToolCalls' || stepContextAvailable === true);
   const close = async () => {
     const finalStatus = await flush?.();
     if (finalStatus !== 'error') onClose();
@@ -117,7 +126,7 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, status
     <Modal title={t.brain.runtime.title} description={t.brain.runtime.hint} icon={Gauge} size="md" onClose={close} closeDisabled={closeDisabled} presentation={presentation}>
       <ModalBody>
         <div className="flex flex-col divide-y divide-border">
-          {RUNTIME_LIMIT_FIELDS.map((field) => {
+          {fields.map((field) => {
             const Icon = field.icon;
             const divisor = DISPLAY_DIVISORS[field.kind];
             const value = runtime.limits[field.key] / divisor;

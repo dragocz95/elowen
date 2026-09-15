@@ -28,6 +28,7 @@ describe('buildContributionReport', () => {
       ctx.registerSystemPromptFragment('alpha fragment');
       ctx.registerHook({ name: 'brain.turn.beforeSend', run: () => {} });
       ctx.registerTurnContext(() => 'now');
+      ctx.registerStepContext(() => 'still open: 2 tasks');
       ctx.registerPlatform(platform('a_platform'));
     });
     stage(reg, 'beta', (ctx) => {
@@ -46,6 +47,7 @@ describe('buildContributionReport', () => {
     expect(report.platforms).toEqual([{ name: 'a_platform', plugin: 'alpha' }]);
     expect(report.promptFragments).toEqual([{ plugin: 'alpha' }, { plugin: 'beta' }]);
     expect(report.turnContexts).toEqual([{ plugin: 'alpha' }]);
+    expect(report.stepContexts).toEqual([{ plugin: 'alpha' }]);
     // Duplicate hook names are preserved as separate, correctly-owned entries (a Map would collapse them).
     expect(report.hooks).toEqual([
       { name: 'brain.turn.beforeSend', plugin: 'alpha' },
@@ -75,7 +77,7 @@ describe('buildContributionReport', () => {
 
   it('emptyContributionReport has every list present and empty', () => {
     expect(emptyContributionReport()).toEqual({
-      tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], hooks: [],
+      tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], stepContexts: [], hooks: [],
     });
   });
 });
@@ -89,6 +91,7 @@ describe('pluginContributions', () => {
       ctx.registerSystemPromptFragment('alpha fragment');
       ctx.registerHook({ name: 'brain.turn.beforeSend', run: () => {} });
       ctx.registerTurnContext(() => 'now');
+      ctx.registerStepContext((info) => `still open at call ${info.toolCalls}`);
       ctx.registerPlatform(platform('a_platform'));
     });
     stage(reg, 'beta', (ctx) => {
@@ -104,6 +107,7 @@ describe('pluginContributions', () => {
       platforms: [{ name: 'a_platform', plugin: 'alpha' }],
       promptFragments: [{ plugin: 'alpha' }],
       turnContexts: [{ plugin: 'alpha' }],
+      stepContexts: [{ plugin: 'alpha' }],
       hooks: [{ name: 'brain.turn.beforeSend', plugin: 'alpha' }],
     });
     expect(pluginContributions(reg, 'beta')).toEqual({
@@ -112,6 +116,7 @@ describe('pluginContributions', () => {
       platforms: [],
       promptFragments: [{ plugin: 'beta' }],
       turnContexts: [],
+      stepContexts: [],
       hooks: [{ name: 'brain.turn.beforeSend', plugin: 'beta' }],
     });
   });

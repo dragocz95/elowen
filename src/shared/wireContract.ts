@@ -718,6 +718,18 @@ export interface RuntimeLimits {
    *  automatic memory writing off entirely; the explicit Memory* tools keep working. */
   memoryCuratorMaxOps: number;
   toolDeferThreshold: number;
+  /** How many tool calls pass before a plugin may remind the agent of its live state MID-turn — the
+   *  cadence of `ctx.registerStepContext`, read by `LiveSessionSpawner` on every model request of a
+   *  running turn, so moving this takes effect without a respawn. It exists because a turn-context
+   *  provider only runs while a prompt is composed: a long turn otherwise works off a snapshot taken
+   *  before its first call.
+   *
+   *  The cost is append-only: each reminder is a frozen block that stays in the conversation until it is
+   *  compacted, because moving or removing it would break the cached prefix it was sent under — a turn
+   *  boundary clears the CADENCE, never the trail. So a lower number spends more context. The consumer decides
+   *  what is said; 0 (unreachable from the slider, whose floor is 10) means no mid-turn reminder at all
+   *  and turns the mechanism off without deleting anything already sent. */
+  stepContextEveryToolCalls: number;
   eventRetentionDays: number;
   /** Exact provider request diagnostics are secondary operational data, not conversation history. The
    *  janitor drops whole oldest diagnostic sessions past this age, never a partial request. */

@@ -7,11 +7,11 @@ import type { RuntimeConfig } from '../../../lib/types';
 const CONFIG: RuntimeConfig = { limits: RUNTIME_LIMIT_DEFAULTS, toolDeferralEnabled: true, subagentRunnerEnabled: false, subagentRunnerPoolMax: null };
 
 /** Collects what the editor writes back — the caller holds the draft, so an update is a function. */
-function renderModal(runtime: RuntimeConfig = CONFIG) {
+function renderModal(runtime: RuntimeConfig = CONFIG, props: Partial<Parameters<typeof RuntimeLimitsModal>[0]> = {}) {
   const updates: ((cur: RuntimeConfig) => RuntimeConfig)[] = [];
-  render(
+  const result = render(
     <LanguageProvider>
-      <RuntimeLimitsModal runtime={runtime} onChange={(update) => updates.push(update)} onClose={() => {}} />
+      <RuntimeLimitsModal runtime={runtime} onChange={(update) => updates.push(update)} onClose={() => {}} {...props} />
     </LanguageProvider>,
   );
   const apply = (index: number): RuntimeConfig => {
@@ -19,7 +19,7 @@ function renderModal(runtime: RuntimeConfig = CONFIG) {
     if (!update) throw new Error(`no update at index ${index}`);
     return update(runtime);
   };
-  return { updates, apply };
+  return { updates, apply, unmount: result.unmount };
 }
 
 describe('RuntimeLimitsModal', () => {
@@ -91,5 +91,27 @@ describe('RuntimeLimitsModal', () => {
     renderModal({ ...CONFIG, subagentRunnerEnabled: true });
     const toggle = screen.getByRole('switch', { name: 'Run sub-agents in separate processes' });
     expect(toggle.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('offers the mid-turn reminder row only when a plugin contributes a provider', () => {
+    const label = 'Mid-turn reminder interval';
+    // No provider loaded means no row — a cadence nobody listens to is a dead control — and the same hold
+    // covers the gate still loading (`undefined`), which must not flash a knob it cannot honour.
+    const { unmount } = renderModal();
+    expect(screen.queryByRole('slider', { name: label })).toBeNull();
+
+    unmount();
+    const withProviders = renderModal(CONFIG, { stepContextAvailable: true });
+    const sliders = screen.getAllByRole('slider');
+    const slider = screen.getByRole('slider', { name: label });
+    // Appended LAST, so every positional `apply(n)` above keeps pointing at the field it was written for.
+    expect(sliders[sliders.length - 1]).toBe(slider);
+    expect(sliders).toHaveLength(15);
+    // Slider bounds mirror the daemon clamp, so the row can never offer a value the daemon would lower.
+    expect(slider).toHaveAttribute('aria-valuemin', '10');
+    expect(slider).toHaveAttribute('aria-valuemax', '100');
+    expect(slider).toHaveAttribute('aria-valuetext', String(RUNTIME_LIMIT_DEFAULTS.stepContextEveryToolCalls));
+    fireEvent.keyDown(slider, { key: 'End' });
+    expect(withProviders.apply(0).limits.stepContextEveryToolCalls).toBe(100);
   });
 });

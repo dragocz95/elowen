@@ -1284,6 +1284,8 @@ export const cs = {
       streamReviveSilenceLimitMsHint: "Totéž ticho měřené ve chvíli, kdy se stránka probudí (odemknutí obrazovky, návrat na panel). Spící stránka nespouští žádné časovače, takže kontrola výše proběhnout nemohla a stav toku se posuzuje podle hodin — zpravidla o něco přísněji. Stejná spodní hranice 35 s jako u limitu výše, a ze stejného důvodu. Rozsah 35–300 s, výchozí 45 s.",
       toastDurationMs: "Doba zobrazení oznámení",
       toastDurationMsHint: "Jak dlouho zůstane oznámení v pravém horním rohu webové aplikace na obrazovce, než samo zmizí. Najetím myší se odpočet pozastaví a zavřít ho lze vždy ručně, takže tato hodnota určuje jen to, jak dlouho čeká samo od sebe. Rozsah 2–15 s, výchozí 4,5 s.",
+      stepContextEveryToolCalls: "Interval připomínek uprostřed tahu",
+      stepContextEveryToolCallsHint: "Kolik vyvolání nástrojů musí v jednom tahu proběhnout, než vám plugin smí uprostřed něj připomenout svůj aktuální stav, například nedokončené úkoly. Bez takové připomínky se asistent o tomto stavu dozví jen jednou, ze snímku pořízeného na začátku tahu, takže dlouhý tah dál pracuje s tím, co platilo před jeho prvním zavoláním. Připomínka se jen přidává a nikdy se nepřepisuje, proto v konverzaci zůstává a uložená vyrovnávací paměť promptu dál funguje: kratší interval pomůže dřív, ale stojí více kontextu. Tento řádek se zobrazuje jen tehdy, když některý načtený plugin takové připomínky dodává; vypnutí takového pluginu je vypne.",
       toolDeferralEnabled: "Odkládat externí nástroje",
       toolDeferralEnabledHint: "Hlavní vypínač k prahu výše. Vypnuto = žádný nástroj se z promptu nikdy nevynechá, bez ohledu na práh. Ve výchozím stavu zapnuto.",
       subagentRunnerEnabled: "Spouštět sub-agenty v samostatných procesech",

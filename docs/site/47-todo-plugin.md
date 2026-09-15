@@ -8,7 +8,7 @@ group: Plugin reference
 
 # Task List
 
-The registry plugin `todo`, version 0.14.6, gives the agent a session task list: it plans multi-step work in one call, tracks it task by task, and shows progress live while the work runs. Every conversation has its own list, kept per signed-in account, so one conversation's checklist never appears in another.
+The registry plugin `todo`, version 0.14.7, gives the agent a session task list: it plans multi-step work in one call, tracks it task by task, and shows progress live while the work runs. Every conversation has its own list, kept per signed-in account, so one conversation's checklist never appears in another.
 
 ## Where it appears
 
@@ -60,7 +60,7 @@ Three mechanics keep the list useful in long sessions:
 ## Install, enable, and grant
 
 1. Install `todo` from **Settings → Plugins → Available**.
-2. It requires Elowen 0.28.14 or newer; the marketplace refuses installation on an older core.
+2. It requires Elowen 0.28.47 or newer; the marketplace refuses installation on an older core.
 3. No configuration fields exist and no per-user grant applies, because the plugin is not user-grantable. Enable it and the tools are available, subject to the account's tool permissions.
 
 ## Permissions and consent

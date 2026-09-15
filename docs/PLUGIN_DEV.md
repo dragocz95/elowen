@@ -233,6 +233,7 @@ The main registration methods are:
 | `registerCommand` | Add a kebab-case prompt macro or picker such as `/review`. |
 | `registerSystemPromptFragment` | Add stable plugin instructions to the system prompt. |
 | `registerTurnContext` | Add ephemeral per-turn context without changing stored history. |
+| `registerStepContext` | The mid-turn sibling: re-read live state INSIDE a long turn, every N tool calls. |
 | `registerHook` | Observe a typed lifecycle point and, for supported hooks, return a gated patch. |
 | `registerPlatform` | Register a chat transport adapter. |
 | `registerHttpRoute` | Add a public webhook under `/hooks/<plugin>/...`. |
@@ -543,6 +544,19 @@ ctx.registerTurnContext(
 ```
 
 The default placement is `before-user`; `after-user` puts the context directly after the user's request. Turn context is ephemeral and is not persisted into conversation history or the stable system prompt.
+
+### Mid-turn step context
+
+```javascript
+ctx.registerStepContext((info) => {
+  const key = ctx.currentSessionId();          // resolve the session BEFORE any await
+  return key ? `Still open: ${countOpen(key)} items after ${info.toolCalls} calls.` : '';
+});
+```
+
+A turn-context provider runs once, while the prompt is composed, so a turn that then makes sixty tool calls works off a snapshot taken before the first one. A step provider runs again inside the turn: core calls it after the last tool result, every N tool calls, where N is the operator's mid-turn reminder interval in Settings → Runtime. The row only appears while some plugin registers such a provider, so disabling the plugin is the off switch.
+
+What it returns is egress-only — it reaches the model and nothing else, not the transcript, the CLI, the web chat or a platform message — and its bytes are then frozen and re-sent unchanged until the conversation is compacted, which is what keeps the prompt cache intact. Keep the answer to a line or two, make it read-only, resolve the session synchronously before your first `await`, and return `''` when there is nothing to say: an empty answer injects no block at all. Core clamps an oversized answer and logs the reminder on `brain-step-context`.
 
 ### Prompt macros
 

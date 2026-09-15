@@ -143,6 +143,9 @@ export const elowenClient = {
   ),
   /** Runtime contributions (tools/skills/platforms/hooks/…) owned by one plugin — powers Tools + Hooks detail. */
   pluginContributions: (name: string) => req<PluginContributions>(`/plugins/${encodeURIComponent(name)}/contributions`),
+  /** The same report UNFILTERED, for the whole loaded registry — lets a control ask whether any plugin
+   *  contributes a given kind before offering a knob that depends on one. */
+  runtimeContributions: () => req<PluginContributions>('/plugins/runtime'),
   /** Tail of one plugin's log ring buffer plus derived health. */
   pluginLogs: (name: string) => req<PluginLogs>(`/plugins/${encodeURIComponent(name)}/logs`),
   /** One plugin's hook-run audit (newest-first) — powers the Hooks section's recent-executions panel. */

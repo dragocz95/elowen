@@ -1326,6 +1326,8 @@ export const en = {
       streamReviveSilenceLimitMsHint: "The same silence, measured the moment the page wakes up (screen unlock, returning to the tab). A sleeping page runs no timers, so the check above cannot have run and the stream is judged against the clock instead — usually a little more strictly. Same 35 s floor as the limit above, for the same reason. Range 35-300 s, default 45 s.",
       toastDurationMs: "Notification duration",
       toastDurationMsHint: "How long a notification in the top-right corner of the web app stays on screen before it dismisses itself. Hovering over it pauses the countdown and it can always be closed by hand, so this only sets how long it waits on its own. Range 2-15 s, default 4.5 s.",
+      stepContextEveryToolCalls: "Mid-turn reminder interval",
+      stepContextEveryToolCallsHint: "How many tool calls a turn must make before a plugin may remind the assistant of its live state in the middle of it, such as unfinished tasks. Without that reminder the assistant learns the state only once, from the snapshot taken when the turn was composed, so a long turn keeps working from what was true before its first call. A reminder is appended and never rewritten, so it stays in the conversation and the stored prompt cache keeps working: a shorter interval helps sooner and costs a little more context. This row is here only while a plugin contributes such reminders, and turning that plugin off is what switches them off.",
       toolDeferralEnabled: "Defer external tools",
       toolDeferralEnabledHint: "The master switch for the threshold above. Off = no tool is ever withheld from the prompt, whatever the threshold says. On by default.",
       subagentRunnerEnabled: "Run sub-agents in separate processes",

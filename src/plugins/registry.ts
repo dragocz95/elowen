@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { ENVIRONMENT_CONTROL_METHODS } from './environmentTypes.js';
 import { INVALID_PLUGIN_SKILL_OVERRIDES, pluginSkillAvailabilityKey } from './skillAvailability.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginImages, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginSkillCatalogEntry, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginImages, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginSkillCatalogEntry, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, StepContextContribution, TurnContextContribution } from './api.js';
 import { webSocketTickets } from './wsTickets.js';
 import { promptsPath } from '../prompts/index.js';
 import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
@@ -295,6 +295,9 @@ export class PluginRegistry {
   readonly platformPromptFragments = new Map<string, { plugin: string; file: string; text: string }[]>();
   readonly hooks: PluginHook[] = [];
   readonly turnContexts: TurnContextContribution[] = [];
+  /** Mid-turn providers, in registration order. Their CADENCE is core's (`runtime.limits
+   *  .stepContextEveryToolCalls`); what they say is the plugin's. */
+  readonly stepContexts: StepContextContribution[] = [];
   readonly platforms: PlatformAdapter[] = [];
   /** Admin-selectable proactive-notification targets, keyed by platform. One platform owns one catalog. */
   readonly notificationDestinationProviders = new Map<string, { plugin: string; provider: NotificationDestinationProvider; logger: PluginLogger }>();
@@ -382,6 +385,7 @@ export class PluginRegistry {
   readonly promptFragmentOwners: string[] = [];
   readonly hookOwners: string[] = [];
   readonly turnContextOwners: string[] = [];
+  readonly stepContextOwners: string[] = [];
   readonly platformOwners: string[] = [];
   readonly controlOwner = new Map<string, string>();
   /** Each plugin's declared capabilities (manifest `capabilities`, `{}` when absent), keyed by plugin
@@ -446,6 +450,7 @@ export class PluginRegistry {
     }
     this.hooks.push(...other.hooks);
     this.turnContexts.push(...other.turnContexts);
+    this.stepContexts.push(...other.stepContexts);
     this.platforms.push(...other.platforms);
     for (const [platform, entry] of other.notificationDestinationProviders) {
       const prior = this.notificationDestinationProviders.get(platform);
@@ -515,6 +520,7 @@ export class PluginRegistry {
     this.promptFragmentOwners.push(...other.promptFragmentOwners);
     this.hookOwners.push(...other.hookOwners);
     this.turnContextOwners.push(...other.turnContextOwners);
+    this.stepContextOwners.push(...other.stepContextOwners);
     this.platformOwners.push(...other.platformOwners);
     for (const [k, v] of other.pluginCapabilities) this.pluginCapabilities.set(k, v);
     for (const n of other.userGrantable) this.userGrantable.add(n);
@@ -1211,6 +1217,10 @@ export class PluginRegistry {
         const placement = options?.placement === 'after-user' ? 'after-user' : 'before-user';
         this.turnContexts.push({ render, placement });
         this.turnContextOwners.push(name);
+      },
+      registerStepContext: (render) => {
+        this.stepContexts.push({ render });
+        this.stepContextOwners.push(name);
       },
       // Same allowlist rule as tools, against `provides.platforms` (Discord/cron/subagent are here).
       registerPlatform: (p) => {

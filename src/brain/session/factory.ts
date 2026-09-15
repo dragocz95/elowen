@@ -11,6 +11,7 @@ import type { SpawnOrigin } from '../spawnOrigin.js';
 import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
 import type { ApplyCompaction } from './liveBrain.js';
 import { installLiveRecall, type LiveRecallOptions } from './liveRecall.js';
+import { installStepContext, type StepContextOptions } from './stepContext.js';
 import { createCompactionModelRoute, type CompactionModelRoute } from './compactionModelRoute.js';
 import { createCompactionCircuitBreaker, type CompactionThresholdBudget } from './compactionCircuitBreaker.js';
 import {
@@ -62,6 +63,8 @@ export interface SessionSpec {
   sessionId: string;
   /** Mid-turn memory recall, when the caller wants it for this session. */
   liveRecall?: LiveRecallOptions;
+  /** Mid-turn plugin reminders, fired on the operator's tool-call cadence. */
+  stepContext?: StepContextOptions;
   /** Live `/skill:name` expansion; avoids PI's stale session-start skills snapshot. */
   skillCommandExtension?: (pi: ExtensionAPI) => void;
   /** The Elowen user the store row belongs to. */
@@ -215,6 +218,8 @@ export interface BrainResourceLoaderOptions {
   inSessionCompactionExtension?: InSessionCompaction['extension'];
   /** Recall memories again mid-turn, searching from the work rather than the opening message. */
   liveRecall?: LiveRecallOptions;
+  /** Remind the model of live plugin state mid-turn, on the operator's tool-call cadence. */
+  stepContext?: StepContextOptions;
   /** Live `/skill:name` expansion; avoids PI's stale session-start skills snapshot. */
   skillCommandExtension?: (pi: ExtensionAPI) => void;
   /** Provider-payload hashes (Anthropic or OpenAI Responses shape) consumed by cacheWatch after each
@@ -494,6 +499,12 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         : []),
       ...(o.skillCommandExtension ? [o.skillCommandExtension] : []),
       ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
+      // IMMEDIATELY AFTER liveRecall, and that order is load-bearing. `emitContext` chains each handler
+      // over the previous one's output, so live recall keeps computing over pristine canonical history
+      // while this one sees liveRecall's synthetic blocks — which is exactly why its own anchor is a
+      // canonical ordinal rather than a raw index. Installed before liveRecall, our block would shift
+      // liveRecall's raw indices, it would read that as a compaction and throw its memories away.
+      ...(o.stepContext ? [((step) => (pi: ExtensionAPI): void => { installStepContext(pi, step); })(o.stepContext)] : []),
       // Before observability and cache breakpoints so both see/hash the exact final request. Restoring raw
       // assistant content after the scrubber does not leak a new path: it replays bytes this provider itself
       // returned, which Anthropic requires for the adjacent signed-thinking blocks to remain valid.
@@ -633,6 +644,7 @@ export class BrainSessionFactory {
       requestProfile: spec.requestProfile, settingsManager,
       ...(spec.skillCommandExtension ? { skillCommandExtension: spec.skillCommandExtension } : {}),
       ...(spec.liveRecall ? { liveRecall: spec.liveRecall } : {}),
+      ...(spec.stepContext ? { stepContext: spec.stepContext } : {}),
       ...(cacheMonitor ? { cacheMonitor } : {}),
       ...(spec.model.provider === 'anthropic' ? { cacheBreakpoints: true } : {}),
       ...(spec.hostedToolSearch ? {
