@@ -546,14 +546,16 @@ export class LiveSessionSpawner {
               // has none to pass. No Elowen core or bundled-plugin tool reads it, and a third-party tool
               // that does will throw — which reaches the script as a rejected promise, never as a silent
               // success. That failure mode is the reason this is a cast and not a fabricated context.
-              invoke: async (input: unknown) => {
+              invoke: async (input: unknown, signal: AbortSignal) => {
                 // A nested call emits no PI tool event, so the panel is the only place the user sees it.
                 const row = codeModeCard.callStarted(tool.name);
                 try {
                   const result = await tool.execute(
                     `code-mode-${randomUUID()}`,
                     input,
-                    undefined,
+                    // Terminating the cell kills the worker, which stops the SCRIPT. This is what also
+                    // stops a nested Bash or MCP call the script had already started.
+                    signal,
                     undefined,
                     undefined as never,
                   );
@@ -571,6 +573,8 @@ export class LiveSessionSpawner {
               },
             })),
             notify: (text) => { codeModeCard.note(text); },
+            // Read per call: a room's tools are composed once, but each sender keeps their own cells.
+            principal: () => String(currentContributionUserId() ?? 'anonymous'),
           });
           codeModeToolNames = tools.map((tool) => tool.name);
           return tools;

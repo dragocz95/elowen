@@ -38,6 +38,9 @@ export class DelegationAbortedError extends Error {
 }
 
 export class LiveSessionRegistry<T extends { sessionId: string; session: { dispose(): void; isStreaming: boolean }; pendingReasoningMarker?: { timer: ReturnType<typeof setTimeout> } }> {
+  /** Called after a live session is forgotten, for resources the PI session does not own. */
+  constructor(private readonly onDispose?: (sessionId: string) => void) {}
+
   private live = new Map<string, T>();
   private active = new Map<number, string>();
   private channels = new Map<string, T>();
@@ -112,6 +115,11 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     if (b.pendingReasoningMarker) { clearTimeout(b.pendingReasoningMarker.timer); b.pendingReasoningMarker = undefined; }
     b.session.dispose();
     this.live.delete(id);
+    // Resources a session owns OUTSIDE the PI session — today a code-mode cell, which is a worker thread
+    // that deliberately outlives its turn. It is released here rather than at the call sites because
+    // there are many of them (clear, model switch, respawn, channel reset, conversation delete) and a
+    // release attached to one of them is a leak on all the others.
+    this.onDispose?.(id);
   }
   /** Mark/unmark an in-flight teardown — see the `disposing` field. `dispose()` and `set()` clear it
    *  themselves, so a caller only has to clear when it ABANDONS a teardown it had marked. */

@@ -1264,7 +1264,8 @@ export interface CodeModeNestedTool {
   /** True for a tool withheld from the prompt today (a deferred MCP tool). It stays callable and stays
    *  listed for runtime discovery, but spends no tokens on a declaration. */
   deferred: boolean;
-  invoke(input: unknown): Promise<unknown>;
+  /** The signal aborts when the cell dies, so a nested call cannot outlive the script. */
+  invoke(input: unknown, signal: AbortSignal): Promise<unknown>;
 }
 
 /** NOT IMPLEMENTED YET, and deliberately so rather than by oversight: Codex withholds an `exec` result
@@ -1282,6 +1283,9 @@ export interface CodeModeCompositionRequest {
   codeModeOnly: boolean;
   /** Injects an extra tool output for the running call, the way a script's `notify()` does. */
   notify(text: string): void;
+  /** WHO is speaking, read per call rather than per composition. A shared room composes its tools once
+   *  and serves many senders, so this is what keeps one sender's cells and stored values their own. */
+  principal(): string;
 }
 
 /** The code-mode plugin's composition seam: core hands it the session's already-gated tools and gets back
@@ -1293,6 +1297,8 @@ export interface CodeModeControl {
   compose(request: CodeModeCompositionRequest): ToolDefinition[];
   /** Releases any cell still running for a session (each holds a worker thread), called on teardown. */
   shutdownSession(sessionId: string): void;
+  /** Cells still running anywhere, so a plugin reload does not orphan the threads that own them. */
+  activeCount(): number;
 }
 
 /** A durable execution lease minted before a child is spawned. The caller owns its actual process lifecycle:

@@ -32,7 +32,7 @@ import {
   type CodeModeOutputItem,
   type ScriptStatus,
 } from './protocol/output.js';
-import type { CodeModeSession } from './runtime/session.js';
+import { TooManyCellsError, type CodeModeSession } from './runtime/session.js';
 import type { CellToolBinding } from './runtime/protocolTypes.js';
 
 /** One tool the script may reach through `tools.<globalName>`. */
@@ -47,12 +47,15 @@ export interface NestedToolBinding {
   outputSchema?: JsonValue;
   /** Deferred tools stay callable and stay in `ALL_TOOLS`, but cost no tokens in the description. */
   deferred: boolean;
-  /** Runs the tool. MUST be the composed, fully gated definition's execute, never a bypass. */
-  invoke: (input: unknown) => Promise<unknown>;
+  /** Runs the tool. MUST be the composed, fully gated definition's execute, never a bypass.
+   *  The signal aborts when the cell dies, so the call cannot outlive the script that made it. */
+  invoke: (input: unknown, signal: AbortSignal) => Promise<unknown>;
 }
 
 export interface CodeModeToolsOptions {
-  session: CodeModeSession;
+  /** Resolved per CALL: a shared room composes its tools once but serves several senders, and each
+   *  gets its own cells and `store` values. */
+  session: () => CodeModeSession;
   nested: NestedToolBinding[];
   /** True when the nested tools are hidden from the model and `exec` is the only way to reach them. */
   codeModeOnly: boolean;
@@ -170,15 +173,19 @@ function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
 
       const calls: NestedCallRecord[] = [];
       const startedAt = Date.now();
-      const cell = options.session.start({
+      // Resolved once per call, so the cell, its observation and its settle all hit the same session.
+      const session = options.session();
+      let cell;
+      try {
+        cell = session.start({
         source: parsed.code,
         tools: bindings,
         notify: options.notify,
-        invokeTool: async ({ name, input }) => {
+        invokeTool: async ({ name, input, signal }) => {
           const tool = byGlobalName.get(name) ?? options.nested.find((candidate) => candidate.name === name);
           if (tool === undefined) throw new Error(`tool \`${name}\` is not available`);
           try {
-            const result = await tool.invoke(input);
+            const result = await tool.invoke(input, signal);
             calls.push({ name: tool.name, ok: true });
             return result;
           } catch (error) {
@@ -187,10 +194,16 @@ function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
             throw error;
           }
         },
-      });
+        });
+      } catch (error) {
+        // The session is at its cell limit. That is the model's to resolve by waiting on or
+        // terminating one, so it is a readable tool result rather than a failed turn.
+        if (error instanceof TooManyCellsError) return textResult(error.message);
+        throw error;
+      }
 
-      const observation = await cell.observe(options.session.resolveYieldTime(parsed.yieldTimeMs ?? defaultYieldTimeMs));
-      options.session.settleInitialObservation(cell.cellId, observation);
+      const observation = await cell.observe(session.resolveYieldTime(parsed.yieldTimeMs ?? defaultYieldTimeMs));
+      session.settleInitialObservation(cell.cellId, observation);
       options.reportNestedCalls?.(calls);
 
       return observationResult(observation, cell.cellId, parsed.maxOutputTokens, Date.now() - startedAt, calls);
@@ -215,7 +228,7 @@ function buildWaitTool(options: CodeModeToolsOptions): ToolDefinition {
     ): Promise<ToolResult> => {
       const cellId = typeof p?.cell_id === 'string' ? p.cell_id : '';
       const startedAt = Date.now();
-      const outcome = await options.session.wait(cellId, {
+      const outcome = await options.session().wait(cellId, {
         yieldTimeMs: p?.yield_time_ms ?? DEFAULT_EXEC_YIELD_TIME_MS,
         ...(p?.terminate === true ? { terminate: true } : {}),
       });

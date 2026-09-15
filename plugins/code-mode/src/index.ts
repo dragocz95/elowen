@@ -16,14 +16,26 @@ import type { JsonValue } from './protocol/jsonSchemaTypes.js';
 import { CodeModeSession } from './runtime/session.js';
 import { buildCodeModeTools, type NestedToolBinding } from './tools.js';
 
-/** One live session's cells. Keyed by the core session id, released by `shutdownSession`. */
+/**
+ * One live session's cells, keyed by conversation AND by who is speaking.
+ *
+ * A shared room composes its tools once but serves many senders, and a cell carries the policy of the
+ * turn that created it. Keying on the conversation alone would let the next sender `wait` on somebody
+ * else's cell, read its output and share its `store` values, so the principal is part of the key and a
+ * foreign cell id simply reads as "not found".
+ */
 const sessions = new Map<string, CodeModeSession>();
 
-function sessionFor(sessionId: string): CodeModeSession {
-  const existing = sessions.get(sessionId);
+function sessionKey(sessionId: string, principal: string): string {
+  return `${sessionId}\u0000${principal}`;
+}
+
+function sessionFor(sessionId: string, principal: string): CodeModeSession {
+  const key = sessionKey(sessionId, principal);
+  const existing = sessions.get(key);
   if (existing !== undefined) return existing;
   const created = new CodeModeSession();
-  sessions.set(sessionId, created);
+  sessions.set(key, created);
   return created;
 }
 
@@ -51,7 +63,7 @@ function toBindings(nested: CodeModeCompositionRequest['nested']): NestedToolBin
       kind: 'function',
       ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema as JsonValue }),
       deferred: tool.deferred,
-      invoke: (input: unknown) => tool.invoke(input),
+      invoke: (input: unknown, signal: AbortSignal) => tool.invoke(input, signal),
     });
   }
   return bindings;
@@ -60,19 +72,27 @@ function toBindings(nested: CodeModeCompositionRequest['nested']): NestedToolBin
 export default function codeModePlugin(ctx: PluginContext): void {
   ctx.registerControl('codeMode', {
     compose(request: CodeModeCompositionRequest): ToolDefinition[] {
-      const session = sessionFor(request.sessionId);
       return buildCodeModeTools({
-        session,
+        // Resolved per CALL, not per composition: a room's tools are composed once for every sender.
+        session: () => sessionFor(request.sessionId, request.principal()),
         nested: toBindings(request.nested),
         codeModeOnly: request.codeModeOnly,
         notify: request.notify,
       });
     },
     shutdownSession(sessionId: string): void {
-      const session = sessions.get(sessionId);
-      if (session === undefined) return;
-      sessions.delete(sessionId);
-      void session.shutdown();
+      const prefix = `${sessionId}\u0000`;
+      for (const [key, session] of [...sessions]) {
+        if (key !== sessionId && !key.startsWith(prefix)) continue;
+        sessions.delete(key);
+        void session.shutdown();
+      }
+    },
+    /** Cells a plugin reload would orphan: the module map is replaced, the threads are not. */
+    activeCount(): number {
+      let open = 0;
+      for (const session of sessions.values()) open += session.openCellCount;
+      return open;
     },
   });
 }

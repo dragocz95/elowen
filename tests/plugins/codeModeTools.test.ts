@@ -38,7 +38,7 @@ function harness(overrides: { nested?: NestedToolBinding[]; codeModeOnly?: boole
     },
   ];
   const [exec, wait] = buildCodeModeTools({
-    session,
+    session: () => session,
     nested,
     codeModeOnly: overrides.codeModeOnly ?? true,
     notify: (text) => notifications.push(text),

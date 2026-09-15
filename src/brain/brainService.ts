@@ -155,7 +155,11 @@ export class BrainService {
   /** All mutable live-session state: user sessions, active pointers, channel LRU and the per-key
    *  locks (PI sessions are single-conversation — concurrent prompt()/spawn calls on one session id
    *  queue up instead of corrupting turn state). */
-  private sessions = new LiveSessionRegistry<LiveBrain>();
+  // Releases a session's code-mode cells wherever a live session is forgotten: clear, model switch,
+  // respawn, channel reset and conversation delete all go through the registry's dispose.
+  private sessions = new LiveSessionRegistry<LiveBrain>((sessionId) => {
+    void this.d.plugins?.get().then((registry) => registry?.control('codeMode')?.shutdownSession(sessionId));
+  });
   /** Shared session assembly (store row + rehydrate + resource loader + PI session) — the same
    *  factory the elowen-exec brain workers use. */
   private factory: BrainSessionFactory;
@@ -2585,7 +2589,9 @@ export class BrainService {
       + busy.children
       + this.turnRunner.resultDeliveryWorkCount()
       + (registry?.control('subagent')?.activeCount() ?? 0)
-      + (registry?.control('workflow')?.activeCount() ?? 0);
+      + (registry?.control('workflow')?.activeCount() ?? 0)
+      // A cell is a worker thread owned by a closure in the plugin module the reload would replace.
+      + (registry?.control('codeMode')?.activeCount() ?? 0);
   }
 
   /** Wait until replacing the current plugin registry cannot cut through work owned by its closures. The

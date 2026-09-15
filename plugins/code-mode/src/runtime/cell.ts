@@ -32,8 +32,15 @@ export interface CellOptions {
   tools: CellToolBinding[];
   storedValues: Record<string, unknown>;
   maxHeapMb: number;
-  /** Dispatches a nested tool call. Rejecting with any value surfaces its message to the script. */
-  invokeTool: (call: { name: string; kind: 'function' | 'freeform'; input: unknown }) => Promise<unknown>;
+  /** Dispatches a nested tool call. Rejecting with any value surfaces its message to the script.
+   *  The signal aborts when the cell is terminated or disposed: killing the worker stops the script,
+   *  but a nested Bash or MCP call already in flight would otherwise run to completion unattended. */
+  invokeTool: (call: {
+    name: string;
+    kind: 'function' | 'freeform';
+    input: unknown;
+    signal: AbortSignal;
+  }) => Promise<unknown>;
   /** Injects an extra tool output for the running exec call. */
   notify: (text: string) => void;
   /** Commits `store` writes into the session once the cell completes. */
@@ -68,6 +75,8 @@ export class Cell {
   private started = false;
   private terminating = false;
   private closed = false;
+  /** Aborted on terminate and on dispose, so nested calls die with the script that issued them. */
+  private readonly abort = new AbortController();
 
   constructor(options: CellOptions) {
     this.options = options;
@@ -85,6 +94,8 @@ export class Cell {
       stdout: true,
       stderr: true,
     });
+    // A yielded cell runs in the background by design; it must not be the reason the daemon cannot exit.
+    this.worker.unref();
 
     this.worker.on('message', (message: WorkerToHostMessage) => {
       this.onWorkerMessage(message);
@@ -150,7 +161,12 @@ export class Cell {
     let reply: HostToWorkerMessage;
     try {
       const input = message.inputJson === undefined ? undefined : (JSON.parse(message.inputJson) as unknown);
-      const result = await this.options.invokeTool({ name: message.name, kind: message.kind, input });
+      const result = await this.options.invokeTool({
+        name: message.name,
+        kind: message.kind,
+        input,
+        signal: this.abort.signal,
+      });
       reply = { type: 'toolResult', id: message.id, ok: true, resultJson: result === undefined ? undefined : JSON.stringify(result) };
     } catch (error) {
       reply = {
@@ -265,6 +281,7 @@ export class Cell {
 
   async terminate(): Promise<void> {
     this.terminating = true;
+    this.abort.abort();
     await this.worker.terminate();
     this.settle({ kind: 'terminated' });
   }
@@ -273,6 +290,7 @@ export class Cell {
   async dispose(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.abort.abort();
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     await this.worker.terminate();

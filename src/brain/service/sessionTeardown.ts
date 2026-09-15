@@ -212,11 +212,6 @@ export class SessionTeardownService {
     this.goals.cancelGoalContinuation(sessionId);
     this.elicitation.cancelForSession(sessionId, reason);
     this.cards.clearSession(sessionId);
-    // A code-mode cell is a worker THREAD that deliberately outlives its turn, so nothing else here would
-    // stop one. `LiveRegistry.dispose` has no generic disposer hook, so the release is stated here beside
-    // the other per-session resources. Resolved from the live registry, so it is a no-op when the plugin
-    // is not loaded; the promise is not awaited because teardown is synchronous by contract.
-    void this.resolvePlugins().then((registry) => registry?.control('codeMode')?.shutdownSession(sessionId));
     this.sessions.dispose(sessionId);
   }
 

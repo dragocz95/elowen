@@ -608,12 +608,17 @@ The registry also restricts the credential and process-launch controls to named 
 ctx.registerControl('codeMode', {
   compose(request) { /* returns the `exec` and `wait` ToolDefinitions */ },
   shutdownSession(sessionId) { /* releases cells still running for that session */ },
+  activeCount() { /* cells still running, so a reload does not orphan their threads */ },
 });
 ```
 
 `compose` receives the session's tools **after** they have been gated, and each entry's `invoke` is that tool's own `execute`. A script calling a tool therefore passes the identical enforcement chain the model's own call would: the deny list, the granular permission gate, the plan-mode clamp, the account's plugin grant and both `tools.call.*` hooks. There is deliberately no second call path to keep in step. A call the policy refuses resolves as a refusal result for the model, so the nested path turns it back into a rejected promise: inside JavaScript a refusal that resolves is indistinguishable from an answer, and the script would carry on as though the call had worked.
 
-Core, not the plugin, decides which tools stay directly visible. Today that is `exec`, `wait` and `AskUserQuestion`; everything else stays registered and callable but is withheld from the prompt, the same narrowing deferred MCP tools already use. `shutdownSession` matters because a cell is a worker thread that deliberately outlives its turn, so nothing else would stop one.
+Core, not the plugin, decides which tools stay directly visible. Today that is `exec`, `wait` and `AskUserQuestion`; everything else stays registered and callable but is withheld from the prompt, the same narrowing deferred MCP tools already use.
+
+A cell is a worker thread that deliberately outlives its turn, which is what makes yielding useful and what makes its lifecycle the plugin's responsibility. Four rules bound it. `shutdownSession` is called from `LiveSessionRegistry.dispose`, so clearing, switching model, respawning, resetting a channel and deleting a conversation all release the cells. `activeCount` keeps a plugin reload from replacing the module that owns those threads while they run. A session holds at most eight open cells and an `exec` past that limit is answered with a readable refusal rather than a failed turn. A yielded cell nobody observes for ten minutes is terminated, and every observation re-arms that deadline.
+
+`request.principal()` is read per call, not per composition: a shared room composes its tools once but serves several senders, and a cell carries the policy of the turn that created it. Keying only on the conversation would let the next sender `wait` on somebody else's cell and share its `store` values, so a cell id from another principal simply reads as not found. Each nested `invoke` also receives an `AbortSignal` that fires when the cell is terminated or disposed; terminating kills the worker, which stops the script, and the signal is what stops a `Bash` or MCP call the script had already started.
 
 Code mode is off unless an operator turns it on for a provider; see `codeModeEnabled` in [DEPLOYMENT.md](DEPLOYMENT.md).
 
