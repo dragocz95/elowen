@@ -130,10 +130,10 @@ export class PluginHookBus {
   /** Fire every hook registered for `name` SEQUENTIALLY until one replaces the session's PERSONA (its
    *  system prompt), returning that replacement.
    *
-   *  Honoured only when the owning plugin declared `mutates:['prompt']` — the same grant that already
-   *  lets it shadow a prompt template through `registerPrompts`, so this is the narrower per-session form
-   *  of a reach it holds anyway. First writer wins: two plugins rewriting one prompt have no meaningful
-   *  merge, and concatenating them would produce a prompt neither asked for.
+   *  Honoured only when the owning plugin declared `mutates:['prompt']` — the same grant that lets it
+   *  overlay its OWN templates through `registerPrompts`, which refuses a core name. First writer wins:
+   *  two plugins rewriting one prompt have no meaningful merge, and concatenating them would produce a
+   *  prompt neither asked for.
    *
    *  Fail-open like every other hook path: a throwing, timing-out or empty answer changes nothing. */
   async emitPersona(name: PluginHookName, payload: unknown): Promise<string | undefined> {

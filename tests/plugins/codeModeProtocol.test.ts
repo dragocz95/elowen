@@ -264,9 +264,7 @@ describe('buildExecToolDescription', () => {
   it('substitutes the configured yield time into the template', () => {
     const description = buildExecToolDescription({
       enabledTools: [],
-      deferredTools: [],
       defaultExecYieldTimeMs: 30_000,
-      codeModeOnly: false,
     });
     expect(description).toContain('`yield_time_ms` asks `exec` to yield early if the script is still running. Defaults to 30000 ms.');
     // Only the yield line carries the ms default; the token default keeps its own wording.
@@ -276,9 +274,7 @@ describe('buildExecToolDescription', () => {
   it('advertises only the helpers the runtime actually installs', () => {
     const description = buildExecToolDescription({
       enabledTools: [],
-      deferredTools: [],
       defaultExecYieldTimeMs: 10_000,
-      codeModeOnly: false,
     });
     for (const helper of ['exit()', 'text(', 'image(', 'generatedImage(', 'store(', 'load(', 'notify(', 'setTimeout(', 'clearTimeout(', 'ALL_TOOLS', 'yield_control()']) {
       expect(description).toContain(helper);
@@ -287,22 +283,10 @@ describe('buildExecToolDescription', () => {
     expect(description).not.toContain('audio(');
   });
 
-  it('omits the per-tool catalogue outside code_mode_only', () => {
+  it('renders a typed declaration per tool', () => {
     const description = buildExecToolDescription({
       enabledTools: [toolDefinition()],
-      deferredTools: [],
       defaultExecYieldTimeMs: 10_000,
-      codeModeOnly: false,
-    });
-    expect(description).not.toContain('### `weather_tool`');
-  });
-
-  it('renders a typed declaration per tool under code_mode_only', () => {
-    const description = buildExecToolDescription({
-      enabledTools: [toolDefinition()],
-      deferredTools: [],
-      defaultExecYieldTimeMs: 10_000,
-      codeModeOnly: true,
     });
     expect(description).toContain('### `weather_tool`');
     expect(description).toContain('declare const tools: { weather_tool(args: { city: string; }): Promise<{ forecast: string; }>; };');
@@ -311,9 +295,7 @@ describe('buildExecToolDescription', () => {
   it('shows the normalised global next to the raw name when they differ', () => {
     const description = buildExecToolDescription({
       enabledTools: [toolDefinition({ name: 'hidden-dynamic-tool' })],
-      deferredTools: [],
       defaultExecYieldTimeMs: 10_000,
-      codeModeOnly: true,
     });
     expect(description).toContain('### `hidden_dynamic_tool` (`hidden-dynamic-tool`)');
   });
@@ -321,32 +303,21 @@ describe('buildExecToolDescription', () => {
   it('renders freeform tools as taking a string input', () => {
     const description = buildExecToolDescription({
       enabledTools: [toolDefinition({ name: 'patch', kind: 'freeform', inputSchema: undefined, outputSchema: undefined })],
-      deferredTools: [],
       defaultExecYieldTimeMs: 10_000,
-      codeModeOnly: true,
     });
     expect(description).toContain('patch(input: string): Promise<unknown>;');
   });
 
-  it('adds the ALL_TOOLS hint only when tools are deferred', () => {
-    const withDeferred = buildExecToolDescription({
-      enabledTools: [],
-      deferredTools: [toolDefinition({ name: 'deferred_tool' })],
+  it('declares every tool it is given: a code-mode session withholds none', () => {
+    // Code mode composes no tool deferral and no search (spawner), so there is no second class of tool
+    // that would have to be discovered through `ALL_TOOLS` at runtime.
+    const description = buildExecToolDescription({
+      enabledTools: [toolDefinition({ name: 'first_tool' }), toolDefinition({ name: 'second_tool' })],
       defaultExecYieldTimeMs: 10_000,
-      codeModeOnly: true,
     });
-    expect(withDeferred).toContain('Some deferred nested tools may be omitted');
-    expect(withDeferred).toContain('filter `ALL_TOOLS` by `name` and `description`');
-    // A deferred tool is callable but must not spend tokens on a declaration.
-    expect(withDeferred).not.toContain('### `deferred_tool`');
-
-    const withoutDeferred = buildExecToolDescription({
-      enabledTools: [],
-      deferredTools: [],
-      defaultExecYieldTimeMs: 10_000,
-      codeModeOnly: true,
-    });
-    expect(withoutDeferred).not.toContain('Some deferred nested tools may be omitted');
+    expect(description).toContain('### `first_tool`');
+    expect(description).toContain('### `second_tool`');
+    expect(description).not.toContain('Some deferred nested tools may be omitted');
   });
 });
 

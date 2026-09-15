@@ -133,10 +133,10 @@ export type PluginHookName =
  *  user's own policy and no plugin may widen or override them — a hook may only refuse further.
  *
  *  `persona` (needs `mutates:['prompt']`) — returned from a `brain.session.beforeSpawn` hook, it replaces
- *  the session's SYSTEM PROMPT, whose default the host resolves per surface and per model. The same grant
- *  already lets a plugin shadow a prompt template globally through `registerPrompts`, so this is the
- *  narrower per-session form of a reach it holds anyway. First writer wins; an empty string is ignored,
- *  because a session with no system prompt has no identity. */
+ *  the session's SYSTEM PROMPT, whose default the host resolves per surface and per model. It is the only
+ *  way a plugin can change that prompt: `registerPrompts` overlays templates the plugin itself registered
+ *  and refuses a core name outright. First writer wins; an empty string is ignored, because a session
+ *  with no system prompt has no identity. */
 export interface HookPatch { appendContext?: string; denyToolCall?: string; persona?: string }
 
 /** What a hook may return. `patch` is the runtime-wired mutation (gated by the owner's declared
@@ -186,16 +186,20 @@ export interface PluginCapabilities {
  *
  *  `prompt` IS required, and used not to be. The exemption was written for that same one-turn reach, but
  *  `prompt` does not have it: `registerPrompts` installs a persistent template overlay that is resolved
- *  ahead of the core file on every render, and `patch.persona` replaces a session's system prompt — so
- *  the grant can rewrite who the agent is, for every conversation, until the plugin is removed. */
+ *  ahead of the plugin's own template on every render, and `patch.persona` replaces a whole session's
+ *  system prompt — so the grant can rewrite who the agent is for the sessions it answers for, until the
+ *  plugin is removed. (A CORE template name is refused outright, `registry.ts`.) */
+export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
+  ['prompt', 'tools', 'events', 'workflow-dag', 'users'];
+
 /** Capability values that used to exist and no longer grant anything. A manifest may still declare one —
  *  it was written against an older daemon — so the loader drops it and warns instead of refusing to load
  *  a plugin whose only sin is naming a dead power. */
 const RETIRED_MUTATES: readonly string[] = ['memory'];
 
 /** Drop retired `mutates` values from a manifest's declared capabilities, reporting each one once.
- *  Returns the capabilities unchanged when there is nothing to strip, so the common path allocates
- *  nothing and `undefined` stays the deny-by-default empty claim. */
+ *  Returns the capabilities as they came when there is nothing to strip, so the common path allocates
+ *  nothing; a plugin that declared none gets the empty claim, which grants nothing. */
 export function stripRetiredMutates(
   capabilities: PluginCapabilities | undefined,
   onRetired?: (value: string) => void,
@@ -209,9 +213,6 @@ export function stripRetiredMutates(
     mutates: declared.filter((value) => !RETIRED_MUTATES.includes(value)) as NonNullable<PluginCapabilities['mutates']>,
   };
 }
-
-export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
-  ['prompt', 'tools', 'events', 'workflow-dag', 'users'];
 
 export interface PlatformHistoryMessage {
   /** Stable platform message id when the API exposes one. */
@@ -1303,9 +1304,7 @@ export interface CodeModeNestedTool {
   description: string;
   /** The tool's JSON input schema, rendered into the TypeScript declaration the model reads. */
   inputSchema?: unknown;
-  /** True for a tool withheld from the prompt today (a deferred MCP tool). It stays callable and stays
-   *  listed for runtime discovery, but spends no tokens on a declaration. */
-  deferred: boolean;
+
   /** The signal aborts when the cell dies, so a nested call cannot outlive the script.
    *
    *  `callId` is the id the tool itself sees as its call id, and a caller that draws a row for this call
@@ -1342,8 +1341,6 @@ export interface CodeModeTraceSink {
 export interface CodeModeCompositionRequest {
   sessionId: string;
   nested: CodeModeNestedTool[];
-  /** True when the nested tools are hidden from the model, so the script is the only way to reach them. */
-  codeModeOnly: boolean;
   /** A transcript sink for one producer — pass `trace` to each `invoke` the producer makes, report its
    *  `drain()` on the result that reports for it, and use `note()` for a script's `notify()`. The id is
    *  the producer's own (the tool call that created the cell), and it prefixes every row id. */

@@ -23,8 +23,9 @@ function resolvePromptsDir(): string {
 const promptsDir = resolvePromptsDir();
 const cache = new Map<string, string>();
 
-/** Plugin template overlay: bare template name → absolute `.md` path. A registered name shadows the
- *  core file (resolution: user override → plugin file → core file); swapped whole on plugin reload. */
+/** Plugin template overlay: bare template name → absolute `.md` path. Resolution is user override →
+ *  plugin file → core file, so an overlay is consulted BEFORE the core file — which is why
+ *  `registerPrompts` refuses a name a core template already owns. Swapped whole on plugin reload. */
 let pluginSources = new Map<string, string>();
 
 /** Generic plugin prompt platform for future github/sandblox consumers; zero in-repo callers is expected.

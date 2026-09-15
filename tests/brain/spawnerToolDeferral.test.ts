@@ -176,11 +176,11 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     // A stand-in for the code-mode plugin's control: it only has to exist and report what core handed it.
     // Six MCP tools over a threshold of five are exactly what tool search would withhold, which is what
     // makes the two spawns below comparable.
-    let composed: { name: string; deferred: boolean }[] = [];
+    let composed: { name: string }[] = [];
     registry.contextFor('code-mode', {}, { info() {}, warn() {}, error() {} })
       .registerControl('codeMode', {
-        compose: (request: { nested: { name: string; deferred: boolean }[] }) => {
-          composed = request.nested.map((tool) => ({ name: tool.name, deferred: tool.deferred }));
+        compose: (request: { nested: { name: string }[] }) => {
+          composed = request.nested.map((tool) => ({ name: tool.name }));
           return [pairTool('exec'), pairTool('wait')];
         },
         // The registry verifies the WHOLE contract before handing a control out, so the stub carries
@@ -199,9 +199,8 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     // The same predicate also selects Codex's request shape, so the tool surface and the wire arrangement
     // can never disagree.
     expect((withCodeMode.create.mock.calls.at(-1)?.[0] as { codexDeveloperPlacement?: unknown }).codexDeveloperPlacement).toBe(true);
-    // The prize: the tools that WOULD have been withheld reach the script API undeferred, so the exec
-    // catalogue declares their full signature instead of hiding them behind a search the model cannot use.
-    expect(composed.filter((tool) => tool.deferred)).toEqual([]);
+    // The prize: the tools that WOULD have been withheld reach the script API, so the exec catalogue
+    // declares their full signature instead of hiding them behind a search the model cannot use.
     expect(composed.map((tool) => tool.name)).toEqual(expect.arrayContaining(['mcp__github__op_0', 'mcp__github__op_5']));
 
     // The same account with the switch off keeps the provider's own hosted search, which is what put

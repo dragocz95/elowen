@@ -62,7 +62,6 @@ function toBindings(nested: CodeModeCompositionRequest['nested']): NestedToolBin
       // produce on this side.
       kind: 'function',
       ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema as JsonValue }),
-      deferred: tool.deferred,
       invoke: (input: unknown, signal: AbortSignal, callId?: string) => tool.invoke(input, signal, callId),
     });
   }
@@ -77,7 +76,6 @@ export function register(ctx: PluginContext): void {
         // Resolved per CALL, not per composition: a room's tools are composed once for every sender.
         session: () => sessionFor(request.sessionId, request.principal()),
         nested: toBindings(request.nested),
-        codeModeOnly: request.codeModeOnly,
         // One sink per CELL: core mints the row ids from the producer id we pass, draws the live rows and
         // hands back the records each result must report.
         trace: request.trace,
