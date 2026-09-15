@@ -139,7 +139,7 @@ function gateToolAccess(
       return refused(`The tool "${tool.name}" belongs to another account and is not available to you in this conversation.`);
     }
     if (!toolPermitted(tool.name, currentToolPolicy())) {
-      return { content: [{ type: 'text' as const, text: `The tool "${tool.name}" is not available to you in this conversation.` }], details: {} };
+      return refused(`The tool "${tool.name}" is not available to you in this conversation.`);
     }
     // Give `tools.call.before` subscribers a veto, AFTER the permission gate: the user's own rules are
     // policy and no plugin may widen them — a hook can only refuse further. Fail-open, so a hook that

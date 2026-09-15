@@ -223,6 +223,36 @@ describe('cell isolation', () => {
     expect(textOf(result.items)).toEqual(['escaped:undefined']);
   });
 
+  /**
+   * The escape this boundary exists to prevent, and the one a first version of it still allowed.
+   *
+   * The bridge out of the sandbox is a function of the WORKER's realm. The bootstrap serialises with the
+   * context's own JSON, so a script can make that serialisation fail on demand and, if the bridge then
+   * throws, it catches a worker-realm error whose `constructor.constructor` is that realm's `Function`.
+   * That is arbitrary code execution as the daemon user. The bridge therefore reports failure as a
+   * string, and the error the script sees is always raised inside the sandbox.
+   */
+  it('raises bridge failures inside the sandbox, never as a foreign error object', async () => {
+    const result = await run(`
+      // Force the bridge to reject the payload: the captured serialiser yields no string.
+      Object.prototype.toJSON = function () { return undefined; };
+      let caught;
+      try { text('trigger'); } catch (error) { caught = error; }
+      delete Object.prototype.toJSON;
+      if (caught === undefined) { text('no failure raised'); }
+      else {
+        const Realm = caught.constructor.constructor;
+        text('kind:' + typeof caught + ' realm:' + Realm('return typeof process')());
+      }
+    `);
+    const texts = textOf(result.items);
+    expect(texts).toHaveLength(1);
+    // Either the payload still went through, or the failure was raised as a sandbox-realm value. What must
+    // never appear is a realm in which `process` exists.
+    expect(texts[0]).not.toContain('realm:object');
+    expect(result.errorText ?? '').not.toContain('realm:object');
+  });
+
   it('does not leave the bridge reachable from the script', async () => {
     const result = await run(`
       text(typeof globalThis.__codeModeSend + '/' + typeof globalThis.__codeModeConfig);

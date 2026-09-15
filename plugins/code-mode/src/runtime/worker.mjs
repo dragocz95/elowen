@@ -27,7 +27,13 @@ const BOOTSTRAP_SOURCE = String.raw`
 (function bootstrap(send, configJson) {
   'use strict';
 
-  var config = JSON.parse(configJson);
+  // Captured before user code runs, so replacing globalThis.JSON cannot redirect the output path. This
+  // is hardening, not the boundary itself: an Object.prototype.toJSON can still break these, which is
+  // why the bridge must never propagate a worker-realm failure back here.
+  var stringify = JSON.stringify;
+  var parse = JSON.parse;
+
+  var config = parse(configJson);
   var EXIT_SENTINEL = config.exitSentinel;
 
   // Codex deletes these four intrinsics from the isolate; do the same so the advertised contract
@@ -41,12 +47,16 @@ const BOOTSTRAP_SOURCE = String.raw`
   var nextToolCallId = 0;
   var timeouts = new Map();
   var nextTimeoutId = 0;
-  var storedValues = new Map(Object.entries(JSON.parse(config.storedValuesJson)));
+  var storedValues = new Map(Object.entries(parse(config.storedValuesJson)));
   var storedWrites = new Map();
   var exitRequested = false;
 
+  // The bridge reports failure as a STRING rather than by throwing, because a throw from the worker
+  // realm would hand the script a foreign error object whose prototype chain leads straight out of the
+  // sandbox. The error the script sees is therefore always raised here, in its own realm.
   function emit(message) {
-    send(JSON.stringify(message));
+    var failure = send(stringify(message));
+    if (typeof failure === 'string') throwText(failure);
   }
 
   function throwText(message) {
@@ -60,7 +70,7 @@ const BOOTSTRAP_SOURCE = String.raw`
     if (value === null || value === undefined || kind === 'string' || kind === 'number' || kind === 'boolean' || kind === 'bigint') {
       return String(value);
     }
-    var serialized = JSON.stringify(value);
+    var serialized = stringify(value);
     return serialized === undefined ? String(value) : serialized;
   }
 
@@ -129,11 +139,11 @@ const BOOTSTRAP_SOURCE = String.raw`
 
   globalThis.store = function store(key, value) {
     if (typeof key !== 'string') throwText('store expects a string key');
-    var serialized = JSON.stringify(value);
+    var serialized = stringify(value);
     if (serialized === undefined) {
       throwText('Unable to store "' + key + '". Only plain serializable objects can be stored.');
     }
-    var parsed = JSON.parse(serialized);
+    var parsed = parse(serialized);
     // Visible to load immediately inside this cell; committed to the session only on completion.
     storedValues.set(key, parsed);
     storedWrites.set(key, parsed);
@@ -181,7 +191,7 @@ const BOOTSTRAP_SOURCE = String.raw`
             id: id,
             name: tool.name,
             kind: tool.kind,
-            inputJson: input === undefined ? undefined : JSON.stringify(input),
+            inputJson: input === undefined ? undefined : stringify(input),
           });
         });
       };
@@ -194,13 +204,13 @@ const BOOTSTRAP_SOURCE = String.raw`
   });
 
   function deliver(payloadJson) {
-    var payload = JSON.parse(payloadJson);
+    var payload = parse(payloadJson);
     if (payload.type === 'toolResult') {
       var entry = pendingToolCalls.get(payload.id);
       if (!entry) return;
       pendingToolCalls.delete(payload.id);
       // Codex rejects with a plain string, not an Error, so catch (e) sees the message itself.
-      if (payload.ok) entry.resolve(payload.resultJson === undefined ? undefined : JSON.parse(payload.resultJson));
+      if (payload.ok) entry.resolve(payload.resultJson === undefined ? undefined : parse(payload.resultJson));
       else entry.reject(payload.error);
       return;
     }
@@ -217,7 +227,7 @@ const BOOTSTRAP_SOURCE = String.raw`
     storedWrites.forEach(function copy(value, key) {
       out[key] = value;
     });
-    return JSON.stringify(out);
+    return stringify(out);
   }
 
   function isExitException(error) {
@@ -247,9 +257,28 @@ if (port === null) throw new Error('code-mode cell worker must run as a worker t
 
 const data = workerData;
 
+/**
+ * The one function of THIS realm the sandbox can call, and therefore the one place a worker-realm object
+ * could leak into it.
+ *
+ * It must never throw. An exception raised here travels into the context as an error object of the
+ * worker's realm, and `error.constructor.constructor` is then that realm's `Function`, which is arbitrary
+ * code execution as the daemon user. The trigger does not have to be exotic: the bootstrap serialises
+ * with the context's own JSON, so a script that makes `JSON.stringify` return undefined, or installs an
+ * `Object.prototype.toJSON`, makes the `JSON.parse` below fail on demand.
+ *
+ * So failure is reported as a STRING return value, which is a primitive with no prototype chain to walk,
+ * and the bootstrap turns it into an error of its own realm.
+ */
 const sandbox = {
   __codeModeSend: (json) => {
-    port.postMessage(JSON.parse(json));
+    try {
+      if (typeof json !== 'string') return 'code mode bridge expects a string payload';
+      port.postMessage(JSON.parse(json));
+      return undefined;
+    } catch {
+      return 'code mode bridge could not deliver this payload';
+    }
   },
   __codeModeConfig: JSON.stringify({
     exitSentinel: EXIT_SENTINEL,
@@ -266,8 +295,14 @@ const context = vm.createContext(sandbox, {
 const control = vm.runInContext(BOOTSTRAP_SOURCE, context, { filename: 'code_mode_bootstrap.js' });
 
 port.on('message', (message) => {
-  // Every delivery crosses as a primitive string, so no host object ever enters the context.
-  control.deliver(JSON.stringify(message));
+  // Every delivery crosses as a primitive string, so no host object ever enters the context. The guard
+  // is for the other direction: a script can poison the intrinsics the bootstrap parses with, and an
+  // exception escaping this listener would kill the worker with no result rather than failing the call.
+  try {
+    control.deliver(JSON.stringify(message));
+  } catch {
+    // The affected promise stays pending; the cell's own yield and termination paths still apply.
+  }
 });
 
 async function run() {
@@ -285,7 +320,16 @@ async function run() {
     if (!control.isExitException(error)) errorText = control.describeError(error);
   }
 
-  port.postMessage({ type: 'result', errorText, storedWritesJson: control.takeStoredWrites() });
+  // Same reasoning: a script that poisons serialisation must lose its stored writes, not the whole result.
+  let storedWritesJson = '{}';
+  try {
+    const collected = control.takeStoredWrites();
+    if (typeof collected === 'string') storedWritesJson = collected;
+  } catch {
+    errorText ??= 'exec could not serialise its stored values';
+  }
+
+  port.postMessage({ type: 'result', errorText, storedWritesJson });
 }
 
 run().catch((error) => {
