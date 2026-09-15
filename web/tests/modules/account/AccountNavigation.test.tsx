@@ -16,7 +16,6 @@ import { en } from '../../../lib/i18n/dictionaries/en';
  *  only: `scrollIntoView` would also ask the overlay's scroller to move, which on a phone means the page
  *  jumping under the reader's thumb. */
 
-/** The records carry the shared HelpTip, which reads the dictionary through `useTranslation`. */
 function W({ children }: { children: ReactNode }) {
   return <LanguageProvider initialLocale="en">{children}</LanguageProvider>;
 }
@@ -133,6 +132,7 @@ describe('AccountNavigation tab strip', () => {
     render(<Navigation active={LAST.id} layout="sidebar" />, { wrapper: W });
     const nav = screen.getByTestId('account-navigation-sidebar');
     expect(nav.scrollLeft).toBe(0);
+    expect(within(nav).getAllByRole('button')).toHaveLength(SECTIONS.length);
   });
 
   /** A section an installed plugin contributes is a section of this deck like any other, in both shapes

@@ -74,7 +74,6 @@ export function SettingsNavigation({ t, sections, pluginEntries, active, query, 
       items: visibleSections.map((section) => ({
         id: section.id,
         label: section.label,
-        hint: section.description,
         icon: section.icon,
         current: active === section.id,
         onActivate: () => onNavigate(settingsSectionHref(section.id), section.id),

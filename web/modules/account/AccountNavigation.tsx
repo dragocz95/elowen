@@ -42,7 +42,6 @@ export function AccountNavigation({ t, sections, active, query, layout, onQueryC
     items: visibleSections.map((section) => ({
       id: section.id,
       label: section.label,
-      hint: section.description,
       icon: section.icon,
       current: section.id === active,
       onActivate: () => onNavigate(accountSectionHref(section.id), section.id),

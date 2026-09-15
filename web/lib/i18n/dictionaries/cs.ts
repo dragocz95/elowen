@@ -151,7 +151,6 @@ export const cs = {
     notifications: 'Oznámení ({hotkey})',
     loading: 'Načítání…',
     help: 'Nápověda',
-    helpFor: 'Nápověda: {label}',
     actions: 'Akce',
     success: 'Úspěch',
     error: 'Chyba',

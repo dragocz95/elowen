@@ -158,10 +158,6 @@ export const en = {
     notifications: 'Notifications ({hotkey})',
     loading: 'Loading…',
     help: 'Help',
-    /** Accessible name of a help affordance that belongs to a NAMED record. Without it a list of records
-     *  presents a row of buttons all called "Help", and neither a screen reader's element list nor voice
-     *  control can tell one from the next. */
-    helpFor: 'Help: {label}',
     actions: 'Actions',
     success: 'Success',
     error: 'Error',

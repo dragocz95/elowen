@@ -2,9 +2,7 @@
 
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Search, type LucideIcon } from 'lucide-react';
-import { HelpTip } from './HelpTip';
 import { revealHorizontalItem } from './horizontalScroll';
-import { interpolate, useTranslation } from '../../lib/i18n';
 
 /** A SECTION DECK: a page that is a set of named sections addressed by `?cat=`, read one at a time with
  *  its own way between them. `/settings` and `/account` are both one, and they are presented in the same
@@ -27,8 +25,6 @@ interface DeckNavItem {
   id: string;
   label: string;
   icon: LucideIcon;
-  /** The section's own sentence, behind the shared help affordance rather than as a truncated subtitle. */
-  hint?: string;
   /** Whether this is the section on screen. A destination that LEAVES the deck (a plugin's own page) is
    *  never current, because the deck is not what it opens. */
   current?: boolean;
@@ -48,7 +44,7 @@ export interface DeckNavGroup {
   items: DeckNavItem[];
 }
 
-/** ONE navigation record: the leading glyph, the name and the shared help affordance.
+/** ONE navigation record: the leading glyph and the name.
  *
  *  DENSITY. The record is a 2rem row — the height this app's own primary sidebar row uses, and the one
  *  the reference secondary navigation uses — and grows to the `--touch-target` floor for a COARSE
@@ -60,18 +56,8 @@ export interface DeckNavGroup {
  *  The icon is a plain 1rem glyph held at half opacity, exactly as `.sidebar-nav__icon` holds one: the
  *  boxed 2rem badge that used to lead each record made the column read as a list of buttons and cost the
  *  list a third of its height. The trailing chevron went with it — it pointed at nothing a vertical
- *  navigation does not already say, and the record's own fill is what marks which section is open.
- *
- *  The activating control is a button STRETCHED over the record rather than one wrapping it (the idiom
- *  `.data-table-row-open` uses for the same reason). A HelpTip is itself a button, and a button inside a
- *  button is markup no browser treats as two controls: the help would be unreachable from the keyboard
- *  and pressing it would navigate. Stretched, the record keeps one tab stop, the help keeps its own, and
- *  the help — positioned, and after the stretched control in DOM — takes its own pointer events, so
- *  revealing it never navigates. The help carries its OWN 24x24 hit area (see `HelpTip`), because a 16px
- *  mark floating over a full-width navigation control turns every near miss into a navigation, and it is
- *  named after the record it belongs to rather than being the twelfth button called "Help". */
-function DeckNavRow({ label, hint, icon: Icon, current = false, onActivate }: DeckNavItem) {
-  const { t } = useTranslation();
+ *  navigation does not already say, and the record's own fill is what marks which section is open. */
+function DeckNavRow({ label, icon: Icon, current = false, onActivate }: DeckNavItem) {
   const labelId = useId();
   return (
     <div className={`relative flex h-8 items-center gap-2.5 rounded-lg px-2 transition-colors hover:bg-accent pointer-coarse:min-h-[var(--touch-target)] ${current ? 'bg-accent' : ''}`}>
@@ -86,7 +72,6 @@ function DeckNavRow({ label, hint, icon: Icon, current = false, onActivate }: De
         <Icon size={16} strokeWidth={1.75} />
       </span>
       <span id={labelId} className="min-w-0 truncate text-sm font-medium text-foreground">{label}</span>
-      {hint ? <HelpTip align="left" label={interpolate(t.common.helpFor, { label })}>{hint}</HelpTip> : null}
     </div>
   );
 }
