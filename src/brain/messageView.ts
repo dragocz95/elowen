@@ -14,6 +14,10 @@ import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import { IMAGE_PREVIEW_TOOL, parseStoredChatImages, persistedToolResultImages, stripAttachmentMarker, toMessageImages } from './chatImages.js';
 import { collectChatFiles, toMessageFile } from './chatFiles.js';
 import { collapseWhitespace } from '../shared/text.js';
+// The hydration half of the tool-trace module. Only `segments.ts` and `types.ts` are imported here, never
+// `record.ts`: the builder reads the formatters in THIS file, so importing it back would form a cycle.
+import { segmentsForTraces, traceNotes, withNotes } from './toolTrace/segments.js';
+import { parseToolTraces } from './toolTrace/types.js';
 // Only these two have daemon consumers that import them from here; BrainSubagentView/BrainWorkflowView/
 // BrainSegment are used internally by the shaping code below, and anything else that needs them imports
 // straight from wireContract.
@@ -581,7 +585,17 @@ export function shapeBrainMessages(
           segments.push(shared);
           continue;
         }
-        const output = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
+        // Tool activity the provider never saw (src/brain/toolTrace/): the call is a WRAPPER around work
+        // it performed itself, so the rows it recorded stand in its place — a code-mode script's `Bash`
+        // and `Write` read exactly like direct calls, with no opaque `exec` row above them. A wrapper that
+        // recorded no call keeps its own row (below), because a turn that renders nothing is worse.
+        const traces = parseToolTraces((res?.result as { details?: { toolTrace?: unknown } } | undefined)?.details?.toolTrace);
+        const traceRows = segmentsForTraces(traces, p.id);
+        if (traceRows.length > 0) { segments.push(...traceRows); continue; }
+        const traced = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
+        // Progress lines with no row of their own ride the wrapper's output — the fallback case above.
+        const notes = traceNotes(traces);
+        const output = notes.length > 0 ? withNotes(traced, notes) : traced;
         const display = toolDisplay(p.name, p.arguments);
         const diff = p.id ? diffs.get(p.id) : undefined;
         const command = toolCommand(p.arguments);
