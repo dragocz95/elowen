@@ -557,6 +557,24 @@ describe('workflow engine', () => {
     expect(contextOf('gather')).not.toContain('Handovers from the nodes');
   });
 
+  it('keeps a complete node result behind an explicit Read reference while handing over only bounded direct context', async () => {
+    const { tools, contextOf, snapshots } = harness();
+    await tools.get('WorkflowStart')!.execute('t-lossless-node', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'gather', task: 'gather BULK:12000' },
+        { id: 'write', task: 'write', deps: ['gather'] },
+      ]),
+    });
+    const write = contextOf('write');
+    expect(write).toContain('Read({"file_path":');
+    expect(write).toContain('complete result');
+    expect(write).toContain('gather');
+    expect(write).not.toContain('done:gather BULK:12000');
+    const gather = snapshots.flatMap((snapshot) => snapshot.nodes).find((node) => node.id === 'gather' && node.status === 'done');
+    expect(gather?.result?.length).toBeLessThanOrEqual(500);
+  });
+
   // Filip's design: an edge carries a HANDOVER, not a report. A node writes the section itself, and only
   // that section travels — the full result stays with the parent's summary. Passing whole results is what
   // filled a dependent's context with three reports about work it was not doing.

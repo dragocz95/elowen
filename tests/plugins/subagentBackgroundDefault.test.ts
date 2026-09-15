@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
@@ -35,6 +35,7 @@ const freshDataRoot = (): string => { const p = mkdtempSync(join(tmpdir(), 'elow
 afterEach(() => {
   for (const p of dirs) rmSync(p, { recursive: true, force: true });
   dirs = [];
+  vi.unstubAllEnvs();
 });
 
 describe('Delegate — asynchronous delivery is the default', () => {
@@ -79,6 +80,27 @@ describe('Delegate — asynchronous delivery is the default', () => {
     expect(asText(res)).toMatch(/Started background delegation/);
     release('explicit conclusion');
     await vi.waitFor(() => expect(completions).toHaveLength(1));
+  });
+
+  it('persists a large default-background result before delivering its bounded placeholder', async () => {
+    const home = freshDataRoot();
+    vi.stubEnv('HOME', home);
+    const { reg, release, completions } = await harness();
+    const large = `HEAD-SENTINEL\n${'MIDDLE-SENTINEL-' + 'x'.repeat(120_000)}\nTAIL-SENTINEL`;
+    const res = await runWithPolicy(ADMIN, () => tool(reg, 'Delegate').execute('call-large', { task: 'inspect large output' }), {
+      sessionId: 'brain-parent', identity: OWNER,
+      emitSubagent: () => {}, emitSubagentCompletion: (c) => completions.push(c as { status?: string; result?: string }),
+    });
+    expect(asText(res)).toMatch(/Started background delegation/);
+    release(large);
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    const result = completions[0]?.result ?? '';
+    expect(result).not.toContain('MIDDLE-SENTINEL');
+    expect(result).toContain('HEAD-SENTINEL');
+    expect(result).toContain('TAIL-SENTINEL');
+    const path = /Full output at: (.+?) — read it/.exec(result)?.[1];
+    expect(path).toBeTruthy();
+    expect(readFileSync(path!, 'utf8')).toBe(large);
   });
 
   it('blocks for an explicit background=false and returns the child text instead of delivering it', async () => {
@@ -155,6 +177,29 @@ describe('DelegateContinue — asynchronous delivery for an idle sub-agent', () 
     expect(completions[0]).toMatchObject({ toolCallId: 'call-continue', status: 'done', result: 'the continued answer' });
     await new Promise((r) => setTimeout(r, 10));
     expect(completions).toHaveLength(1);
+  });
+
+  it('persists a large idle Continue reply before delivering its bounded placeholder', async () => {
+    const home = freshDataRoot();
+    vi.stubEnv('HOME', home);
+    const { reg, release, completions } = await harness('idle');
+    const large = `HEAD-SENTINEL\n${'MIDDLE-SENTINEL-' + 'x'.repeat(120_000)}\nTAIL-SENTINEL`;
+    const res = await runWithPolicy(ADMIN, () => tool(reg, 'DelegateContinue').execute('call-large-continue', {
+      id: CHILD_SESSION, message: 'continue with a large report',
+    }), {
+      sessionId: 'brain-parent', identity: OWNER,
+      emitSubagent: () => {}, emitSubagentCompletion: (c) => completions.push(c as { status?: string; result?: string }),
+    });
+    expect(asText(res)).toMatch(/Started the sub-agent's follow-up turn/);
+    release({ status: 'reply', reply: large });
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    const result = completions[0]?.result ?? '';
+    expect(result).not.toContain('MIDDLE-SENTINEL');
+    expect(result).toContain('HEAD-SENTINEL');
+    expect(result).toContain('TAIL-SENTINEL');
+    const path = /Full output at: (.+?) — read it/.exec(result)?.[1];
+    expect(path).toBeTruthy();
+    expect(readFileSync(path!, 'utf8')).toBe(large);
   });
 
   it('blocks for an explicit background=false and returns the reply inline', async () => {
