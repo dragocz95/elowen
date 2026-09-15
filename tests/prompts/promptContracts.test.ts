@@ -8,9 +8,13 @@ const read = (path: string): string => readFileSync(join(root, path), 'utf8');
 // Captured from every bundled template before the Markdown rewrite. Counts preserve repeated slots,
 // while exact map equality catches accidental new tokens as well as omissions.
 const placeholders: Record<string, Record<string, number>> = {
+  // The persona parts. Identity carries every variable; the harness and work parts carry none of their
+  // own, except the one place the vendor text names the agent.
   'elowen.md': { '{{agentName}}': 2, '{{userName}}': 1, '{{productName}}': 3, '{{personality}}': 1 },
+  'elowen-harness.md': {},
+  'elowen-work.md': {},
+  'codex-work.md': { '{{agentName}}': 1 },
   'elowen-platform.md': { '{{ownerName}}': 2, '{{productName}}': 1, '{{agentName}}': 1 },
-  'elowen-codex.md': { '{{agentName}}': 2, '{{userName}}': 1, '{{productName}}': 4, '{{personality}}': 1 },
   'scheduled.md': { '{{agentName}}': 1, '{{userName}}': 1, '{{personality}}': 1 },
   'cli/plan-mode.md': { '{{planFile}}': 1, '{{planState}}': 1 },
   'cli/plan-mode-sparse.md': { '{{planFile}}': 1 },

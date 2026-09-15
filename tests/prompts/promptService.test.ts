@@ -7,6 +7,11 @@ import { rawTemplate } from '../../src/prompts/index.js';
 let prompts: PromptService;
 let store: UserPromptStore;
 
+/** The interactive persona as a session receives it: identity, harness, our own work rules, in order.
+ *  Mirrors `personaTemplatesFor` for a non-code-mode owner chat. */
+const composedPersona = (): string =>
+  ['elowen', 'elowen-harness', 'elowen-work'].map((name) => rawTemplate(name)).join('\n\n');
+
 beforeEach(() => {
   store = new UserPromptStore(openDb(':memory:'));
   prompts = new PromptService(store);
@@ -14,12 +19,14 @@ beforeEach(() => {
 
 describe('PromptService.render', () => {
   it('ships a Markdown owner-chat contract with dynamic identity and behavior guarantees', () => {
-    const template = rawTemplate('elowen');
-    expect(template.startsWith('You are {{agentName}},')).toBe(true);
+    // Asserted against the COMPOSED persona, because that is what a session receives: the identity part
+    // alone is a third of the contract, and pinning only it would pass while two thirds drifted.
+    const template = composedPersona();
+    expect(rawTemplate('elowen').startsWith('You are {{agentName}},')).toBe(true);
     for (const section of [
       'Reporting outcomes', 'Harness', 'Session guidance', 'Control plane', 'Memory',
-      'Context management', 'Delivering work', 'Software engineering', 'Recovery',
-      'Permissions and safety', 'Writing for the user',
+      'Context management', 'Delivering work', 'Delegation', 'Software engineering', 'Recovery',
+      'Permissions and safety', 'Voice', 'Writing for the user',
     ]) {
       expect(template).toContain(`\n## ${section}\n`);
     }

@@ -749,9 +749,15 @@ export class LiveSessionSpawner {
     // people in a shared room, which is false for a fork and — being system-prompt bytes — would move the
     // whole cached prefix out from under the parent's cache.
     const templates = personaTemplatesFor({ scheduled: opts.scheduled === true, ownerChatShape, provider: providerEntry, modelId: model.id });
-    const basePersona = templates.base === 'scheduled'
-      ? this.d.prompts.render(templates.base, { userName, personality, agentName }, settingsUserId)
-      : this.d.prompts.render(templates.base, { userName, personality, agentName, productName }, settingsUserId);
+    // Every part takes the same variables: an unreferenced placeholder is simply not substituted, and one
+    // variable set keeps a per-user override of any part rendering the same way it did as one file. The
+    // scheduled template is the exception it always was — it names no product on purpose.
+    const vars: Record<string, string> = templates.parts.includes('scheduled')
+      ? { userName, personality, agentName }
+      : { userName, personality, agentName, productName };
+    const basePersona = templates.parts
+      .map((name) => this.d.prompts.render(name, vars, settingsUserId))
+      .join('\n\n');
     const renderedPersona = templates.overlay === undefined
       ? basePersona
       : basePersona + '\n\n' + this.d.prompts.render(templates.overlay, { ownerName: userName, agentName, productName }, settingsUserId);
