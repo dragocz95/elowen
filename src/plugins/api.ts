@@ -1854,10 +1854,13 @@ export interface PluginContext {
    *  not into the transcript, the CLI, the web chat or a platform message. Nothing renders it to a human,
    *  so if a reminder seems to do nothing, check the `brain-step-context` log line.
    *
-   *  Its bytes are then FROZEN and append-only for the life of the turn, because rewriting anything
-   *  already sent is what drops the provider's prompt cache. So: keep it SHORT (a few hundred bytes; the
-   *  block accumulates one entry per reminder, it is never replaced), and do not depend on the wall clock
-   *  changing between calls — an already-sent reminder is never re-rendered.
+   *  Its bytes are then FROZEN and append-only until the conversation is compacted, because rewriting
+   *  anything already sent is what drops the provider's prompt cache — a new user message does NOT clear
+   *  the trail, it only restarts the cadence. So: keep it SHORT (a few hundred bytes; the block accumulates
+   *  one entry per reminder, it is never replaced), and do not depend on the wall clock changing between
+   *  calls — an already-sent reminder is never re-rendered. Core clamps an answer that ignores this
+   *  (`STEP_CONTEXT_MAX_BYTES`) and marks the log line `truncated`, so an over-long provider loses its tail
+   *  rather than the conversation losing its cache.
    *
    *  Read `ctx.currentSessionId()` / `ctx.currentIdentity()` SYNCHRONOUSLY, before the first `await`: the
    *  provider runs inside the turn's async scope and that scope does not survive your own suspension. A

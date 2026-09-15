@@ -724,8 +724,9 @@ export interface RuntimeLimits {
    *  provider only runs while a prompt is composed: a long turn otherwise works off a snapshot taken
    *  before its first call.
    *
-   *  The cost is append-only: each reminder is a frozen block that stays in the turn's context to keep
-   *  the cached prefix intact, so a lower number spends more context on reminders. The consumer decides
+   *  The cost is append-only: each reminder is a frozen block that stays in the conversation until it is
+   *  compacted, because moving or removing it would break the cached prefix it was sent under — a turn
+   *  boundary clears the CADENCE, never the trail. So a lower number spends more context. The consumer decides
    *  what is said; 0 (unreachable from the slider, whose floor is 10) means no mid-turn reminder at all
    *  and turns the mechanism off without deleting anything already sent. */
   stepContextEveryToolCalls: number;

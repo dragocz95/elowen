@@ -17,10 +17,17 @@ import { logger } from '../../shared/logger.js';
  *       The anchor is a canonical ordinal (how many non-meta messages precede it) and not a raw index,
  *       because this handler runs after {@link installLiveRecall} in the chain and sees that injector's
  *       synthetic blocks too — a raw index would move when a sibling inserts one and read as a compaction.
- *    2. Once rendered, a block's bytes NEVER change and it is never moved or removed while the turn lives.
+ *    2. Once rendered, a block's bytes NEVER change and it is never moved or removed until a COMPACTION.
  *       That is what makes each provider message stream a byte-for-byte prefix extension of the previous
  *       one, the same invariant live recall pins with byte comparisons. It is also why reminders
- *       accumulate within a turn: re-rendering one at the moving tail would rewrite already-sent bytes.
+ *       accumulate: re-rendering one at the moving tail would rewrite already-sent bytes.
+ *
+ *       A turn boundary is explicitly NOT such a moment. PI does not reset its message history when a new
+ *       user message arrives — the conversation keeps growing and the provider keeps reading the same
+ *       cached prefix — so dropping a block there removes a message from the MIDDLE of what was already
+ *       sent and invalidates every entry from its anchor onward. A new user message therefore restarts the
+ *       CADENCE (it opens a new instruction) and nothing else; only a compaction, which destroys the prefix
+ *       anyway, clears the trail. Live recall reaches the same conclusion at `liveRecall.ts:299-316`.
  *
  *  Nothing returned here is persisted: pi clones canonical history per request and chains the `context`
  *  handlers over each other's output, so a reminder reaches the model and nothing else — not the
@@ -69,44 +76,60 @@ interface FrozenBlock {
 
 const FRAME_OPEN = '<step_context';
 const FRAME_CLOSE = '</step_context>';
+const TRUNCATION_MARK = '\n…[truncated]';
+
+/** Ceiling on one reminder's body. Every byte here is FROZEN and re-sent on every later request of the
+ *  conversation until a compaction, so an unbounded provider does not merely make one prompt long — it
+ *  inflates every request that follows, permanently. The API doc comment asks a provider for a few hundred
+ *  bytes; this is what keeps core safe from one that ignores it, the way `memoryLiveRecallBytes` bounds the
+ *  sibling injector. Generous enough that no honest reminder ever meets it. */
+export const STEP_CONTEXT_MAX_BYTES = 1024;
+
+/** Cut `text` to at most `max` BYTES without splitting a character. A raw byte slice can land inside a
+ *  multi-byte sequence, which decodes to a replacement character and hands the provider a corrupted tail;
+ *  the incomplete sequence is dropped instead. */
+function clampToBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  const room = max - Buffer.byteLength(TRUNCATION_MARK);
+  const cut = Buffer.from(text).subarray(0, room).toString('utf8');
+  const whole = cut.endsWith('\uFFFD') ? cut.slice(0, -1) : cut;
+  return `${whole}${TRUNCATION_MARK}`;
+}
 
 /** Wrap the parts one provider pass produced in the envelope the model sees.
  *
  *  `tool_calls` states where in the turn this reminder was made, so a trail of frozen blocks reads as
  *  checkpoints rather than as contradictions. Provider output may itself carry a literal closing
  *  delimiter, which would end the element early and promote whatever follows to instructions — the same
- *  defence `renderTurnContextFrame` applies. */
-export function renderStepContextFrame(parts: readonly string[], info: StepContextInfo): string {
-  if (parts.length === 0) return '';
-  const body = parts
+ *  defence `renderTurnContextFrame` applies.
+ *
+ *  `truncated` is reported rather than kept quiet: a clamped reminder and a provider that simply had
+ *  little to say are otherwise the same bytes in the log, and they need different fixes. */
+export function renderStepContextFrame(
+  parts: readonly string[],
+  info: StepContextInfo,
+): { content: string; truncated: boolean } {
+  if (parts.length === 0) return { content: '', truncated: false };
+  const rendered = parts
     .map((part) => part.replace(/<\s*\/\s*step_context\s*>/gi, '[/step_context]'))
     .join('\n');
-  return `${FRAME_OPEN} tool_calls="${info.toolCalls}">\n${body}\n${FRAME_CLOSE}`;
+  const body = clampToBytes(rendered, STEP_CONTEXT_MAX_BYTES);
+  return {
+    content: `${FRAME_OPEN} tool_calls="${info.toolCalls}">\n${body}\n${FRAME_CLOSE}`,
+    truncated: body !== rendered,
+  };
 }
 
-/** The ordinal of a message among the CANONICAL ones: what a block anchors on, invariant to how many
- *  synthetic blocks are sitting in front of it. -1 for a meta message, which has no ordinal at all. */
-function canonicalOrdinals(messages: readonly ContextMessage[]): number[] {
-  const ordinals: number[] = [];
-  let ordinal = 0;
+/** The CANONICAL messages in order, indexed by their ordinal: what a block anchors on, invariant to how
+ *  many synthetic blocks a sibling injector has put in front of them. Built once per pass so re-finding an
+ *  anchor costs one array read rather than a scan — the trail now outlives a turn, so this runs against
+ *  every block of the conversation on every model request. */
+function canonicalMessages(messages: readonly ContextMessage[]): ContextMessage[] {
+  const canonical: ContextMessage[] = [];
   for (const message of messages) {
-    if (isMetaUserMessage(message)) { ordinals.push(-1); continue; }
-    ordinals.push(ordinal);
-    ordinal += 1;
+    if (!isMetaUserMessage(message)) canonical.push(message);
   }
-  return ordinals;
-}
-
-/** The message at a canonical ordinal, or undefined when history no longer reaches that far. */
-function messageAtOrdinal(
-  messages: readonly ContextMessage[],
-  ordinals: readonly number[],
-  ordinal: number,
-): ContextMessage | undefined {
-  for (let index = 0; index < messages.length; index += 1) {
-    if (ordinals[index] === ordinal) return messages[index];
-  }
-  return undefined;
+  return canonical;
 }
 
 /** How many tool calls the model has made since the turn's last real user message. A parallel batch
@@ -127,9 +150,15 @@ function countTurnToolCalls(messages: readonly ContextMessage[]): number {
   return calls;
 }
 
-/** Rebuild the provider stream with every frozen block back at its canonical boundary, after the run of
- *  synthetic messages that already sits there — so a sibling injector's block stays where it put it and
- *  ours appends behind it, exactly as on the request that first sent it. */
+/** Rebuild the provider stream with every frozen block back at its canonical boundary — IMMEDIATELY after
+ *  the canonical message it was anchored to, ahead of whatever synthetic messages follow it.
+ *
+ *  Ahead, not behind, and that is the whole point. A sibling injector anchors at the last canonical message
+ *  too, and it can add a block there on a later pass without the canonical history moving at all: a durable
+ *  harness retry re-runs this hook over the same messages, and live recall injects a settled retrieval on
+ *  exactly such a pass. Placing ours behind the synthetic run would let that newcomer push our already-sent
+ *  block one position later — an insertion in the middle of bytes the provider has cached. Placed here,
+ *  every later sibling block lands BEHIND ours and the payload stays a pure append. */
 function insertFrozenBlocks(
   messages: readonly ContextMessage[],
   blocks: readonly FrozenBlock[],
@@ -141,21 +170,14 @@ function insertFrozenBlocks(
     else byOrdinal.set(block.anchorOrdinal, [block]);
   }
   const anchored: ContextMessage[] = [];
-  const emitAt = (ordinal: number) => {
-    for (const block of byOrdinal.get(ordinal) ?? []) anchored.push(structuredClone(block.frozenMessage));
-  };
-  let nextOrdinal = 0;
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
+  let ordinal = 0;
+  for (const message of messages) {
     if (!message) continue;
-    if (isMetaUserMessage(message)) { anchored.push(message); continue; }
-    // The previous canonical boundary closes here: everything synthetic that followed it has now been
-    // pushed, so blocks anchored there go after that run rather than cutting into it.
-    emitAt(nextOrdinal - 1);
     anchored.push(message);
-    nextOrdinal += 1;
+    if (isMetaUserMessage(message)) continue;
+    for (const block of byOrdinal.get(ordinal) ?? []) anchored.push(structuredClone(block.frozenMessage));
+    ordinal += 1;
   }
-  emitAt(nextOrdinal - 1);
   return { messages: anchored as unknown as PiAgentMessage[] };
 }
 
@@ -171,19 +193,28 @@ export function installStepContext(pi: ExtensionAPI, opts: StepContextOptions): 
 
   pi.on('context', async (event) => {
     const messages = (event.messages ?? []) as unknown as ContextMessage[];
-    const ordinals = canonicalOrdinals(messages);
+    const canonical = canonicalMessages(messages);
 
-    // A new user turn (including a steering message, which opens a new instruction), a shrinking history
-    // or a replaced anchor all mean the turn's context was reset anyway: the blocks of the old one are
-    // gone from it, so this starts over instead of carrying them onto a transcript that never had them.
+    // Two DIFFERENT events, deliberately not merged into one "reset".
+    //
+    // A compaction — a shrinking history, or an anchored canonical message that is no longer the message
+    // it was — replaced the transcript. The blocks this seam sent are gone from it, the cached prefix is
+    // gone with them, and carrying them onto the replacement would both stale the context and invent a
+    // boundary nothing wrote. So the trail is cleared, and ONLY here.
+    //
+    // A new user message is not that. PI keeps the same growing history across a turn boundary, so
+    // dropping the trail there would delete messages from the middle of a prefix the provider has cached.
+    // What a new instruction does change is the cadence: `countTurnToolCalls` restarts at it, so the
+    // fired-at mark has to restart with it or the next reminder would wait for a count that never comes.
     const userCount = messages.reduce((n, m) => (isUserTurn(m) ? n + 1 : n), 0);
     const anchorLost = blocks.some((block) =>
-      !isDeepStrictEqual(messageAtOrdinal(messages, ordinals, block.anchorOrdinal), block.anchorMessage));
-    const reset = userCount !== lastUserCount || anchorLost || (lastLength >= 0 && messages.length < lastLength);
+      !isDeepStrictEqual(canonical[block.anchorOrdinal], block.anchorMessage));
+    const compacted = anchorLost || (lastLength >= 0 && messages.length < lastLength);
+    const newInstruction = userCount !== lastUserCount;
     lastUserCount = userCount;
     lastLength = messages.length;
-    if (reset) {
-      blocks = [];
+    if (compacted) blocks = [];
+    if (compacted || newInstruction) {
       lastFiredAt = 0;
       loggedSkip = false;
     }
@@ -224,18 +255,10 @@ export function installStepContext(pi: ExtensionAPI, opts: StepContextOptions): 
 
     // The anchor is the LAST canonical message, so the reminder trails everything the turn has actually
     // produced. Its ordinal — not its index — is what a later request re-finds it by.
-    let anchorMessage: ContextMessage | undefined;
-    let anchorOrdinal = -1;
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const ordinal = ordinals[index];
-      const message = messages[index];
-      if (ordinal === undefined || ordinal < 0 || !message) continue;
-      anchorMessage = message;
-      anchorOrdinal = ordinal;
-      break;
-    }
+    const anchorOrdinal = canonical.length - 1;
+    const anchorMessage = canonical[anchorOrdinal];
     if (!anchorMessage) return reEmit();
-    const content = renderStepContextFrame(parts, info);
+    const { content, truncated } = renderStepContextFrame(parts, info);
     blocks = [...blocks, {
       anchorOrdinal,
       anchorMessage: structuredClone(anchorMessage),
@@ -249,6 +272,7 @@ export function installStepContext(pi: ExtensionAPI, opts: StepContextOptions): 
       toolCalls,
       providers: parts.length,
       bytes: Buffer.byteLength(content),
+      truncated,
     });
     return insertFrozenBlocks(messages, blocks);
   });
