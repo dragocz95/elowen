@@ -261,9 +261,6 @@ function ToolExecutionControl({ providerLabel, hosted, codeMode, hostedPending, 
     : hosted.effective === 'off' ? t.brain.hostedSearchOff
       : hosted.effective === 'unsupported' ? t.brain.hostedSearchUnsupported
         : t.brain.hostedSearchUnverified;
-  const codeModeState = codeMode === undefined || codeMode.effective !== 'unsupported'
-    ? undefined
-    : t.brain.codeModeUnsupported;
 
   return (
     <Popover>
@@ -298,7 +295,6 @@ function ToolExecutionControl({ providerLabel, hosted, codeMode, hostedPending, 
               help={t.brain.codeModeHelp}
               providerLabel={providerLabel}
               enabled={codeMode.enabled}
-              stateLabel={codeModeState}
               tone="danger"
               pending={codeModePending}
               onChange={onCodeModeChange}

@@ -1,8 +1,8 @@
 /**
  * Which system-prompt templates a session runs on.
  *
- * One named place, because the answer depends on the MODEL and not only on the surface. It used to be a
- * ternary inside `spawnOnce` reading `scheduled` and `ownerChatShape`; a per-model branch bolted onto that
+ * One named place, because the answer depends on the ROUTE and not only on the surface. It used to be a
+ * ternary inside `spawnOnce` reading `scheduled` and `ownerChatShape`; a route branch bolted onto that
  * expression would have had no test of its own and no obvious home for the next such rule.
  *
  * The persona is composed from ORDERED PARTS rather than one file, because the parts have different
@@ -46,7 +46,6 @@ export interface PersonaRequest {
   /** Owner chat (or a fork child, which takes the same shape). False for a shared platform room. */
   ownerChatShape: boolean;
   provider: BrainProviderEntry | undefined;
-  modelId: string;
 }
 
 export interface PersonaChoice {
@@ -60,13 +59,13 @@ export interface PersonaChoice {
  * Resolve the templates for a session.
  *
  * The codex work rules are gated on `codeModeApplies`, i.e. the operator switch AND a Responses-family
- * provider AND a gpt-5.6+ model — deliberately narrower than "any codex session". A prompt swap
- * re-charges the whole cached prefix once per affected session, so it only happens where the measurement
- * that motivated it applies; widening it later is one predicate in this function.
+ * provider — deliberately narrower than "any codex session". They describe how to drive the single-`exec`
+ * surface, so they follow that surface rather than the account. A prompt swap re-charges the whole cached
+ * prefix once per affected session, which is why it is tied to a real composition difference.
  */
 export function personaTemplatesFor(request: PersonaRequest): PersonaChoice {
   if (request.scheduled) return { parts: [PERSONA_SCHEDULED] };
-  const work = codeModeApplies(request.provider, request.modelId) ? PERSONA_WORK_CODEX : PERSONA_WORK;
+  const work = codeModeApplies(request.provider) ? PERSONA_WORK_CODEX : PERSONA_WORK;
   const parts = [PERSONA_BASE, PERSONA_HARNESS, work];
   return request.ownerChatShape ? { parts } : { parts, overlay: PERSONA_PLATFORM_OVERLAY };
 }
