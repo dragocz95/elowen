@@ -438,14 +438,13 @@ export const CardBlock = memo(function CardBlock({ card, live }: { card: BrainCa
     : <StaticCard card={card} live={live} />;
 });
 
-/** Persistent conversation controls that are not part of the answer currently streaming.
+/** Persistent transcript controls that are not part of the answer currently streaming.
  *
- * While idle they close the transcript as before. During a live turn they sit immediately BEFORE that
- * turn instead: keeping a tall checklist and an agents row after the growing node makes every token move
- * that whole block, and bottom-follow then pins the controls above the composer instead of the answer.
- * The controls stay in the transcript and retain their state; only their owning position changes at the
- * live boundary. Memoizing the group also keeps a text delta from reconciling controls whose data did not
- * change. */
+ * Todo is deliberately absent: it belongs to the footer above the statusline. Other plugin cards and the
+ * agents row stay in the transcript. During a live turn they sit immediately BEFORE that turn so every
+ * token cannot move an unchanged control block above the composer. The controls retain their state; only
+ * their owning position changes at the live boundary. Memoizing the group also keeps a text delta from
+ * reconciling controls whose data did not change. */
 const TranscriptAmbientExtras = memo(function TranscriptAmbientExtras({
   variant,
   cards,
@@ -1598,14 +1597,16 @@ export const ChatConversationBar = memo(function ChatConversationBar({ variant, 
  *  more below" and had readers scrolling for text that was never hidden. The dock's own opaque background
  *  is the only edge.
  *
- *  Memoized, and reading only the actions and the status: everything here moves on a user action or a
- *  daemon event, never per token, so a streaming reply leaves the whole footer — statusline, model picker
- *  and editor — untouched. */
-export const ChatFooterDock = memo(function ChatFooterDock({ variant, dockRef, composerRef, pinToNewest, telemetryShown, statuslineShown, onToggleStatusline }: {
+ *  Memoized, and reading only persistent cards, actions and status: everything here moves on a user action
+ *  or daemon event, never per token, so a streaming reply leaves the Todo, statusline, model picker and
+ *  editor untouched. */
+export const ChatFooterDock = memo(function ChatFooterDock({ variant, dockRef, composerRef, pinToNewest, cards, live, telemetryShown, statuslineShown, onToggleStatusline }: {
   variant: 'full' | 'compact';
   dockRef: RefObject<HTMLDivElement | null>;
   composerRef: RefObject<HTMLTextAreaElement | null>;
   pinToNewest: () => void;
+  cards: readonly BrainCard[];
+  live: boolean;
   telemetryShown?: boolean;
   statuslineShown: boolean;
   onToggleStatusline: () => void;
@@ -1627,6 +1628,17 @@ export const ChatFooterDock = memo(function ChatFooterDock({ variant, dockRef, c
       {notice && !ask ? (
         <div className={`flex items-center gap-2 py-1.5 font-mono text-muted-foreground ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}>
           <span className="italic opacity-80">{notice}</span>
+        </div>
+      ) : null}
+      {/* Todo is persistent conversation state, not part of any message. Keep it in the non-scrolling footer
+          directly above the statusline so a live answer remains the transcript tail and every token cannot
+          move the checklist through the conversation. */}
+      {cards.length > 0 ? (
+        <div
+          data-testid="chat-footer-cards"
+          className={`flex flex-col gap-3 py-2 font-mono ${variant === 'full' ? 'chat-gutter text-[0.6875rem]' : 'px-3 text-tiny'}`}
+        >
+          {cards.map((card) => <CardBlock key={card.id} card={card} live={live} />)}
         </div>
       ) : null}
       {/* Statusline (the statusline plugin's toggles decide what shows; hidden when disabled). A leading
@@ -1830,12 +1842,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   // swapping them for the ⋯ menu. A bar that is briefly missing a control is quieter than one that visibly
   // rearranges itself. Same approach as ChatView, which reads this hook for its own layout.
   const mobile = useMobileViewport();
-  // The transcript's out-of-band extras (TODO cards, agents chip) wait for the measurement too: rendering
-  // them while the viewport is still unknown paints them once on a phone before the layout resolves.
-  const transcriptExtras = mobile !== undefined;
+  // Out-of-band controls wait for the viewport measurement too: rendering them while the viewport is still
+  // unknown paints them once on a phone before the layout resolves.
+  const ambientExtrasReady = mobile !== undefined;
   // Whether the rail's Tasks section is actually RENDERING this conversation's checklist right now — the
-  // exact condition TelemetryPanel builds its rows from, so the transcript can only hand the rows over to
-  // a section that has them. Structured card rows are enough on their own; a legacy card (rows without
+  // exact condition TelemetryPanel builds its rows from, so the footer can only hand the rows over to a
+  // section that has them. Structured card rows are enough on their own; a legacy card (rows without
   // ids) is shown by the rail only once its session-task fallback has answered, and while that query is
   // loading — or has failed — the rail shows nothing at all. React Query shares the fetch with the rail's
   // own `useSessionTasks`, so consulting it here costs no extra request.
@@ -1846,21 +1858,24 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   );
   const railShowsTasks = railOwnsLiveWork && railCardRows.length > 0
     && (railRowsAddressable || (railFallback.data?.tasks.length ?? 0) > 0);
-  // TODO cards with open work (CardBlock hides a card whose every item is done). The phone bar has no room
-  // for a control of its own, so the ⋯ menu opens them in a dialog instead.
-  //
-  // A visible docked rail reports the same checklist ROWS in its Tasks section, where they are also
-  // tickable, so repeating them under the transcript would announce the same work twice — the rule the
-  // agents chip above already follows. It is the rows the rail takes over, not the card: a card carrying
-  // freeform `body` still belongs here, because the rail has nowhere to put that body. Only the TODO card
-  // is ever handed over — another plugin's card is not task-shaped and the rail never lists it. A phone
-  // (no docked rail, `telemetryShown` undefined) and a collapsed rail both keep the card exactly as before.
-  const todoCards = useMemo(() => cards.filter((cd) => {
-    if (isBackgroundProcessCardId(cd.id)) return false;
-    const items = cd.items ?? [];
-    if (railShowsTasks && cd.id === TODO_CARD_ID && items.length > 0 && !cd.body) return false;
-    return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
-  }), [cards, railShowsTasks]);
+  // Todo is footer state; every other live card remains transcript content. A visible docked rail reports
+  // the same checklist rows in its Tasks section, so a plain Todo card is hidden there rather than repeated.
+  // A Todo body still stays in the footer because the rail has nowhere to display it.
+  const { footerTodoCards, ambientCards } = useMemo(() => {
+    const footerTodoCards: BrainCard[] = [];
+    const ambientCards: BrainCard[] = [];
+    for (const card of cards) {
+      if (isBackgroundProcessCardId(card.id)) continue;
+      const items = card.items ?? [];
+      if (items.length > 0 && items.every((item) => item.status === 'completed')) continue;
+      if (card.id === TODO_CARD_ID) {
+        if (!(railShowsTasks && items.length > 0 && !card.body)) footerTodoCards.push(card);
+      } else {
+        ambientCards.push(card);
+      }
+    }
+    return { footerTodoCards, ambientCards };
+  }, [cards, railShowsTasks]);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
@@ -2360,11 +2375,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     <TranscriptAmbientExtras
       key="ambient-extras"
       variant={variant}
-      cards={todoCards}
+      cards={ambientCards}
       live={busy}
       subagents={subagents}
       railOwnsLiveWork={railOwnsLiveWork}
-      visible={transcriptExtras}
+      visible={ambientExtrasReady}
       beforeLiveTail={liveTailActive}
       onOpenAgents={openAgents}
     />
@@ -2483,6 +2498,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         dockRef={composerDockRef}
         composerRef={composerRef}
         pinToNewest={pinToNewest}
+        cards={ambientExtrasReady ? footerTodoCards : []}
+        live={busy}
         telemetryShown={telemetryShown}
         statuslineShown={statuslineShown}
         onToggleStatusline={toggleStatusline}

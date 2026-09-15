@@ -126,7 +126,7 @@ const seedTurns = Array.from({ length: 60 }, (_, i) => (i % 2 === 0
   : { id: `m${i}`, role: 'assistant' as const, text: '', segments: [{ kind: 'text' as const, text: `Msg ${i} (elowen) with enough prose to wrap onto a second line on a phone.` }] }));
 
 const MOBILE_TASK_CARD = {
-  id: 'todo',
+  id: 'todos',
   title: 'Tasks',
   items: Array.from({ length: 8 }, (_, i) => ({
     id: `task-${i}`,
@@ -274,7 +274,8 @@ test('typing with the keyboard up survives high-frequency stream updates', async
   await app.evaluate(() => (window as unknown as { __ios: { open(h: number): Promise<void> } }).__ios.open(336));
   await expect.poll(async () => (await geometry(app)).keyboardOpen).toBe('true');
 
-  // A live turn underneath, a settled agent, a running tool reporting progress, and the reader typing on top.
+  // A live turn in the transcript, Todo pinned in the footer, a settled agent, a running tool reporting
+  // progress, and the reader typing on top.
   await sse.user('A question that is being answered while the reader types the next one');
   await sse.tool({ name: 'Delegate', id: 'delegate-finished', detail: 'Finished mobile helper' });
   expect(await sse.emit({
@@ -289,16 +290,23 @@ test('typing with the keyboard up survives high-frequency stream updates', async
     const ambient = surface.querySelector<HTMLElement>('[data-testid="chat-ambient-extras"]')!;
     const live = surface.querySelector<HTMLElement>('[data-tk^="live:"]')!;
     const transcript = surface.querySelector<HTMLElement>('[data-testid="chat-transcript"]')!;
+    const todo = surface.querySelector<HTMLElement>('[data-testid="chat-footer-cards"] [data-testid="chat-card"]')!;
+    const statusline = surface.querySelector<HTMLElement>('[data-testid="chat-statusline"]')!;
     const ambientRect = ambient.getBoundingClientRect();
     return {
       topInScrollContent: ambientRect.top + transcript.scrollTop,
       ambientBottom: ambientRect.bottom,
       liveTop: live.getBoundingClientRect().top,
+      todoTop: todo.getBoundingClientRect().top,
       beforeLive: Boolean(ambient.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING),
+      todoAfterLive: Boolean(live.compareDocumentPosition(todo) & Node.DOCUMENT_POSITION_FOLLOWING),
+      todoBeforeStatusline: Boolean(todo.compareDocumentPosition(statusline) & Node.DOCUMENT_POSITION_FOLLOWING),
     };
   });
   const ambientBefore = await ambientLayout();
-  expect(ambientBefore.beforeLive, 'task and agent controls must precede the growing live turn').toBe(true);
+  expect(ambientBefore.beforeLive, 'the agents control must precede the growing live turn').toBe(true);
+  expect(ambientBefore.todoAfterLive, 'Todo appeared above the assistant reply').toBe(true);
+  expect(ambientBefore.todoBeforeStatusline, 'Todo did not stay above the statusline').toBe(true);
 
   const typed = 'Ahoj, tohle píšu zatímco běží odpověď.';
   for (const chunk of typed.match(/.{1,6}/g) ?? []) {
@@ -311,11 +319,15 @@ test('typing with the keyboard up survives high-frequency stream updates', async
   const ambientAfter = await ambientLayout();
   expect(ambientAfter.beforeLive).toBe(true);
   expect(ambientAfter.topInScrollContent,
-    'streamed text moved the unchanged task/agent block through the document')
+    'streamed text moved the unchanged agents control through the document')
     .toBeCloseTo(ambientBefore.topInScrollContent, 0);
   expect(ambientAfter.ambientBottom,
     'ambient controls still occupied the tail below the live answer')
     .toBeLessThanOrEqual(ambientAfter.liveTop);
+  expect(ambientAfter.todoTop, 'streamed text moved the footer Todo card')
+    .toBeCloseTo(ambientBefore.todoTop, 0);
+  expect(ambientAfter.todoAfterLive).toBe(true);
+  expect(ambientAfter.todoBeforeStatusline).toBe(true);
 
   const busy = await geometry(app);
   expect(busy.keyboardOpen).toBe('true');

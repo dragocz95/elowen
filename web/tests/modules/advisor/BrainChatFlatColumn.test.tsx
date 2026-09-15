@@ -25,7 +25,7 @@ class FakeES {
   close() {}
 }
 
-const CARD = { id: 'c1', title: 'Plán', items: [{ text: 'krok', status: 'in_progress' as const }] };
+const CARD = { id: 'todos', title: 'Plán', items: [{ text: 'krok', status: 'in_progress' as const }] };
 const STATUSLINE = { showModel: true, showContext: false, showTokens: false, showCost: false };
 
 const server = setupServer(
@@ -102,6 +102,19 @@ describe('transcript reads as one column', () => {
     const card = await screen.findByTestId('chat-card');
     // A size declared on the card itself would override the wrapper and silently drift again.
     expect(sizeClass(card)).toBeNull();
+  });
+
+  it('keeps the todo card in the footer directly above the statusline', async () => {
+    renderSurface();
+    const card = await screen.findByTestId('chat-card');
+    const footerCards = await screen.findByTestId('chat-footer-cards');
+    const transcript = screen.getByTestId('chat-transcript');
+    const statusline = await screen.findByTestId('chat-statusline');
+
+    expect(footerCards).toContainElement(card);
+    expect(transcript).not.toContainElement(card);
+    expect(card.compareDocumentPosition(statusline) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it('gives the extras the same monospace face the statusline uses', async () => {
