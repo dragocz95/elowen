@@ -879,6 +879,21 @@ export class LiveSessionSpawner {
           },
         },
       } : {}),
+      // Remind the agent of live plugin state DURING a long turn, not only at its start: whatever a
+      // `ctx.registerStepContext` provider says is re-sent after the last tool result, every N calls.
+      // Wired only when some plugin contributes, so a session with no step provider installs no extra
+      // context handler at all. Both thunks, deliberately: the cadence is read per pass because the
+      // operator may move the slider mid-conversation (do NOT latch it the way `toolDeferThreshold` is
+      // latched above, which is a spawn-time routing decision), and the provider list is read per pass
+      // so it follows the live registry rather than a snapshot of it. `?? 0` is the unwired-dependency
+      // case — a process with no runtimeConfig — which the seam treats as OFF, never as "every step".
+      ...(plugins && plugins.stepContexts.length > 0 ? {
+        stepContext: {
+          sessionId,
+          every: () => this.d.runtimeConfig?.().limits.stepContextEveryToolCalls ?? 0,
+          providers: () => plugins.stepContexts,
+        },
+      } : {}),
       // Project AGENTS.md/CLAUDE.md ride the system prompt for an ADMIN's own chat only. Two guards,
       // both required: (1) not a shared channel (foreign senders must never see instruction files);
       // (2) admin owner — a non-admin account with no repo of its own resolves cwd to the daemon's
