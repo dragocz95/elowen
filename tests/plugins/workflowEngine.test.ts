@@ -118,7 +118,10 @@ function harness(opts: {
   /** The model catalog `ctx.listModels()` serves — a node's own `thinkingLevel` is validated against the
    *  ladder of whichever entry its model resolves to. */
   models?: { provider: string; model: string; reasoningLevels?: string[] }[];
-  subagentTypes?: { name: string; description: string }[];
+  subagentTypes?: { name: string; description: string; source?: 'builtin' | 'user' }[];
+  /** The acting account's own slice of this plugin's config, where built-in type model pins live.
+   *  A function so a test can change the pin mid-run and prove what a node actually reads. */
+  userConfig?: () => Record<string, unknown> | null;
   workflowExpansionRpc?: { addNodes(input: { workflowId: string; nodes: unknown[] }): Promise<{ added: string[] }> };
   readSubagentResult?: (parentSessionId: string, childSessionId: string) => string;
   persistSubagentToolOutput?: (input: { channelId: string; toolCallId: string; text: string }) => Promise<{ path: string; bytes: number } | null>;
@@ -276,6 +279,7 @@ function harness(opts: {
     delegatedWorkflowExpansionAvailable: () => opts.delegatedRpcAvailable === true,
     workflowExpansionRpc: () => opts.workflowExpansionRpc ?? null,
     subagentTypes: () => opts.subagentTypes ?? [],
+    userConfig: () => opts.userConfig?.() ?? null,
   };
   const chunkCalls = { value: 0 };
   const helpers = {
@@ -2722,5 +2726,96 @@ describe('workflow recovery journal + boot resume', () => {
     });
     expect(noJournal.resumed).toBe(false);
     expect(noJournal.reason).toBeTruthy();
+  });
+});
+
+/** A workflow node carrying `subagent_type` spawns through the SAME per-account pin resolver the Delegate
+ *  tool uses (plugins/subagent/lib/typeModel.mjs). These prove the node path reaches it, including the
+ *  nodes that start long after the turn that scheduled them. */
+describe('workflow nodes — built-in sub-agent type model pins', () => {
+  const MODELS = [
+    { provider: 'p', model: 'm' },
+    { provider: 'anthropic', model: 'claude-opus-4' },
+    { provider: 'openai', model: 'gpt-5' },
+  ];
+  const TYPES = [
+    { name: 'plan', description: 'planner', source: 'builtin' as const },
+    { name: 'triage', description: 'user triage', source: 'user' as const },
+  ];
+  /** The effective model of one node, as the engine reports it on its snapshots. */
+  const modelOf = (snapshots: { nodes: { id: string; model?: string; error?: string }[] }[], id: string) =>
+    [...snapshots].reverse().map((s) => s.nodes.find((n) => n.id === id)).find((n) => n?.model)?.model;
+  const errorOf = (snapshots: { nodes: { id: string; model?: string; error?: string }[] }[], id: string) =>
+    [...snapshots].reverse().map((s) => s.nodes.find((n) => n.id === id)).find((n) => n?.error)?.error;
+
+  it('runs a pinned typed node on the pinned model, and an unpinned one on the inherited model', async () => {
+    const h = harness({
+      models: MODELS, subagentTypes: TYPES,
+      userConfig: () => ({ 'typeModel.plan': 'anthropic::claude-opus-4' }),
+    });
+    await h.tools.get('WorkflowStart')!.execute('pins', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'pinned', task: 'pinned', subagent_type: 'plan' },
+        { id: 'custom', task: 'custom', subagent_type: 'triage' },
+        { id: 'plain', task: 'plain' },
+      ]),
+    });
+    expect(modelOf(h.snapshots, 'pinned')).toBe('anthropic/claude-opus-4');
+    expect(modelOf(h.snapshots, 'custom')).toBe('p/m');
+    expect(modelOf(h.snapshots, 'plain')).toBe('p/m');
+  });
+
+  it('lets an unpinned typed node name any configured model', async () => {
+    const h = harness({ models: MODELS, subagentTypes: TYPES, userConfig: () => ({}) });
+    await h.tools.get('WorkflowStart')!.execute('free', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'n', subagent_type: 'plan', model: 'openai/gpt-5' }]),
+    });
+    expect(modelOf(h.snapshots, 'n')).toBe('openai/gpt-5');
+  });
+
+  it('fails a node that asks for a model the pin forbids, instead of quietly overriding it', async () => {
+    const h = harness({
+      models: MODELS, subagentTypes: TYPES,
+      userConfig: () => ({ 'typeModel.plan': 'anthropic::claude-opus-4' }),
+    });
+    await h.tools.get('WorkflowStart')!.execute('conflict', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'n', subagent_type: 'plan', model: 'openai/gpt-5' }]),
+    });
+    expect(errorOf(h.snapshots, 'n')).toMatch(/pinned to anthropic\/claude-opus-4/);
+    expect(h.launched).not.toContain('n');
+  });
+
+  it('fails a node whose pinned model is no longer configured rather than substituting one', async () => {
+    const h = harness({
+      models: MODELS, subagentTypes: TYPES,
+      userConfig: () => ({ 'typeModel.plan': 'anthropic::retired' }),
+    });
+    await h.tools.get('WorkflowStart')!.execute('gone', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'n', subagent_type: 'plan' }]),
+    });
+    expect(errorOf(h.snapshots, 'n')).toMatch(/\/p\/subagent/);
+    expect(h.launched).not.toContain('n');
+  });
+
+  // A dependent node starts after its dependency finished, outside the turn that scheduled the DAG — the
+  // pins are captured at start so it resolves the same way the first node did.
+  it('applies the pin to a node that starts only after its dependency, with no live turn scope', async () => {
+    let live: Record<string, unknown> | null = { 'typeModel.plan': 'anthropic::claude-opus-4' };
+    const h = harness({ models: MODELS, subagentTypes: TYPES, userConfig: () => live });
+    const started = h.tools.get('WorkflowStart')!.execute('later', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'first', task: 'first' },
+        { id: 'second', task: 'second', deps: ['first'], subagent_type: 'plan' },
+      ]),
+    });
+    // Whatever the account's config does after the DAG was scheduled, this run keeps what it started with.
+    live = null;
+    await started;
+    expect(modelOf(h.snapshots, 'second')).toBe('anthropic/claude-opus-4');
   });
 });
