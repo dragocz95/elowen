@@ -24,10 +24,38 @@ describe('codexDeveloperPayload', () => {
     expect(next.tools).toBeUndefined();
     expect('tools' in next).toBe(false);
     expect(next.input).toEqual([
-      { type: 'additional_tools', role: 'developer', tools: [{ type: 'function', name: 'exec' }, { type: 'function', name: 'wait' }] },
+      {
+        type: 'additional_tools',
+        role: 'developer',
+        // One `functions` namespace holding every tool — Codex's lite declaration, not the flat array.
+        tools: [{
+          type: 'namespace',
+          name: 'functions',
+          description: '',
+          tools: [{ type: 'function', name: 'exec' }, { type: 'function', name: 'wait' }],
+        }],
+      },
       { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'You are Elowen.' }] },
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
     ]);
+  });
+
+  it("normalises pi-ai's null `strict` to the boolean Codex declares", () => {
+    const next = codexDeveloperPayload(body({
+      tools: [{ type: 'function', name: 'wait', strict: null }, { type: 'custom', name: 'exec' }],
+    }))!;
+    const [namespace] = next.input as [{ tools: [{ tools: unknown[] }] }];
+    expect(namespace.tools[0].tools).toEqual([
+      { type: 'function', name: 'wait', strict: false },
+      { type: 'custom', name: 'exec' },
+    ]);
+  });
+
+  it('carries reasoning state across the thread, the way Codex does for these models', () => {
+    const withReasoning = codexDeveloperPayload(body({ reasoning: { effort: 'high', summary: 'concise' } }))!;
+    expect(withReasoning.reasoning).toEqual({ effort: 'high', summary: 'concise', context: 'all_turns' });
+    // A body carrying no reasoning object is left without one rather than given an invented default.
+    expect(codexDeveloperPayload(body())!.reasoning).toBeUndefined();
   });
 
   it('turns parallel tool calls off and leaves every other field untouched', () => {

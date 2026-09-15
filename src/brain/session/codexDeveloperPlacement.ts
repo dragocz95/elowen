@@ -23,8 +23,44 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 /** The role Codex gives both spliced items. */
 const DEVELOPER_ROLE = 'developer';
 
+/** Codex's namespace for top-level function and custom tools (`DEFAULT_FUNCTION_NAMESPACE`,
+ *  `codex-rs/protocol/src/tool_name.rs:7`). Its description is deliberately EMPTY — the default namespace
+ *  is the one the model already knows (`default_namespace_description`, `tools/src/responses_api.rs:64-70`)
+ *  — and a call inside it comes back under its BARE name, because `ToolName`'s Display writes no prefix
+ *  for the default namespace (`tool_name.rs:54-61`). So the wrapper changes the declaration the backend
+ *  reads, not the names we dispatch on. */
+const DEFAULT_FUNCTION_NAMESPACE = 'functions';
+
+/** Codex carries reasoning state across the whole thread for its lite models
+ *  (`client.rs:785-791`: `use_responses_lite.then_some(ReasoningContext::AllTurns)`); the Responses default
+ *  it otherwise falls back to is `current_turn`. pi-ai sends no `context` at all. */
+const REASONING_CONTEXT_ALL_TURNS = 'all_turns';
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * The tools as Codex declares them in the lite shape: ONE `namespace` entry holding every function and
+ * freeform tool (`create_tools_json_for_responses_lite`, `codex-rs/tools/src/tool_spec.rs:95-141`, chosen
+ * whenever the provider advertises `namespace_tools`, which is the default and what the ChatGPT backend
+ * gets — `client.rs:812-816`, `model-provider/src/provider.rs:70`). We were sending the flat array from
+ * the other branch: legal, but not the shape this backend is handed.
+ *
+ * `strict` is normalised on the way in: Codex's field is a plain `bool` (`responses_api.rs:37`) while
+ * pi-ai emits an explicit `null`, a value outside Codex's range.
+ */
+function namespacedTools(tools: readonly unknown[]): Record<string, unknown>[] {
+  const inNamespace = tools.map((tool) => {
+    if (!isRecord(tool) || tool.strict !== null) return tool;
+    return { ...tool, strict: false };
+  });
+  return [{
+    type: 'namespace',
+    name: DEFAULT_FUNCTION_NAMESPACE,
+    description: '',
+    tools: inNamespace,
+  }];
+}
 
 /**
  * Rewrite one Responses body into Codex's lite shape, or return `undefined` to leave it alone.
@@ -44,7 +80,7 @@ export function codexDeveloperPayload(payload: unknown): Record<string, unknown>
   const prefix: Record<string, unknown>[] = [];
   // Tools first, then the prompt — Codex's order, and the order the model saw in training.
   if (Array.isArray(payload.tools) && payload.tools.length > 0) {
-    prefix.push({ type: 'additional_tools', role: DEVELOPER_ROLE, tools: payload.tools });
+    prefix.push({ type: 'additional_tools', role: DEVELOPER_ROLE, tools: namespacedTools(payload.tools) });
   }
   prefix.push({
     type: 'message',
@@ -59,6 +95,9 @@ export function codexDeveloperPayload(payload: unknown): Record<string, unknown>
     // Codex: `prompt.parallel_tool_calls && !model_info.use_responses_lite`, i.e. always false here. A
     // model that cannot fan out in the request is the one that composes its calls inside a script.
     parallel_tool_calls: false,
+    // Reasoning is left exactly as pi-ai and `codexReasoningSummary` built it, apart from the thread-wide
+    // context Codex sets for these models. A body without a `reasoning` object gets none invented for it.
+    ...(isRecord(payload.reasoning) ? { reasoning: { ...payload.reasoning, context: REASONING_CONTEXT_ALL_TURNS } } : {}),
   };
   // The tools now live in `input`; leaving the top-level copy would declare each of them twice.
   delete next.tools;
