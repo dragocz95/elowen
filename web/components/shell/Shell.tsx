@@ -264,9 +264,9 @@ function ShellLayout({ children }: { children: ReactNode }) {
           instead, keeping overlays outside it. */}
       <main
         data-scroll-owner={onChat ? 'chat-shell' : 'page'}
-        className={`flex min-h-0 flex-1 flex-col overflow-x-hidden ${onChat
-          ? 'overflow-y-hidden'
-          : 'overflow-y-auto overscroll-contain [scrollbar-gutter:stable]'}`}
+        className={`flex min-h-0 flex-1 flex-col ${onChat
+          ? 'overflow-clip'
+          : 'overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable]'}`}
       >
         {/* Studio's ruled app bar spans the whole workspace between navigation and advisor, like the
             reference. Document content below keeps its own centred reading frame. */}

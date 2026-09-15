@@ -271,6 +271,8 @@ describe('ChatView (/chat page)', () => {
       const surface = dock.closest<HTMLElement>('[data-variant="full"]')!;
       const transcript = screen.getByTestId('chat-transcript');
       const main = container.querySelector('main')!;
+      // JSDOM has no CSS layout; the surface border box is the inset's reference, not innerHeight.
+      const surfaceRect = vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 100, 390, 744));
       Object.defineProperty(transcript, 'scrollHeight', { configurable: true, value: 1600 });
       const transcriptScroll = vi.spyOn(transcript, 'scrollTo');
       const mainScroll = vi.spyOn(main, 'scrollTo');
@@ -286,6 +288,7 @@ describe('ChatView (/chat page)', () => {
       expect(mainScroll).not.toHaveBeenCalled();
       transcriptScroll.mockRestore();
       mainScroll.mockRestore();
+      surfaceRect.mockRestore();
     } finally {
       Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalViewport });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight });
@@ -323,7 +326,7 @@ describe('ChatView (/chat page)', () => {
     const surface = transcript.closest<HTMLElement>('[data-variant="full"]')!;
     const host = surface.parentElement!.parentElement!;
     expect(transcript).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto', 'overscroll-contain');
-    expect(surface).toHaveClass('min-h-0', 'flex-1', 'overflow-hidden');
+    expect(surface).toHaveClass('min-h-0', 'flex-1', 'overflow-clip');
     expect(host).toHaveClass('min-h-0', 'flex-1');
     expect(host.style.minHeight).toBe('');
   });

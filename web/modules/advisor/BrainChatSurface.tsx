@@ -2139,10 +2139,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     const viewportWidth = () => window.visualViewport?.width ?? window.innerWidth;
     let restingHeight = viewportHeight();
     let restingWidth = viewportWidth();
-    let keyboardWasOpen = false;
+    let keyboardSessionOpen = false;
     let frame = 0;
-    let baselineFrame = 0;
-    let baselineSettleFrame = 0;
+
     const setPx = (name: string, value: number) => {
       const next = `${Math.max(0, Math.round(value))}px`;
       if (root.style.getPropertyValue(name) !== next) root.style.setProperty(name, next);
@@ -2154,24 +2153,38 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         const currentHeight = viewportHeight();
         const currentWidth = viewportWidth();
         const focused = document.activeElement === composer;
+        // Both edges are in layout-viewport coordinates. innerHeight is not the bottom of our dvh
+        // shell on Safari; subtracting from it can pay for a keyboard the layout already consumed.
+        const surfaceBottom = root.getBoundingClientRect().bottom;
+        const visibleBottom = (currentViewport?.offsetTop ?? 0) + currentHeight;
+        const overlap = Math.max(0, surfaceBottom - visibleBottom);
         const restingLandscape = restingWidth > restingHeight;
         const currentLandscape = currentWidth > currentHeight;
-        const layoutRotated = focused && keyboardWasOpen
+        const layoutRotated = keyboardSessionOpen
           && Math.abs(currentWidth - restingWidth) >= 1
           && currentLandscape !== restingLandscape;
         if (layoutRotated) {
-          // A focused keyboard survives rotation. Project the new resting height from the previous layout's
-          // width (the axes exchanged) instead of comparing the new portrait/landscape viewport against a
-          // baseline from the old orientation, which can falsely close the keyboard in one direction.
+          // A pending close after blur also survives rotation. Project the resting height from the old
+          // layout's width (the axes exchanged), rather than comparing the new viewport to a baseline
+          // from the old orientation, which can falsely close the keyboard in one direction.
           const previousRestingWidth = restingWidth;
           restingWidth = currentWidth;
           restingHeight = previousRestingWidth;
         }
-        const keyboardOpen = focused && (currentHeight < restingHeight - 1 || layoutRotated);
-        keyboardWasOpen = keyboardOpen;
-        const visualBottomOffset = keyboardOpen && currentViewport
-          ? (window.innerHeight - currentViewport.offsetTop - currentViewport.height) / uiZoom()
-          : 0;
+        // Blur ends the composer's inset, not the keyboard's viewport lifecycle. The surface itself
+        // may already be keyboard-sized, so fitting inside it is NOT proof of a resting viewport.
+        // Keep the original baseline until the visible height returns, even across repeated blur/resize
+        // events. Rotation projects that baseline first; it must never learn the reduced visual height.
+        if (currentHeight >= restingHeight - 1) keyboardSessionOpen = false;
+        if (!focused && !keyboardSessionOpen && currentHeight >= surfaceBottom - 1) {
+          restingHeight = currentHeight;
+          restingWidth = currentWidth;
+        }
+        const keyboardOpen = focused && (overlap > 1 || currentHeight < restingHeight - 1 || layoutRotated);
+        keyboardSessionOpen ||= keyboardOpen;
+        // Padding may only remove the part of THIS surface below the visible band. Its border box
+        // stays fixed, so measuring it cannot feed the padding back into the next calculation.
+        const visualBottomOffset = keyboardOpen && currentViewport ? overlap / uiZoom() : 0;
 
         root.dataset.chatKeyboardOpen = keyboardOpen ? 'true' : 'false';
         setPx('--chat-visual-bottom-offset', visualBottomOffset);
@@ -2180,41 +2193,27 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
         pinToNewest();
       });
     };
-    const updateRestingHeightWhenStable = () => {
-      cancelAnimationFrame(baselineFrame);
-      cancelAnimationFrame(baselineSettleFrame);
-      const sampledHeight = viewportHeight();
-      const sampledWidth = viewportWidth();
-      baselineFrame = requestAnimationFrame(() => {
-        baselineSettleFrame = requestAnimationFrame(() => {
-          if (document.activeElement === composer) return;
-          const stableHeight = viewportHeight();
-          const stableWidth = viewportWidth();
-          if (Math.abs(stableHeight - sampledHeight) >= 1 || Math.abs(stableWidth - sampledWidth) >= 1) return;
-          restingHeight = stableHeight;
-          restingWidth = stableWidth;
-          keyboardWasOpen = false;
-          measure();
-        });
-      });
-    };
-    const onViewportResize = () => {
-      measure();
-      updateRestingHeightWhenStable();
-    };
-
+    // SwiftKey/WebKit need not deliver a final visual resize/scroll with the layout's return. Observe
+    // the actual border box as well; observing the content box would respond to our own inset writes.
+    const observer = new ResizeObserver(measure);
+    observer.observe(root, { box: 'border-box' });
     measure();
-    window.addEventListener('resize', onViewportResize);
-    viewport?.addEventListener('resize', onViewportResize);
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, { passive: true });
+    window.addEventListener('pageshow', measure);
+    document.addEventListener('visibilitychange', measure);
+    viewport?.addEventListener('resize', measure);
     viewport?.addEventListener('scroll', measure);
     composer.addEventListener('focus', measure);
     composer.addEventListener('blur', measure);
     return () => {
       cancelAnimationFrame(frame);
-      cancelAnimationFrame(baselineFrame);
-      cancelAnimationFrame(baselineSettleFrame);
-      window.removeEventListener('resize', onViewportResize);
-      viewport?.removeEventListener('resize', onViewportResize);
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure);
+      window.removeEventListener('pageshow', measure);
+      document.removeEventListener('visibilitychange', measure);
+      viewport?.removeEventListener('resize', measure);
       viewport?.removeEventListener('scroll', measure);
       composer.removeEventListener('focus', measure);
       composer.removeEventListener('blur', measure);
@@ -2388,7 +2387,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   return (
     <div
       ref={surfaceRootRef}
-      className={`relative flex flex-col ${variant === 'full' ? 'chat-surface-full min-h-0 flex-1 overflow-hidden' : 'h-full min-h-0'}`}
+      className={`relative flex flex-col ${variant === 'full' ? 'chat-surface-full min-h-0 flex-1 overflow-clip' : 'h-full min-h-0'}`}
       data-variant={variant}
     >
       <ChatConversationBar

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -12,10 +12,11 @@ import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailSta
 
 /** The iOS keyboard path, modelled deterministically.
  *
- * iOS does not resize the layout viewport for the soft keyboard: `window.innerHeight` stays full-size and
- * only `visualViewport` shrinks. Its bottom gap is published once to the fixed chat surface, whose content
- * box becomes shorter while the composer remains in normal flow. The stylesheet contract is pinned by
- * `tests/styles/chatComposerDock.test.ts`; real scroll and rect geometry is covered in Playwright. */
+ * Keep the rendered surface border box, innerHeight and visual viewport independent: WebKit need not
+ * update them together or deliver the final visual event. These are deterministic counterexamples,
+ * not a recording of hardware events. The overlap is published once to the surface while the composer
+ * stays in flow. CSS ownership is pinned in `tests/styles/chatComposerDock.test.ts`; Playwright checks
+ * real rects, but final device behaviour still needs an iPhone. */
 
 class FakeVisualViewport extends EventTarget {
   width: number;
@@ -60,6 +61,15 @@ let viewport: FakeVisualViewport;
 let originalViewport: VisualViewport | undefined;
 let originalInnerHeight: number;
 let originalInnerWidth: number;
+let surfaceBottom: number;
+const observed = new Map<Element, ResizeObserverCallback>();
+
+// JSDOM has no layout. Model the border box, independently of innerHeight and the visible band.
+function resizeSurface(bottom: number): void {
+  surfaceBottom = bottom;
+  const surface = screen.getByTestId('chat-composer-dock').closest<HTMLElement>('[data-variant="full"]')!;
+  observed.get(surface)?.([], {} as ResizeObserver);
+}
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest });
@@ -71,6 +81,23 @@ beforeEach(() => {
   originalViewport = window.visualViewport ?? undefined;
   originalInnerHeight = window.innerHeight;
   originalInnerWidth = window.innerWidth;
+  surfaceBottom = PHONE.height;
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.dataset.variant === 'full') {
+      const height = surfaceBottom;
+      return { top: 0, bottom: height, height, width: window.innerWidth, left: 0, right: window.innerWidth, x: 0, y: 0, toJSON() {} };
+    }
+    return originalRect.call(this);
+  });
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(element: Element) { observed.set(element, this.callback); }
+    unobserve(element: Element) { observed.delete(element); }
+    disconnect() {
+      for (const [element, callback] of observed) if (callback === this.callback) observed.delete(element);
+    }
+  });
   viewport = new FakeVisualViewport(PHONE.width, PHONE.height);
   Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
   Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: PHONE.height });
@@ -80,6 +107,10 @@ afterEach(() => {
   server.resetHandlers();
   FakeES.instances.length = 0;
   localStorage.clear();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  observed.clear();
+  document.documentElement.style.removeProperty('--ui-scale');
   Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalViewport });
   Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: originalInnerHeight });
   Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: originalInnerWidth });
@@ -110,6 +141,144 @@ const settle = async () => {
 };
 
 describe('iOS soft keyboard geometry on /chat', () => {
+  it('uses the rendered surface edge when innerHeight disagrees with dvh', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    // Safari can change innerHeight independently of the CSS dvh shell. The keyboard is NOT the
+    // distance to that unrelated edge. Subtracting it would lift the composer a second keyboard.
+    window.innerHeight = PHONE.height + KEYBOARD_HEIGHT;
+    viewport.set({ height: PHONE.height - KEYBOARD_HEIGHT, offsetTop: 60 });
+    await waitFor(() => expect(published().open).toBe('true'));
+    expect(published().inset).toBe(KEYBOARD_HEIGHT - 60);
+  });
+
+  it('reconciles layout return without a visual resize or scroll, even while focus is retained', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published().inset).toBe(336));
+
+    // A later layout pass consumes part of the occlusion. No VisualViewport event accompanies it.
+    resizeSurface(700);
+    await waitFor(() => expect(published().inset).toBe(192));
+
+    // Dismissal can retain focus and omit the final visual events. The CSS box returning is observable.
+    viewport.height = PHONE.height;
+    viewport.offsetTop = 0;
+    resizeSurface(PHONE.height);
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'false' }));
+    expect(document.activeElement).toBe(composer);
+  });
+
+  it('clears on blur before delayed viewport events and does not learn a keyboard-sized baseline', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    viewport.set({ height: 508, offsetTop: 80 });
+    await waitFor(() => expect(published().inset).toBe(256));
+    composer.blur();
+    await settle();
+    expect(published().inset).toBe(0);
+    // SwiftKey's final resize may arrive with the old metrics, after blur.
+    viewport.dispatchEvent(new Event('resize'));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    viewport.height = PHONE.height; // No final resize.
+    viewport.offsetTop = 0;
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published()).toEqual({ inset: 336, open: 'true' }));
+  });
+
+  it('preserves the resting baseline across blur and refocus after the surface shrinks to the keyboard', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published()).toEqual({ inset: 336, open: 'true' }));
+    resizeSurface(508);
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'true' }));
+
+    composer.blur();
+    await settle();
+    // An additional close-animation resize with the same metrics must not poison the baseline either.
+    viewport.dispatchEvent(new Event('resize'));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    composer.focus();
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'true' }));
+
+    // The retained-focus close still ends the keyboard lifecycle when the real resting band returns.
+    viewport.height = PHONE.height;
+    resizeSurface(PHONE.height);
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'false' }));
+    expect(document.activeElement).toBe(composer);
+  });
+
+  it('projects the preserved baseline through rotation while a blurred keyboard is closing', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published().open).toBe('true'));
+    resizeSurface(508);
+    await waitFor(() => expect(published().inset).toBe(0));
+    composer.blur();
+    await settle();
+
+    // The layout and visible band rotate before focus returns, with the keyboard still taking room.
+    window.innerWidth = 844;
+    window.innerHeight = 390;
+    resizeSurface(220);
+    viewport.set({ width: 844, height: 220 });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    composer.focus();
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'true' }));
+    viewport.height = 390;
+    resizeSurface(390);
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'false' }));
+
+    // A completed close releases the baseline for an ordinary unfocused viewport resize.
+    composer.blur();
+    await settle();
+    resizeSurface(300);
+    viewport.set({ height: 300 });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    composer.focus();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(published()).toEqual({ inset: 0, open: 'false' });
+  });
+
+  it('reads offsetTop on window scroll and converts the overlap to CSS pixels once', async () => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    document.documentElement.style.setProperty('--ui-scale', '1.25');
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published().inset).toBe(269));
+    viewport.offsetTop = 100;
+    window.dispatchEvent(new Event('scroll'));
+    await waitFor(() => expect(published().inset).toBe(189));
+  });
+
+  it.each(['pageshow', 'visibilitychange'])('reconciles a silent viewport restoration on %s', async (event) => {
+    renderChat(<main><ChatView /></main>);
+    const composer = await screen.findByTestId('chat-composer');
+    await settle();
+    composer.focus();
+    viewport.set({ height: 508 });
+    await waitFor(() => expect(published().inset).toBe(336));
+    viewport.height = PHONE.height;
+    (event === 'pageshow' ? window : document).dispatchEvent(new Event(event));
+    await waitFor(() => expect(published()).toEqual({ inset: 0, open: 'false' }));
+  });
+
   it('publishes the visible-band inset once for every phase of a keyboard', async () => {
     renderChat(<main><ChatView /></main>);
     const composer = await screen.findByTestId('chat-composer') as HTMLTextAreaElement;
@@ -156,6 +325,7 @@ describe('iOS soft keyboard geometry on /chat', () => {
     // Rotation / split screen with nothing focused: the smaller viewport IS the screen now.
     Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: 390 });
     Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 844 });
+    surfaceBottom = 390;
     viewport.set({ width: 844, height: 390 });
     window.dispatchEvent(new Event('resize'));
     await waitFor(() => expect(published().open).toBe('false'));
@@ -182,6 +352,7 @@ describe('iOS soft keyboard geometry on /chat', () => {
     // Portrait → landscape while the field keeps focus: the axes exchange and the keyboard stays up.
     Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: PHONE.width });
     Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: PHONE.height });
+    surfaceBottom = PHONE.width;
     viewport.set({ width: PHONE.height, height: 220 });
     await waitFor(() => expect(published().inset).toBe(expectedInset()));
     expect(published().open).toBe('true');

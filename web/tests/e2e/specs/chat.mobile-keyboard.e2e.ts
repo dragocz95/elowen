@@ -68,12 +68,16 @@ async function emulateIosViewport(page: Page): Promise<void> {
         viewport.offsetTop = offsetTop;
         viewport.dispatchEvent(new Event('scroll'));
       },
-      close() {
+      update(next: { height?: number; offsetTop?: number }) {
+        Object.assign(viewport, next);
+        viewport.dispatchEvent(new Event('resize'));
+      },
+      close(notify = true) {
         (window as unknown as { __keyboard: number }).__keyboard = 0;
         viewport.offsetTop = 0;
         viewport.height = window.innerHeight;
         viewport.width = window.innerWidth;
-        viewport.dispatchEvent(new Event('resize'));
+        if (notify) viewport.dispatchEvent(new Event('resize'));
       },
       band() {
         return { top: viewport.offsetTop, bottom: viewport.offsetTop + viewport.height, height: viewport.height };
@@ -108,6 +112,12 @@ async function geometry(page: Page) {
       dockBottom: dockRect.bottom,
       dockGap: band.bottom - dockRect.bottom,
       composerGap: band.bottom - composerRect.bottom,
+      composerTop: composerRect.top,
+      bandTop: band.top,
+      surfaceBottom: surface.getBoundingClientRect().bottom,
+      surfaceScroll: surface.scrollTop,
+      mainOverflow: getComputedStyle(main).overflowY,
+      documentOverflow: getComputedStyle(document.documentElement).overflowY,
       lastClearance: lastRect ? composerRect.top - lastRect.bottom : null,
       slotPadding: parseFloat(getComputedStyle(composer.parentElement!).paddingBottom) * scale,
       dockSafePadding: parseFloat(getComputedStyle(dock).paddingBottom),
@@ -119,6 +129,11 @@ async function geometry(page: Page) {
       innerHeight: window.innerHeight,
     };
   });
+}
+
+async function insetError(page: Page, scale = 1): Promise<number> {
+  const g = await geometry(page);
+  return g.inset - Math.round(Math.max(0, g.surfaceBottom - g.bandBottom) / scale);
 }
 
 const seedTurns = Array.from({ length: 60 }, (_, i) => (i % 2 === 0
@@ -172,7 +187,7 @@ for (const profile of PROFILES) {
     const open = await geometry(app);
     // The one figure, applied once. `innerHeight` is unchanged — this is the iOS policy, not Chromium's.
     expect(open.innerHeight).toBe(profile.layout.height);
-    expect(open.inset).toBeCloseTo(profile.keyboard / profile.scale, 0);
+    expect(open.inset).toBeCloseTo((open.surfaceBottom - open.bandBottom) / profile.scale, 0);
     // THE regression: with the inset applied twice the dock ends a whole keyboard above the band.
     expect(open.dockGap, 'the composer dock left the visible band').toBeGreaterThanOrEqual(-1);
     expect(open.dockGap, 'a black band opened between the composer and the keyboard').toBeLessThanOrEqual(12);
@@ -190,12 +205,12 @@ for (const profile of PROFILES) {
 
     // ── Safari scrolls the band to follow the caret ────────────────────────────────────────────────
     await app.evaluate(() => (window as unknown as { __ios: { scrollBand(v: number): void } }).__ios.scrollBand(60));
-    await expect.poll(async () => (await geometry(app)).inset).toBeCloseTo((profile.keyboard - 60) / profile.scale, 0);
+    await expect.poll(() => insetError(app, profile.scale)).toBe(0);
     const scrolled = await geometry(app);
     expect(scrolled.dockGap).toBeGreaterThanOrEqual(-1);
     expect(scrolled.dockGap).toBeLessThanOrEqual(12);
     await app.evaluate(() => (window as unknown as { __ios: { scrollBand(v: number): void } }).__ios.scrollBand(0));
-    await expect.poll(async () => (await geometry(app)).inset).toBeCloseTo(profile.keyboard / profile.scale, 0);
+    await expect.poll(() => insetError(app, profile.scale)).toBe(0);
 
     // ── Reading history with the keyboard up: only the transcript scrolls ─────────────────────────
     await page.getByTestId('chat-transcript').evaluate((transcript) => transcript.scrollTo({ top: Math.max(0, transcript.scrollHeight / 2) }));
@@ -221,6 +236,75 @@ for (const profile of PROFILES) {
     await cdp.detach();
   });
 }
+
+test('SwiftKey lifecycle reconciles independent layout metrics and missing visual events', async ({ app, seed }) => {
+  test.setTimeout(120_000);
+  await emulateIosViewport(app);
+  await app.setViewportSize({ width: 390, height: 844 });
+  await seed.messages(seedTurns);
+  const chat = new ChatPage(app);
+  await chat.goto();
+  await expect(chat.lastTurn()).toContainText('Msg 59 (elowen)');
+  await app.evaluate(() => document.documentElement.style.setProperty('--safe-bottom', '34px'));
+  await chat.composer.focus();
+
+  await app.evaluate(() => {
+    const ios = (window as unknown as { __ios: { update(next: { height: number; offsetTop: number }): void } }).__ios;
+    // Deliberately decouple Safari's JS metric from CSS dvh. The old test made them identical.
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1180 });
+    ios.update({ height: 508, offsetTop: 60 });
+  });
+  await expect.poll(() => insetError(app)).toBe(0);
+  const assertVisible = async () => {
+    const g = await geometry(app);
+    expect(g.dockGap).toBeGreaterThanOrEqual(-1);
+    expect(g.dockGap).toBeLessThanOrEqual(12);
+    expect(g.composerTop).toBeGreaterThanOrEqual(g.bandTop);
+    expect(g.pageScroll).toBe(0);
+    expect(g.mainScroll).toBe(0);
+    expect(g.surfaceScroll).toBe(0);
+    expect(g.mainOverflow).toBe('clip');
+    expect(g.documentOverflow).toBe('clip');
+    await expect(chat.composer).toBeVisible();
+  };
+  await assertVisible();
+
+  // A layout resize without a VisualViewport event must not spend the consumed height a second time.
+  await app.evaluate(() => { document.querySelector<HTMLElement>('.shell-viewport')!.style.height = '700px'; });
+  await expect.poll(() => insetError(app)).toBe(0);
+  await assertVisible();
+
+  // Hardware Done may retain focus. Only the returning CSS layout reports the final closing geometry.
+  await app.evaluate(() => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+    (window as unknown as { __ios: { close(notify: boolean): void } }).__ios.close(false);
+    document.querySelector<HTMLElement>('.shell-viewport')!.style.height = 'calc(100dvh / var(--ui-scale, 1))';
+  });
+  await expect.poll(async () => (await geometry(app)).keyboardOpen).toBe('false');
+  expect((await geometry(app)).inset).toBe(0);
+  expect((await geometry(app)).dockSafePadding).toBe(SAFE_BOTTOM);
+  await expect(chat.composer).toBeFocused();
+  await assertVisible();
+
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await chat.composer.focus();
+    await app.evaluate(() => (window as unknown as { __ios: { open(h: number): Promise<void> } }).__ios.open(336));
+    await expect.poll(() => insetError(app)).toBe(0);
+    await assertVisible();
+    await chat.composer.fill(`Draft survives keyboard cycle ${cycle}`);
+    // Blur FIRST, old metrics in a delayed resize, then restore metrics with no final visual event.
+    await chat.composer.blur();
+    await expect.poll(async () => (await geometry(app)).inset).toBe(0);
+    await app.evaluate(() => {
+      const ios = (window as unknown as { __ios: { update(next: { height: number }): void; close(notify: boolean): void } }).__ios;
+      ios.update({ height: 508 });
+    });
+    await app.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await app.evaluate(() => (window as unknown as { __ios: { close(notify: boolean): void } }).__ios.close(false));
+    await assertVisible();
+    await expect(chat.composer).toHaveValue(`Draft survives keyboard cycle ${cycle}`);
+  }
+});
 
 test('focusing the composer leaves page scroll fixed and moves only the transcript', async ({ app, seed }) => {
   test.setTimeout(120_000);
