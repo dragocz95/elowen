@@ -174,7 +174,14 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
             event.preventDefault();
             restoreFocus();
           }}
-          onClick={(e) => e.stopPropagation()}
+          // A click inside the surface must keep BUBBLING, all the way to the document. Radix dismisses an
+          // open popover/menu from a press outside it, and its outside-press rule waits for the matching
+          // `click` on the document: a click it never sees counts as intercepted, and the layer stays open.
+          // React's `stopPropagation` stops the NATIVE event too (the synthetic system dispatches from the
+          // portal root, which sits below `document`), so stopping it here left every popover inside a
+          // modal — tool execution, model pickers, every menu in Settings — closable only by pressing its
+          // own trigger again. Nothing needs the stop: the backdrop above already ignores any click whose
+          // target is not the backdrop itself, and a nested modal's backdrop stops its own click there.
         >
           {/* One branch, and it is only about what is DRAWN: a bare surface has no header to draw and no
               body region to scroll, because its content is the surface. Everything above this — portal,
