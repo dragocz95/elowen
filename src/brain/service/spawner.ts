@@ -297,12 +297,6 @@ export class LiveSessionSpawner {
     const providerEntry = cfg.providers.find((provider) => provider.id === route.providerId);
     if (!providerEntry) throw new Error(`brain provider '${route.providerId}' is not configured`);
     const fastRoute = resolveFastModeRoute(providerEntry, model);
-    const hostedRoute = resolveHostedToolSearchRoute(providerEntry, model, {
-      toolDeferralEnabled: runtime?.toolDeferralEnabled ?? false,
-      hostedToolSearch: runtime?.hostedToolSearch ?? {},
-    });
-    const hostedToolSearch = hostedRoute?.provider;
-    const providerHostedToolSearch = hostedRoute !== undefined;
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and
     // absent unless the operator set one — see ProviderRequestProfile on why absent must stay the default.
     const requestProfile = {
@@ -392,6 +386,28 @@ export class LiveSessionSpawner {
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.d.plugins();
+    // CODE MODE. Resolved once per spawn from the same snapshot every other route decision reads, so a
+    // config change applies on the next respawn and never mid-turn. The control is absent whenever the
+    // plugin is not loaded, which reads as "code mode unavailable" and leaves the direct tool surface.
+    // Resolved HERE, before tool search, because the two are mutually exclusive (see below).
+    const codeModeControl = codeModeApplies(providerEntry, model.id) ? plugins?.control('codeMode') : undefined;
+    let codeModeToolNames: string[] = [];
+    // TOOL SEARCH, and why a code-mode session has none.
+    //
+    // Code mode already hides every tool behind `exec` and reaches them from inside a script, so search
+    // has nothing left to do: a tool it "activated" would still not be callable directly. Worse, the two
+    // fight over the same switch — a deferred tool is declared to the model by NAME only, and the exec
+    // description declares a full TypeScript signature only for the tools that are NOT deferred. With
+    // search on, most of the API the script could call is invisible to the model writing that script.
+    // Turning search off for these sessions is what makes `tools.*` the complete surface Codex exposes.
+    const hostedRoute = codeModeControl === undefined
+      ? resolveHostedToolSearchRoute(providerEntry, model, {
+        toolDeferralEnabled: runtime?.toolDeferralEnabled ?? false,
+        hostedToolSearch: runtime?.hostedToolSearch ?? {},
+      })
+      : undefined;
+    const hostedToolSearch = hostedRoute?.provider;
+    const providerHostedToolSearch = hostedRoute !== undefined;
     // The one live Sandbox seam for every managed-project artifact consumer composed below. Resolved
     // through the registry on each call rather than captured here, so a plugin reload never leaves a
     // consumer holding a disposed control; absent or disabled means those consumers refuse, and a
@@ -476,11 +492,6 @@ export class LiveSessionSpawner {
     const iconMap = new Map<string, string>(Object.entries(BUILTIN_TOOL_ICONS));
     for (const [k, v] of plugins?.toolIcons ?? []) iconMap.set(k, v);
     const iconOf = makeToolIconResolver(iconMap);
-    // CODE MODE. Resolved once per spawn from the same snapshot every other route decision reads, so a
-    // config change applies on the next respawn and never mid-turn. The control is absent whenever the
-    // plugin is not loaded, which reads as "code mode unavailable" and leaves the direct tool surface.
-    const codeModeControl = codeModeApplies(providerEntry, model.id) ? plugins?.control('codeMode') : undefined;
-    let codeModeToolNames: string[] = [];
     const allTools = composeSessionTools({
       kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
@@ -489,14 +500,19 @@ export class LiveSessionSpawner {
       // composeSessionTools first builds every other group once, then resolves policy over that exact set.
       // The callback creates the one shared handle only when something is actually withheld and returns
       // ToolSearch to its historical stable position in the ordered definitions.
-      toolDeferral: {
-        toolOwner: plugins?.toolOwner ?? new Map(),
-        toolDeferLoading: plugins?.toolDeferLoading ?? new Set(),
-        planSafeToolNames,
-        builtinDeferLoading: BUILTIN_TOOL_DEFER_LOADING,
-        overrides: toolDeferralOverrides,
-        options: runtime ? { enabled: runtime.toolDeferralEnabled, threshold: runtime.limits.toolDeferThreshold } : undefined,
-      },
+      // Omitted entirely under code mode — both of them, so nothing is withheld and no search tool is
+      // composed. Leaving the deferral spec in with search removed would be worse than either: the tools
+      // would be hidden from the model AND unreachable, because the exec catalogue skips a deferred tool.
+      ...(codeModeControl ? {} : {
+        toolDeferral: {
+          toolOwner: plugins?.toolOwner ?? new Map(),
+          toolDeferLoading: plugins?.toolDeferLoading ?? new Set(),
+          planSafeToolNames,
+          builtinDeferLoading: BUILTIN_TOOL_DEFER_LOADING,
+          overrides: toolDeferralOverrides,
+          options: runtime ? { enabled: runtime.toolDeferralEnabled, threshold: runtime.limits.toolDeferThreshold } : undefined,
+        },
+      }),
       toolSearch: (deferred) => {
         // Hosted mode keeps every sender-visible application tool active in PI's execution registry, then
         // the provider module marks the final payload definitions deferred. Execute-time plan/permission

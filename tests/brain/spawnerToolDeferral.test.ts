@@ -85,6 +85,22 @@ function makeSpawner(
   };
 }
 
+/** A minimal stand-in for one of the two tools the code-mode plugin composes. */
+function pairTool(name: string): ToolDefinition {
+  return defineTool({
+    name, label: name, description: `${name} tool`, parameters: Type.Object({}),
+    execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
+  }) as ToolDefinition;
+}
+
+/** A ChatGPT-account provider on a code-mode capable model, with the operator switch on or off. */
+const codexConfig = (codeModeEnabled: boolean): BrainRuntimeConfig => ({
+  providers: [{
+    id: 'chatgpt', label: 'ChatGPT', type: 'oauth-openai-codex' as const,
+    baseUrl: '', models: ['gpt-5.6-luna'], apiKey: null, codeModeEnabled,
+  }],
+});
+
 const factoryTools = (create: ReturnType<typeof vi.fn>) => {
   const spec = create.mock.calls.at(-1)?.[0] as { tools: ToolDefinition[] };
   return spec.tools;
@@ -153,6 +169,43 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     expect(live.toolSearch?.deferred).toEqual(new Set(['ScanCode']));
     expect(factoryToolNames(create)).toContain('ToolSearch');
     expect((create.mock.calls.at(-1)?.[0] as { toolSearch?: unknown }).toolSearch).toBe(live.toolSearch);
+  });
+
+  it('composes no tool search at all for a code-mode session, and withholds nothing from the script API', async () => {
+    const registry = registryWithMcpTools(6);
+    // A stand-in for the code-mode plugin's control: it only has to exist and report what core handed it.
+    // Six MCP tools over a threshold of five are exactly what tool search would withhold, which is what
+    // makes the two spawns below comparable.
+    let composed: { name: string; deferred: boolean }[] = [];
+    registry.contextFor('code-mode', {}, { info() {}, warn() {}, error() {} })
+      .registerControl('codeMode', {
+        compose: (request: { nested: { name: string; deferred: boolean }[] }) => {
+          composed = request.nested.map((tool) => ({ name: tool.name, deferred: tool.deferred }));
+          return [pairTool('exec'), pairTool('wait')];
+        },
+        // The registry verifies the WHOLE contract before handing a control out, so the stub carries
+        // every method the key promises (KNOWN_CONTROL_METHODS.codeMode).
+        shutdownSession: () => {},
+        activeCount: () => 0,
+      } as never);
+
+    const withCodeMode = makeSpawner(registry, () => runtime(5), codexConfig(true));
+    const live = await withCodeMode.spawn();
+    expect(live.toolSearch).toBeUndefined();
+    const names = factoryToolNames(withCodeMode.create);
+    expect(names).toEqual(expect.arrayContaining(['exec', 'wait']));
+    expect(names).not.toContain('ToolSearch');
+    expect((withCodeMode.create.mock.calls.at(-1)?.[0] as { hostedToolSearch?: unknown }).hostedToolSearch).toBeUndefined();
+    // The prize: the tools that WOULD have been withheld reach the script API undeferred, so the exec
+    // catalogue declares their full signature instead of hiding them behind a search the model cannot use.
+    expect(composed.filter((tool) => tool.deferred)).toEqual([]);
+    expect(composed.map((tool) => tool.name)).toEqual(expect.arrayContaining(['mcp__github__op_0', 'mcp__github__op_5']));
+
+    // The same account with the switch off keeps the provider's own hosted search, which is what put
+    // `{type: 'tool_search'}` on the wire and `defer_loading` on `wait` before this change.
+    const withoutCodeMode = makeSpawner(registryWithMcpTools(6), () => runtime(5), codexConfig(false));
+    await withoutCodeMode.spawn();
+    expect((withoutCodeMode.create.mock.calls.at(-1)?.[0] as { hostedToolSearch?: unknown }).hostedToolSearch).toBe('openai');
   });
 
   it('wires the production ToolSearch handle with plugin ownership and wildcard permission semantics', async () => {
