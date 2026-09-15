@@ -26,8 +26,8 @@ import { WORKFLOW_ADD_NODES_RPC } from '../../src/subagent/hostRpc.js';
 const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
-const owner: TurnIdentity = { platform: 'elowen', userId: '1', elowenUserId: 1, admin: true, owner: true };
-const nodeIdentity: TurnIdentity = { platform: 'subagent', userId: 'subagent' };
+const owner: TurnIdentity = { platform: 'elowen', userId: '1', elowenUserId: 1, admin: true, owner: true, conversation: 'own' };
+const nodeIdentity: TurnIdentity = { platform: 'subagent', userId: 'subagent', admin: false, owner: false, conversation: 'delegated' };
 
 const filesDir = mkdtempSync(join(tmpdir(), 'elowen-wf-wiring-'));
 afterAll(() => { rmSync(filesDir, { recursive: true, force: true }); });
@@ -37,6 +37,7 @@ const workflowFile = (nodes: unknown): string => {
   writeFileSync(path, JSON.stringify(nodes));
   return path;
 };
+const childResults = new Map<string, string>();
 
 interface CapturedSource { channelId?: string; access?: { context?: string[]; toolPolicy?: { allow?: string[]; deny?: string[] } } }
 type RunHandler = (src: CapturedSource, text: string, onEvent: (e: unknown) => void) => Promise<string>;
@@ -69,6 +70,12 @@ const registry: PluginRegistry = await loadPlugins({
   // Production wiring shape (brainCore): the prediction IS the dispatcher's own answer.
   delegatedTurnsOutOfProcess: () => dispatch.mode() === 'runner',
   delegatedWorkflowExpansionAvailable: () => runner.supportsHostRpc?.(WORKFLOW_ADD_NODES_RPC) === true,
+  delegatedChildren: {
+    runs: () => [],
+    read: (_parent: string, child: string) => childResults.get(child) ?? '',
+    continue: async () => ({ status: 'reply', reply: '' }),
+    stop: async () => ({ stopped: true }),
+  },
 });
 
 const captured: { sources: CapturedSource[]; tasks: string[] } = { sources: [], tasks: [] };
@@ -78,9 +85,12 @@ const handler: RunHandler = async (src, task, onEvent) => {
   captured.sources.push(src);
   captured.tasks.push(task);
   const bare = task.split('\n')[0] ?? task;
-  onEvent({ type: 'session', sessionId: channelSessionId(src.channelId ?? bare) });
+  const childSessionId = channelSessionId(src.channelId ?? bare);
+  onEvent({ type: 'session', sessionId: childSessionId });
   if (gate && bare === gate.task) await gate.release;
-  return `done:${bare}`;
+  const result = `done:${bare}`;
+  childResults.set(childSessionId, result);
+  return result;
 };
 registry.platforms.find((p) => p.name === 'subagent')!.listen(handler as unknown as Parameters<PluginRegistry['platforms'][number]['listen']>[0]);
 

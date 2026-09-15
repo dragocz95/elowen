@@ -39,8 +39,8 @@ const STATUS_ERROR_PREVIEW = 300;
 // Never hand a node a slice too small to carry a finding. A fan-in whose results cannot each reach this
 // is REFUSED (see buildNodeAccess): a node reporting conclusions drawn from three words per dependency —
 // or, once the forced minimum overran the budget, from dependencies it was never shown — is worse than a
-// node that fails and says why. The floor leaves room for the immutable Read reference on the widest DAG.
-const DEP_MIN_CHARS = 300;
+// node that fails and says why.
+const DEP_MIN_CHARS = 400;
 // The blank line joining two result blocks inside one chunk.
 const DEP_BLOCK_SEPARATOR = '\n\n';
 
@@ -485,8 +485,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (typeof dependency?.handover?.text !== 'string' || dependency.handover.text.length === 0) continue;
       const result = dependency.handover.text;
       let reference = 'Complete result reference unavailable in this legacy workflow state.';
-      if (typeof dependency.sessionId === 'string' && dependency.sessionId.length > 0
-        && typeof ctx.readSubagentResult === 'function' && typeof ctx.persistSubagentToolOutput === 'function') {
+      if (typeof dependency.sessionId === 'string' && dependency.sessionId.length > 0) {
+        if (typeof ctx.readSubagentResult !== 'function' || typeof ctx.persistSubagentToolOutput !== 'function') {
+          throw new Error(`complete result reference for dependency "${id}" cannot be prepared: host sub-agent output support is unavailable`);
+        }
         try {
           const full = ctx.readSubagentResult(wf.originSessionId, dependency.sessionId);
           if (!dependentState?.channelId) throw new Error(`the dependent node "${node.id}" has no host-derived channel for its result reference`);
@@ -498,7 +500,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
           if (!stored) throw new Error(`the complete result from node "${id}" could not be copied for dependent "${node.id}"`);
           reference = outputReference(stored.path, stored.bytes);
         } catch (e) {
-          ctx.logger.warn(`workflow ${wf.id}: complete result for dependency "${id}" unavailable: ${errorText(e)}`);
+          throw new Error(`complete result reference for dependency "${id}" could not be prepared: ${errorText(e)}`);
         }
       }
       depResults.push({ id, result, derived: dependency.handover.derived === true, reference });
@@ -641,8 +643,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ns.handover = handoverOf(reply);
       }
     } catch (e) {
+      const message = errorText(e);
       ns.status = 'error';
-      ns.error = clip(errorText(e), MAX_RESULT_CHARS);
+      ns.error = clip(message, MAX_RESULT_CHARS);
+      if (message.startsWith('complete result reference for dependency')) wf.deliveryFailure = message;
     }
     ns.seconds = Math.round((Date.now() - (ns.startedAt ?? Date.now())) / 1000);
     writeJournal(wf); // node terminal: the FULL result must reach the journal — snapshots only carry a preview
@@ -728,10 +732,56 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     return lines.join('\n');
   };
 
+  /** Build the bounded failure result shared by foreground returns, background completions and boot recovery. */
+  const workflowFailureResult = (wf, failure, run = wf.run ?? 0) => {
+    const reason = clip(errorText(failure), 1_000);
+    const completed = [...wf.state.values()]
+      .filter((state) => state.status === 'done' && typeof state.sessionId === 'string' && state.sessionId.length > 0)
+      .map((state) => state.sessionId);
+    const transcriptHelp = completed.length
+      ? `Completed node transcripts remain available with ${completed.map((id) => `DelegateRead({"id":"${id}"})`).join(', ')}.`
+      : 'No completed node transcript is available for direct recovery.';
+    return `Workflow ${wf.id} run ${run} finished with status: error. `
+      + `The result could not be delivered: ${reason} ${transcriptHelp} `
+      + `Use WorkflowResume({"workflowId":"${wf.id}"}) to retry unfinished work after resolving the delivery problem.`;
+  };
+
+  const markWorkflowFailure = (wf, failure, run = wf.run ?? 0) => {
+    wf.status = 'error';
+    wf.finished = true;
+    wf.finishedAt ??= Date.now();
+    snapshot(wf);
+    return workflowFailureResult(wf, failure, run);
+  };
+
+  /** Emit exactly one terminal completion for one workflow run. The deduplication marker is set only after the
+   * durable sink accepts the payload, while the in-flight marker closes the async gap between preparation and emission. */
+  const emitWorkflowCompletion = (wf, status, result, run = wf.run ?? 0) => {
+    if (!wf.emitCompletion || wf.completionDeliveredRun === run || wf.completionDeliveringRun === run) return false;
+    wf.completionDeliveringRun = run;
+    try {
+      wf.emitCompletion({
+        id: wf.id,
+        toolCallId: wf.toolCallId,
+        ...(wf.title ? { title: wf.title } : {}),
+        status,
+        result,
+        run,
+      });
+      wf.completionDeliveredRun = run;
+      return true;
+    } catch (e) {
+      ctx.logger.warn(`workflow completion sink failed: ${errorText(e)}`);
+      return false;
+    } finally {
+      if (wf.completionDeliveringRun === run) delete wf.completionDeliveringRun;
+    }
+  };
+
   /** Start the DAG ONCE and resolve with the final summary when it settles. The single `tick(wf)` here is
    *  the only launch point, so a foreground blocking call and a detach/background call share ONE run: a
    *  detach never re-starts the engine, it only stops the parent waiting on it. Settles the terminal
-   *  status, finishes the row (drives retention) and yields the summary the caller returns or delivers. */
+   *  status, finishes the row and yields the summary the caller returns or delivers. */
   const runToCompletion = (wf) => {
     wf.status = 'running';
     snapshot(wf);
@@ -749,15 +799,19 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // Terminal either way (done/error above, cancelled settled by cancelWorkflow): the journal's job is
       // over — a journal on disk at boot is precisely the marker of an INTERRUPTED run.
       deleteJournal(wf.id);
+      if (wf.deliveryFailure) throw new Error(wf.deliveryFailure);
       return summarize(wf);
     });
   };
 
+  const safeCompletion = (wf, run = wf.run ?? 0) => runToCompletion(wf).catch((failure) => markWorkflowFailure(wf, failure, run));
+
   /** Deliver a detached/background workflow's summary through the turn-captured durable host sink, so an
    *  explicit `background` and a Ctrl+B detach follow the exact same result path. A never-detached
    *  foreground workflow returns its summary inline instead, so this is gated on `wf.background`. */
-  const deliverCompletion = async (wf, summary) => {
-    if (!wf.background || !wf.emitCompletion) return;
+  const deliverCompletion = async (wf, summary, run = wf.run ?? 0) => {
+    if (!wf.background || wf.completionDeliveredRun === run || wf.completionPreparingRun === run || !wf.emitCompletion) return;
+    wf.completionPreparingRun = run;
     try {
       let result = summary;
       const inlineLimit = typeof ctx.toolResultInlineBytes === 'function' ? ctx.toolResultInlineBytes() : 120_000;
@@ -769,9 +823,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       }
       // `run` tells the host which run of this DAG the summary closes: a resumed run's summary must reach
       // the parent as a NEW result, not be dropped as a duplicate of the first one it already heard.
-      wf.emitCompletion({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, result, run: wf.run ?? 0 });
+      emitWorkflowCompletion(wf, wf.status, result, run);
     } catch (e) {
-      ctx.logger.warn(`workflow completion persistence failed: ${errorText(e)}`);
+      const errorResult = markWorkflowFailure(wf, e, run);
+      emitWorkflowCompletion(wf, 'error', errorResult, run);
+    } finally {
+      if (wf.completionPreparingRun === run) delete wf.completionPreparingRun;
     }
   };
 
@@ -781,10 +838,14 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
    *  requested up front, returns the handle immediately and delivers the summary through the durable sink
    *  once it lands. */
   const driveResult = async (wf, completion, requestedBackground) => {
+    const completionRun = wf.run ?? 0;
     if (requestedBackground) {
       // No durable sink on this surface (worker/cron) — block rather than silently drop the result.
       if (!wf.emitCompletion) return ok(await completion);
-      void completion.then((summary) => deliverCompletion(wf, summary));
+      void completion.then(
+        (summary) => deliverCompletion(wf, summary, completionRun),
+        (failure) => deliverCompletion(wf, markWorkflowFailure(wf, failure, completionRun), completionRun),
+      ).catch((failure) => ctx.logger.warn(`workflow ${wf.id}: completion observer failed: ${errorText(failure)}`));
       return ok(
         `Started background workflow ${wf.id}.\n`
           + 'Its result is delivered to you automatically in a NEW turn when it finishes — you do not have to '
@@ -795,7 +856,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     }
     const outcome = await raceDetach((resolve) => { wf.resolveDetached = resolve; }, () => completion);
     if (!outcome.detached) return ok(outcome.value);
-    void completion.then((summary) => deliverCompletion(wf, summary));
+    void completion.then(
+      (summary) => deliverCompletion(wf, summary, completionRun),
+      (failure) => deliverCompletion(wf, markWorkflowFailure(wf, failure, completionRun), completionRun),
+    ).catch((failure) => ctx.logger.warn(`workflow ${wf.id}: completion observer failed: ${errorText(failure)}`));
     return ok(
       `The user moved this workflow to the background. It is still running as ${wf.id}; continue helping the `
       + 'user now. Its result is delivered to you automatically in a new turn when it finishes, so once you have '
@@ -983,13 +1047,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     }
     workflows.set(wf.id, wf);
     writeJournal(wf);
-    const completion = runToCompletion(wf).catch((e) => {
-      wf.status = 'error';
-      wf.finished = true;
-      wf.finishedAt = Date.now();
-      return `Error: workflow failed: ${errorText(e)}`;
-    });
-    void completion.then((summary) => deliverCompletion(wf, summary));
+    const completionRun = wf.run ?? 0;
+    const completion = safeCompletion(wf, completionRun);
+    void completion.then(
+      (summary) => deliverCompletion(wf, summary, completionRun),
+      (failure) => deliverCompletion(wf, markWorkflowFailure(wf, failure, completionRun), completionRun),
+    ).catch((failure) => ctx.logger.warn(`workflow ${wf.id}: recovery completion observer failed: ${errorText(failure)}`));
     ctx.logger.info(`workflow ${wf.id} resumed from its recovery journal (${done}/${wf.nodes.length} node(s) already done)`);
     return { resumed: true };
   };
@@ -1193,12 +1256,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       writeJournal(wf);
       // Start the DAG once. This promise settles the terminal status, finishes the row and yields the
       // summary — a foreground blocking call and a detach/background call ride this SAME run.
-      const completion = runToCompletion(wf).catch((e) => {
-        wf.status = 'error';
-        wf.finished = true;
-        wf.finishedAt = Date.now();
-        return `Error: workflow failed: ${errorText(e)}`;
-      });
+      const completionRun = wf.run ?? 0;
+      const completion = safeCompletion(wf, completionRun);
 
       // Foreground blocks on the DAG but lets Ctrl+B detach the wait; background returns the handle right
       // away — driveResult is the shared tail WorkflowResume reuses so both behave identically.
@@ -1288,12 +1347,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (wf.background && !wf.emitCompletion) wf.background = false;
       wf.parentAccess = access;
       writeJournal(wf); // the finish deleted the journal; the resumed run is interruptible again
-      const completion = runToCompletion(wf).catch((e) => {
-        wf.status = 'error';
-        wf.finished = true;
-        wf.finishedAt = Date.now();
-        return `Error: workflow failed: ${errorText(e)}`;
-      });
+      const completionRun = wf.run ?? 0;
+      const completion = safeCompletion(wf, completionRun);
       const res = await driveResult(wf, completion, wf.background === true);
       if (!scopeChanged) return res;
       return ok(
