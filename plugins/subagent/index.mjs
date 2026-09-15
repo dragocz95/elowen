@@ -1367,9 +1367,20 @@ export function register(ctx) {
     return jsonRes({ error: result.error }, result.status);
   };
 
+  // READING the catalog is open to any authenticated account: the page every account may open needs the
+  // built-in agents' names and descriptions to label their model pickers, and those two fields are
+  // already in front of that account on every turn (they ride in the Delegate tool description that tells
+  // the assistant which types it may use). A user agent's BODY is not — it is the authored system prompt,
+  // and it is only ever sent to the administrators who may edit it. Creating, overwriting and deleting a
+  // definition stays admin-only below: those write instance-wide files.
   ctx.registerApiRoute({
-    rootMount: '/plugins/agents/list', path: '', method: 'GET', access: 'admin',
-    handler: async (req) => (req.path === '' ? jsonRes(catalog().list()) : jsonRes({ error: 'not found' }, 404)),
+    rootMount: '/plugins/agents/list', path: '', method: 'GET', access: 'user',
+    handler: async (req) => {
+      if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
+      const entries = catalog().list();
+      if (req.auth.admin) return jsonRes(entries);
+      return jsonRes(entries.map(({ body: _body, ...rest }) => ({ ...rest, canDelete: false })));
+    },
   });
 
   ctx.registerApiRoute({

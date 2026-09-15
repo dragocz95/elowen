@@ -8,10 +8,14 @@ type ToolsMode = 'read-only' | 'all' | 'inherit' | 'custom';
 type SubagentForm = { editing: string | null; name: string; description: string; body: string; toolsMode: ToolsMode; customTools: string };
 const EMPTY_FORM: SubagentForm = { editing: null, name: '', description: '', body: '', toolsMode: 'read-only', customTools: '' };
 
-/** Sub-agents manager (the subagent plugin's own page): built-in explore/plan ship read-only; user
- *  agents are one `.md` file each (frontmatter name/description/tools + a body prompt) and can be
- *  created, edited and deleted here. A read-only agent gets look-only tools plus read-only shell.
- *  Changes hot-reload the plugins, so new conversations pick them up immediately. */
+/** Sub-agents manager (the subagent plugin's own page).
+ *
+ *  Two audiences, one page and one permission model — the host's. Everybody who may open the page chooses
+ *  which model each BUILT-IN agent runs on for them: that is their own account setting and needs no
+ *  administrator. Authoring agents edits instance-wide definition files, so the register that creates,
+ *  edits and deletes them is drawn only for an administrator, and its API refuses the writes for everyone
+ *  else regardless of what the page draws. Nothing instance-wide — another account's runs, delegation
+ *  history, plugin controls — is on this page at all. */
 export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings('subagent');
@@ -19,7 +23,9 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const query = hooks.usePluginSubagents();
   const save = hooks.useSavePluginSubagent();
   const remove = hooks.useDeletePluginSubagent();
-  const savePin = hooks.useSaveUserPluginConfig();
+  const me = hooks.useMe();
+  const canAuthor = me.data?.user?.is_admin === true;
+  const [pinSave, setPinSave] = useState({ saving: false, error: false, success: false });
   const [creating, setCreating] = useState(false);
 
   const toolsLabel = (tools: PluginSubagent['tools']): string =>
@@ -29,23 +35,25 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   // mutations that write is read straight off them. All three are watched: deleting an agent is as
   // much a save as editing one, a failed delete with no indicator looks like nothing happened, and
   // picking an agent's model writes immediately and deserves the same single indicator.
-  const saveStatus: SaveStatus = save.isPending || remove.isPending || savePin.isPending ? 'saving'
-    : save.isError || remove.isError || savePin.isError ? 'error'
-    : save.isSuccess || remove.isSuccess || savePin.isSuccess ? 'saved'
+  const saveStatus: SaveStatus = save.isPending || remove.isPending || pinSave.saving ? 'saving'
+    : save.isError || remove.isError || pinSave.error ? 'error'
+    : save.isSuccess || remove.isSuccess || pinSave.success ? 'saved'
     : 'idle';
 
   const agents: PluginSubagent[] = query.data ?? [];
   const userCount = agents.filter((agent) => agent.source === 'user').length;
   const readOnlyCount = agents.filter((agent) => agent.tools === 'read-only').length;
 
-  const addButton = <C.Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{s.add}</C.Button>;
+  const addButton = canAuthor
+    ? <C.Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{s.add}</C.Button>
+    : undefined;
 
   const surfaceDocument = (
     <C.ControlSurfaceDocument>
       {/* The built-in agents' models come first: they are a short, settled list of choices about agents
           the page then goes on to list, where the register below is a workspace for editing your own. */}
-      <TypeModelPins agents={agents} />
-      <C.MarkdownAssetEditor
+      <TypeModelPins agents={agents} onSaveState={setPinSave} />
+      {!canAuthor ? null : <C.MarkdownAssetEditor
         query={query}
         creating={creating}
         onCreatingChange={setCreating}
@@ -117,7 +125,7 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
         }}
         saving={save.isPending}
         onDelete={(agent: PluginSubagent, callbacks: { onSuccess: () => void; onError: (e: unknown) => void }) => remove.mutate(agent.name, callbacks)}
-      />
+      />}
     </C.ControlSurfaceDocument>
   );
 

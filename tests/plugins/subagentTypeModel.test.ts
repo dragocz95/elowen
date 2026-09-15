@@ -48,14 +48,16 @@ const identity = (userId: number): TurnIdentity =>
 // ── the pure pieces ────────────────────────────────────────────────────────────────────────────────
 
 describe('parseTypeModelPin', () => {
-  it('reads a complete provider::model pair', () => {
-    expect(typeModel.parseTypeModelPin('anthropic::claude-sonnet-5'))
+  // The stored spelling is the host's canonical brain exec — the same `<provider>/<model>` every model
+  // field in the app stores and the host validates a save against.
+  it('reads a complete provider/model exec', () => {
+    expect(typeModel.parseTypeModelPin('anthropic/claude-sonnet-5'))
       .toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
   });
 
-  it('keeps a model id containing separators intact', () => {
-    expect(typeModel.parseTypeModelPin('openrouter::meta-llama/llama-3.1:free'))
-      .toEqual({ provider: 'openrouter', model: 'meta-llama/llama-3.1:free' });
+  it('splits on the FIRST slash, so a model id carrying more stays intact', () => {
+    expect(typeModel.parseTypeModelPin('relay/ollama/kimi-k2.7-code'))
+      .toEqual({ provider: 'relay', model: 'ollama/kimi-k2.7-code' });
   });
 
   it('reads an empty value as "no pin", not as a pin on nothing', () => {
@@ -68,8 +70,8 @@ describe('parseTypeModelPin', () => {
   // happened to list that name — the pin would stop being an atomic route.
   it('refuses a bare model id and a half pair', () => {
     expect(typeModel.parseTypeModelPin('claude-sonnet-5')).toBeNull();
-    expect(typeModel.parseTypeModelPin('::claude-sonnet-5')).toBeNull();
-    expect(typeModel.parseTypeModelPin('anthropic::')).toBeNull();
+    expect(typeModel.parseTypeModelPin('/claude-sonnet-5')).toBeNull();
+    expect(typeModel.parseTypeModelPin('anthropic/')).toBeNull();
   });
 });
 
@@ -119,13 +121,13 @@ describe('readTypeModelPin', () => {
   });
 
   it('reads the built-in type\'s own key', () => {
-    expect(typeModel.readTypeModelPin(ctxWith({ [typeModel.typeModelPinKey('explore')]: 'openai::gpt-5' }), 'explore'))
+    expect(typeModel.readTypeModelPin(ctxWith({ [typeModel.typeModelPinKey('explore')]: 'openai/gpt-5' }), 'explore'))
       .toEqual({ provider: 'openai', model: 'gpt-5' });
   });
 
   // Custom types are deliberately untouched by this feature: their model stays the caller's choice.
   it('ignores a pin stored against a user-defined type', () => {
-    expect(typeModel.readTypeModelPin(ctxWith({ [typeModel.typeModelPinKey('triage')]: 'openai::gpt-5' }), 'triage'))
+    expect(typeModel.readTypeModelPin(ctxWith({ [typeModel.typeModelPinKey('triage')]: 'openai/gpt-5' }), 'triage'))
       .toBeNull();
   });
 
@@ -187,8 +189,8 @@ describe('Delegate — per-account built-in type model pins', () => {
   };
 
   it('two accounts pin the same type to different models — an admin pin is not global', async () => {
-    stored.set(1, { 'typeModel.explore': 'anthropic::claude-opus-4' });
-    stored.set(2, { 'typeModel.explore': 'openai::gpt-5' });
+    stored.set(1, { 'typeModel.explore': 'anthropic/claude-opus-4' });
+    stored.set(2, { 'typeModel.explore': 'openai/gpt-5' });
     await delegate({ task: 'look', subagent_type: 'explore' }, 1);
     expect(seen.access?.model).toEqual({ provider: 'anthropic', model: 'claude-opus-4' });
     await delegate({ task: 'look', subagent_type: 'explore' }, 2);
@@ -213,7 +215,7 @@ describe('Delegate — per-account built-in type model pins', () => {
   });
 
   describe('with a pin', () => {
-    beforeAll(() => { stored.set(1, { 'typeModel.plan': 'anthropic::claude-opus-4' }); });
+    beforeAll(() => { stored.set(1, { 'typeModel.plan': 'anthropic/claude-opus-4' }); });
 
     it('spawns an omitted-model typed delegation on the pinned model', async () => {
       await delegate({ task: 'design it', subagent_type: 'plan' });
@@ -241,11 +243,11 @@ describe('Delegate — per-account built-in type model pins', () => {
     });
 
     it('fails loud when the pinned model is gone instead of running on a substitute', async () => {
-      stored.set(1, { 'typeModel.plan': 'anthropic::retired-model' });
+      stored.set(1, { 'typeModel.plan': 'anthropic/retired-model' });
       const res = await delegate({ task: 'design it', subagent_type: 'plan' });
       expect(res.content[0]!.text).toMatch(/\/p\/subagent/);
       expect(seen.access).toBeUndefined();
-      stored.set(1, { 'typeModel.plan': 'anthropic::claude-opus-4' });
+      stored.set(1, { 'typeModel.plan': 'anthropic/claude-opus-4' });
     });
   });
 
@@ -257,7 +259,7 @@ describe('Delegate — per-account built-in type model pins', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['subagent'], logger: log,
       subagentTypes: () => TYPES,
       listModels: async () => MODELS,
-      host: { userPluginConfig: () => ({ 'typeModel.plan': 'anthropic::claude-opus-4' }) },
+      host: { userPluginConfig: () => ({ 'typeModel.plan': 'anthropic/claude-opus-4' }) },
       delegatedChildren: {
         runs: () => [], read: () => '',
         continue: async (input: Record<string, unknown>) => { continued = input; return { status: 'reply', reply: 'ok' }; },

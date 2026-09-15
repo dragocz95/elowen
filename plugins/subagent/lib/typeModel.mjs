@@ -16,18 +16,21 @@ export const typeModelPinKey = (type) => `${PIN_KEY_PREFIX}${type}`;
 
 /** Parse a stored pin value into its provider/model pair, or null for "no pin" (Automatic).
  *
- *  The stored encoding is `provider::model`, the same atomic pair every model-role picker in the app
- *  writes: `::` cannot occur in a provider id while a model id may itself contain slashes and colons, so
- *  only the FIRST separator splits. Anything that is not a complete pair reads as no pin at all — a bare
- *  model id has no provider, and routing a child through whichever provider happens to list that name is
- *  precisely the silent substitution this feature exists to prevent. */
+ *  The stored encoding is the host's canonical brain exec, `<provider>/<model>` — exactly what every other
+ *  `model` config field stores and what the host's config write path validates against the account's own
+ *  catalog, so "which model" has ONE spelling rather than a private one here. A provider id never contains
+ *  a slash while a model id may carry several (`relay/ollama/kimi-k2.7-code`), so only the FIRST slash
+ *  splits. This mirrors `parseElowenExec` in src/shared/execs.ts, which a plugin module cannot import.
+ *
+ *  Anything that is not a complete pair reads as no pin at all — a bare model id has no provider, and
+ *  routing a child through whichever provider happens to list that name is precisely the silent
+ *  substitution this feature exists to prevent. */
 export function parseTypeModelPin(raw) {
   if (typeof raw !== 'string') return null;
-  const at = raw.indexOf('::');
-  if (at <= 0) return null;
-  const provider = raw.slice(0, at).trim();
-  const model = raw.slice(at + 2).trim();
-  return provider && model ? { provider, model } : null;
+  const spec = raw.trim();
+  const slash = spec.indexOf('/');
+  if (slash <= 0 || slash === spec.length - 1) return null;
+  return { provider: spec.slice(0, slash), model: spec.slice(slash + 1) };
 }
 
 /** Just the pin entries of the current account's stored config, as a plain record.

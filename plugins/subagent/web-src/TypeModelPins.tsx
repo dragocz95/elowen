@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect } from 'react';
 import { Bot } from 'lucide-react';
-import { runtime, roleKey, type BrainModelOption, type PluginSubagent } from './runtime';
+import { runtime, USER_PLUGIN_CONFIGS_KEY, type BrainModelOption, type PluginSubagent, type UserPluginConfigDetail } from './runtime';
 
-/** The key each built-in type's model is stored under in the account's own plugin config. Mirrors
+/** The key each built-in agent's model is stored under in the account's own plugin settings. Mirrors
  *  `typeModelPinKey` in ../lib/typeModel.mjs — a browser bundle cannot import the server module, so the
  *  one thing both sides must agree on is written here beside the read that depends on it. */
 const pinKey = (type: string) => `typeModel.${type}`;
@@ -22,39 +22,60 @@ const firstSentence = (text: string): string => {
  *  new sub-agent of that type runs on it — and one that names a different model is refused rather than
  *  quietly redirected.
  *
- *  Custom agents are absent on purpose: their definition is already the author's, model included. */
-export function TypeModelPins({ agents }: { agents: PluginSubagent[] }) {
-  const { components: C, hooks } = runtime();
+ *  Custom agents are absent on purpose: their definition is already the author's, model included.
+ *
+ *  The values travel through the host's OWN per-account config API — the same route, revision token and
+ *  server-side validation the rest of the app writes them with — reached through the generic
+ *  query/mutation seam rather than a runtime hook of its own, so this page needs no new plugin UI
+ *  contract version. The query key is the host's, so the two caches are one. */
+export function TypeModelPins({ agents, onSaveState }: {
+  agents: PluginSubagent[];
+  /** Lets the page fold this section's save into its single status indicator. */
+  onSaveState?: (state: { saving: boolean; error: boolean; success: boolean }) => void;
+}) {
+  const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings('subagent');
   const models = hooks.useBrainModels();
-  const configs = hooks.useUserPluginConfigs();
-  const save = hooks.useSaveUserPluginConfig();
+  const queryClient = hooks.useQueryClient();
+  const configs = hooks.useQuery<UserPluginConfigDetail[]>({
+    queryKey: USER_PLUGIN_CONFIGS_KEY,
+    queryFn: () => utils.elowenClient.userPluginConfigs(),
+  });
+  const save = hooks.useMutation<UserPluginConfigDetail, { values: Record<string, unknown>; expectedRevision: number }>({
+    mutationFn: (v) => utils.elowenClient.saveUserPluginConfig('subagent', v.values, v.expectedRevision),
+    onSuccess: (detail) => {
+      queryClient.setQueryData<UserPluginConfigDetail[]>(USER_PLUGIN_CONFIGS_KEY, (current) =>
+        current?.map((item) => (item.name === detail.name ? detail : item)));
+    },
+  });
+  // Reported from an EFFECT, keyed on the three booleans themselves: calling the parent's setter during
+  // render would queue a parent update on every render and never settle.
+  const { isPending, isError, isSuccess } = save;
+  useEffect(() => {
+    onSaveState?.({ saving: isPending, error: isError, success: isSuccess });
+  }, [isPending, isError, isSuccess, onSaveState]);
 
-  const builtins = useMemo(() => agents.filter((a) => a.source === 'builtin'), [agents]);
+  const builtins = agents.filter((a) => a.source === 'builtin');
   const mine = configs.data?.find((c) => c.name === 'subagent');
   const catalog: BrainModelOption[] = models.data ?? [];
 
-  // Every pin is written through ONE patch of the whole form, so two pickers changed in quick succession
-  // cannot race each other's revision: the second reads the value the first stored.
-  const setPin = (type: string, key: string) => {
+  // Every pin is written as ONE patch of the whole form against the revision it was read at, so two
+  // pickers changed in quick succession cannot lose each other's value.
+  const setPin = (type: string, exec: string) => {
     if (!mine) return;
-    save.mutate({
-      name: 'subagent',
-      values: { ...mine.config, [pinKey(type)]: key },
-      expectedRevision: mine.revision,
-    });
+    save.mutate({ values: { ...mine.config, [pinKey(type)]: exec }, expectedRevision: mine.revision });
   };
 
-  // An account that cannot reach this plugin's per-account settings has nothing to save into. Say so
-  // instead of rendering pickers whose writes would 404.
   if (configs.isLoading || models.isLoading) return <C.LoadingLine />;
+  // An account the host offers no per-plugin settings for has nothing to save into. Say so rather than
+  // drawing pickers whose writes would be refused.
   if (configs.isError || models.isError || !mine) return <C.ErrorState title={s.pinsUnavailable} />;
 
   return (
     <C.SettingsGroup title={s.pinsTitle} description={s.pinsHint}>
       {builtins.map((agent) => {
         const stored = String(mine.config[pinKey(agent.name)] ?? '');
-        const offered = !stored || catalog.some((m) => roleKey(m.provider, m.model) === stored);
+        const offered = !stored || catalog.some((m) => m.exec === stored);
         return (
           <C.SettingsRow
             key={agent.name}
@@ -65,13 +86,13 @@ export function TypeModelPins({ agents }: { agents: PluginSubagent[] }) {
             control={(
               <C.BrainModelField
                 value={stored}
-                onChange={(key: string) => setPin(agent.name, key)}
+                onChange={(exec: string) => setPin(agent.name, exec)}
                 models={catalog}
                 title={agent.name}
                 subtitle={firstSentence(agent.description)}
                 defaultLabel={s.pinAutomatic}
                 missingLabel={s.pinUnavailable}
-                keyOf={(m: BrainModelOption) => roleKey(m.provider, m.model)}
+                keyOf={(m: BrainModelOption) => m.exec}
                 manageAriaLabel={`${s.pinsTitle}: ${agent.name}`}
               />
             )}

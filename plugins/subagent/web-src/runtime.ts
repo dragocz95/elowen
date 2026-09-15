@@ -16,8 +16,9 @@ export interface PluginSubagent {
   body?: string;
 }
 
-/** One pickable brain model, as the host's `/brain/models` serves it. */
-export interface BrainModelOption { provider: string; providerLabel: string; model: string }
+/** One pickable brain model, as the host's `/brain/models` serves it. `exec` is the canonical identity
+ *  (`<provider>/<model>`) every model picker stores and the host validates a saved pick against. */
+export interface BrainModelOption { provider: string; providerLabel: string; model: string; exec: string }
 
 /** The account's own values for ONE plugin, as `/plugins/user-config` returns them. `revision` is the CAS
  *  token a save must carry so a stale tab cannot overwrite a newer one. */
@@ -27,11 +28,13 @@ export interface UserPluginConfigDetail {
   revision: number;
 }
 
-/** The provider/model pair encoding every model picker in the app writes. `::` cannot occur in a provider
- *  id while a model id may contain slashes and colons, which is why the pair is not joined with one; an
- *  empty key means "no explicit pick". Mirrors the host's `roleKey` and the server-side parser in
- *  ../lib/typeModel.mjs — a bundle must not import either, so the encoding is restated here. */
-export const roleKey = (providerId: string, model: string): string => (providerId && model ? `${providerId}::${model}` : '');
+/** The host's own react-query key for that listing. Reused verbatim so this page and the rest of the app
+ *  read one cache; a private key would leave two copies of the same account's settings on screen. */
+export const USER_PLUGIN_CONFIGS_KEY = ['user-plugin-configs'] as const;
+
+/** `GET /auth/me`, narrowed to the one fact this page reads: whether the signed-in account administers
+ *  this instance, and may therefore author the shared agent definitions. */
+export interface Me { user?: { is_admin?: boolean } }
 
 // ---- hook shapes --------------------------------------------------------------------------------
 
@@ -60,9 +63,26 @@ interface SubagentHooks {
   useDeletePluginSubagent(): MutationResult<string>;
   usePluginStrings(plugin: string): Record<string, string>;
   useBrainModels(): QueryResult<BrainModelOption[]>;
-  /** The signed-in account's own per-plugin values — the store behind the built-in agent model pins. */
-  useUserPluginConfigs(): QueryResult<UserPluginConfigDetail[]>;
-  useSaveUserPluginConfig(): MutationResult<{ name: string; values: Record<string, unknown>; expectedRevision?: number }>;
+  useMe(): QueryResult<Me>;
+  /** The host's raw react-query seam. The account's own per-plugin values are read and written through it
+   *  plus `utils.elowenClient`, rather than through a dedicated runtime hook — this page must not require
+   *  a plugin UI contract version newer than the one it already declares. */
+  useQuery<T>(options: { queryKey: readonly unknown[]; queryFn: () => Promise<T> }): QueryResult<T>;
+  useMutation<TData, TVars>(options: {
+    mutationFn: (vars: TVars) => Promise<TData>;
+    onSuccess?: (data: TData) => void;
+  }): MutationResult<TVars>;
+  useQueryClient(): {
+    setQueryData<T>(key: readonly unknown[], updater: (current: T | undefined) => T | undefined): void;
+  };
+}
+
+/** The host's pure helpers, narrowed to the typed REST client this bundle calls. */
+interface SubagentUtils {
+  elowenClient: {
+    userPluginConfigs(): Promise<UserPluginConfigDetail[]>;
+    saveUserPluginConfig(name: string, values: Record<string, unknown>, expectedRevision?: number): Promise<UserPluginConfigDetail>;
+  };
 }
 
 // The host components are runtime records; `any` props keep the JSX call sites identical to the
@@ -81,6 +101,7 @@ interface SubagentComponents {
 interface SubagentRuntime {
   components: SubagentComponents;
   hooks: SubagentHooks;
+  utils: SubagentUtils;
 }
 
 type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
