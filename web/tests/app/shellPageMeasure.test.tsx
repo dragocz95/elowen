@@ -10,9 +10,11 @@ import { Shell } from '../../components/shell/Shell';
 class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) {} }
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
-/** `editor` declares itself a workbench in its manifest; `skills` says nothing and stays a document. */
+/** `editor` declares itself a workbench in its manifest; cronjob's calendar workbench joins it; `skills`
+ *  says nothing and stays a document. */
 const listing = [
   { name: 'editor', url: '/plugins/editor/web/a.js', apiVersion: 16, layout: 'workbench', nav: [{ label: 'Editor', route: '' }], settings: [] },
+  { name: 'cronjob', url: '/plugins/cronjob/web/c.js', apiVersion: 16, layout: 'workbench', nav: [{ label: 'Automation', route: '' }], settings: [] },
   { name: 'skills', url: '/plugins/skills/web/b.js', apiVersion: 16, nav: [{ label: 'Skills', route: '' }], settings: [] },
 ];
 
@@ -53,6 +55,14 @@ describe('the shell reads each route at its declared measure', () => {
     const className = await frameClass('/p/editor');
     expect(className).toContain('max-w-[var(--workbench-max)]');
     expect(className).not.toContain('max-w-[var(--content-max)]');
+  });
+
+  it('gives cronjob\u2019s calendar the same wide measure, matching the Editor contract', async () => {
+    // The cron page is a month grid with a selected-day agenda, not a register of rows: it asked for
+    // the wide measure through the same `web.layout` declaration Editor runs under, and any drift
+    // between the two would read one of the pages at the other's width.
+    expect(await frameClass('/p/cronjob')).toContain('max-w-[var(--workbench-max)]');
+    expect(await frame('/p/cronjob')).toHaveAttribute('data-page-measure', 'workbench');
   });
 
   it('keeps a plugin page that declares nothing at the ordinary page measure', async () => {

@@ -59,6 +59,14 @@ beforeEach(() => {
 });
 
 describe('plugin host route', () => {
+  // The runtime the route mounts bundles against: the API a bundle declares in its manifest has to be
+  // the one the host actually stamps, or a new bundle would render (and crash) against an old contract.
+  it('installs the API 17 runtime surface, Calendar included', () => {
+    ensurePluginUiRuntime();
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(17);
+    expect(window.ElowenUiRuntime?.components.Calendar).toEqual(expect.any(Function));
+  });
+
   // The route hands a settings section the page column and the page's identity, and nothing else: the
   // header and the document surface come from the section itself (components.PluginPageFrame), because
   // the header has to sit ABOVE that surface and only the section knows its own subtitle and actions.

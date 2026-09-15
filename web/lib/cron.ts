@@ -1,5 +1,3 @@
-import type { CronJob } from './types';
-
 /** Weekday tokens as used by the cronjob plugin's `weekly <day> HH:MM` schedule (index = getDay()). */
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -17,11 +15,16 @@ type Parsed =
   | { kind: 'weekly'; day: number; hour: number; minute: number }
   | CronParsed;
 
-/** Parse ONE cron field into the set of values it matches — mirror of `parseCronField` in
- *  plugins/cronjob/index.mjs (kept in lockstep; a conformance test asserts they accept/reject the same
- *  corpus). Null on anything malformed so the caller rejects the whole expression. The web's second
- *  hand-synced grammar copy (`web/lib/cronSchedule.ts`) was merged into this file: its `isValidSchedule`
- *  is now the validity view exported below. */
+/** Parse ONE cron field into the set of values it matches — mirror of `parseCronField` in the cronjob
+ *  plugin's schedule engine. Null on anything malformed so the caller rejects the whole expression.
+ *
+ *  VALIDATION ONLY, deliberately deprecated: this web copy existed so the old browser bundles could
+ *  validate a schedule and expand its next runs without a round-trip. The next-run expansion is gone —
+ *  every future occurrence now comes from the plugin's server projection (`nextOccurrence` on the job),
+ *  which reads the scheduler's own timezone, active-hours and catch-up rules instead of a second
+ *  hand-synced browser copy of them that quietly disagreed. What is left here is the validity view the
+ *  still-released API 12 bundles reach through `window.ElowenUiRuntime.utils.isValidSchedule`; the new
+ *  cronjob UI never calls it. Removing it is a deliberately breaking plugin UI contract. */
 function parseCronField(spec: string, min: number, max: number, names?: string[], wrapValue?: number): Set<number> | null {
   const text = String(spec ?? '').trim().toLowerCase();
   if (!text) return null;
@@ -78,8 +81,8 @@ function parseCron(spec: string): CronParsed | null {
 }
 
 /** Parse the plugin's schedule grammar — `every 15m` / `every 2h` / `daily 07:30` / `weekly sun 20:00`,
- *  or a standard 5-field cron expression. Deliberately a small mirror of `parseSchedule` in
- *  plugins/cronjob/index.mjs (kept in lockstep with it). Null = invalid. */
+ *  or a standard 5-field cron expression. Deliberately a small mirror of `parseSchedule` in the
+ *  registry's cronjob plugin (kept in lockstep with it). Null = invalid. */
 function parseSchedule(spec: string): Parsed | null {
   let m = /^every\s+(\d+)\s*(m|h)$/i.exec(spec.trim());
   if (m) {
@@ -93,71 +96,13 @@ function parseSchedule(spec: string): Parsed | null {
   return parseCron(spec);
 }
 
-// A cron expression may next fire up to ~4 years out (e.g. `0 0 29 2 *` — Feb 29). Scanning by day keeps
-// the day-level check cheap; capping at 4 years + 1 covers every leap-year case without an unbounded loop.
-const CRON_SCAN_DAYS = 366 * 4 + 1;
-
-/** The next epoch-ms a 5-field cron fires at or after `now`, on the viewer's local wall clock (matching
- *  the daily/weekly forms below). Walks candidate days forward, then picks the earliest matching HH:MM. */
-function nextCronFire(sched: CronParsed, now: number): number | null {
-  const start = new Date(now);
-  const hours = [...sched.hour].sort((a, b) => a - b);
-  const minutes = [...sched.minute].sort((a, b) => a - b);
-  for (let d = 0; d <= CRON_SCAN_DAYS; d++) {
-    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + d);
-    if (!sched.month.has(day.getMonth() + 1)) continue;
-    const dom = sched.dayOfMonth.has(day.getDate());
-    const dow = sched.dayOfWeek.has(day.getDay());
-    // Cron's quirk: when BOTH day-of-month and day-of-week are restricted, a date matches if EITHER does.
-    const dayMatch = sched.domRestricted && sched.dowRestricted ? (dom || dow) : (dom && dow);
-    if (!dayMatch) continue;
-    for (const h of hours) for (const mnt of minutes) {
-      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, mnt, 0, 0).getTime();
-      if (t > now) return t;
-    }
-  }
-  return null;
-}
-
-/** The next time a cron job will fire, in epoch ms — or null when it never will (disabled, spent
- *  one-shot, or an unparseable schedule). The soonest future-or-imminent fire: an overdue interval or
- *  a never-run job resolves to `now` (it fires on the next scheduler tick). Mirrors the plugin's
- *  `isDue` logic but computes the timestamp instead of a boolean. */
-export function nextCronRun(job: CronJob, now: number): number | null {
-  if (job.enabled === false) return null;
-  // One-shot wake-up: fires exactly once at runAt, then the plugin deletes it. Already run → gone.
-  if (job.runAt) {
-    if (job.lastRun) return null;
-    const at = Date.parse(job.runAt);
-    return Number.isNaN(at) ? null : Math.max(at, now);
-  }
-  const sched = parseSchedule(job.schedule);
-  if (!sched) return null;
-  const last = job.lastRun ? Date.parse(job.lastRun) : 0;
-
-  if (sched.kind === 'interval') {
-    return Math.max((Number.isNaN(last) ? 0 : last) + sched.ms, now);
-  }
-
-  if (sched.kind === 'cron') {
-    return nextCronFire(sched, now);
-  }
-
-  // daily / weekly: the next clock occurrence of HH:MM (on the right weekday), at or after now.
-  const at = new Date(now);
-  at.setHours(sched.hour, sched.minute, 0, 0);
-  if (sched.kind === 'weekly') {
-    const ahead = (sched.day - at.getDay() + 7) % 7;
-    at.setDate(at.getDate() + ahead);
-  }
-  if (at.getTime() <= now) at.setDate(at.getDate() + (sched.kind === 'weekly' ? 7 : 1));
-  return at.getTime();
-}
-
 /** Whether `spec` is a valid schedule the scheduler will run — the validation-only view of
  *  `parseSchedule`, under the same name the daemon's API validator `src/shared/cronSchedule.ts` exports
- *  (that file remains a separate mirror of the same grammar, as does the plugin's `parseSchedule`). */
+ *  (that file remains a separate mirror of the same grammar, as does the plugin's `parseSchedule`).
+ *
+ *  COMPATIBILITY-ONLY export, published to plugin bundles as `utils.isValidSchedule`. The browser
+ *  never validates a new form against it: the cronjob UI asks the plugin's `schedule-preview` route,
+ *  so a schedule is always judged by the engine that will run it. */
 export function isValidSchedule(spec: string): boolean {
   return parseSchedule(spec) !== null;
 }
-

@@ -1,16 +1,6 @@
-// Layout guarantees for the pages plugins own — the `/p/*` surface.
-//
-// `viewport.e2e.ts` measures the same properties on the core pages. Everything under `/p/` used to be
-// invisible to it: the fake daemon served an empty `/plugins/ui`, so a plugin page rendered the host's
-// "this plugin is unavailable" notice and every register, toolbar, pager and takeover a plugin ships was
-// asserted by nothing that runs a layout engine. `seed.realPlugins()` arms the listing with the REAL
-// built bundles and `handlers/pluginSurfaces.ts` gives them content to lay out.
-//
-// WHICH PLUGINS ARE REACHABLE: the ones bundled in this repo (`plugins/`) always are. The plugin REGISTRY
-// is a separate repository, so its pages are measured only when the run is pointed at that checkout with
-// `E2E_PLUGIN_DIRS=/path/to/registry/plugins`; each case below skips what it does not find rather than
-// asserting against a page that was never served. The properties are the same either way — they are
-// properties of the plugin HOST and of the shared workspace kit, which is what a plugin composes.
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test, expect, type Page } from '../fixtures/index.ts';
 import { STORAGE_STATE } from '../../../playwright.config.ts';
 import { EDITOR_PROJECT } from '../fake-daemon/handlers/pluginSurfaces.ts';
@@ -25,6 +15,33 @@ const REFERENCE_REGISTER = '/memory';
 
 const authedOnly = (testInfo: { project: { name: string } }) =>
   test.skip(testInfo.project.name !== 'authed', 'needs the authenticated shell that hosts plugin pages');
+
+/** The plugins whose own manifest declares the WIDE workbench measure. Read from disk the same way
+ *  `fake-daemon/realPlugins.ts` reads them (repo `plugins/` then `E2E_PLUGIN_DIRS`), so a spec asserts
+ *  against what the checkout actually declares instead of what the test wishes it did in another app.
+ *  Unbuilt or absent checkouts contribute nothing — the plugin is skipped, never asserted against an
+ *  answer that was never served. */
+function workbenchPlugins(): string[] {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = resolve(here, '../../..');
+  const dirs = [join(repoRoot, 'plugins'),
+    ...(process.env.E2E_PLUGIN_DIRS ?? '').split(':').map((dir) => dir.trim()).filter(Boolean)];
+  const declared: string[] = [];
+  for (const root of dirs) {
+    if (!existsSync(root)) continue;
+    for (const name of ['editor', 'cronjob']) {
+      if (declared.includes(name)) continue;
+      const manifestPath = join(root, name, 'elowen-plugin.json');
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { web?: { layout?: string; entry?: string } };
+        const built = manifest.web?.entry && existsSync(join(root, name, manifest.web.entry));
+        if (manifest.web?.layout === 'workbench' && built) declared.push(name);
+      } catch { /* malformed manifest → the plugin stays unmeasured, exactly as the loader treats it */ }
+    }
+  }
+  return declared;
+}
 
 /** A page that reports a COARSE pointer, the way a phone does — see the note in `viewport.e2e.ts`:
  *  resizing alone leaves `pointer: fine`, and every touch-target rule is gated on the pointer. */
@@ -53,7 +70,9 @@ test('a plugin page draws exactly one page frame, the same one its sibling regis
   // gets the time rather than fewer widths — the boundary this defect lived on was width-dependent.
   test.setTimeout(240_000);
   const armed = await seed.realPlugins();
-  const plugins = [...CORE_PLUGINS, ...REGISTRY_PLUGINS.filter((p) => p !== 'editor')].filter((p) => armed.includes(p));
+  // A plugin whose page IS a calendar workbench (declare) is measured by its own spec below — its
+  // surface builds no `[role="table"]` register for `openPluginRegister` to stand on.
+  const plugins = [...CORE_PLUGINS, ...REGISTRY_PLUGINS.filter((p) => p !== 'editor' && p !== 'cronjob')].filter((p) => armed.includes(p));
   expect(plugins, 'no plugin bundle was reachable — the fixture served nothing to measure').not.toHaveLength(0);
 
   const frameBox = () => app.evaluate(() => {
@@ -84,6 +103,30 @@ test('a plugin page draws exactly one page frame, the same one its sibling regis
       expect(measured.x, `/p/${plugin} starts where a core register starts at ${size.width}px`).toBe(reference.x);
       expect(measured.width, `/p/${plugin} is as wide as a core register at ${size.width}px`).toBe(reference.width);
     }
+  }
+});
+
+test('a plugin page that declares `workbench` is framed at the wide measure, like Editor', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  // The workspace frame is DECLARED by the plugin manifest (`web.layout: 'workbench'`) and applied by
+  // the shell (components/shell/Shell.tsx) — the same contract Editor runs under.
+  // The register-wide canvas is a calendar, not a table: reading it at the document measure wastes a
+  // third of the page and is exactly the trap the shell measure exists to end. The test reads the
+  // declaration straight out of each checkout's manifest (see `workbenchPlugins`), so a run pointed at
+  // a checkout that has not shipped the workbench declaration skips rather than re-learning the
+  // attribute by editing the test.
+  const armed = await seed.realPlugins();
+  const shipped = workbenchPlugins().filter((p) => armed.includes(p));
+  test.skip(shipped.length === 0, 'no reachable manifest declares the workbench measure (ship the registry cronjob first)');
+
+  await app.setViewportSize({ width: 1440, height: 900 });
+  for (const plugin of shipped) {
+    await app.goto(`/p/${plugin}`);
+    await expect(app.locator('h1')).toBeVisible();
+    // ONE measure, applied once: the wide frame on the shell's own element, and no second cap.
+    const frame = app.locator('[data-page-measure]');
+    await expect(frame).toHaveAttribute('data-page-measure', 'workbench');
+    expect(await frame.count()).toBe(1);
   }
 });
 
@@ -134,9 +177,11 @@ test('the rows of a plugin register share one height', async ({ app, seed }, tes
   // /p/skills measured 27/41/59/59/49px against the 48px rhythm every other register holds, which is
   // what makes a register unscannable. Its rows carry a mix of one-word and wrapping descriptions on
   // purpose (see the fixture) — that mix is exactly what produced the ragged heights.
+  // `cronjob` is deliberately absent: its page is now a calendar workbench, not a register — measured
+  // by `cronjob.calendar.e2e.ts` instead of by whoever a table row happens to be inside it.
   const armed = await seed.realPlugins();
   await app.setViewportSize({ width: 1440, height: 900 });
-  for (const plugin of [...CORE_PLUGINS, 'stats', 'cronjob', 'skills'].filter((p) => armed.includes(p))) {
+  for (const plugin of [...CORE_PLUGINS, 'stats', 'skills'].filter((p) => armed.includes(p))) {
     await openPluginRegister(app, plugin);
     const heights = await app.evaluate(() =>
       [...document.querySelectorAll('[role="table"] [role="row"]:not(.data-table-header)')]
@@ -155,7 +200,9 @@ test('no plugin toolbar overflows its own box', async ({ app, seed }, testInfo) 
   // the same specificity trap that stopped the register header from sticking, and it is invisible at any
   // width where the labels happen to fit — which is why every narrow width is measured.
   const armed = await seed.realPlugins();
-  const plugins = [...CORE_PLUGINS, ...REGISTRY_PLUGINS.filter((p) => p !== 'editor')].filter((p) => armed.includes(p));
+  // `cronjob` is no longer a register the shared toolbar row is measured from — its workbench surface
+  // owns its own toolbar contract, asserted with the month grid in `cronjob.calendar.e2e.ts`.
+  const plugins = [...CORE_PLUGINS, ...REGISTRY_PLUGINS.filter((p) => p !== 'editor' && p !== 'cronjob')].filter((p) => armed.includes(p));
   for (const width of [320, 390, 768, 1440]) {
     await app.setViewportSize({ width, height: 800 });
     for (const plugin of plugins) {
@@ -201,7 +248,7 @@ test("a plugin register's pager can be reached and used at 320px", async ({ brow
   // edge of an `overflow-x-hidden` main — painted, enabled, and impossible to tap.
   const armed = await seed.realPlugins();
   await seed.response('projects', [EDITOR_PROJECT]);
-  const plugins = ['stats', 'cronjob', 'skills'].filter((p) => armed.includes(p));
+  const plugins = ['stats', 'skills'].filter((p) => armed.includes(p));
   test.skip(plugins.length === 0, 'needs a registry bundle with a paginated register');
 
   const { context, page } = await touchPage(browser, { width: 320, height: 700 });
@@ -305,7 +352,9 @@ test("a plugin register still shows what names its rows at 320px", async ({ app,
   // tracks than the row has visible cells misaligns silently, and that shows up here as the wrong cell
   // being measured or a starved one.
   const armed = await seed.realPlugins();
-  const plugins = [...CORE_PLUGINS, ...REGISTRY_PLUGINS.filter((p) => p !== 'editor')].filter((p) => armed.includes(p));
+  // The register templates this contrasts were fixed by their own compact templates; `cronjob` is no
+  // longer a register at all — a job there has no `[role="table"]` row a template could starve.
+  const plugins = [...CORE_PLUGINS, ...REGISTRY_PLUGINS.filter((p) => p !== 'editor' && p !== 'cronjob')].filter((p) => armed.includes(p));
   expect(plugins, 'no plugin bundle was reachable — the fixture served nothing to measure').not.toHaveLength(0);
 
   for (const width of [320, 390]) {

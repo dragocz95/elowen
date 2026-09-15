@@ -53,6 +53,7 @@
     "next": "^16.2.11",
     "postcss-import": "^16.1.1",
     "react": "^19.2.8",
+    "react-day-picker": "^9.14.0",
     "react-dom": "^19.2.8",
     "react-resizable-panels": "^4.12.3",
     "recharts": "^3.10.1",

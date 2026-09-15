@@ -85,6 +85,9 @@
     ],
     "web/components/ui/shadcn/chart.tsx": [
       "exports"
+    ],
+    "web/components/ui/shadcn/calendar.tsx": [
+      "exports"
     ]
   },
   "ignore": [
