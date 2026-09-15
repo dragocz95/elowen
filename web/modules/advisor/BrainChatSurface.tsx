@@ -1,6 +1,7 @@
 'use client';
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, Bot, type LucideIcon } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, Compass, Hammer, Workflow, Bot, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { renderMarkdown } from '../../lib/markdown';
 import { langForPath, parseDiffRow } from '../../lib/codeDiff';
@@ -15,6 +16,8 @@ import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainModelOption, 
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { Dialog, DialogContent, DialogOverlay } from '../../components/ui/shadcn/dialog';
+import { focusOverlaySurface, useOverlayIsolation } from '../../components/ui/overlayStack';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
@@ -708,14 +711,18 @@ function SessionEvents({ events, tk }: { events: SessionEventItem[]; tk?: string
  *  they sit in one turn or across a turn boundary; only a speaker change opens a real block break. The
  *  compact dock keeps the tight look: a small accent bubble for the user, bubble-free markdown for the
  *  assistant. */
-/** A user turn's surviving attachments. The daemon kept the files next to its database, so these render
+/** The pictures a turn carries. The daemon kept the files next to its database, so these render
  *  identically from the live stream and from reloaded history — the whole point of storing them. The
  *  `<img>` hits the same-origin proxy, which turns the session cookie into the daemon bearer, so no
- *  signed link is involved. Clicking opens the picture in the app's own dialog. */
-function Attachments({ images, full }: { images: BrainMessageImage[]; full?: boolean }) {
+ *  signed link is involved. Clicking one opens the picture full size, in the conversation. */
+function Attachments({ images, full, attached }: { images: BrainMessageImage[]; full?: boolean; attached?: boolean }) {
+  const { t } = useTranslation();
+  // Whose picture it is, said in the description the picture carries: "Attached image" is only true of a
+  // turn this reader sent, and a shared room shows everybody's pictures through this one control.
+  const description = attached ? t.brainChat.attachmentAlt : t.brainChat.imageAttached;
   return (
     <div className={`flex flex-wrap gap-2 ${full ? 'my-1.5' : 'mt-1.5'}`}>
-      {images.map((image) => <AttachmentThumb key={image.url} image={image} />)}
+      {images.map((image) => <AttachmentThumb key={image.url} image={image} description={description} />)}
     </div>
   );
 }
@@ -725,8 +732,8 @@ function Attachments({ images, full }: { images: BrainMessageImage[]; full?: boo
  *  read-only asks for an image the daemon will only serve to its owner (a 404 by design, so the request
  *  cannot be used to probe what other conversations hold). The browser's own reply to that is a broken
  *  image glyph, which reads as "the chat is buggy" rather than "this picture is no longer here". State it
- *  instead, and drop the click-through: a link to a 404 is worse than no link. */
-function AttachmentThumb({ image }: { image: BrainMessageImage }) {
+ *  instead, and drop the click-through: a surface that can only fail to open is worse than no control. */
+function AttachmentThumb({ image, description }: { image: BrainMessageImage; description: string }) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -744,7 +751,7 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        title={t.brainChat.attachmentOpen}
+        title={description}
         aria-label={t.brainChat.attachmentOpen}
         // The width cap sits on the FRAME, not the picture. A percentage max-width on the <img> is ignored
         // while the flex item measures its content, so a wide picture capped only by height left the
@@ -753,55 +760,118 @@ function AttachmentThumb({ image }: { image: BrainMessageImage }) {
       >
         <img
           src={`/api${image.url}`}
-          alt={t.brainChat.attachmentAlt}
+          alt={description}
           onError={() => setFailed(true)}
           className="block max-h-48 max-w-full object-contain"
         />
       </button>
-      {open ? <ImageLightbox image={image} onClose={() => setOpen(false)} /> : null}
+      {open ? <ImageLightbox image={image} description={description} onClose={() => setOpen(false)} /> : null}
     </>
   );
 }
 
 /** The full-size view of any picture in the conversation — a user's attachment, one the agent shared, one
- *  it generated, one it read. It is the shared {@link Modal}, so the focus trap, Escape, the overlay stack
- *  and the return of focus to the thumbnail all come from the one implementation the rest of the app uses,
- *  and the page behind it never scrolls.
+ *  it generated, one it read. There is nothing drawn around it: the picture, on a calm backdrop.
  *
- *  The picture itself is `object-contain` inside the dialog's own frame, so a panorama and a tall
- *  screenshot both fit whole on a phone and on a desktop without the dialog growing past the viewport.
- *  Opening the raw file stays available as a named action in the header rather than as the click on the
- *  image: that request is the same authenticated proxy fetch it always was, and it leaves the app. */
-function ImageLightbox({ image, onClose }: { image: BrainMessageImage; onClose: () => void }) {
+ *  It used to be the app's own `Modal`, which put a header, an edge, a ground and a cast shadow between
+ *  the reader and the thing they clicked. The frame is what a dialog is FOR — it holds a title, controls
+ *  and a body of text — and an enlarged picture has none of those, so the surface now declines the shared
+ *  material (`chrome="bare"`) and renders the picture alone. The accessible name is stated rather than
+ *  shown, which is the same move the command palette makes: a screen reader still hears "Image preview,
+ *  dialog", a sighted reader sees nothing but the picture.
+ *
+ *  What is NOT declined is everything the seam carries that was never visual: Radix's focus trap, Escape
+ *  and layer order, the overlay stack's `inert` isolation and body scroll lock, and focus going back to
+ *  the thumbnail the surface was opened from. Dismissal is the app's one backdrop rule, restated here
+ *  because it lives in the wrapper that was taken away — a press must BEGIN on the backdrop, so a drag
+ *  that starts on the picture and ends in the scrim keeps it open (see `Modal.tsx`).
+ *
+ *  The picture is capped by the padded backdrop, not by anything it draws: `DialogOverlay` carries the
+ *  safe-area padding on every edge, the surface takes that whole box, and `object-contain` inside it is
+ *  what keeps a panorama and a tall screenshot whole on a phone in either orientation and on a desktop.
+ *
+ *  The surface covers the viewport but is not a thing that can be clicked: pointer events are off on it
+ *  and back on the picture, so hit-testing falls through the empty area onto the backdrop that closes
+ *  the lightbox, while a click that lands on the picture stays a click on the picture. */
+function ImageLightbox({ image, description, onClose }: {
+  image: BrainMessageImage;
+  description: string;
+  onClose: () => void;
+}) {
   const { t } = useTranslation();
-  return (
-    <Modal
-      title={t.brainChat.imageViewerTitle}
-      onClose={onClose}
-      size="lg"
-      presentation="center"
-      intent="inspect"
-      headerActions={(
-        <a
-          href={`/api${image.url}`}
-          target="_blank"
-          rel="noreferrer"
-          className={buttonClassName('outline', 'sm')}
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  /** Whether the press that is about to produce a click started on the backdrop itself. */
+  const pressedBackdrop = useRef(false);
+  // Mounted for the length of one opening, like every overlay here: the stack captures the thumbnail to
+  // hand focus back to on its FIRST render, and the scroll lock ends with the surface.
+  const { restoreFocus } = useOverlayIsolation({ enabled: true, rootRef: layerRef });
+
+  return createPortal(
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogOverlay
+        ref={layerRef}
+        presentation="center"
+        layer="modal"
+        onPointerDown={(event) => { pressedBackdrop.current = event.target === event.currentTarget; }}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget || !pressedBackdrop.current) return;
+          pressedBackdrop.current = false;
+          // Portal events bubble through the React tree; stop at this backdrop so a surface raised over
+          // another cannot close both with one click.
+          event.stopPropagation();
+          onClose();
+        }}
+      >
+        <DialogContent
+          ref={surfaceRef}
+          presentation="center"
+          chrome="bare"
+          // `relative` is this surface's own layout: the loading status is centred on it.
+          className="pointer-events-none relative"
+          aria-label={t.brainChat.imageViewerTitle}
+          // Clicks that land on the picture itself must not reach the rule above.
+          onClick={(event) => event.stopPropagation()}
+          // Radix would dismiss on any press outside the surface: that is the same decision the backdrop
+          // already makes, and it is declined here exactly as `Modal.tsx` declines it.
+          onInteractOutside={(event) => event.preventDefault()}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus();
+          }}
         >
-          <ExternalLink size={14} aria-hidden />
-          {t.brainChat.imageOpenInTab}
-        </a>
-      )}
-    >
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
-        <img
-          src={`/api${image.url}`}
-          alt={t.brainChat.attachmentAlt}
-          data-testid="image-lightbox"
-          className="max-h-full max-w-full object-contain"
-        />
-      </div>
-    </Modal>
+          {failed ? (
+            // The bytes can be gone by the time full size is asked for, and a broken-image glyph in the
+            // middle of a dark screen explains nothing. Say what happened; the backdrop still closes it.
+            <span data-testid="image-lightbox-gone" className="pointer-events-auto inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <ImageOff size={16} className="shrink-0" aria-hidden />
+              {t.brainChat.imageGone}
+            </span>
+          ) : (
+            <img
+              src={`/api${image.url}`}
+              alt={description}
+              data-testid="image-lightbox"
+              onLoad={() => setLoaded(true)}
+              onError={() => setFailed(true)}
+              className="pointer-events-auto block max-h-full max-w-full object-contain"
+            />
+          )}
+          {loaded || failed ? null : (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <Spinner size="lg" label={t.common.loading} />
+            </div>
+          )}
+        </DialogContent>
+      </DialogOverlay>
+    </Dialog>,
+    document.body,
   );
 }
 
@@ -944,7 +1014,7 @@ export const Message = memo(function Message({ turn, models, full, showRole, sho
   const body = turn.role === 'you'
     ? <div data-testid="chat-user-bubble" className="chat-user-message">
         {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground ${full ? '' : 'my-1.5'}`}>{turn.text}</div> : null}
-        {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
+        {turn.images?.length ? <Attachments images={turn.images} full={full} attached /> : null}
         <MessageMeta turn={turn} models={models} />
       </div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
@@ -982,7 +1052,7 @@ export const Message = memo(function Message({ turn, models, full, showRole, sho
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
         <div data-testid="chat-user-bubble" className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
           {turn.role === 'you' ? turn.text : null}
-          {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
+          {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} attached /> : null}
           <MessageMeta turn={turn} models={models} />
         </div>
       </div>

@@ -115,28 +115,39 @@ function DialogOverlay({
  *  `width` the room a drawer takes; the two size axes are compound rather than free because a drawer has
  *  no use for `max-w-lg` and a centered window has no use for a drawer width.
  *
- *  `.overlay-surface` is in the BASE, on every presentation, and that is the whole point of it: it is
- *  what `app/styles/components/primitives.css` paints (background, border colour, raised shadow) and
- *  what dresses the two phone presentations geometrically. Carried by only some of the four, as it was,
- *  the ones left out had to restate the same material at their call sites — which is how a drawer ended
- *  up a different colour from the window it opens into. The variants below own the shape and nothing
- *  else: border WIDTH and which edges are drawn is geometry; the colour of that border is not.
+ *  `.overlay-surface` is what `app/styles/components/primitives.css` paints (background, border colour,
+ *  raised shadow) and what dresses the two phone presentations geometrically. The variants below own the
+ *  shape and nothing else: border WIDTH and which edges are drawn is geometry; the colour of that border
+ *  is not.
  *
  *  dvh throughout: a mobile browser's collapsing toolbar makes `vh` taller than the screen actually is,
- *  which put the footer of every one of these under the browser chrome. */
-const dialogSurfaceVariants = cva('overlay-surface flex flex-col focus:outline-none', {
+ *  which put the footer of every one of these under the browser chrome.
+ *
+ *  `chrome` is the one axis that asks whether this surface IS a panel. `card` — the default, and what
+ *  every dialog, drawer and sheet in the app wears — carries the shared material, the drawn edge and the
+ *  size a panel needs room for. `bare` declines all three: a surface whose content IS the frame (the chat
+ *  image lightbox) must not paint a ground, an edge, a shadow or a `max-w-lg` over the picture the reader
+ *  clicked, or the lightbox is a card again. Everything else is shared and unchanged: the same primitive,
+ *  the same focus trap, Escape, layer order, inert isolation and scroll lock. */
+const dialogSurfaceVariants = cva('flex flex-col focus:outline-none', {
   variants: {
     presentation: {
-      center: 'animate-pop-in rounded-lg border',
+      center: 'animate-pop-in',
       drawer: 'animate-drawer-in h-full rounded-l-lg border-l',
       sheet: 'min-h-0 w-full',
-      fullscreen: 'animate-pop-in relative min-h-0 w-full border',
+      fullscreen: 'animate-pop-in relative min-h-0 w-full',
     },
+    chrome: { card: 'overlay-surface', bare: '' },
     size: { sm: '', md: '', lg: '', xl: '', page: '' },
     width: { default: '', wide: '' },
   },
   compoundVariants: [
-    { presentation: 'center', size: 'lg', class: 'h-[88dvh] w-[92vw] max-w-[90rem]' },
+    // The drawn edge and the room both belong to a PANEL, so both are gated on the chrome: a bare surface
+    // takes exactly what its content takes.
+    { presentation: 'center', chrome: 'card', class: 'rounded-lg border' },
+    { presentation: 'fullscreen', chrome: 'card', class: 'border' },
+    { presentation: 'center', chrome: 'bare', class: 'h-full w-full items-center justify-center' },
+    { presentation: 'center', chrome: 'card', size: 'lg', class: 'h-[88dvh] w-[92vw] max-w-[90rem]' },
     // The READING frame, taken by an intercepted page that is a stack of records rather than a data
     // surface — both Settings and Account ask for `PageOverlay frame="reading"`. `lg` beside it is the DATA
     // window that wants every pixel a monitor has (a log table, a diagnostics run), so it grows to 90rem by
@@ -147,19 +158,25 @@ const dialogSurfaceVariants = cva('overlay-surface flex flex-col focus:outline-n
     // a skin moves it to suit its own measure, so restating a cap here is the one thing that token
     // forbids. The height IS stated, because this frame has to hold still while sections of very
     // different lengths are swapped through it.
-    { presentation: 'center', size: 'page', class: 'h-[min(88dvh,50rem)] w-[92vw] max-w-[var(--content-max)]' },
-    { presentation: 'center', size: 'xl', class: 'max-h-[90dvh] w-full max-w-2xl' },
-    { presentation: 'center', size: 'md', class: 'max-h-[88dvh] w-full max-w-lg' },
-    { presentation: 'center', size: 'sm', class: 'max-h-[80dvh] w-full max-w-md' },
+    { presentation: 'center', chrome: 'card', size: 'page', class: 'h-[min(88dvh,50rem)] w-[92vw] max-w-[var(--content-max)]' },
+    { presentation: 'center', chrome: 'card', size: 'xl', class: 'max-h-[90dvh] w-full max-w-2xl' },
+    { presentation: 'center', chrome: 'card', size: 'md', class: 'max-h-[88dvh] w-full max-w-lg' },
+    { presentation: 'center', chrome: 'card', size: 'sm', class: 'max-h-[80dvh] w-full max-w-md' },
     { presentation: 'drawer', width: 'default', class: 'w-[min(38rem,calc(100vw-3rem))]' },
     { presentation: 'drawer', width: 'wide', class: 'w-[min(72rem,calc(100vw-3rem))]' },
   ],
-  defaultVariants: { presentation: 'center', size: 'md', width: 'default' },
+  defaultVariants: { presentation: 'center', chrome: 'card', size: 'md', width: 'default' },
 });
 
 function DialogContent({
   className = '',
   presentation = 'center',
+  // Whether this surface IS a panel. `card` is every dialog, drawer and sheet in the app. `bare` is one
+  // whose content is the whole frame — the chat image lightbox, where a ground, an edge, a cast shadow and
+  // the room a panel reserves for a title would all be a card drawn over the picture the reader clicked.
+  // What `bare` keeps is everything that was never visual: the same primitive, the same focus trap,
+  // Escape, layer order, inert isolation and scroll lock.
+  chrome = 'card',
   size = 'md',
   width = 'default',
   ...props
@@ -172,12 +189,15 @@ function DialogContent({
       // is a modal one and says so.
       aria-modal="true"
       data-presentation={presentation}
+      // Stated on the DOM as well as in the class list, so a browser test can see which of the two the
+      // surface was built as.
+      data-chrome={chrome}
       // `focus:outline-none` on the surface itself: the overlay focuses this element on open so the focus
       // trap and screen readers have an anchor, but it is `tabIndex={-1}` and not interactive, so the
       // browser's ring around the whole window says nothing. Opening a dialog from the keyboard — a slash
       // command, for instance — made `:focus-visible` match and drew a bright outline around the entire
       // dialog that vanished on the first click inside. Controls INSIDE keep their own rings.
-      className={cn(dialogSurfaceVariants({ presentation, size, width }), className)}
+      className={cn(dialogSurfaceVariants({ presentation, chrome, size, width }), className)}
       {...props}
     />
   );
