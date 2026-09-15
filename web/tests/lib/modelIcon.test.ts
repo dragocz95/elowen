@@ -36,6 +36,18 @@ describe('modelIconSlug', () => {
     expect(modelIconSlug('copilot')?.color).toBe(false);
   });
 
+  it('brands Codex with the OpenAI mark, never a standalone Codex glyph', () => {
+    // `openai-codex` is the PI provider id behind the ChatGPT OAuth account and `codex:` the CLI engine.
+    // Both are OpenAI products, so every surface that draws a model icon has to wear the OpenAI mark.
+    expect(slugOf('openai-codex')).toBe('openai');
+    expect(slugOf('codex:gpt-5.5')).toBe('openai');
+    expect(slugOf('gpt-5.1-codex')).toBe('openai');
+    // A bare id carries no "gpt" to match on. It still has to brand as OpenAI rather than fall through to
+    // the generic chip glyph.
+    expect(brandOf('codex')).toBe('openai');
+    expect(modelIconSlug('Codex')?.color).toBe(false);
+  });
+
   it('lets the model brand beat the runner brand', () => {
     // The ordering contract: `github-copilot/claude-opus-4.8` is a CLAUDE model served through Copilot, so
     // it must wear the Claude mark. Same reason `ollama/deepseek-…` is a DeepSeek model. Adding the copilot
