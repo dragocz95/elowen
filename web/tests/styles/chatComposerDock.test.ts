@@ -65,6 +65,14 @@ describe('the chat surface owns keyboard geometry and transcript scrolling', () 
     expect(surface).toContain('min-h-0 flex-1 overflow-y-auto overscroll-contain');
     expect(surface).toContain('data-testid="chat-transcript-content"');
     expect(shell).toContain("data-scroll-owner={onChat ? 'chat-shell' : 'page'}");
-    expect(shell).toContain("? 'overflow-y-hidden'");
+    expect(shell).toContain("? 'overflow-clip'");
+    expect(surface).toContain('chat-surface-full min-h-0 flex-1 overflow-clip');
+    const documentRules: string[] = [];
+    root.walkRules((rule) => {
+      if (rule.selector.includes('html:has(') && rule.selector.includes('body:has(')) {
+        rule.walkDecls('overflow', (decl) => { documentRules.push(decl.value); });
+      }
+    });
+    expect(documentRules).toEqual(['clip']);
   });
 });

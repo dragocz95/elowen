@@ -4,6 +4,10 @@
 /* /chat is an application region, not a scrolling document. The shell fixes this module to its available
    height; the transcript below owns vertical scrolling while the hero and composer remain outside it. */
 .module-root[data-module='chat'] { height: 100%; min-height: 0; }
+/* Hidden overflow still creates a programmatically scrollable box: WebKit's caret reveal can scroll
+   it even with no scrollbar. Clip removes that second scroll owner, only while the chat route exists. */
+html:has(main[data-scroll-owner='chat-shell']),
+body:has(main[data-scroll-owner='chat-shell']) { overflow: clip; }
 
 /* /chat identity hero: the section icon + the page's real <h1>, with a row of live conversation stats.
    Deliberately compact — the conversation below owns the viewport — but the heading is a genuine level 1
