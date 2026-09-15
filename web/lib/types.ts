@@ -655,14 +655,19 @@ export interface PluginDetail extends PluginInfo {
   capabilities?: PluginCapabilities;
 }
 
-/** GET /plugins/:name/contributions — the runtime contribution report filtered to entries OWNED by the
- *  requested plugin (every `plugin` field equals that name). Powers both the Tools and Hooks detail sections. */
+/** The contributions the LOADED plugin registry actually reports, each tagged with its owning plugin.
+ *  Served both by GET /plugins/:name/contributions — filtered to entries OWNED by the requested plugin, so
+ *  every `plugin` field equals that name, powering the Tools and Hooks detail sections — and unfiltered by
+ *  GET /plugins/runtime, which is what lets one web control ask whether ANY plugin contributes a given
+ *  kind (the mid-turn reminder row is offered only when `stepContexts` is non-empty). */
 export interface PluginContributions {
   tools: { name: string; plugin: string }[];
   skills: { name: string; plugin: string }[];
   platforms: { name: string; plugin: string }[];
   promptFragments: { plugin: string }[];
   turnContexts: { plugin: string }[];
+  /** Mid-turn context providers (`ctx.registerStepContext`) — unnamed, only the owner is known. */
+  stepContexts: { plugin: string }[];
   hooks: { name: string; plugin: string }[];
 }
 

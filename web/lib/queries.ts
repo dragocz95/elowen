@@ -317,6 +317,14 @@ export const usePluginDetail = (name: string | null) =>
 export const usePluginContributions = (name: string | null) =>
   useQuery({ queryKey: ['plugin-contributions', name], queryFn: () => elowenClient.pluginContributions(name as string), enabled: !!name });
 
+/** The contributions of the WHOLE loaded registry, unfiltered — read by a control that must ask whether any
+ *  plugin provides something before offering a knob that depends on it. `enabled` is passed by the caller so
+ *  the request happens when that control can actually use the answer, not on every visit to the page; it is
+ *  deliberately left uncached, because toggling the plugin that provides the contribution IS how the control
+ *  behind it is switched off and a stale answer would keep offering (or hiding) the knob after that. */
+export const useRuntimeContributions = (enabled = true) =>
+  useQuery({ queryKey: ['plugin-runtime-contributions'], queryFn: elowenClient.runtimeContributions, enabled });
+
 /** The tail of one plugin's log ring buffer plus derived health (the Logs detail section). Polled every
  *  3 s while a detail is open so logs + the health badge stay live without a manual refresh; the query is
  *  disabled (and polling stops) as soon as the detail closes. */
