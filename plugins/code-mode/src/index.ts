@@ -69,7 +69,8 @@ function toBindings(nested: CodeModeCompositionRequest['nested']): NestedToolBin
   return bindings;
 }
 
-export default function codeModePlugin(ctx: PluginContext): void {
+/** The loader resolves a plugin entry by this NAME, not by its default export. */
+export function register(ctx: PluginContext): void {
   ctx.registerControl('codeMode', {
     compose(request: CodeModeCompositionRequest): ToolDefinition[] {
       return buildCodeModeTools({
