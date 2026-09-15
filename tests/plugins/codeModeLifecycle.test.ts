@@ -8,6 +8,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { register as codeModePlugin } from '../../plugins/code-mode/src/index.js';
+import { createToolTraceSink } from '../../src/brain/toolTrace/sink.js';
 import type { CodeModeCompositionRequest, PluginContext } from '../../src/plugins/api.js';
 import { CodeModeSession, TooManyCellsError } from '../../plugins/code-mode/src/runtime/session.js';
 import type { CellToolBinding } from '../../plugins/code-mode/src/runtime/protocolTypes.js';
@@ -155,7 +156,7 @@ function toolsFor(control: Control, sessionId: string, principal: () => string) 
     sessionId,
     nested: [],
     codeModeOnly: true,
-    notify: () => {},
+    trace: (producerId) => createToolTraceSink(producerId),
     principal,
   });
   return { exec: exec as { execute: Function }, wait: wait as { execute: Function } };

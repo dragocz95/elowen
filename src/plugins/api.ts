@@ -1284,8 +1284,31 @@ export interface CodeModeNestedTool {
   /** True for a tool withheld from the prompt today (a deferred MCP tool). It stays callable and stays
    *  listed for runtime discovery, but spends no tokens on a declaration. */
   deferred: boolean;
-  /** The signal aborts when the cell dies, so a nested call cannot outlive the script. */
-  invoke(input: unknown, signal: AbortSignal): Promise<unknown>;
+  /** The signal aborts when the cell dies, so a nested call cannot outlive the script.
+   *
+   *  `callId` is the id the tool itself sees as its call id, and a caller that draws a row for this call
+   *  should pass that ROW's id: anything the tool keys on its call id — delegated sub-agent progress, a
+   *  workflow run, an inline artifact — then lands on the row the user is looking at instead of on an id
+   *  no row carries. Omitted, the host mints a unique one. */
+  invoke(input: unknown, signal: AbortSignal, callId?: string): Promise<unknown>;
+}
+
+/** Turns work the model did not call directly into ordinary transcript rows — see `src/brain/toolTrace/`.
+ *
+ *  One sink per PRODUCER (a code-mode cell), not per tool call: a cell keeps working after `exec` has
+ *  yielded, so its rows are reported by `exec` and then by each `wait`. {@link drain} returns only what
+ *  has not been reported yet, and the payload it returns belongs on the reporting tool result's
+ *  `details.toolTrace`, where the host expands it on reload. Reporting it twice draws the rows twice;
+ *  not reporting it at all leaves rows that vanish when the user reloads. */
+export interface CodeModeTraceSink {
+  /** Run one call as a row. Rethrows a failure after recording it as an errored row. */
+  call<T>(name: string, args: unknown, execute: (rowId: string | undefined) => Promise<T>): Promise<T>;
+  /** A progress line for the user, shown live under the rows it sits between. */
+  note(text: string): void;
+  /** The records not yet reported. Put them on the reporting result's `details.toolTrace`. */
+  drain(): unknown[];
+  /** Whether any call was recorded, i.e. whether the reporting call's own row is redundant. */
+  hasCalls(): boolean;
 }
 
 /** NOT IMPLEMENTED YET, and deliberately so rather than by oversight: Codex withholds an `exec` result
@@ -1301,8 +1324,10 @@ export interface CodeModeCompositionRequest {
   nested: CodeModeNestedTool[];
   /** True when the nested tools are hidden from the model, so the script is the only way to reach them. */
   codeModeOnly: boolean;
-  /** Injects an extra tool output for the running call, the way a script's `notify()` does. */
-  notify(text: string): void;
+  /** A transcript sink for one producer — pass `trace` to each `invoke` the producer makes, report its
+   *  `drain()` on the result that reports for it, and use `note()` for a script's `notify()`. The id is
+   *  the producer's own (the tool call that created the cell), and it prefixes every row id. */
+  trace(producerId: string): CodeModeTraceSink;
   /** WHO is speaking, read per call rather than per composition. A shared room composes its tools once
    *  and serves many senders, so this is what keeps one sender's cells and stored values their own. */
   principal(): string;

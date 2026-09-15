@@ -12,11 +12,15 @@
  *
  * THREE INVARIANTS A NEW CALLER MUST HONOUR:
  *
- * 1. IDS ARE DERIVED, never minted twice — {@link traceRowId}. The live event and the hydrated segment
- *    must compute the same id from the same inputs, or a client draws the row twice (once from the
- *    stream, once from the refetch) instead of patching it.
- * 2. EVERY LIVE ROW NEEDS A DURABLE TWIN. Emit only what was also recorded; a live-only row works until
- *    the user presses F5 and then vanishes, which is the exact bug this module exists to fix.
+ * 1. A ROW ID IS MINTED ONCE, by the producer, and travels INSIDE the record — see {@link traceRowId}.
+ *    The live event and the stored record therefore carry the same id by construction, instead of two
+ *    sides recomputing it and drifting; a drift draws the row twice, once from the stream and once from
+ *    the refetch, rather than patching it.
+ *    A positional id would not survive the real producer: a code-mode cell keeps recording after `exec`
+ *    has yielded, so the rows of one cell are reported across several tool calls, and the position of a
+ *    record inside one call's payload says nothing about which row it is.
+ * 2. EVERY LIVE ROW NEEDS A DURABLE TWIN, and each record must be reported exactly ONCE. A live-only row
+ *    works until the user presses F5 and then vanishes; a record reported by two calls draws twice.
  * 3. THE PAYLOAD IS CAPPED, visibly — {@link MAX_TRACE_RECORDS}, {@link MAX_TRACE_BYTES}. A loop calling
  *    a tool a thousand times must not grow the stored row without bound, and truncation must be stated
  *    rather than silent.
@@ -31,6 +35,8 @@ import type { ToolOutputView } from '../../shared/wireContract.js';
  *  time here, where a direct call re-derives them at render. */
 export interface ToolTraceCall {
   kind: 'call';
+  /** The row this record is, minted by the producer. Absent only on a record built for a comparison. */
+  row?: string;
   name: string;
   detail?: string;
   command?: string;
@@ -48,17 +54,17 @@ export interface ToolTraceNote {
 
 export type ToolTrace = ToolTraceCall | ToolTraceNote;
 
-/** Records kept per owning call. A panel is a live view of what is happening, not an audit log; the
- *  transcript keeps the durable record and the stored row has to stay a sane size. */
+/** Records kept per producer (per code-mode cell). A panel is a live view of what is happening, not an
+ *  audit log; the transcript keeps the durable record and the stored rows have to stay a sane size. */
 export const MAX_TRACE_RECORDS = 100;
 
-/** Serialised budget per owning call. Reached before the count when results carry large diffs. */
+/** Serialised budget per producer. Reached before the count when results carry large diffs. */
 export const MAX_TRACE_BYTES = 128 * 1024;
 
-/** The id of the nth row belonging to `callId`. Both the live emitter and the hydration compute row ids
- *  through this function — that is what makes the streamed row and the reloaded row the same row. */
-export function traceRowId(callId: string | undefined, index: number): string | undefined {
-  return callId === undefined ? undefined : `${callId}:${index}`;
+/** The id of the nth row of `producerId`. Called in exactly one place — the sink that mints the row —
+ *  and never recomputed by a reader. */
+export function traceRowId(producerId: string, index: number): string {
+  return `${producerId}:${index}`;
 }
 
 /** Read a persisted trace payload back defensively. The stored row is untrusted input by the time it is
@@ -73,6 +79,7 @@ export function parseToolTraces(value: unknown): ToolTrace[] {
     if (record.kind === 'call' && typeof record.name === 'string' && record.name) {
       out.push({
         kind: 'call',
+        ...(typeof record.row === 'string' && record.row ? { row: record.row } : {}),
         name: record.name,
         ...(typeof record.detail === 'string' ? { detail: record.detail } : {}),
         ...(typeof record.command === 'string' ? { command: record.command } : {}),

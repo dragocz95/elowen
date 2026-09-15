@@ -28,7 +28,7 @@ import { createProjectExecutionBoundary } from '../session/projectExecutionBound
 import { buildProjectTool } from '../tools/projectTool.js';
 import { codeModeApplies, codeModeVisibilityFor } from '../session/codeModeRoute.js';
 import { personaTemplatesFor } from '../session/personaRoute.js';
-import { CodeModeCardFeed } from '../session/codeModeCard.js';
+import { createToolTraceSink } from '../toolTrace/sink.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
@@ -469,13 +469,18 @@ export class LiveSessionSpawner {
           },
         })
       : undefined;
+    // Resolve tool→icon once per session and stamp it on each tool event, so every client renders the
+    // same icon without its own hardcoded map. Resolved BEFORE the tool composition, because a code-mode
+    // trace sink stamps the same glyph on the rows it draws for calls PI never saw. Icons live with their owner: built-in tools declare them
+    // co-located (BUILTIN_TOOL_ICONS), plugins in their manifest — a plugin entry overrides a built-in.
+    const iconMap = new Map<string, string>(Object.entries(BUILTIN_TOOL_ICONS));
+    for (const [k, v] of plugins?.toolIcons ?? []) iconMap.set(k, v);
+    const iconOf = makeToolIconResolver(iconMap);
     // CODE MODE. Resolved once per spawn from the same snapshot every other route decision reads, so a
     // config change applies on the next respawn and never mid-turn. The control is absent whenever the
     // plugin is not loaded, which reads as "code mode unavailable" and leaves the direct tool surface.
     const codeModeControl = codeModeApplies(providerEntry, model.id) ? plugins?.control('codeMode') : undefined;
     let codeModeToolNames: string[] = [];
-    // The only window the user has into a running script: nested calls emit no PI tool events.
-    const codeModeCard = new CodeModeCardFeed(sessionId);
     const allTools = composeSessionTools({
       kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
@@ -569,12 +574,12 @@ export class LiveSessionSpawner {
               // has none to pass. No Elowen core or bundled-plugin tool reads it, and a third-party tool
               // that does will throw — which reaches the script as a rejected promise, never as a silent
               // success. That failure mode is the reason this is a cast and not a fabricated context.
-              invoke: async (input: unknown, signal: AbortSignal) => {
-                // A nested call emits no PI tool event, so the panel is the only place the user sees it.
-                const row = codeModeCard.callStarted(tool.name);
-                try {
+              // `callId` is the row the caller drew for this call, so whatever the tool keys on its call
+              // id (a delegated sub-agent, a workflow run) lands on that row. Absent, a unique id keeps
+              // unrelated calls from colliding.
+              invoke: async (input: unknown, signal: AbortSignal, callId?: string) => {
                   const result = await tool.execute(
-                    `code-mode-${randomUUID()}`,
+                    callId ?? `code-mode-${randomUUID()}`,
                     input,
                     // Terminating the cell kills the worker, which stops the SCRIPT. This is what also
                     // stops a nested Bash or MCP call the script had already started.
@@ -587,15 +592,10 @@ export class LiveSessionSpawner {
                   // Turned back into a rejection so the failure is impossible to miss inside the cell.
                   const refusal = refusedToolResultText(result);
                   if (refusal !== undefined) throw new Error(refusal);
-                  codeModeCard.callSettled(row);
                   return result;
-                } catch (err) {
-                  codeModeCard.callSettled(row, err instanceof Error ? err.message : String(err));
-                  throw err;
-                }
               },
             })),
-            notify: (text) => { codeModeCard.note(text); },
+            trace: (producerId) => createToolTraceSink(producerId, iconOf),
             // Read per call: a room's tools are composed once, but each sender keeps their own cells.
             principal: () => String(currentContributionUserId() ?? 'anonymous'),
           });
@@ -868,12 +868,6 @@ export class LiveSessionSpawner {
       onSpawned: toolHookBus ? (e) => toolHookBus.emit('brain.session.afterSpawn', e) : undefined,
     });
 
-    // Resolve tool→icon once per session and stamp it on each tool event, so every client renders the
-    // same icon without its own hardcoded map. Icons live with their owner: built-in tools declare them
-    // co-located (BUILTIN_TOOL_ICONS), plugins in their manifest — a plugin entry overrides a built-in.
-    const iconMap = new Map<string, string>(Object.entries(BUILTIN_TOOL_ICONS));
-    for (const [k, v] of plugins?.toolIcons ?? []) iconMap.set(k, v);
-    const iconOf = makeToolIconResolver(iconMap);
     // The stateful event reducer that projects raw PI events into the store and fans the BrainEvent
     // contract to clients. Extracted into spawnEventReducer.ts (its own deferred terminal state per
     // session); `getLive` defers the `live` capture because it is assigned below, after subscribe — and
@@ -887,6 +881,9 @@ export class LiveSessionSpawner {
       store: this.d.store,
       providerId,
       iconOf,
+      // The names the composition actually produced, so the wrapper rows are hidden live exactly
+      // where the trace sink draws the real ones.
+      isCodeModeTool: (name: string) => codeModeToolNames.includes(name),
       queuedSteer,
       queuedFollowUp,
       maxSteps: this.d.maxSteps,

@@ -66,7 +66,7 @@ describe('a recorded row renders like a direct one', () => {
       expect(direct, 'the direct path must produce a tool segment for this fixture').toBeDefined();
 
       const trace = traceForCall(c.name, c.args, c.result, c.isError);
-      const [recorded] = segmentsForTraces([trace], 'call_x');
+      const [recorded] = segmentsForTraces([{ ...trace, row: 'call_x:0' }]);
       expect(recorded?.kind).toBe('tool');
       if (recorded?.kind !== 'tool' || direct === undefined) return;
 
@@ -109,7 +109,7 @@ describe('a recorded row renders like a direct one', () => {
 
     it(`${c.name}${c.isError ? ' (failing)' : ''}: the live row id equals the hydrated row id`, () => {
       const trace = traceForCall(c.name, c.args, c.result, c.isError);
-      const [recorded] = segmentsForTraces([trace], 'call_x');
+      const [recorded] = segmentsForTraces([{ ...trace, row: 'call_x:0' }]);
       const [open] = openEventsForCall(c.name, c.args, 'call_x:0');
       const [settle] = settleEventsForTrace(trace, 'call_x:0');
 
@@ -129,14 +129,14 @@ describe('hydration expands a wrapper call into its recorded rows', () => {
 
   it('replaces the wrapper row with the rows it recorded', () => {
     const traces = [
-      traceForCall('Bash', { command: 'ls' }, { content: [{ type: 'text', text: '$ ls\n(cwd: /tmp)\na\n[exit 0]' }], details: { exitCode: 0 } }),
-      traceForCall('Write', { file_path: '/tmp/a' }, { details: { diff: '--- a\n+++ b' } }),
+      { ...traceForCall('Bash', { command: 'ls' }, { content: [{ type: 'text', text: '$ ls\n(cwd: /tmp)\na\n[exit 0]' }], details: { exitCode: 0 } }), row: 'cell_1:0' },
+      { ...traceForCall('Write', { file_path: '/tmp/a' }, { details: { diff: '--- a\n+++ b' } }), row: 'cell_1:1' },
     ];
 
     const segments = wrapper(traces)[0]?.segments ?? [];
 
     expect(segments.map((s) => (s.kind === 'tool' ? s.name : s.kind))).toEqual(['Bash', 'Write']);
-    expect(segments.map((s) => (s.kind === 'tool' ? s.id : undefined))).toEqual(['exec_1:0', 'exec_1:1']);
+    expect(segments.map((s) => (s.kind === 'tool' ? s.id : undefined))).toEqual(['cell_1:0', 'cell_1:1']);
   });
 
   it('keeps the wrapper row when nothing was called, carrying its notes', () => {

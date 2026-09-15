@@ -39,67 +39,90 @@ describe('traceForCall', () => {
   });
 });
 
-describe('ToolTraceLog budget', () => {
-  it('stops at the record cap and says how many calls it did not record', () => {
-    const log = new ToolTraceLog();
-    for (let i = 0; i < MAX_TRACE_RECORDS + 50; i++) log.push({ kind: 'call', name: `Tool${i}` });
+describe('ToolTraceLog', () => {
+  it('mints ids from the producer and the record position', () => {
+    const log = new ToolTraceLog('cell_1');
 
-    const records = log.records();
-    expect(records.filter((r) => r.kind === 'call')).toHaveLength(MAX_TRACE_RECORDS);
-    expect(records[records.length - 1]).toEqual({ kind: 'note', text: '… 50 further call(s) not recorded' });
+    expect(log.open('Bash')).toBe('cell_1:0');
+    expect(log.note('halfway')).toBe('cell_1:1');
+    expect(log.open('Write')).toBe('cell_1:2');
+    expect(traceRowId('cell_1', 2)).toBe('cell_1:2');
   });
 
-  it('keeps a huge call as its bare identity rather than dropping it silently', () => {
-    const log = new ToolTraceLog();
-    const huge = { kind: 'call', name: 'Write', diff: 'x'.repeat(MAX_TRACE_BYTES) } satisfies ToolTrace;
+  it('hands each record out exactly once, so two reporting calls cannot draw one row twice', () => {
+    const log = new ToolTraceLog('cell_1');
+    log.settle(log.open('Bash')!, traceForCall('Bash', { command: 'ls' }, bashResult('a')));
 
-    const accepted = log.push(huge);
+    const first = log.drain();
+    expect(first.map((r) => (r.kind === 'call' ? r.row : r.kind))).toEqual(['cell_1:0']);
 
-    expect(accepted).toEqual({ kind: 'call', name: 'Write' });
-    // What was accepted is what a caller may emit live: the reduced record, never the original.
-    expect(log.records()).toEqual([{ kind: 'call', name: 'Write' }]);
+    // Nothing new yet: a `wait` on the same cell must report nothing rather than repeat the row.
+    expect(log.drain()).toEqual([]);
+
+    log.open('Write');
+    expect(log.drain().map((r) => (r.kind === 'call' ? r.row : r.kind))).toEqual(['cell_1:1']);
+  });
+
+  it('stops handing out rows at the cap and says how many calls it did not record', () => {
+    const log = new ToolTraceLog('cell_1');
+    const rows = Array.from({ length: MAX_TRACE_RECORDS + 50 }, (_, i) => log.open(`Tool${i}`));
+
+    expect(rows.filter((r) => r !== undefined)).toHaveLength(MAX_TRACE_RECORDS);
+    const records = log.drain();
+    expect(records.filter((r) => r.kind === 'call')).toHaveLength(MAX_TRACE_RECORDS);
+    expect(records[records.length - 1]).toEqual({ kind: 'note', text: '… 50 further call(s) not recorded' });
+    // The count is reported once, not re-reported on every later drain.
+    expect(log.drain()).toEqual([]);
+  });
+
+  it('keeps a row that was handed out, shrinking the record instead of losing it', () => {
+    const log = new ToolTraceLog('cell_1');
+    const row = log.open('Write')!;
+
+    const stored = log.settle(row, { kind: 'call', name: 'Write', diff: 'x'.repeat(MAX_TRACE_BYTES) });
+
+    // The live row for cell_1:0 was already drawn, so a durable twin MUST remain under that id.
+    expect(stored).toEqual({ kind: 'call', row: 'cell_1:0', name: 'Write' });
+    expect(log.drain()).toEqual([{ kind: 'call', row: 'cell_1:0', name: 'Write' }]);
+  });
+
+  it('upgrades a settled call to its full record when it fits', () => {
+    const log = new ToolTraceLog('cell_1');
+    const row = log.open('Bash')!;
+    const full = traceForCall('Bash', { command: 'ls' }, bashResult('a'));
+
+    expect(log.settle(row, full)).toEqual({ ...full, row });
   });
 
   it('reports whether any call was recorded, which decides the wrapper row', () => {
-    const empty = new ToolTraceLog();
-    expect(empty.hasCalls()).toBe(false);
-    empty.push({ kind: 'note', text: 'working…' });
-    expect(empty.hasCalls()).toBe(false);
-    empty.push({ kind: 'call', name: 'Read' });
-    expect(empty.hasCalls()).toBe(true);
+    const log = new ToolTraceLog('cell_1');
+    expect(log.hasCalls()).toBe(false);
+    log.note('working…');
+    expect(log.hasCalls()).toBe(false);
+    log.open('Read');
+    expect(log.hasCalls()).toBe(true);
   });
 });
 
 describe('segmentsForTraces', () => {
-  it('derives row ids from the owning call id and the record index', () => {
-    const traces: ToolTrace[] = [{ kind: 'call', name: 'Bash' }, { kind: 'call', name: 'Write' }];
+  it('reads the row id off the record rather than recomputing it', () => {
+    const segments = segmentsForTraces([
+      { kind: 'call', row: 'cell_1:0', name: 'Bash' },
+      { kind: 'call', row: 'cell_1:4', name: 'Write' },
+    ]);
 
-    const segments = segmentsForTraces(traces, 'call_1');
-
-    expect(segments.map((s) => (s.kind === 'tool' ? s.id : undefined))).toEqual(['call_1:0', 'call_1:1']);
-    expect(traceRowId('call_1', 1)).toBe('call_1:1');
-  });
-
-  it('counts notes in the index, so live ids and hydrated ids cannot drift', () => {
-    const traces: ToolTrace[] = [{ kind: 'note', text: 'step 1' }, { kind: 'call', name: 'Bash' }];
-
-    const segments = segmentsForTraces(traces, 'call_1');
-
-    expect(segments).toHaveLength(1);
-    expect(segments[0]?.kind === 'tool' && segments[0].id).toBe('call_1:1');
+    expect(segments.map((s) => (s.kind === 'tool' ? s.id : undefined))).toEqual(['cell_1:0', 'cell_1:4']);
   });
 
   it('rides a note on the first row instead of inventing a row for it', () => {
-    const traces: ToolTrace[] = [{ kind: 'call', name: 'Bash' }, { kind: 'note', text: 'halfway' }];
-
-    const segments = segmentsForTraces(traces, 'call_1');
+    const segments = segmentsForTraces([{ kind: 'call', row: 'cell_1:0', name: 'Bash' }, { kind: 'note', text: 'halfway' }]);
 
     expect(segments).toHaveLength(1);
     expect(segments[0]?.kind === 'tool' && segments[0].output?.notes).toEqual(['halfway']);
   });
 
   it('produces no rows when nothing was called, leaving the wrapper its own row', () => {
-    expect(segmentsForTraces([{ kind: 'note', text: 'computed 2+2' }], 'call_1')).toEqual([]);
+    expect(segmentsForTraces([{ kind: 'note', text: 'computed 2+2' }])).toEqual([]);
     expect(traceNotes([{ kind: 'note', text: 'computed 2+2' }])).toEqual(['computed 2+2']);
   });
 });

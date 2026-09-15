@@ -590,8 +590,18 @@ export function shapeBrainMessages(
         // and `Write` read exactly like direct calls, with no opaque `exec` row above them. A wrapper that
         // recorded no call keeps its own row (below), because a turn that renders nothing is worse.
         const traces = parseToolTraces((res?.result as { details?: { toolTrace?: unknown } } | undefined)?.details?.toolTrace);
-        const traceRows = segmentsForTraces(traces, p.id);
-        if (traceRows.length > 0) { segments.push(...traceRows); continue; }
+        const traceRows = segmentsForTraces(traces);
+        if (traceRows.length > 0) {
+          // A recorded row keys delegated state exactly like a direct one: the nested call ran with the
+          // ROW id as its tool-call id, so a `Delegate` a script made carries its sub-agent state here.
+          for (const row of traceRows) {
+            if (row.kind !== 'tool' || row.id === undefined) { segments.push(row); continue; }
+            const sub = isSubagentToolName(row.name) ? subagents.get(row.id) : undefined;
+            const wf = row.name === 'WorkflowStart' ? workflows.get(row.id) : undefined;
+            segments.push({ ...row, ...(sub ? { sub } : {}), ...(wf ? { wf } : {}) });
+          }
+          continue;
+        }
         const traced = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
         // Progress lines with no row of their own ride the wrapper's output — the fallback case above.
         const notes = traceNotes(traces);

@@ -6,7 +6,7 @@
  * meaningful rather than tautological.
  */
 import { toolCommand, toolDisplay, toolOutputView } from '../messageView.js';
-import { MAX_TRACE_BYTES, MAX_TRACE_RECORDS, type ToolTrace, type ToolTraceCall } from './types.js';
+import { MAX_TRACE_BYTES, MAX_TRACE_RECORDS, traceRowId, type ToolTrace, type ToolTraceCall } from './types.js';
 
 /** Build the record for one settled call. `isError` is the caller's own verdict (a refusal, a thrown
  *  error) and is authoritative, exactly as the `isError` flag on a PI tool event is. */
@@ -27,46 +27,84 @@ export function traceForCall(name: string, args: unknown, result: unknown, isErr
 }
 
 /**
- * The per-call record log, which owns the budget.
+ * The per-producer record log: it mints row ids, owns the budget, and hands each record out exactly once.
  *
- * `push` returns the record that was actually ACCEPTED (possibly reduced to its name, or undefined when
- * the budget is exhausted), and a caller emits live events for exactly that return value. Emitting the
- * unreduced record instead is how the live stream and the reloaded transcript drift apart.
+ * ONE LOG PER PRODUCER, not per reporting call. A code-mode cell keeps working after `exec` has yielded,
+ * so its rows are reported across several tool calls (`exec`, then each `wait`); ids therefore belong to
+ * the cell and {@link drain} returns only what has not been reported yet. Reporting a record twice would
+ * draw its row twice.
+ *
+ * A call is registered when it STARTS, because that is when its live row is drawn and its id must exist.
+ * The slot is filled with the minimal record immediately, so an id that was handed out always has a
+ * durable twin: the budget can shrink a record, never make a streamed row vanish on reload. A call
+ * refused at open time gets no id and no live row, and is counted into the truncation note instead.
  */
 export class ToolTraceLog {
   private readonly entries: ToolTrace[] = [];
+  private readonly rows = new Map<string, number>();
   private bytes = 0;
   private dropped = 0;
+  private reported = 0;
+  private droppedReported = 0;
 
-  push(trace: ToolTrace): ToolTrace | undefined {
-    if (this.entries.length >= MAX_TRACE_RECORDS) { this.dropped += 1; return undefined; }
-    const accepted = this.fit(trace);
-    if (accepted === undefined) { this.dropped += 1; return undefined; }
-    this.entries.push(accepted);
-    this.bytes += sizeOf(accepted);
-    return accepted;
+  constructor(private readonly producerId: string) {}
+
+  /** Register a starting call. Returns its row id, or undefined when the log is full — a caller that
+   *  gets undefined must not emit a live row for that call. */
+  open(name: string): string | undefined {
+    const minimal: ToolTraceCall = { kind: 'call', name };
+    const row = this.append(minimal);
+    if (row === undefined) return undefined;
+    this.entries[this.rows.get(row)!] = { ...minimal, row };
+    return row;
   }
 
-  /** The records to persist: what was accepted, plus one visible note when anything was dropped. A
-   *  silent truncation would read as "the script did less work than it did". */
-  records(): ToolTrace[] {
-    if (this.dropped === 0) return [...this.entries];
-    return [...this.entries, { kind: 'note', text: `… ${this.dropped} further call(s) not recorded` }];
+  /** Fill in a settled call, upgrading its slot to the full display record when the byte budget allows.
+   *  Returns the record now STORED, which is exactly what the caller may emit as its settle event. */
+  settle(row: string, trace: ToolTraceCall): ToolTraceCall {
+    const index = this.rows.get(row);
+    const current = index === undefined ? undefined : this.entries[index];
+    if (index === undefined || current === undefined || current.kind !== 'call') return trace;
+    const full: ToolTraceCall = { ...trace, row };
+    const minimal: ToolTraceCall = { kind: 'call', row, name: trace.name, ...(trace.isError ? { isError: true } : {}) };
+    const budget = this.bytes - sizeOf(current);
+    const stored = budget + sizeOf(full) <= MAX_TRACE_BYTES ? full : minimal;
+    this.entries[index] = stored;
+    this.bytes = budget + sizeOf(stored);
+    return stored;
   }
 
-  /** Whether any CALL was recorded. A caller uses this to decide whether its own row is redundant (the
-   *  rows below it tell the story) or the only thing the user would see. */
+  /** Append a progress line. Returns the row id it is keyed to for live progress (notes occupy an index
+   *  of their own so nothing shifts), or undefined when the log is full. */
+  note(text: string): string | undefined {
+    return this.append({ kind: 'note', text });
+  }
+
+  /** The records not yet reported, plus one visible note when anything was refused since the last drain.
+   *  A silent truncation would read as "the script did less work than it did". */
+  drain(): ToolTrace[] {
+    const fresh = this.entries.slice(this.reported);
+    this.reported = this.entries.length;
+    const newlyDropped = this.dropped - this.droppedReported;
+    this.droppedReported = this.dropped;
+    if (newlyDropped === 0) return fresh;
+    return [...fresh, { kind: 'note', text: `… ${newlyDropped} further call(s) not recorded` }];
+  }
+
+  /** Whether this producer has recorded any CALL at all. A caller uses it to decide whether its own row
+   *  is redundant (the rows below it tell the story) or the only thing the user would see. */
   hasCalls(): boolean {
     return this.entries.some((entry) => entry.kind === 'call');
   }
 
-  /** Fit a record into the byte budget: keep it whole when it fits, otherwise strip the heavy display
-   *  fields and keep the identity (name + error), otherwise refuse it. */
-  private fit(trace: ToolTrace): ToolTrace | undefined {
-    if (this.bytes + sizeOf(trace) <= MAX_TRACE_BYTES) return trace;
-    if (trace.kind !== 'call') return undefined;
-    const minimal: ToolTraceCall = { kind: 'call', name: trace.name, ...(trace.isError ? { isError: true } : {}) };
-    return this.bytes + sizeOf(minimal) <= MAX_TRACE_BYTES ? minimal : undefined;
+  private append(trace: ToolTrace): string | undefined {
+    if (this.entries.length >= MAX_TRACE_RECORDS) { this.dropped += 1; return undefined; }
+    if (this.bytes + sizeOf(trace) > MAX_TRACE_BYTES) { this.dropped += 1; return undefined; }
+    const row = traceRowId(this.producerId, this.entries.length);
+    this.rows.set(row, this.entries.length);
+    this.entries.push(trace);
+    this.bytes += sizeOf(trace);
+    return row;
   }
 }
 

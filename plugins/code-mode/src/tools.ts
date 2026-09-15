@@ -9,6 +9,7 @@
  */
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { CodeModeTraceSink } from '../../../src/plugins/api.js';
 import { Type } from 'typebox';
 import {
   buildExecToolDescription,
@@ -49,7 +50,7 @@ export interface NestedToolBinding {
   deferred: boolean;
   /** Runs the tool. MUST be the composed, fully gated definition's execute, never a bypass.
    *  The signal aborts when the cell dies, so the call cannot outlive the script that made it. */
-  invoke: (input: unknown, signal: AbortSignal) => Promise<unknown>;
+  invoke: (input: unknown, signal: AbortSignal, callId?: string) => Promise<unknown>;
 }
 
 export interface CodeModeToolsOptions {
@@ -60,17 +61,9 @@ export interface CodeModeToolsOptions {
   /** True when the nested tools are hidden from the model and `exec` is the only way to reach them. */
   codeModeOnly: boolean;
   defaultYieldTimeMs?: number;
-  /** Injects an extra tool output for the running `exec` call, as Codex's `notify()` does. */
-  notify: (text: string) => void;
-  /** Reports the nested calls one `exec` made, so a surface can show what happened inside a script. */
-  reportNestedCalls?: (calls: NestedCallRecord[]) => void;
-}
-
-export interface NestedCallRecord {
-  name: string;
-  ok: boolean;
-  /** The failure text handed back into the script, when the call failed. */
-  error?: string;
+  /** A transcript sink per CELL, from core. Every nested call becomes a row, `notify()` becomes a
+   *  progress line, and the records it hands back ride the result that reports for that cell. */
+  trace: (producerId: string) => CodeModeTraceSink;
 }
 
 type ToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
@@ -130,6 +123,10 @@ function toCellBindings(nested: readonly NestedToolBinding[]): CellToolBinding[]
   }));
 }
 
+/** The live sink of each open cell, keyed by cell id, so a `wait` reports the rows its cell recorded
+ *  since the last report. Cleared when the cell settles: only a YIELDED cell can be waited on again. */
+const traces = new Map<string, CodeModeTraceSink>();
+
 export function buildCodeModeTools(options: CodeModeToolsOptions): ToolDefinition[] {
   return [buildExecTool(options), buildWaitTool(options)];
 }
@@ -171,8 +168,10 @@ function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
         throw error;
       }
 
-      const calls: NestedCallRecord[] = [];
       const startedAt = Date.now();
+      // The producer id is THIS call's id: the cell it creates keeps recording after this call has
+      // yielded, and every row of that cell is prefixed with it, whichever call reports the row.
+      const trace = options.trace(_id);
       // Resolved once per call, so the cell, its observation and its settle all hit the same session.
       const session = options.session();
       let cell;
@@ -180,19 +179,14 @@ function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
         cell = session.start({
         source: parsed.code,
         tools: bindings,
-        notify: options.notify,
+        notify: (text) => { trace.note(text); },
         invokeTool: async ({ name, input, signal }) => {
           const tool = byGlobalName.get(name) ?? options.nested.find((candidate) => candidate.name === name);
           if (tool === undefined) throw new Error(`tool \`${name}\` is not available`);
-          try {
-            const result = await tool.invoke(input, signal);
-            calls.push({ name: tool.name, ok: true });
-            return result;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            calls.push({ name: tool.name, ok: false, error: message });
-            throw error;
-          }
+          // Wrapped HERE, in the loop that owns every nested call, so no binding can forget to draw its
+          // row. The row id becomes the call id the tool sees — that is what puts a nested `Delegate`'s
+          // sub-agent state on the row the user is watching.
+          return trace.call(tool.name, input, (rowId) => tool.invoke(input, signal, rowId));
         },
         });
       } catch (error) {
@@ -202,11 +196,13 @@ function buildExecTool(options: CodeModeToolsOptions): ToolDefinition {
         throw error;
       }
 
+      // Remembered by cell id so a later `wait` on the same cell reports the rows recorded since.
+      traces.set(cell.cellId, trace);
       const observation = await cell.observe(session.resolveYieldTime(parsed.yieldTimeMs ?? defaultYieldTimeMs));
       session.settleInitialObservation(cell.cellId, observation);
-      options.reportNestedCalls?.(calls);
+      if (observation.kind !== 'yielded') traces.delete(cell.cellId);
 
-      return observationResult(observation, cell.cellId, parsed.maxOutputTokens, Date.now() - startedAt, calls);
+      return observationResult(observation, cell.cellId, parsed.maxOutputTokens, Date.now() - startedAt, trace);
     },
   }) as ToolDefinition;
 }
@@ -234,10 +230,12 @@ function buildWaitTool(options: CodeModeToolsOptions): ToolDefinition {
       });
       const wallTimeMs = Date.now() - startedAt;
 
+      const trace = traces.get(cellId);
+      if (outcome.kind !== 'yielded') traces.delete(cellId);
       if (outcome.kind === 'missing') {
-        return resultFrom({ kind: 'failed' }, [], outcome.errorText, p?.max_tokens, wallTimeMs, false, []);
+        return resultFrom({ kind: 'failed' }, [], outcome.errorText, p?.max_tokens, wallTimeMs, false, trace);
       }
-      return observationResult(outcome, cellId, p?.max_tokens, wallTimeMs, []);
+      return observationResult(outcome, cellId, p?.max_tokens, wallTimeMs, trace);
     },
   }) as ToolDefinition;
 }
@@ -247,7 +245,7 @@ function observationResult(
   cellId: string,
   maxOutputTokens: number | undefined,
   wallTimeMs: number,
-  calls: NestedCallRecord[],
+  trace: CodeModeTraceSink | undefined,
 ): ToolResult {
   const status: ScriptStatus = observation.kind === 'yielded'
     ? { kind: 'yielded', cellId }
@@ -256,7 +254,7 @@ function observationResult(
       : observation.errorText === undefined ? { kind: 'completed' } : { kind: 'failed' };
   // Only a completed-with-error cell is a failure; a yield and a termination both "succeeded".
   const success = observation.kind !== 'completed' || observation.errorText === undefined;
-  return resultFrom(status, observation.items, observation.errorText, maxOutputTokens, wallTimeMs, success, calls);
+  return resultFrom(status, observation.items, observation.errorText, maxOutputTokens, wallTimeMs, success, trace);
 }
 
 function resultFrom(
@@ -266,8 +264,9 @@ function resultFrom(
   maxOutputTokens: number | undefined,
   wallTimeMs: number,
   success: boolean,
-  calls: NestedCallRecord[],
+  trace: CodeModeTraceSink | undefined,
 ): ToolResult {
+  const records = trace?.drain() ?? [];
   const shaped = buildCodeModeResultItems({
     status,
     items,
@@ -279,7 +278,9 @@ function resultFrom(
     content: toToolContent(shaped),
     details: {
       success,
-      ...(calls.length > 0 ? { nestedCalls: calls } : {}),
+      // The rows recorded for this cell since the last report. Core expands them in place of THIS call's
+      // own row on reload, so the transcript shows the tools the script used and not the wrapper.
+      ...(records.length > 0 ? { toolTrace: records } : {}),
     },
   };
 }
