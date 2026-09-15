@@ -294,8 +294,6 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
   if (o.startedAt !== undefined && (typeof o.startedAt !== 'number' || !Number.isSafeInteger(o.startedAt) || o.startedAt < 0)) return undefined;
   if (o.result !== undefined && typeof o.result !== 'string') return undefined;
   if (o.error !== undefined && typeof o.error !== 'string') return undefined;
-  if (o.outputPath !== undefined && (typeof o.outputPath !== 'string' || !o.outputPath || o.outputPath.length > 4096)) return undefined;
-  if (o.outputBytes !== undefined && (typeof o.outputBytes !== 'number' || !Number.isSafeInteger(o.outputBytes) || o.outputBytes < 0)) return undefined;
   return {
     id: o.id,
     task: bounded(o.task, MAX_WORKFLOW_TASK_CHARS),
@@ -313,8 +311,6 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
     ...(typeof o.startedAt === 'number' ? { startedAt: o.startedAt } : {}),
     ...(typeof o.result === 'string' ? { result: bounded(o.result, MAX_WORKFLOW_RESULT_CHARS) } : {}),
     ...(typeof o.error === 'string' ? { error: bounded(o.error, MAX_WORKFLOW_RESULT_CHARS) } : {}),
-    ...(typeof o.outputPath === 'string' ? { outputPath: o.outputPath } : {}),
-    ...(typeof o.outputBytes === 'number' ? { outputBytes: o.outputBytes } : {}),
   };
 }
 
@@ -419,7 +415,7 @@ function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'paren
   return {
     id: o.id, toolCallId: o.toolCallId, sessionId: o.sessionId, status: o.status,
     task: bounded(o.task, 8_000),
-    ...(typeof o.result === 'string' ? { result: o.result } : {}),
+    ...(typeof o.result === 'string' ? { result: bounded(o.result, 100_000) } : {}),
     ...(typeof o.error === 'string' ? { error: bounded(o.error, 100_000) } : {}),
     tools: o.tools, ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
     ...(typeof o.effectiveTps === 'number' ? { effectiveTps: o.effectiveTps } : {}),
@@ -454,9 +450,9 @@ function normalizeWorkflowCompletion(
     toolCallId: o.toolCallId,
     status: o.status === 'done' ? 'done' : 'error',
     task: bounded(title, 8_000),
-    // The workflow producer owns presentation before enqueue. The durable inbox preserves the accepted
-    // bounded summary or placeholder exactly, rather than clipping a successful result a second time.
-    result: o.result,
+    // The producer normally enqueues a bounded placeholder, but the fixed store bound remains a final guard
+    // for malformed or legacy callers that send an oversized raw summary.
+    result: bounded(o.result, 100_000),
   };
 }
 

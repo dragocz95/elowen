@@ -1207,6 +1207,8 @@ export interface WorkflowRecoveryControl {
     hooks: {
       emit: (update: WorkflowUpdate) => void;
       complete: (completion: WorkflowCompletion) => void;
+      /** Host-captured recipient writer used by boot recovery, where no ambient prompt turn exists. */
+      outputWriter?: (input: { toolCallId: string; text: string }) => Promise<{ path: string; bytes: number } | null>;
       stopChild: (childSessionId: string) => Promise<{ stopped: boolean }>;
       /** Finish a node's child the way a restart finishes any delegated child, instead of prompting it
        *  with its task again: `answered` when its transcript already ended on a final answer (that text
@@ -1851,7 +1853,15 @@ export interface PluginContext {
    *  name. The caller keeps whatever it does without a stored path. Rejects on a real write failure, and on
    *  a `text` above the host's size ceiling — bounding what it produces is the caller's job, not this
    *  store's. */
-  persistToolOutput(input: { toolCallId: string; text: string; sessionId?: string }): Promise<{ path: string; bytes: number } | null>;
+  persistToolOutput(input: { toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
+  /** Capture the current conversation's output sink before background work leaves its turn. The returned
+   *  writer has no caller-selectable session or path and is null outside an interactive conversation. */
+  captureToolOutputWriter(): ((input: { toolCallId: string; text: string }) => Promise<{ path: string; bytes: number } | null>) | null;
+  /** Persist output for a workflow node. The host derives the destination session from the node channel id;
+   *  callers cannot choose a session namespace or filesystem path. */
+  persistSubagentToolOutput(input: { channelId: string; toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
+  /** Read a direct child result through the durable parent/child relation, without exposing filesystem access. */
+  readSubagentResult(parentSessionId: string, childSessionId: string): string;
   /** Render the bounded placeholder for a complete output already persisted by persistToolOutput. The host
    * owns the wording and preview budget so delegated producers do not duplicate delivery formatting. */
   formatToolOutputPlaceholder(path: string, bytes: number, text: string): string;
@@ -1960,9 +1970,6 @@ export interface PluginContext {
    *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
    *  from (a cron wake-up records it as the job's origin and the reply lands there). */
   currentSessionId(): string | undefined;
-  /** Resolve the host-derived session id for a delegated channel id. Used only to place workflow output
-   *  in a dependent node's own spill namespace; the plugin cannot choose an account or filesystem path. */
-  subagentSessionId(channelId: string): string;
   /** Opaque outbound destination for the current verified direct platform chat. Persist and return it to
    *  the host for scheduled delivery; never parse or construct it. Undefined elsewhere. */
   currentDeliveryTarget(): string | undefined;

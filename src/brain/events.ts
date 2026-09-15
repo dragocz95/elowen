@@ -244,9 +244,6 @@ export interface WorkflowNode {
   startedAt?: number;
   result?: string;
   error?: string;
-  /** Host-owned full node result in the node session's existing spill namespace. */
-  outputPath?: string;
-  outputBytes?: number;
 }
 
 /** The payload the workflow engine pushes through `ctx.workflowEmitter()` — the whole `workflow`

@@ -16,6 +16,7 @@ import { foldEffectiveUsage, foldToolDetail } from './progress.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './thinking.mjs';
 import {
   CONTEXT_HEADER,
+  MAX_CONTEXT_CHUNK_CHARS,
   MAX_CONTEXT_CHUNKS,
   TRUNCATION_MARKER,
   resolveContextTotalChars,
@@ -38,8 +39,8 @@ const STATUS_ERROR_PREVIEW = 300;
 // Never hand a node a slice too small to carry a finding. A fan-in whose results cannot each reach this
 // is REFUSED (see buildNodeAccess): a node reporting conclusions drawn from three words per dependency —
 // or, once the forced minimum overran the budget, from dependencies it was never shown — is worse than a
-// node that fails and says why.
-const DEP_MIN_CHARS = 400;
+// node that fails and says why. The floor leaves room for the immutable Read reference on the widest DAG.
+const DEP_MIN_CHARS = 300;
 // The blank line joining two result blocks inside one chunk.
 const DEP_BLOCK_SEPARATOR = '\n\n';
 
@@ -292,7 +293,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     try { unlinkSync(journalPath(workflowId)); } catch { /* already gone — the common case for a clean finish */ }
   };
 
-  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, effectiveTps: undefined, effectiveTurnId: undefined, effectiveModel: undefined, seconds: undefined, model: undefined, thinkingLevel: undefined, startedAt: undefined, result: undefined, outputPath: undefined, outputBytes: undefined, handover: undefined, error: undefined });
+  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, effectiveTps: undefined, effectiveTurnId: undefined, effectiveModel: undefined, seconds: undefined, model: undefined, thinkingLevel: undefined, startedAt: undefined, result: undefined, handover: undefined, error: undefined });
 
   /** Appended to a node's task when a resume puts it back into the conversation it already worked in. It has
    *  to read sensibly BOTH ways: the child session usually survives (the node reads its own prior work and
@@ -474,63 +475,58 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     //
     // DIRECT dependencies only, and only their handovers. A transitive chain used to arrive in full: the
     // fourth node of a pipeline read three complete reports, most of them about work it was not doing.
-    // A handover can arrive from the recovery journal, which is an agent-writable file: take it only when it
-    // still has the shape the blocks below slice, never on truthiness alone.
+    // A handover can arrive from the recovery journal, which is an agent-writable file: take only its small
+    // text shape. The complete answer is reconstructed from the host-validated child transcript, never from a
+    // path or body stored in that journal.
     const dependentState = wf.state.get(node.id);
-    const dependentSessionId = dependentState?.channelId && ctx.subagentSessionId
-      ? ctx.subagentSessionId(dependentState.channelId)
-      : dependentState?.sessionId || ctx.currentSessionId?.();
     const depResults = [];
     for (const id of node.deps ?? []) {
       const dependency = wf.state.get(id);
       if (typeof dependency?.handover?.text !== 'string' || dependency.handover.text.length === 0) continue;
+      const result = dependency.handover.text;
       let reference = 'Complete result reference unavailable in this legacy workflow state.';
-      if (typeof dependency.outputPath === 'string' && dependency.outputPath.length > 0) {
-        if (!dependentSessionId) throw new Error(`the dependent node "${node.id}" has no host-derived session for its result reference`);
-        const full = ctx.currentAccess().projectRef?.kind === 'managed'
-          ? await ctx.readManagedProjectFile(dependency.outputPath)
-          : readFileSync(dependency.outputPath, 'utf8');
-        const stored = await ctx.persistToolOutput({
-          toolCallId: `${node.id}-${id}-${wf.run ?? 0}`,
-          text: full,
-          sessionId: dependentSessionId,
-        });
-        if (!stored) throw new Error(`the complete result from node "${id}" could not be copied for dependent "${node.id}"`);
-        reference = outputReference(stored.path, stored.bytes);
+      if (typeof dependency.sessionId === 'string' && dependency.sessionId.length > 0
+        && typeof ctx.readSubagentResult === 'function' && typeof ctx.persistSubagentToolOutput === 'function') {
+        try {
+          const full = ctx.readSubagentResult(wf.originSessionId, dependency.sessionId);
+          if (!dependentState?.channelId) throw new Error(`the dependent node "${node.id}" has no host-derived channel for its result reference`);
+          const stored = await ctx.persistSubagentToolOutput({
+            channelId: dependentState.channelId,
+            toolCallId: `${node.id}-${id}-${wf.run ?? 0}`,
+            text: full,
+          });
+          if (!stored) throw new Error(`the complete result from node "${id}" could not be copied for dependent "${node.id}"`);
+          reference = outputReference(stored.path, stored.bytes);
+        } catch (e) {
+          ctx.logger.warn(`workflow ${wf.id}: complete result for dependency "${id}" unavailable: ${errorText(e)}`);
+        }
       }
-      depResults.push({ id, result: dependency.handover.text, derived: dependency.handover.derived === true, reference });
+      depResults.push({ id, result, derived: dependency.handover.derived === true, reference });
     }
     if (depResults.length) {
       // Each dependency gets its OWN prompt chunk (several share one only when the DAG is wider than the
       // chunk budget), so the per-chunk ceiling bounds a SINGLE result rather than all of them joined.
-      //
-      // The dependency chunker is the final authority on context size. Build candidate parts and ask it to
-      // package them without clipping or dropping a block, then lower the shared slice until the exact result
-      // fits. This avoids duplicating its header, marker and remaining-budget arithmetic here.
+      // Reserve the immutable Read reference line as fixed metadata. Only the handover text is clipped.
+      const spent = contextParts.reduce((n, part) => n + part.length + TRUNCATION_MARKER.length,
+        CONTEXT_HEADER.length + 1);
       const slots = Math.max(1, MAX_CONTEXT_CHUNKS - contextParts.length - 1);
       const perChunk = Math.ceil(depResults.length / slots);
-      const buildDependencyParts = (perDep) => {
-        const parts = [depIntro(
-          depResults.filter((d) => d.derived).map((d) => d.id),
-          depResults.filter((d) => d.result.length > perDep).map((d) => d.id),
-        )];
-        for (let i = 0; i < depResults.length; i += perChunk) {
-          parts.push(depResults.slice(i, i + perChunk)
-            .map((d) => `${depBlockHeading(d.id)}${clipDep(d.result, perDep)}\n\n${d.reference}`)
-            .join(DEP_BLOCK_SEPARATOR));
-        }
-        return parts;
-      };
-      const fitsWithoutChunkerClipping = (parts) => {
-        const packaged = dependencyContextChunks([...contextParts, ...parts], contextTotal);
-        if (packaged.length !== contextParts.length + parts.length) return false;
-        return packaged.every((chunk, index) => {
-          const head = index === 0 ? `${CONTEXT_HEADER}\n` : '';
-          return chunk === `${head}${[...contextParts, ...parts][index].trim()}`;
-        });
-      };
-      let perDep = MAX_HANDOVER_CHARS;
-      while (perDep >= DEP_MIN_CHARS && !fitsWithoutChunkerClipping(buildDependencyParts(perDep))) perDep--;
+      const groups = Math.ceil(depResults.length / perChunk);
+      const introChars = depIntro(depResults.map((d) => d.id), depResults.map((d) => d.id)).length
+        + TRUNCATION_MARKER.length;
+      const referenceSeparatorChars = '\n\n'.length;
+      const referenceChars = depResults.reduce((n, d) => n + d.reference.length + referenceSeparatorChars, 0);
+      const blockChars = depResults.reduce((n, d) => n + depBlockHeading(d.id).length + TRUNCATION_MARKER.length, 0)
+        + DEP_BLOCK_SEPARATOR.length * (depResults.length - groups) + referenceChars;
+      const maxReferenceChars = Math.max(...depResults.map((d) => d.reference.length));
+      const perDep = Math.min(
+        Math.floor((contextTotal - spent - introChars - groups * TRUNCATION_MARKER.length - blockChars)
+          / depResults.length),
+        Math.floor((MAX_CONTEXT_CHUNK_CHARS - TRUNCATION_MARKER.length
+          - perChunk * (Math.max(...depResults.map((d) => depBlockHeading(d.id).length) )
+            + TRUNCATION_MARKER.length + maxReferenceChars + referenceSeparatorChars)
+          - DEP_BLOCK_SEPARATOR.length * (perChunk - 1)) / perChunk),
+      );
       // Refuse rather than starve. Below this the node would be reasoning from fragments, and forcing the
       // minimum anyway is precisely what overran the budget and lost whole dependencies.
       if (perDep < DEP_MIN_CHARS) {
@@ -538,9 +534,15 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
           + `${contextTotal}-char context budget: each would get ${Math.max(0, perDep)} chars, below the `
           + `${DEP_MIN_CHARS}-char minimum. Aggregate them through intermediate nodes.`);
       }
-      // Say so IN the context. A node reading a truncated dependency cannot tell whether the finding it is
-      // looking for was absent or merely cut off, and that difference decides whether it should re-derive.
-      contextParts.push(...buildDependencyParts(perDep));
+      contextParts.push(depIntro(
+        depResults.filter((d) => d.derived).map((d) => d.id),
+        depResults.filter((d) => d.result.length > perDep).map((d) => d.id),
+      ));
+      for (let i = 0; i < depResults.length; i += perChunk) {
+        contextParts.push(depResults.slice(i, i + perChunk)
+          .map((d) => `${depBlockHeading(d.id)}${clipDep(d.result, perDep)}\n\n${d.reference}`)
+          .join(DEP_BLOCK_SEPARATOR));
+      }
     }
     const context = dependencyContextChunks(contextParts, contextTotal);
     const access = {
@@ -630,23 +632,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // so the summary says so up front and WorkflowResume re-runs it.
       const reply = raw?.trim() ? raw : 'Error: the node ended its turn without returning a result';
       if (reply.startsWith('Error:')) { ns.status = 'error'; ns.error = clip(reply.slice('Error:'.length).trim() || reply, MAX_RESULT_CHARS); }
-      // Persist only when the workflow's bounded preview would lose content. Small answers stay inline as
-      // before; large ones use the node session's existing spill namespace, and direct dependents copy that
-      // file into their own namespace before receiving its Read reference.
+      // Keep only the bounded display preview in workflow state. The complete answer remains in the durable
+      // child transcript and is reconstructed through the host relation when a dependent or final summary
+      // needs a Read reference.
       else {
-        const needsReference = reply.length > MAX_RESULT_CHARS;
-        const stored = needsReference ? await ctx.persistToolOutput({
-          toolCallId: `${node.id}-${wf.run ?? 0}`,
-          text: reply,
-          ...(ns.sessionId ? { sessionId: ns.sessionId } : {}),
-        }) : null;
-        if (needsReference && !stored) throw new Error(`the complete result for node "${node.id}" could not be persisted`);
         ns.status = 'done';
-        ns.result = needsReference ? resultPreview(reply, MAX_RESULT_CHARS) : reply;
-        if (stored) {
-          ns.outputPath = stored.path;
-          ns.outputBytes = stored.bytes;
-        }
+        ns.result = resultPreview(reply, MAX_RESULT_CHARS);
         ns.handover = handoverOf(reply);
       }
     } catch (e) {
@@ -710,14 +701,22 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     wf.resolveDone?.();
   };
 
-  const summarize = (wf) => {
+  const summarize = async (wf) => {
     const lines = [`Workflow ${wf.title ? `"${wf.title}" ` : ''}finished with status: ${wf.status}.`];
     for (const n of wf.nodes) {
       const s = wf.state.get(n.id);
       lines.push('', `[${n.id}] ${s.status.toUpperCase()}${n.deps.length ? ` (after ${n.deps.join(', ')})` : ''}`);
       if (s.status === 'done') {
         lines.push(s.result || '(no output)');
-        if (s.outputPath) lines.push(outputReference(s.outputPath, s.outputBytes));
+        if (s.sessionId && s.result?.startsWith(TRUNCATION_MARKER) && wf.outputWriter && ctx.readSubagentResult) {
+          const full = ctx.readSubagentResult(wf.originSessionId, s.sessionId);
+          const stored = await wf.outputWriter({
+            toolCallId: `${wf.toolCallId}-${n.id}-${wf.run ?? 0}`,
+            text: full,
+          });
+          if (!stored) throw new Error(`the complete result for node "${n.id}" could not be persisted for the workflow summary`);
+          lines.push(outputReference(stored.path, stored.bytes));
+        }
       }
       else if (s.status === 'error') lines.push(`Error: ${s.error}`);
       // A node the cancellation caught mid-run is NOT a node that never ran: it may already have edited
@@ -757,12 +756,20 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   /** Deliver a detached/background workflow's summary through the turn-captured durable host sink, so an
    *  explicit `background` and a Ctrl+B detach follow the exact same result path. A never-detached
    *  foreground workflow returns its summary inline instead, so this is gated on `wf.background`. */
-  const deliverCompletion = (wf, summary) => {
+  const deliverCompletion = async (wf, summary) => {
     if (!wf.background || !wf.emitCompletion) return;
     try {
+      let result = summary;
+      const inlineLimit = typeof ctx.toolResultInlineBytes === 'function' ? ctx.toolResultInlineBytes() : 120_000;
+      if (Buffer.byteLength(summary, 'utf8') > inlineLimit) {
+        if (!wf.outputWriter) throw new Error('the complete workflow summary has no host-captured output writer');
+        const stored = await wf.outputWriter({ toolCallId: wf.toolCallId, text: summary });
+        if (!stored) throw new Error('the complete workflow summary could not be persisted');
+        result = ctx.formatToolOutputPlaceholder(stored.path, stored.bytes, summary);
+      }
       // `run` tells the host which run of this DAG the summary closes: a resumed run's summary must reach
       // the parent as a NEW result, not be dropped as a duplicate of the first one it already heard.
-      wf.emitCompletion({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, result: summary, run: wf.run ?? 0 });
+      wf.emitCompletion({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, result, run: wf.run ?? 0 });
     } catch (e) {
       ctx.logger.warn(`workflow completion persistence failed: ${errorText(e)}`);
     }
@@ -936,6 +943,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // (a cancelled-on-restart one), and this run's must not be dropped as its duplicate.
       run: (Number.isInteger(raw.run) && raw.run >= 0 ? raw.run : 0) + 1,
       emitCompletion: (completion) => hooks.complete(completion),
+      outputWriter: hooks.outputWriter,
       resolveDetached: undefined,
       // Boot-only: nodes whose child session survived get ONE continuation (runNodeTurn) instead of a
       // fresh prompt. Absent on a live WorkflowResume, whose interrupted children were stopped on purpose.
@@ -1138,6 +1146,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // no sink cannot promise asynchronous delivery, so its requested background run becomes a real
       // foreground run: abort and Ctrl+B must see the same mode the tool call actually uses.
       const emitCompletion = ctx.workflowCompletionEmitter?.() ?? undefined;
+      const outputWriter = ctx.captureToolOutputWriter?.();
       const background = requestedBackground && Boolean(emitCompletion);
       const wf = {
         id: `wf-${randomUUID()}`,
@@ -1177,6 +1186,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         // share ONE run.
         background,
         emitCompletion,
+        outputWriter,
         resolveDetached: undefined,
       };
       workflows.set(wf.id, wf);

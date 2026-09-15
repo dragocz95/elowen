@@ -352,13 +352,9 @@ export function register(ctx) {
         job.completionPrepared = true;
         return true;
       }
-      const stored = await ctx.persistToolOutput({
-        toolCallId: job.toolCallId,
-        text: fullResult,
-        // runChild is detached from the originating turn on some runners; this is the host-derived parent
-        // session captured before launch, never a model-supplied path or account selector.
-        ...(job.originSessionId ? { sessionId: job.originSessionId } : {}),
-      });
+      const stored = job.outputWriter
+        ? await job.outputWriter({ toolCallId: job.toolCallId, text: fullResult })
+        : null;
       if (!stored) {
         job.status = 'error';
         job.error = `the complete result could not be persisted; use DelegateRead for ${job.sessionId || 'the sub-agent'} to recover it`;
@@ -648,6 +644,9 @@ export function register(ctx) {
       const emitCompletion = ctx.subagentCompletionEmitter();
       const originSessionId = ctx.currentSessionId();
       const originPrincipal = principalOf(ctx.currentIdentity());
+      // Capture the host-owned recipient before the child leaves this tool turn. The writer exposes no
+      // session selector to the plugin and remains usable when the background child finishes later.
+      const outputWriter = ctx.captureToolOutputWriter?.();
       // Delegation is ASYNCHRONOUS by default: an omitted `background` starts the child and returns a
       // handle, and the result is delivered in a new turn. Waiting inside the call is the explicit
       // choice (`background: false`).
@@ -700,6 +699,7 @@ export function register(ctx) {
         background,
         autoDeliver: background && !!emitCompletion,
         emitCompletion,
+        outputWriter,
         resolveDetached: undefined,
         startedAt,
         finishedAt: undefined,
@@ -1120,6 +1120,7 @@ export function register(ctx) {
       // already exists, so its session id is known up front — no `session` event needed to seed the row.
       const originSessionId = ctx.currentSessionId();
       const originPrincipal = principalOf(ctx.currentIdentity());
+      const outputWriter = ctx.captureToolOutputWriter?.();
       const trackable = Boolean(originSessionId && originPrincipal);
       // Capacity must be reserved BEFORE continueSubagent can steer or start a child turn. Checking after that
       // side effect returned an error while leaving an untracked continuation running outside detach/reload.
@@ -1155,6 +1156,7 @@ export function register(ctx) {
         originPrincipal,
         emit: ctx.subagentEmitter(),
         emitCompletion,
+        outputWriter,
         background: false,
         autoDeliver: false,
         resolveDetached: undefined,

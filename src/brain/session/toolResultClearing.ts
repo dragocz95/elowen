@@ -74,12 +74,12 @@ export const COLD_CLEAR_MIN_BYTES = 1024;
  *  for the idle gate: at ~12k tokens one result of this size costs more context than the whole rest of
  *  a typical turn, and the model can read it back in full from the spill path.
  *
- *  The fresh default is 120 000 bytes and the live operator setting is read through
+ *  The live operator setting is read through
  *  `setSpillMaxResultBytes`. `toolOutputMaxChars` caps the TRANSCRIPT preview, not what the model receives,
  *  so it neither bounds nor competes with this. Measured in bytes because this module already measures in
  *  bytes.
  */
-export const SPILL_MAX_RESULT_BYTES = 120_000;
+export const SPILL_MAX_RESULT_BYTES = 50_000;
 
 /** Aggregate cap on ONE wire-level tool-result message. pi-ai's Anthropic converter coalesces every RUN
  *  of consecutive `toolResult` messages into a single `user` message (`convertMessages`), so the parallel

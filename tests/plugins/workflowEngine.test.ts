@@ -1,4 +1,4 @@
-import { afterAll, describe, it, expect } from 'vitest';
+import { afterAll, describe, it, expect, vi } from 'vitest';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname, sep } from 'node:path';
@@ -29,7 +29,9 @@ const rawGuestWorkflowFile = (contents: string): string => {
 const guestWorkflowFile = (definition: unknown): string => rawGuestWorkflowFile(JSON.stringify(definition));
 
 let testPersistCounter = 0;
+const persistedOutputTexts: string[] = [];
 const testPersistToolOutput = async ({ toolCallId, text, sessionId }: { toolCallId: string; text: string; sessionId?: string }) => {
+  persistedOutputTexts.push(text);
   const sessionKey = (sessionId ?? 'brain-parent').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
   const dir = resolve(workflowFilesDir, 'tool-results', sessionKey);
   mkdirSync(dir, { recursive: true });
@@ -40,6 +42,14 @@ const testPersistToolOutput = async ({ toolCallId, text, sessionId }: { toolCall
 };
 const testFormatToolOutputPlaceholder = (path: string, bytes: number, text: string) =>
   `[Large tool result (${bytes} bytes) saved to disk instead of the context. Full output at: ${path} — read it with the Read tool if needed. First ${Math.min(2000, text.length)} characters below.]\n${text.slice(0, 2000)}`;
+const testPersistSubagentToolOutput = async ({ channelId, toolCallId, text }: { channelId: string; toolCallId: string; text: string }) => {
+  const dir = resolve(workflowFilesDir, 'tool-results', `subagent-${channelId}`);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${toolCallId}-${(testPersistCounter++).toString(36)}.txt`);
+  writeFileSync(path, text, { flag: 'wx' });
+  persistedOutputTexts.push(text);
+  return { path, bytes: Buffer.byteLength(text, 'utf8') };
+};
 
 const assertTestPathAllowed = (path: string): string => {
   const abs = resolve(path);
@@ -84,6 +94,7 @@ interface WorkflowControl {
   /** The engine's liveness seam: does THIS engine still hold the DAG? Status reads consult it instead of
    *  trusting a durable row whose terminal snapshot may never have landed. */
   isWorkflowLive(input: { workflowId: string }): boolean;
+  resumeInterrupted(input: unknown): Promise<{ resumed: boolean; reason?: string }>;
 }
 
 /** When set, the harness `run` parks the matching task on this promise and settles it as an aborted
@@ -108,6 +119,7 @@ function harness(opts: {
   models?: { provider: string; model: string; reasoningLevels?: string[] }[];
   subagentTypes?: { name: string; description: string }[];
   workflowExpansionRpc?: { addNodes(input: { workflowId: string; nodes: unknown[] }): Promise<{ added: string[] }> };
+  readSubagentResult?: (parentSessionId: string, childSessionId: string) => string;
 } = {}) {
   gate = null;
   const tools = new Map<string, Tool>();
@@ -119,6 +131,7 @@ function harness(opts: {
   // A resume test needs a node that fails its FIRST run and succeeds on retry — real recovery, not a
   // second guaranteed failure. FAIL_ONCE tracks attempts per exact task string.
   const attempts = new Map<string, number>();
+  const nodeResults = new Map<string, string>();
   /** Every launch as the host saw it: which channel the node ran in, and the VERBATIM task it received.
    *  A resume is only real if the channel id repeats — that is what puts the retry back in the same session. */
   const runs: { task: string; channelId: string; fullTask: string; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string }[] = [];
@@ -168,9 +181,11 @@ function harness(opts: {
       ? `\n\n**Handover:**\nhandover-of:${task}\n\nFor reference the format is:\n\n\`\`\`md\n## Handover\nquoted-example-not-the-handover\n\`\`\``
       : (task.includes('WITH_HANDOVER') ? `\n\n## Handover\nhandover-of:${task}` : '');
     const bulk = /BULK:(\d+)/.exec(task);
-    return bulk
+    const result = bulk
       ? `done:${task}:${'x'.repeat(Number(bulk[1]))}:CONCLUSION${handover}`
       : `done:${task}${handover}`;
+    nodeResults.set(`s-${task}`, result);
+    return result;
   };
   /** Mutable so a test can call a tool AS one of the workflow's own node sessions. */
   const sessionId = { current: 'brain-parent' };
@@ -208,6 +223,15 @@ function harness(opts: {
     currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
     currentAccess: () => access.current,
     currentModel: () => model.current,
+    captureToolOutputWriter: () => async ({ toolCallId, text }: { toolCallId: string; text: string }) =>
+      testPersistToolOutput({ toolCallId, text, sessionId: sessionId.current }),
+    persistSubagentToolOutput: testPersistSubagentToolOutput,
+    readSubagentResult: (parentSessionId: string, childSessionId: string) => {
+      if (opts.readSubagentResult) return opts.readSubagentResult(parentSessionId, childSessionId);
+      const result = nodeResults.get(childSessionId);
+      if (result === undefined) throw new Error(`no result for ${childSessionId}`);
+      return result;
+    },
     // The turn's working directory, exactly as the real context resolves it: a managed project's own
     // mount, so guidance can name the directory the caller is actually standing in.
     workDir: () => (access.current.projectRef?.kind === 'managed' ? '/managed-project' : workflowFilesDir),
@@ -246,16 +270,20 @@ function harness(opts: {
     workflowExpansionRpc: () => opts.workflowExpansionRpc ?? null,
     subagentTypes: () => opts.subagentTypes ?? [],
   };
+  const chunkCalls = { value: 0 };
   const helpers = {
     resolveDelegateTools: (_inheritedAllow: string[] | undefined, requested: string[] | undefined) =>
       (requested ? { allow: requested } : { allow: undefined }),
     principalOf: (identity: unknown) => (identity ? 'elowen:1' : null),
-    dependencyContextChunks,
+    dependencyContextChunks: (raw: unknown, totalChars?: number) => {
+      chunkCalls.value += 1;
+      return dependencyContextChunks(raw, totalChars);
+    },
   };
   registerWorkflow(ctx, () => run, helpers);
   /** Everything the node can read, as one string — the chunks are a transport detail, not the content. */
   const contextOf = (task: string) => (contexts.get(task) ?? []).join('\n\n');
-  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, completions, pathGuardCalls, managedReads };
+  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, completions, pathGuardCalls, managedReads, chunkCalls };
 }
 
 describe('workflow engine', () => {
@@ -745,26 +773,31 @@ describe('workflow engine', () => {
     for (const id of branches) expect(synthesis).toMatch(new RegExp(`truncated to fit[^\\n]*${id}`));
   });
 
-  // This used to refuse: the divided budget fell below the 400-char floor, the engine applied it anyway,
+  // This used to refuse: the divided budget fell below the 300-char floor, the engine applied it anyway,
   // and the node ran on dependencies it had never been shown. The guard is still there and still fails the
   // node loudly, but it is now DEFENSIVE — the fixed budget carries the widest DAG the engine allows
   // (MAX_NODES) above the floor, so the reachable invariant is that a maximum fan-in arrives whole.
   it('carries the widest fan-in the engine allows without dropping a dependency', async () => {
-    const { tools, launched, contextOf } = harness();
+    const { tools, launched, contextOf, chunkCalls } = harness();
     const branches = Array.from({ length: 63 }, (_, i) => `n${i}`);
     const res = await tools.get('WorkflowStart')!.execute('t-wide', {
       background: false,
       nodesFile: workflowFile([
-        ...branches.map((id) => ({ id, task: `${id} BULK:600` })),
+        ...branches.map((id) => ({ id, task: `${id} BULK:9000` })),
         { id: 'synthesis', task: 'synthesise', deps: branches },
       ]),
     });
     expect(res.content[0]!.text).toMatch(/status: done/);
     expect(launched).toContain('synthesise');
     const synthesis = contextOf('synthesise');
-    for (const id of branches) expect(synthesis).toContain(`## Handover from node "${id}"`);
+    for (const id of branches) {
+      expect(synthesis).toContain(`## Handover from node "${id}"`);
+      expect(synthesis).toMatch(new RegExp(`Read\\(\\{\\"file_path\\":.*${id}.*\\}\\)`));
+    }
     // Nothing shaved off the end by the chunker, which is how the original bug presented.
     expect(synthesis).not.toContain('further context block');
+    // Sizing is arithmetic, not a retry loop that re-packs the entire fan-in once per character.
+    expect(chunkCalls.value).toBeLessThan(100);
   });
 
   // A width the budget CAN represent, with every dependency reporting far more than its slice: the packed
@@ -868,6 +901,28 @@ describe('workflow engine', () => {
     const dependent = contextOf('b');
     expect(dependent).toContain(':CONCLUSION');
     expect(dependent).toContain('Read({"file_path":');
+  });
+
+  it('reads a managed direct dependency from the host child transcript, never a journaled host path', async () => {
+    persistedOutputTexts.length = 0;
+    const { tools, contextOf, managedReads, access } = harness({
+      readSubagentResult: (_parent, child) => `authoritative result from ${child}: ${'x'.repeat(9000)}`,
+    });
+    access.current = { ...TEST_ACCESS, projectRef: { kind: 'managed', projectId: 1 } };
+    const definitionPath = guestWorkflowFile([
+      { id: 'a', task: 'a BULK:9000' },
+      { id: 'b', task: 'b', deps: ['a'] },
+    ]);
+    const res = await tools.get('WorkflowStart')!.execute('t-managed-dep', {
+      background: false,
+      nodesFile: definitionPath,
+    });
+    expect(res.content[0]!.text).toMatch(/status: done/);
+    // The dependent receives the bounded handover plus a host-owned Read path. The complete authoritative child
+    // answer is kept in that copied spill, not inserted into the managed project's guest context.
+    expect(contextOf('b')).toContain('Read({"file_path":');
+    expect(managedReads).toEqual([definitionPath]);
+    expect(persistedOutputTexts.join('\\n')).toContain('authoritative result from');
   });
 
   // The budget is an ENGINE CONSTANT now, not an operator setting: it was a knob only while the same
@@ -1878,6 +1933,68 @@ describe('WorkflowStop guards', () => {
     const runB = runs.find((r) => r.task === 'b')!;
     expect(runB.channelId).not.toBe(firstA.channelId);
     expect(runB.fullTask).toBe('b');
+  });
+});
+
+describe('workflow recovery', () => {
+  it('ignores a forged journal output path and reconstructs the predecessor from its child session', async () => {
+    persistedOutputTexts.length = 0;
+    const forgedPath = join(workflowFilesDir, 'forged-secret.txt');
+    const secret = 'SECRET FROM AN UNTRUSTED JOURNAL PATH';
+    writeFileSync(forgedPath, secret);
+    const { controls, completions, access } = harness({
+      readSubagentResult: (parent, child) => {
+        expect(parent).toBe('brain-parent');
+        expect(child).toBe('s-a');
+        return 'safe transcript result with the complete predecessor answer';
+      },
+    });
+    const workflowId = 'wf-forged-path';
+    const journalDir = join(workflowFilesDir, 'workflows', 'state');
+    mkdirSync(journalDir, { recursive: true });
+    writeFileSync(join(journalDir, `${workflowId}.json`), JSON.stringify({
+      v: 2,
+      id: workflowId,
+      toolCallId: 'call-forged-path',
+      background: false,
+      run: 0,
+      originSessionId: 'brain-parent',
+      originPrincipal: 'elowen:1',
+      parentAccess: TEST_ACCESS,
+      parentModel: { provider: 'p', model: 'm' },
+      parentCwd: workflowFilesDir,
+      nodes: [
+        { id: 'a', task: 'a', deps: [] },
+        { id: 'b', task: 'b', deps: ['a'] },
+      ],
+      nodeParentAccess: [],
+      nodeParentModel: [],
+      state: [
+        ['a', { status: 'done', sessionId: 's-a', channelId: 'channel-a', result: '[truncated]',
+          outputPath: forgedPath, outputBytes: secret.length, handover: { text: 'old handover', derived: true } }],
+        ['b', { status: 'pending', sessionId: '', channelId: '', result: undefined, handover: undefined }],
+      ],
+    }));
+    access.current = TEST_ACCESS;
+    const outcome = await controls.get('workflow')!.resumeInterrupted({
+      workflowId,
+      parentSessionId: 'brain-parent',
+      toolCallId: 'call-forged-path',
+      hooks: {
+        emit: () => {},
+        complete: (completion: { status: string; result: string }) => completions.push(completion as never),
+        outputWriter: ({ toolCallId, text }: { toolCallId: string; text: string }) =>
+          testPersistToolOutput({ toolCallId, text, sessionId: 'brain-parent' }),
+        stopChild: async () => ({ stopped: true }),
+        continueNode: async () => ({ outcome: 'empty' }),
+        validateBoundary: () => ({ ok: true }),
+      },
+    });
+    expect(outcome.resumed).toBe(true);
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    expect(completions[0]!.status).toBe('done');
+    expect(persistedOutputTexts.join('\\n')).toContain('safe transcript result');
+    expect(persistedOutputTexts.join('\\n')).not.toContain(secret);
   });
 });
 
