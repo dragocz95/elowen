@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "apiVersion": "1",
   "description": "Gives the model a single `exec` tool whose input is raw JavaScript, with every other tool reachable from inside the script through a `tools` object. Composes dependent tool calls into one turn instead of one model round per call. Enabled per provider by an operator switch.",
-  "entry": "src/index.js",
+  "entry": "dist/index.js",
   "provides": {
     "controls": [
       "codeMode"

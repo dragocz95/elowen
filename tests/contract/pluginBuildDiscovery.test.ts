@@ -75,9 +75,9 @@ describe('the TypeScript build discovers plugin projects instead of naming them'
   it('discovers exactly the root plugin projects that exist', () => {
     const onDisk = readdirSync(repoRoot).filter((f) => /^tsconfig\.plugins\.[a-z0-9-]+\.json$/.test(f)).sort();
     expect(discover(repoRoot)).toEqual(onDisk);
-    // Today that set is empty on both sides, which is why the two tests below carry the weight: they
-    // measure the glob against compile units that exist, and the empty case against the build command.
-    expect(onDisk).toEqual([]);
+    // The set this package ships today. It is asserted rather than merely compared so that removing a
+    // plugin's compile unit without removing the plugin cannot pass as "discovery found nothing".
+    expect(onDisk).toEqual(['tsconfig.plugins.code-mode.json']);
   });
 
   it('picks up a plugin compile unit the day one lands, and nothing else', () => {
@@ -92,12 +92,19 @@ describe('the TypeScript build discovers plugin projects instead of naming them'
     expect(discover(dir)).toEqual(['tsconfig.plugins.audit.json', 'tsconfig.plugins.ledger.json']);
   });
 
-  it('collapses to a plain single-project build when no plugin ships TypeScript', () => {
-    // The zero-match case is this package's CURRENT state, and it is the one an unguarded glob breaks:
-    // with no `2>/dev/null` the build prints an ls error, and an unexpanded literal would reach tsc as a
-    // project path that does not exist. Expanding the real script is the only way to see which happened.
+  it('expands to the daemon project plus every plugin project on disk', () => {
+    // Expanding the real script is the only way to see what tsc will actually receive: with no
+    // `2>/dev/null` a zero-match build prints an ls error, and an unexpanded literal would reach tsc as a
+    // project path that does not exist. Both failure modes look like a working build until it runs.
     const expanded = execFileSync('sh', ['-c', `echo ${pkg.scripts['build:ts']!}`], { cwd: repoRoot, encoding: 'utf-8' }).trim();
-    expect(expanded).toBe('tsc -b tsconfig.json');
+    expect(expanded).toBe('tsc -b tsconfig.json tsconfig.plugins.code-mode.json');
+  });
+
+  it('still collapses to a plain single-project build when no plugin ships TypeScript', () => {
+    // The zero-match case has to keep working: this package had no TypeScript plugin at all until code
+    // mode landed, and a fork or a future removal puts it straight back in that state.
+    const dir = fixtureTree({ rootFiles: ['tsconfig.json'], plugins: {} });
+    expect(discover(dir)).toEqual([]);
   });
 
   it('gives every plugin shipping TypeScript sources a root project that emits into that plugin', () => {

@@ -81,9 +81,11 @@ export class Cell {
   constructor(options: CellOptions) {
     this.options = options;
     this.cellId = options.cellId;
-    // Plain ESM on purpose: the same relative path resolves from the TypeScript source during tests
-    // and from the copied plugin tree in dist/, with no compile step in between.
-    this.worker = new Worker(fileURLToPath(new URL('./worker.mjs', import.meta.url)), {
+    // Plain ESM on purpose, and addressed from the PLUGIN ROOT rather than from this file: `tsc` compiles
+    // `src/` into `dist/` and does not carry a `.mjs` across, so a sibling path would resolve to nothing
+    // once this module runs from `dist/runtime/`. Two directories up is the plugin root either way, so
+    // this one expression finds the same file from the TypeScript source under test and from the build.
+    this.worker = new Worker(fileURLToPath(new URL('../../src/runtime/worker.mjs', import.meta.url)), {
       workerData: {
         source: options.source,
         tools: options.tools,
