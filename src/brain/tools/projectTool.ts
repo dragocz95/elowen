@@ -27,24 +27,40 @@ export const projectToolInputSchema = z.discriminatedUnion('action', [
 const projectExecutionRefType = Type.Object({
   kind: Type.Unsafe<ProjectExecutionRef['kind']>({
     type: 'string', enum: ['host', 'managed'],
-    description: 'Execution target kind, as reported by action list.',
+    description: 'host for a host project or plain host administration; managed for a managed project environment.',
   }),
   projectId: Type.Optional(Type.Integer({
     minimum: 1,
-    description: 'Required for kind managed; may be omitted for kind host to mean plain host administration.',
+    description: 'The Project id reported by action list. Required for kind managed; omit it only for plain host administration.',
   })),
 }, {
   additionalProperties: false,
-  description: 'Required with action switch and rejected with action list.',
+  description: 'Where to switch to. Required with action switch, rejected with action list.',
 });
 
 const projectToolInputType = Type.Object({
   action: Type.Unsafe<'list' | 'switch'>({
     type: 'string', enum: ['list', 'switch'],
-    description: 'list takes no target; switch requires one.',
+    description: 'list reads the Projects allowed here; switch requests a new execution target.',
   }),
   target: Type.Optional(projectExecutionRefType),
 }, { additionalProperties: false });
+
+/** The three literal call shapes, written out for the model. They are the same JSON the schema above
+ *  describes, and they exist because the schema alone cannot say that `target` belongs to `switch` only —
+ *  a provider-compatible object schema has no way to express the discriminated union (see above), so the
+ *  arrangement is stated in prose the model reads instead. Also repeated in the refusal messages, which is
+ *  where a model that got it wrong actually looks. */
+const CALL_SHAPES =
+  '{"action":"list"} · {"action":"switch","target":{"kind":"host"}} · '
+  + '{"action":"switch","target":{"kind":"managed","projectId":123}}';
+
+const DESCRIPTION =
+  'List Projects allowed to this conversation, or request switching its execution target. '
+  + `Exactly three call shapes are valid: ${CALL_SHAPES}. `
+  + 'Add "projectId" inside target for kind host to name a host project; kind managed always requires it. '
+  + 'Never put "projectId" at the top level, and never send "target" with action list. '
+  + 'Ids come from action list. A switch applies after the current tool batch and never starts an environment.';
 
 const result = (details: object) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(details) }],
@@ -54,6 +70,55 @@ const unavailable = () => result({
   ok: false as const,
   message: 'The requested Project is not available in this conversation.',
 });
+
+/** At most three argument names, each clamped, so a refusal names what was wrong without echoing an
+ *  arbitrary amount of model-authored text back into the transcript. */
+function nameKeys(keys: readonly string[]): string {
+  const shown = keys.slice(0, 3).map((key) => `"${key.slice(0, 40)}"`);
+  return keys.length > shown.length ? `${shown.join(', ')} and ${keys.length - shown.length} more` : shown.join(', ');
+}
+
+/** Why the arguments were refused, in terms the model can act on.
+ *
+ *  `projectToolInputSchema` stays the authority — this reads the SAME raw input a second time only to
+ *  choose a sentence, and it never reports a Zod issue dump: the paths in one are internal union-branch
+ *  detail ("expected literal list at action" for a switch call) that misleads more than it helps. Each
+ *  branch here is a mistake models actually make against this tool, chiefly because the public schema
+ *  cannot state the discriminated union it is checked against. */
+function invalidInputMessage(raw: unknown): string {
+  const shapes = `Valid shapes: ${CALL_SHAPES}.`;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return `Project takes a JSON object. ${shapes}`;
+  const input = raw as Record<string, unknown>;
+  const action = input.action;
+  if (action !== 'list' && action !== 'switch') {
+    return `"action" must be "list" or "switch". ${shapes}`;
+  }
+  if (action === 'list') {
+    const extra = Object.keys(input).filter((key) => key !== 'action');
+    return `action "list" takes no other argument, so drop ${nameKeys(extra)}. `
+      + 'Call {"action":"list"} first and switch to one of the targets it reports.';
+  }
+  const target = input.target;
+  if (target === undefined || target === null) {
+    const misplaced = Object.keys(input).filter((key) => key === 'kind' || key === 'projectId');
+    return misplaced.length > 0
+      ? `${nameKeys(misplaced)} must be nested inside "target", not sent at the top level. ${shapes}`
+      : `action "switch" requires a "target". ${shapes}`;
+  }
+  if (typeof target !== 'object' || Array.isArray(target)) return `"target" must be a JSON object. ${shapes}`;
+  const ref = target as Record<string, unknown>;
+  if (ref.kind !== 'host' && ref.kind !== 'managed') {
+    return `"target.kind" must be "host" or "managed". ${shapes}`;
+  }
+  if (ref.kind === 'managed' && !(typeof ref.projectId === 'number' && Number.isInteger(ref.projectId) && ref.projectId > 0)) {
+    return 'kind "managed" requires "projectId" inside "target", a positive integer id from action list. '
+      + 'Example: {"action":"switch","target":{"kind":"managed","projectId":123}}.';
+  }
+  const extra = Object.keys(ref).filter((key) => key !== 'kind' && key !== 'projectId');
+  return extra.length > 0
+    ? `"target" accepts only "kind" and "projectId", so drop ${nameKeys(extra)}. ${shapes}`
+    : `Project arguments were not valid. ${shapes}`;
+}
 
 export interface ProjectToolDeps {
   sessionId: string;
@@ -69,11 +134,11 @@ export function buildProjectTool(deps: ProjectToolDeps | undefined) {
   return defineTool({
     name: 'Project',
     label: 'Project',
-    description: 'List Projects allowed to this conversation or request switching its execution target. A switch applies after the current tool batch and never starts an environment.',
+    description: DESCRIPTION,
     parameters: projectToolInputType,
     execute: async (_toolCallId: string, raw: unknown) => {
       const parsed = projectToolInputSchema.safeParse(raw);
-      if (!parsed.success) return result({ ok: false as const, message: 'Invalid Project input.' });
+      if (!parsed.success) return result({ ok: false as const, message: invalidInputMessage(raw) });
       if (!deps) return result({ ok: false as const, message: 'Project control is unavailable in this session.' });
       const action = parsed.data.action;
       const accountUserId = currentAccountUserId();
