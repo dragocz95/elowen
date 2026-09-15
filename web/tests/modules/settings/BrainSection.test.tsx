@@ -72,6 +72,28 @@ const hostedMocks = vi.hoisted(() => ({
     .mockResolvedValue({ providers: [] }),
 }));
 
+type CodeModeStatusProvider = {
+  providerId: string;
+  enabled: boolean;
+  effective: 'active' | 'off' | 'unsupported';
+  models: { modelId: string; status: 'supported' | 'unsupported' }[];
+};
+const codeModeMocks = vi.hoisted(() => ({
+  status: vi.fn<() => Promise<{ providers: {
+    providerId: string;
+    enabled: boolean;
+    effective: 'active' | 'off' | 'unsupported';
+    models: { modelId: string; status: 'supported' | 'unsupported' }[];
+  }[] }>>()
+    .mockResolvedValue({ providers: [] }),
+}));
+
+/** One provider record of GET /brain/providers/code-mode/status, defaulted to a capable provider whose
+ *  switch is still OFF — code mode is opt-in, so that is the state every account starts in. */
+const codeModeProvider = (providerId: string, overrides: Partial<CodeModeStatusProvider> = {}): CodeModeStatusProvider => ({
+  providerId, enabled: false, effective: 'off', models: [], ...overrides,
+});
+
 /** One provider record of GET /brain/providers/hosted-tool-search/status, defaulted to the shape the
  *  daemon reports for a capable, switched-on provider so each test states only what it is about. */
 const hostedProvider = (providerId: string, overrides: Partial<HostedStatusProvider> = {}): HostedStatusProvider => ({
@@ -115,6 +137,7 @@ vi.mock('../../../lib/elowenClient', async (importOriginal) => {
       brainOauthFlow: oauthFlowMocks.flow,
       brainProviderProbe: probeMock.probe,
       brainHostedToolSearchStatus: hostedMocks.status,
+      brainCodeModeStatus: codeModeMocks.status,
     },
   };
 });
@@ -139,6 +162,7 @@ beforeEach(() => {
   oauthFlowMocks.start.mockClear(); oauthFlowMocks.flow.mockClear(); oauthFlowMocks.pending.resolve = null;
   probeMock.probe.mockClear(); probeMock.pending.length = 0;
   hostedMocks.status.mockReset(); hostedMocks.status.mockResolvedValue({ providers: [] });
+  codeModeMocks.status.mockReset(); codeModeMocks.status.mockResolvedValue({ providers: [] });
   (CONFIG.brain.providers as unknown[]).length = 0;
   CONFIG.brain.hiddenOauth.length = 0;
 });
@@ -198,12 +222,14 @@ describe('BrainSection — OAuth account model picker', () => {
     // A config save re-runs the status effect; its answer is the newer generation and must win.
     rerender(<ToastProvider><BrainProvidersSection config={{ ...CONFIG, brain: { ...CONFIG.brain, providers: [...(CONFIG.brain.providers as unknown[])] } } as unknown as ElowenConfig} /></ToastProvider>);
     openSettingsGroups(container);
-    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` }));
-    const dialog = await screen.findByRole('dialog', { name: en.brain.hostedSearchTitle });
-    expect(within(dialog).getByText(en.brain.hostedSearchActive)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
+    const dialog = await screen.findByRole('dialog', { name: en.brain.toolExecutionSettings });
+    // An active route states itself through the switch; only a state the switch cannot show gets a badge.
+    expect(within(dialog).getByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` })).toBeChecked();
+    expect(within(dialog).queryByText(en.brain.hostedSearchUnverified)).toBeNull();
 
     await act(async () => resolveInitial({ providers: [hostedProvider('openai', { effective: 'unverified' })] }));
-    expect(within(dialog).getByText(en.brain.hostedSearchActive)).toBeInTheDocument();
+    expect(within(dialog).getByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` })).toBeChecked();
     expect(within(dialog).queryByText(en.brain.hostedSearchUnverified)).toBeNull();
   });
 
@@ -248,12 +274,12 @@ describe('BrainSection — OAuth account model picker', () => {
     renderSection();
     // The connected Claude account carries one too — its entry id is the built-in provider name, which is
     // what the daemon reports the account's hosted status under.
-    expect(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: ${en.brain.types['oauth-anthropic']}` })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` })).toBeInTheDocument();
     // A relay speaking the same wire API has no hosted route to switch off, so it gets no switch at all.
-    expect(screen.queryByRole('button', { name: `${en.brain.hostedSearchSettings}: Relay` })).toBeNull();
+    expect(screen.queryByRole('button', { name: `${en.brain.toolExecutionSettings}: Relay` })).toBeNull();
     // A disconnected account is absent from the daemon's list for the same reason.
-    expect(screen.queryByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-github-copilot']}` })).toBeNull();
+    expect(screen.queryByRole('button', { name: `${en.brain.toolExecutionSettings}: ${en.brain.types['oauth-github-copilot']}` })).toBeNull();
   });
 
   it('keeps the subscription meters when the account also carries the tool search switch', async () => {
@@ -264,7 +290,7 @@ describe('BrainSection — OAuth account model picker', () => {
     hostedMocks.status.mockResolvedValue({ providers: [hostedProvider('anthropic')] });
 
     renderSection();
-    const gear = await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` });
+    const gear = await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: ${en.brain.types['oauth-anthropic']}` });
     const row = gear.closest('.settings-row')!;
     expect(row.querySelectorAll('[data-testid="oauth-usage-window"]')).toHaveLength(1);
     expect(gear.closest('.settings-row__actions')).not.toBeNull();
@@ -274,8 +300,8 @@ describe('BrainSection — OAuth account model picker', () => {
   it('opens the switch popover with focus on the switch, not on the help tip', async () => {
     hostedMocks.status.mockResolvedValue({ providers: [hostedProvider('anthropic')] });
     renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` }));
-    const dialog = await screen.findByRole('dialog', { name: en.brain.hostedSearchTitle });
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: ${en.brain.types['oauth-anthropic']}` }));
+    const dialog = await screen.findByRole('dialog', { name: en.brain.toolExecutionSettings });
     // Radix autofocuses the first tabbable in the panel; a HelpTip there opens its tooltip over the panel.
     await waitFor(() => expect(within(dialog).getByRole('switch')).toHaveFocus());
     expect(screen.queryByRole('tooltip')).toBeNull();
@@ -291,10 +317,11 @@ describe('BrainSection — OAuth account model picker', () => {
       .mockResolvedValue({ providers: [hostedProvider('openai', { enabled: false, effective: 'off', models: [{ modelId: 'gpt-5.5', status: 'supported', checkedAt: null }] })] });
 
     renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` }));
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
     const toggle = await screen.findByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` });
     expect(toggle).toBeChecked();
-    expect(screen.getByText(en.brain.hostedSearchActive)).toBeInTheDocument();
+    // No "active" badge: the switch in its on position already says that, and restating it is noise.
+    expect(screen.queryByText(en.brain.hostedSearchOff)).toBeNull();
 
     fireEvent.click(toggle);
     // Saved as a field on the provider row through the ordinary providers PUT — no endpoint of its own,
@@ -307,6 +334,79 @@ describe('BrainSection — OAuth account model picker', () => {
     expect(screen.getByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` })).not.toBeChecked();
   });
 
+  it('offers the code mode switch only where the daemon reports a capable wire', async () => {
+    (CONFIG.brain.providers as unknown[]).push(
+      { id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6'], apiKeySet: true },
+      { id: 'legacy', label: 'Legacy', type: 'openai', api: 'openai-completions', baseUrl: 'https://legacy.example/v1', models: ['gpt-5.6'], apiKeySet: true },
+    );
+    codeModeMocks.status.mockResolvedValue({ providers: [
+      codeModeProvider('openai', { models: [{ modelId: 'gpt-5.6', status: 'supported' }] }),
+    ] });
+
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
+    const dialog = await screen.findByRole('dialog', { name: en.brain.toolExecutionSettings });
+    expect(within(dialog).getByRole('switch', { name: `${en.brain.codeModeTitle}: OpenAI` })).not.toBeChecked();
+    // Chat Completions cannot carry the grammar-constrained `exec` tool, so that row gets no popover at
+    // all — its hosted search is off too, and a switch that cannot apply must not be offered.
+    expect(screen.queryByRole('button', { name: `${en.brain.toolExecutionSettings}: Legacy` })).toBeNull();
+  });
+
+  it('turns code mode on by writing the field the daemon actually stores', async () => {
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6'], apiKeySet: true,
+    });
+    codeModeMocks.status
+      .mockResolvedValueOnce({ providers: [codeModeProvider('openai', { models: [{ modelId: 'gpt-5.6', status: 'supported' }] })] })
+      .mockResolvedValue({ providers: [codeModeProvider('openai', { enabled: true, effective: 'active', models: [{ modelId: 'gpt-5.6', status: 'supported' }] })] });
+
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
+    fireEvent.click(await screen.findByRole('switch', { name: `${en.brain.codeModeTitle}: OpenAI` }));
+
+    // Opposite spelling to the hosted-search field above: `true` IS the stored value, and absence is off.
+    await waitFor(() => expect(saveProviders).toHaveBeenCalledWith([expect.objectContaining({
+      id: 'openai', codeModeEnabled: true,
+    })], expect.anything()));
+    expect(saveProviders.mock.calls[0]?.[0][0]).not.toHaveProperty('apiKeySet');
+    await waitFor(() => expect(screen.getByRole('switch', { name: `${en.brain.codeModeTitle}: OpenAI` })).toBeChecked());
+  });
+
+  it('turns code mode off by omitting the field rather than sending false', async () => {
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6'], apiKeySet: true, codeModeEnabled: true,
+    });
+    codeModeMocks.status.mockResolvedValue({ providers: [codeModeProvider('openai', {
+      enabled: true, effective: 'active', models: [{ modelId: 'gpt-5.6', status: 'supported' }],
+    })] });
+
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
+    fireEvent.click(await screen.findByRole('switch', { name: `${en.brain.codeModeTitle}: OpenAI` }));
+
+    await waitFor(() => expect(saveProviders).toHaveBeenCalled());
+    expect(saveProviders.mock.calls[0]?.[0][0]).not.toHaveProperty('codeModeEnabled');
+  });
+
+  it('says so when the provider is capable but none of its models are', async () => {
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5'], apiKeySet: true, codeModeEnabled: true,
+    });
+    codeModeMocks.status.mockResolvedValue({ providers: [codeModeProvider('openai', {
+      enabled: true, effective: 'unsupported', models: [{ modelId: 'gpt-5.5', status: 'unsupported' }],
+    })] });
+
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
+    const dialog = await screen.findByRole('dialog', { name: en.brain.toolExecutionSettings });
+    // The switch is on and the feature still does nothing — exactly the state a badge has to carry.
+    expect(within(dialog).getByRole('switch', { name: `${en.brain.codeModeTitle}: OpenAI` })).toBeChecked();
+    expect(within(dialog).getByText(en.brain.codeModeUnsupported)).toBeInTheDocument();
+  });
+
   it('turns it back on by omitting the field rather than sending true', async () => {
     (CONFIG.brain.providers as unknown[]).push({
       id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
@@ -317,7 +417,7 @@ describe('BrainSection — OAuth account model picker', () => {
     })] });
 
     renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` }));
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
     fireEvent.click(await screen.findByRole('switch', { name: `${en.brain.hostedSearchTitle}: OpenAI` }));
 
     // Absent IS "on": the daemon stores no value meaning enabled, so a `true` would be dropped anyway and
@@ -330,7 +430,7 @@ describe('BrainSection — OAuth account model picker', () => {
     hostedMocks.status.mockResolvedValue({ providers: [hostedProvider('anthropic')] });
 
     renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: ${en.brain.types['oauth-anthropic']}` }));
+    fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: ${en.brain.types['oauth-anthropic']}` }));
     fireEvent.click(await screen.findByRole('switch', { name: `${en.brain.hostedSearchTitle}: ${en.brain.types['oauth-anthropic']}` }));
 
     await waitFor(() => expect(saveProviders).toHaveBeenCalledWith([{

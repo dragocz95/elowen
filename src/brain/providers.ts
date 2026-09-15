@@ -36,6 +36,15 @@ export interface BrainProviderEntry {
    *  provider/model gates and, for Azure, a stored positive probe. So the flag can subtract a route and
    *  never add one, which is what keeps it safe to carry through the generic config PATCH. */
   hostedToolSearchEnabled?: false;
+  /** Operator switch for CODE MODE on this provider: the model is given a single `exec` tool taking raw
+   *  JavaScript, and every other tool is reached from inside that script instead of being advertised.
+   *
+   *  Typed as the literal `true` for the same reason `hostedToolSearchEnabled` is typed `false`, in the
+   *  opposite direction: this one may only ADD a behaviour, and the absent default is today's direct tool
+   *  surface. It is an opt-in because it changes what the model sees on every turn, so nothing about an
+   *  existing installation moves until an operator states it. The provider and model gates still apply on
+   *  top: the switch alone does not turn code mode on for a provider that cannot support it. */
+  codeModeEnabled?: true;
 }
 
 export interface BrainRuntimeConfig {

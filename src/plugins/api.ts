@@ -1250,6 +1250,57 @@ export interface LspStateControl {
   diagnosticsEnabled(): boolean;
 }
 
+/** One already-composed tool as core offers it to a code-mode script.
+ *
+ *  `invoke` is the COMPOSED definition's own `execute`, so it still carries the whole enforcement chain
+ *  (deny list, granular permissions, plan-mode clamp, and for a plugin tool the grant check plus both
+ *  `tools.call.*` hooks). The plugin must call it and must never rebuild a call path of its own: a script
+ *  reaching a tool is exactly as privileged as the model reaching it directly, no more. */
+export interface CodeModeNestedTool {
+  name: string;
+  description: string;
+  /** The tool's JSON input schema, rendered into the TypeScript declaration the model reads. */
+  inputSchema?: unknown;
+  /** True for a tool withheld from the prompt today (a deferred MCP tool). It stays callable and stays
+   *  listed for runtime discovery, but spends no tokens on a declaration. */
+  deferred: boolean;
+  /** The signal aborts when the cell dies, so a nested call cannot outlive the script. */
+  invoke(input: unknown, signal: AbortSignal): Promise<unknown>;
+}
+
+/** NOT IMPLEMENTED YET, and deliberately so rather than by oversight: Codex withholds an `exec` result
+ *  while an approval is outstanding (`elicitations.wait_until_clear`), so the model is never handed a
+ *  "still running" yield that is really "waiting for the user". Elowen has the signal for it —
+ *  `ElicitationRegistry.pendingForSession`, already used by `sessionQuiescence.ts` — but the session
+ *  spawner does not hold the elicitation registry, so wiring it means widening `SpawnerDeps` and every
+ *  construction site, which is a bigger change than this seam should make on its own. Until then an
+ *  approval raised inside a script yields normally and the model may call `wait` while the user is still
+ *  being asked, which is correct but noisier than Codex. */
+export interface CodeModeCompositionRequest {
+  sessionId: string;
+  nested: CodeModeNestedTool[];
+  /** True when the nested tools are hidden from the model, so the script is the only way to reach them. */
+  codeModeOnly: boolean;
+  /** Injects an extra tool output for the running call, the way a script's `notify()` does. */
+  notify(text: string): void;
+  /** WHO is speaking, read per call rather than per composition. A shared room composes its tools once
+   *  and serves many senders, so this is what keeps one sender's cells and stored values their own. */
+  principal(): string;
+}
+
+/** The code-mode plugin's composition seam: core hands it the session's already-gated tools and gets back
+ *  the tools that front them (`exec` and `wait`). Core decides which tools stay directly visible, because
+ *  "the model must always be able to ask the user" is a safety question core owns; the plugin decides how
+ *  a script reaches everything else. An absent control means code mode is simply unavailable and the
+ *  session keeps today's direct tool surface. */
+export interface CodeModeControl {
+  compose(request: CodeModeCompositionRequest): ToolDefinition[];
+  /** Releases any cell still running for a session (each holds a worker thread), called on teardown. */
+  shutdownSession(sessionId: string): void;
+  /** Cells still running anywhere, so a plugin reload does not orphan the threads that own them. */
+  activeCount(): number;
+}
+
 /** A durable execution lease minted before a child is spawned. The caller owns its actual process lifecycle:
  * heartbeat while the child is alive, transfer the same handle when foreground work detaches, and release it
  * only on spawn failure or real exit/error/kill. Implementations persist the row in shared SQLite so daemon
@@ -1544,6 +1595,7 @@ export interface KnownControls {
   workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl & WorkflowRecoveryControl;
   mcp: McpListControl;
   lsp: LspStateControl;
+  codeMode: CodeModeControl;
   sandbox: SandboxControl;
   microsoftIdentity: MicrosoftIdentityControl;
   github: GitHubIdentityControl;

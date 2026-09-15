@@ -211,6 +211,8 @@ interface BrainProviderPublic {
   /** Present only when the operator switched this provider's native tool search off. See
    *  BrainProviderStored.hostedToolSearchEnabled. */
   hostedToolSearchEnabled?: false;
+  /** Present only when the operator switched code mode ON. See BrainProviderStored.codeModeEnabled. */
+  codeModeEnabled?: true;
 }
 
 interface BrainProviderStored {
@@ -228,6 +230,12 @@ interface BrainProviderStored {
    *  a provider row IS client-writable, so the only value it may carry is the one that can subtract a
    *  route. Absent = today's behaviour (enabled wherever the gates and the probe allow it). */
   hostedToolSearchEnabled?: false;
+  /** The operator's "on" switch for CODE MODE, and nothing else. Mirror image of the field above: that one
+   *  may only ever say "off", this one may only ever say "on", and in both cases the absent value is the
+   *  behaviour an installation already has. Code mode rewrites what the model sees on every turn, so it
+   *  stays opt-in; the provider and model gates in the spawner still decide whether the switch has any
+   *  effect. */
+  codeModeEnabled?: true;
 }
 
 /** A malformed capability falls back independently to the conservative baseline. One typo must not
@@ -284,6 +292,9 @@ function sanitizeBrainProviders(input: unknown): BrainProviderStored[] {
       // SAY a route is enabled and a hand-written patch cannot turn one on. Turning the switch back on is
       // therefore the same wire operation as never having touched it: omit the field.
       ...(p.hostedToolSearchEnabled === false ? { hostedToolSearchEnabled: false as const } : {}),
+      // Symmetrically, only an explicit `true` survives here: the stored config cannot SAY code mode is
+      // off, it can only fail to say it is on, so omitting the field is how an operator turns it back off.
+      ...(p.codeModeEnabled === true ? { codeModeEnabled: true as const } : {}),
       apiKey: typeof p.apiKey === 'string' && p.apiKey ? p.apiKey : null,
     });
   }
@@ -1387,7 +1398,7 @@ export class ConfigStore {
   dashboardConfig(): DashboardBlock { return this.read().dashboard; }
 
   /** Daemon-side brain provider list including plaintext API keys. Never routed to any client. */
-  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; compatibility?: BrainProviderCompatibility; apiKey: string | null; temperature?: number; hostedToolSearchEnabled?: false }[] {
+  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; compatibility?: BrainProviderCompatibility; apiKey: string | null; temperature?: number; hostedToolSearchEnabled?: false; codeModeEnabled?: true }[] {
     return this.read().brain.providers;
   }
 

@@ -104,6 +104,12 @@ export interface CapabilitySpec {
    *  inside the tool's ALS turn scope like `onToolResult`, and is fail-open at every layer — a rejecting
    *  gate blocks nothing, and the bus bounds each hook by the event's (deliberately short) budget. */
   onToolCall?: (e: PluginToolCallEvent) => Promise<string | undefined>;
+  /** CODE MODE's `exec`/`wait` pair, composed from this session's tools AFTER they have been gated — the
+   *  argument is the finished array, so a script reaching a tool goes through the very same enforcement
+   *  chain the model's own call would, and no second call path exists to keep in step. Absent (the
+   *  default) or an empty result leaves the direct tool surface untouched. The returned pair takes the
+   *  gates itself, so denying `exec` switches code mode off exactly like denying any other tool. */
+  codeMode?: (nested: ToolDefinition[]) => ToolDefinition[];
 }
 
 /** Wrap a plugin tool so its access is decided at EXECUTE time from the current turn's ToolPolicy.
@@ -135,7 +141,7 @@ function gateToolAccess(
       return refused(`The tool "${tool.name}" belongs to another account and is not available to you in this conversation.`);
     }
     if (!toolPermitted(tool.name, currentToolPolicy())) {
-      return { content: [{ type: 'text' as const, text: `The tool "${tool.name}" is not available to you in this conversation.` }], details: {} };
+      return refused(`The tool "${tool.name}" is not available to you in this conversation.`);
     }
     // Give `tools.call.before` subscribers a veto, AFTER the permission gate: the user's own rules are
     // policy and no plugin may widen them — a hook can only refuse further. Fail-open, so a hook that
@@ -162,7 +168,24 @@ function gateToolAccess(
 }
 
 /** A model-readable refusal result (the tool "ran" but reports why it did not act). */
-const refused = (text: string) => ({ content: [{ type: 'text' as const, text }], details: {} });
+/** A policy refusal, shaped as an ordinary tool result because that is what the model must read: a
+ *  sentence explaining why, not a thrown error it cannot reason about.
+ *
+ *  `refusedByPolicy` is metadata for callers that are NOT the model. A code-mode script calls a tool from
+ *  inside JavaScript, where a refusal that resolves like any other result is indistinguishable from a
+ *  successful one and the script would carry on as if the call had worked. The flag is what lets that path
+ *  turn the refusal back into a rejected promise. It changes nothing the model sees. */
+const refused = (text: string) => ({ content: [{ type: 'text' as const, text }], details: { refusedByPolicy: true } });
+
+/** The refusal sentence when a tool result is a policy refusal rather than an answer, otherwise undefined.
+ *  The signal a nested caller needs to fail loudly instead of reading the refusal text as output. */
+export function refusedToolResultText(result: unknown): string | undefined {
+  if (typeof result !== 'object' || result === null) return undefined;
+  const shaped = result as { details?: { refusedByPolicy?: unknown }; content?: { type?: string; text?: string }[] };
+  if (shaped.details?.refusedByPolicy !== true) return undefined;
+  const text = shaped.content?.find((item) => item.type === 'text')?.text;
+  return text ?? 'the tool refused this call';
+}
 
 /** Enforce the turn's `deny` list at EXECUTE time, for EVERY tool rather than only plugin ones.
  *
@@ -386,7 +409,12 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
       + capped.map((c) => `${c.name} (${c.bytes} bytes, ${c.schemaOmitted ? 'schema omitted' : 'description shortened'})`).join(', '),
     );
   }
-  return tools;
+  // Code mode is composed LAST and from the finished array on purpose: `exec` hands a script the gated
+  // definitions themselves, so there is exactly one enforcement chain rather than a second one that would
+  // have to be kept in step. The pair then takes the deny and permission gates like any other tool.
+  const codeModeTools = spec.codeMode?.(tools) ?? [];
+  if (codeModeTools.length === 0) return tools;
+  return [...tools, ...codeModeTools.map(withReason).map(gateDeniedTools).map(gatePermissions).map(stripReason)];
 }
 
 /** The names a turn's ToolPolicy is allowed to HIDE from the model, given the full tool set and which of

@@ -54,6 +54,17 @@ const toHostedSearchMap = (response: HostedSearchStatusResponse): HostedSearchMa
   response.providers.map(({ providerId, ...rest }) => [providerId, rest]),
 );
 
+type CodeModeStatusResponse = Awaited<ReturnType<typeof elowenClient.brainCodeModeStatus>>;
+/** One record per provider code mode can apply to. As with hosted search, membership IS the capability
+ *  answer — a provider absent from this map gets no switch, because no session on it could run a script. */
+type CodeModeEntry = CodeModeStatusResponse['providers'][number];
+type CodeModeInfo = Omit<CodeModeEntry, 'providerId'>;
+type CodeModeMap = Record<string, CodeModeInfo>;
+
+const toCodeModeMap = (response: CodeModeStatusResponse): CodeModeMap => Object.fromEntries(
+  response.providers.map(({ providerId, ...rest }) => [providerId, rest]),
+);
+
 // `temperature` is a string because the field is free text: '' means "send none", which is a distinct,
 // meaningful state rather than a missing value, and 0 is a legitimate setting.
 type Draft = {
@@ -197,60 +208,102 @@ function OAuthModelsModal({ type, initial, onSave, onClose }: {
   );
 }
 
-/** The per-provider native-tool-search switch, behind the record's own settings affordance.
- *
- *  It sits among the row's actions, beside manage and disconnect — the row's control is its value (the
- *  subscription meters), and putting the gear there had hidden them. The popover carries the switch, the
- *  explanation, and what a session spawned right now would actually get — the daemon decides that last
- *  part, so "verified", "unsupported" and "off" are never re-derived here.
- *
- *  Only providers the daemon reported as hosted-search capable ever render one; everything else has no
- *  hosted route to switch off, and a dead switch would promise otherwise. */
-function HostedToolSearchControl({ providerLabel, info, pending, onChange }: {
+/** One switch inside the tool-execution popover: label, toggle, help, and a badge ONLY when the daemon
+ *  says something the toggle does not already say. "Active" is exactly what a switch in its on position
+ *  means, so restating it is noise; "off by operator", "unsupported" and "unverified" are not. */
+function ToolExecutionSwitch({ title, help, providerLabel, enabled, stateLabel, tone, pending, onChange }: {
+  title: string;
+  help: string;
   providerLabel: string;
-  info: HostedSearchInfo;
+  enabled: boolean;
+  stateLabel?: string;
+  tone: 'accent' | 'danger' | 'default';
   pending: boolean;
   onChange: (enabled: boolean) => void;
 }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      {/* The switch comes FIRST in DOM order: the popover autofocuses its first tabbable, and a HelpTip
+          there would open its tooltip over the panel the moment it appeared. */}
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-sm font-medium text-foreground">{title}</span>
+        <span className="flex items-center gap-1.5">
+          <Toggle checked={enabled} disabled={pending} onChange={onChange} label={`${title}: ${providerLabel}`} />
+          <HelpTip>{help}</HelpTip>
+        </span>
+      </div>
+      {stateLabel ? <span className="flex"><Badge tone={tone}>{stateLabel}</Badge></span> : null}
+    </div>
+  );
+}
+
+/** The per-provider tool-execution switches, behind the record's own settings affordance.
+ *
+ *  It sits among the row's actions, beside manage and disconnect — the row's control is its value (the
+ *  subscription meters), and putting the gear there had hidden them. The popover carries how this provider
+ *  REACHES tools: whether the tool catalog is searched natively, and whether the model drives tools from
+ *  JavaScript instead of one call per turn.
+ *
+ *  Each switch renders only for a provider the daemon reported as capable of that feature; the daemon owns
+ *  both capability answers, so neither gate is re-derived here and a dead switch can never promise a route
+ *  the provider has no way to take. */
+function ToolExecutionControl({ providerLabel, hosted, codeMode, hostedPending, codeModePending, onHostedChange, onCodeModeChange }: {
+  providerLabel: string;
+  hosted?: HostedSearchInfo;
+  codeMode?: CodeModeInfo;
+  hostedPending: boolean;
+  codeModePending: boolean;
+  onHostedChange: (enabled: boolean) => void;
+  onCodeModeChange: (enabled: boolean) => void;
+}) {
   const { t } = useTranslation();
-  const stateLabel = info.effective === 'off' ? t.brain.hostedSearchOff
-    : info.effective === 'unsupported' ? t.brain.hostedSearchUnsupported
-      : info.effective === 'unverified' ? t.brain.hostedSearchUnverified
-        : t.brain.hostedSearchActive;
-  const tone = info.effective === 'active' ? 'accent' : info.effective === 'unsupported' ? 'danger' : 'default';
+  const hostedState = hosted === undefined || hosted.effective === 'active' ? undefined
+    : hosted.effective === 'off' ? t.brain.hostedSearchOff
+      : hosted.effective === 'unsupported' ? t.brain.hostedSearchUnsupported
+        : t.brain.hostedSearchUnverified;
+  const codeModeState = codeMode === undefined || codeMode.effective !== 'unsupported'
+    ? undefined
+    : t.brain.codeModeUnsupported;
 
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`${t.brain.hostedSearchSettings}: ${providerLabel}`}
-          title={t.brain.hostedSearchSettings}
+          aria-label={`${t.brain.toolExecutionSettings}: ${providerLabel}`}
+          title={t.brain.toolExecutionSettings}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
         >
           <Settings2 size={15} aria-hidden />
         </button>
       </PopoverTrigger>
       {/* Radix gives the content `role="dialog"`; it has no visible heading, so it names itself. */}
-      <PopoverContent align="end" aria-label={t.brain.hostedSearchTitle} className="w-72">
-        <div className="flex flex-col gap-3">
-          {/* The switch comes FIRST in DOM order: the popover autofocuses its first tabbable, and a HelpTip
-              there would open its tooltip over the panel the moment it appeared. */}
-          <div className="flex items-start justify-between gap-3">
-            <span className="text-sm font-medium text-foreground">{t.brain.hostedSearchTitle}</span>
-            <span className="flex items-center gap-1.5">
-              <Toggle
-                checked={info.enabled}
-                disabled={pending}
-                onChange={onChange}
-                label={`${t.brain.hostedSearchTitle}: ${providerLabel}`}
-              />
-              <HelpTip>{t.brain.hostedSearchHelp}</HelpTip>
-            </span>
-          </div>
-          <span className="flex">
-            <Badge tone={tone}>{stateLabel}</Badge>
-          </span>
+      <PopoverContent align="end" aria-label={t.brain.toolExecutionSettings} className="w-72">
+        <div className="flex flex-col gap-4">
+          {hosted ? (
+            <ToolExecutionSwitch
+              title={t.brain.hostedSearchTitle}
+              help={t.brain.hostedSearchHelp}
+              providerLabel={providerLabel}
+              enabled={hosted.enabled}
+              stateLabel={hostedState}
+              tone={hosted.effective === 'unsupported' ? 'danger' : 'default'}
+              pending={hostedPending}
+              onChange={onHostedChange}
+            />
+          ) : null}
+          {codeMode ? (
+            <ToolExecutionSwitch
+              title={t.brain.codeModeTitle}
+              help={t.brain.codeModeHelp}
+              providerLabel={providerLabel}
+              enabled={codeMode.enabled}
+              stateLabel={codeModeState}
+              tone="danger"
+              pending={codeModePending}
+              onChange={onCodeModeChange}
+            />
+          ) : null}
         </div>
       </PopoverContent>
     </Popover>
@@ -460,17 +513,33 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
   const [hostedSearch, setHostedSearch] = useState<HostedSearchMap>({});
   const [hostedSearchPending, setHostedSearchPending] = useState<string | null>(null);
   const hostedStatusGeneration = useRef(0);
+  const [codeMode, setCodeMode] = useState<CodeModeMap>({});
+  const [codeModePending, setCodeModePending] = useState<string | null>(null);
+  const codeModeStatusGeneration = useRef(0);
 
   const refreshHostedSearchStatus = async () => {
     const generation = ++hostedStatusGeneration.current;
     const response = await elowenClient.brainHostedToolSearchStatus();
     if (hostedStatusGeneration.current === generation) setHostedSearch(toHostedSearchMap(response));
   };
+  const refreshCodeModeStatus = async () => {
+    const generation = ++codeModeStatusGeneration.current;
+    const response = await elowenClient.brainCodeModeStatus();
+    if (codeModeStatusGeneration.current === generation) setCodeMode(toCodeModeMap(response));
+  };
   useEffect(() => {
     let cancelled = false;
     const generation = ++hostedStatusGeneration.current;
     void elowenClient.brainHostedToolSearchStatus().then((response) => {
       if (!cancelled && hostedStatusGeneration.current === generation) setHostedSearch(toHostedSearchMap(response));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [config?.brain?.providers]);
+  useEffect(() => {
+    let cancelled = false;
+    const generation = ++codeModeStatusGeneration.current;
+    void elowenClient.brainCodeModeStatus().then((response) => {
+      if (!cancelled && codeModeStatusGeneration.current === generation) setCodeMode(toCodeModeMap(response));
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [config?.brain?.providers]);
@@ -592,6 +661,31 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
     });
   };
 
+  // Same path and the same reasoning as the hosted-search switch above, mirrored: `codeModeEnabled` is a
+  // field on the provider row, and the daemon stores only the literal `true` — turning it OFF omits the
+  // field rather than sending `false`, because absent is the only spelling of "off" it keeps.
+  const setCodeModeEnabled = (
+    entryId: string, type: BrainProviderType, label: string, enabled: boolean,
+  ) => {
+    const keyless = providers.map(({ apiKeySet, ...p }) => p);
+    const existing = keyless.find((p) => p.id === entryId);
+    const { codeModeEnabled: _current, ...base } = existing ?? { id: entryId, label, type, baseUrl: '', models: [] };
+    const entry = enabled ? { ...base, codeModeEnabled: true as const } : base;
+    const next = existing ? keyless.map((p) => (p.id === entryId ? entry : p)) : [...keyless, entry];
+    setCodeModePending(entryId);
+    save.mutate(next, {
+      onSuccess: () => {
+        setCodeModePending(null);
+        void refreshCodeModeStatus();
+        toast(t.brain.saved);
+      },
+      onError: () => {
+        setCodeModePending(null);
+        toast(t.brain.codeModeToggleError, 'error');
+      },
+    });
+  };
+
   const startConnect = (type: string) =>
     void elowenClient.brainOauthStart(type)
       .then((f) => setFlow(f))
@@ -625,6 +719,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
           // Only reported for a CONNECTED account whose provider can carry a hosted route at all —
           // Copilot and Kimi never appear here, and neither does a disconnected Claude/ChatGPT account.
           const hostedInfo = hostedSearch[entryId];
+          const codeModeInfo = codeMode[entryId];
           return (
             <SettingsRow
               key={type}
@@ -646,12 +741,15 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
               actions={connected ? (
                 <>
                   <Button variant="ghost" icon={ListChecks} aria-label={`${t.brain.pickModels}: ${typeLabel(type)}`} onClick={() => setModelsFor(type as BrainProviderType)}>{t.brain.pickModels}</Button>
-                  {hostedInfo ? (
-                    <HostedToolSearchControl
+                  {hostedInfo || codeModeInfo ? (
+                    <ToolExecutionControl
                       providerLabel={typeLabel(type)}
-                      info={hostedInfo}
-                      pending={hostedSearchPending === entryId}
-                      onChange={(enabled) => setHostedToolSearchEnabled(entryId, type as BrainProviderType, typeLabel(type), enabled)}
+                      hosted={hostedInfo}
+                      codeMode={codeModeInfo}
+                      hostedPending={hostedSearchPending === entryId}
+                      codeModePending={codeModePending === entryId}
+                      onHostedChange={(enabled) => setHostedToolSearchEnabled(entryId, type as BrainProviderType, typeLabel(type), enabled)}
+                      onCodeModeChange={(enabled) => setCodeModeEnabled(entryId, type as BrainProviderType, typeLabel(type), enabled)}
                     />
                   ) : null}
                   <Button variant="ghost" icon={Unlink} aria-label={`${t.brain.disconnect}: ${typeLabel(type)}`} onClick={() => setDisconnectTarget(type as BrainProviderType)} />
@@ -692,6 +790,7 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
           <>
             {apiProviders.map((p) => {
               const hostedInfo = hostedSearch[p.id];
+              const codeModeInfo = codeMode[p.id];
               return (
                 <SettingsRow
                   key={p.id}
@@ -723,12 +822,15 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
                       apiKey: '', api: p.api ?? '', temperature: p.temperature === undefined ? '' : String(p.temperature),
                       compatibility: p.compatibility ?? DEFAULT_PROVIDER_COMPATIBILITY,
                     })} />
-                    {hostedInfo ? (
-                      <HostedToolSearchControl
+                    {hostedInfo || codeModeInfo ? (
+                      <ToolExecutionControl
                         providerLabel={p.label}
-                        info={hostedInfo}
-                        pending={hostedSearchPending === p.id}
-                        onChange={(enabled) => setHostedToolSearchEnabled(p.id, p.type, p.label, enabled)}
+                        hosted={hostedInfo}
+                        codeMode={codeModeInfo}
+                        hostedPending={hostedSearchPending === p.id}
+                        codeModePending={codeModePending === p.id}
+                        onHostedChange={(enabled) => setHostedToolSearchEnabled(p.id, p.type, p.label, enabled)}
+                        onCodeModeChange={(enabled) => setCodeModeEnabled(p.id, p.type, p.label, enabled)}
                       />
                     ) : null}
                     <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => setRemoveTarget(p.id)} />

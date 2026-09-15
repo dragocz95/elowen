@@ -598,7 +598,29 @@ const environment = await sandbox.environmentFor({ project, accountUserId });
 
 Never cache the result across calls: a plugin reload replaces the live generation. Treat `undefined` as a legitimate disabled or unavailable dependency. Do not return fabricated empty domain state.
 
-The registry also restricts the credential and process-launch controls to named consumers: `github` is available only to `sandbox`, `publishedSitesGateway` and `browserCapture` only to `sites`, and `sandbox` only to `files`, `terminal`, `github`, `onedrive`, `sites`, `editor`, `lsp`, `mcp`, `browser`, `cronjob`, and `codebase`. A consumer outside that list resolving `sandbox` receives a facade whose site-environment methods throw. The control keys shipped today are `subagent`, `terminal`, `cron`, `workflow`, `mcp`, `lsp`, `sandbox`, `microsoftIdentity`, `github`, `publishedSitesGateway`, `browserCapture`, and `skillCatalog`.
+The registry also restricts the credential and process-launch controls to named consumers: `github` is available only to `sandbox`, `publishedSitesGateway` and `browserCapture` only to `sites`, and `sandbox` only to `files`, `terminal`, `github`, `onedrive`, `sites`, `editor`, `lsp`, `mcp`, `browser`, `cronjob`, and `codebase`. A consumer outside that list resolving `sandbox` receives a facade whose site-environment methods throw. The control keys shipped today are `subagent`, `terminal`, `cron`, `workflow`, `mcp`, `lsp`, `codeMode`, `sandbox`, `microsoftIdentity`, `github`, `publishedSitesGateway`, `browserCapture`, and `skillCatalog`.
+
+### The `codeMode` control
+
+`codeMode` is the seam for code mode: instead of advertising every tool to the model, the session advertises a single `exec` tool whose input is raw JavaScript, and the script reaches the other tools through a `tools` object. Core owns the decision and the safety boundary, the plugin owns the language runtime.
+
+```typescript
+ctx.registerControl('codeMode', {
+  compose(request) { /* returns the `exec` and `wait` ToolDefinitions */ },
+  shutdownSession(sessionId) { /* releases cells still running for that session */ },
+  activeCount() { /* cells still running, so a reload does not orphan their threads */ },
+});
+```
+
+`compose` receives the session's tools **after** they have been gated, and each entry's `invoke` is that tool's own `execute`. A script calling a tool therefore passes the identical enforcement chain the model's own call would: the deny list, the granular permission gate, the plan-mode clamp, the account's plugin grant and both `tools.call.*` hooks. There is deliberately no second call path to keep in step. A call the policy refuses resolves as a refusal result for the model, so the nested path turns it back into a rejected promise: inside JavaScript a refusal that resolves is indistinguishable from an answer, and the script would carry on as though the call had worked.
+
+Core, not the plugin, decides which tools stay directly visible. Today that is `exec`, `wait` and `AskUserQuestion`; everything else stays registered and callable but is withheld from the prompt, the same narrowing deferred MCP tools already use.
+
+A cell is a worker thread that deliberately outlives its turn, which is what makes yielding useful and what makes its lifecycle the plugin's responsibility. Four rules bound it. `shutdownSession` is called from `LiveSessionRegistry.dispose`, so clearing, switching model, respawning, resetting a channel and deleting a conversation all release the cells. `activeCount` keeps a plugin reload from replacing the module that owns those threads while they run. A session holds at most eight open cells and an `exec` past that limit is answered with a readable refusal rather than a failed turn. A yielded cell nobody observes for ten minutes is terminated, and every observation re-arms that deadline.
+
+`request.principal()` is read per call, not per composition: a shared room composes its tools once but serves several senders, and a cell carries the policy of the turn that created it. Keying only on the conversation would let the next sender `wait` on somebody else's cell and share its `store` values, so a cell id from another principal simply reads as not found. Each nested `invoke` also receives an `AbortSignal` that fires when the cell is terminated or disposed; terminating kills the worker, which stops the script, and the signal is what stops a `Bash` or MCP call the script had already started.
+
+Code mode is off unless an operator turns it on for a provider; see `codeModeEnabled` in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 Use domain keys such as `sandbox`, `mcp`, or `workflow`, not the current plugin name. `registerControl(name, control, { requires })` can make one control unavailable until another domain control resolves, and two plugins publishing the same key is caught when registries merge.
 

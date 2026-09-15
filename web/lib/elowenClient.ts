@@ -380,6 +380,9 @@ export const elowenClient = {
    *  `enabled` is the operator switch, `verifiable` marks the Azure deployments whose native search the
    *  daemon has not proven yet, and `effective` is what a session spawned right now would actually get. */
   brainHostedToolSearchStatus: () => req<{ providers: { providerId: string; enabled: boolean; verifiable: boolean; effective: 'active' | 'off' | 'unsupported' | 'unverified'; models: { modelId: string; status: 'supported' | 'unsupported' | 'unverified'; checkedAt: number | null }[] }[] }>('/brain/providers/hosted-tool-search/status'),
+  /** Per-provider code-mode state, same contract as the hosted-search status above: membership is the
+   *  capability answer, `enabled` is the operator switch, `effective` is what a session would get today. */
+  brainCodeModeStatus: () => req<{ providers: { providerId: string; enabled: boolean; effective: 'active' | 'off' | 'unsupported'; models: { modelId: string; status: 'supported' | 'unsupported' }[] }[] }>('/brain/providers/code-mode/status'),
   brainOauthStart: (type: string) => req<OAuthFlowState>(`/brain/oauth/${encodeURIComponent(type)}/start`, { method: 'POST' }),
   brainOauthFlow: (id: string) => req<OAuthFlowState>(`/brain/oauth/flow/${encodeURIComponent(id)}`),
   brainOauthInput: (id: string, value: string) => req<{ ok: boolean }>(`/brain/oauth/flow/${encodeURIComponent(id)}/input`, json({ value })),

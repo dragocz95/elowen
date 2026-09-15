@@ -15,16 +15,19 @@ import type { SandboxResolver } from '../managedArtifacts.js';
 import { setManagedSandboxResolver } from '../session/toolResultClearing.js';
 import { buildShareImageTool } from '../tools/shareImageTool.js';
 import { makeToolIconResolver } from '../toolIcons.js';
-import { composeSessionTools } from '../session/capabilities.js';
+import { composeSessionTools, refusedToolResultText } from '../session/capabilities.js';
 import { createToolSearchHandle, toolSearchTool, formatDeferredToolsBlock, formatHostedToolCatalogBlock, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { buildPromptTemplates } from '../slashCommands.js';
 import { estimateTokens, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '../session/forkPrefix.js';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
+import { randomUUID } from 'node:crypto';
 import { currentContributionUserId, currentWorkDir, currentToolPolicy, currentPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
 import { createProjectExecutionBoundary } from '../session/projectExecutionBoundary.js';
 import { buildProjectTool } from '../tools/projectTool.js';
+import { codeModeApplies, codeModeVisibilityFor } from '../session/codeModeRoute.js';
+import { CodeModeCardFeed } from '../session/codeModeCard.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
@@ -465,6 +468,13 @@ export class LiveSessionSpawner {
           },
         })
       : undefined;
+    // CODE MODE. Resolved once per spawn from the same snapshot every other route decision reads, so a
+    // config change applies on the next respawn and never mid-turn. The control is absent whenever the
+    // plugin is not loaded, which reads as "code mode unavailable" and leaves the direct tool surface.
+    const codeModeControl = codeModeApplies(providerEntry, model.id) ? plugins?.control('codeMode') : undefined;
+    let codeModeToolNames: string[] = [];
+    // The only window the user has into a running script: nested calls emit no PI tool events.
+    const codeModeCard = new CodeModeCardFeed(sessionId);
     const allTools = composeSessionTools({
       kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
@@ -540,6 +550,57 @@ export class LiveSessionSpawner {
       // waits through in FRONT of every call, not after it.
       onToolCall: toolHookBus
         ? async (e) => (await toolHookBus.emitBlocking('tools.call.before', e)).deny
+        : undefined,
+      // Hands the plugin the FINISHED, gated definitions. `invoke` is each tool's own `execute`, so a
+      // script's call carries the identical enforcement chain; there is deliberately no second path.
+      codeMode: codeModeControl
+        ? (nested) => {
+          const deferred = toolSearchHandle?.deferred ?? new Set<string>();
+          const tools = codeModeControl.compose({
+            sessionId,
+            codeModeOnly: true,
+            nested: nested.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.parameters,
+              deferred: deferred.has(tool.name),
+              // PI supplies an ExtensionContext as the fifth argument when IT calls a tool; a nested call
+              // has none to pass. No Elowen core or bundled-plugin tool reads it, and a third-party tool
+              // that does will throw — which reaches the script as a rejected promise, never as a silent
+              // success. That failure mode is the reason this is a cast and not a fabricated context.
+              invoke: async (input: unknown, signal: AbortSignal) => {
+                // A nested call emits no PI tool event, so the panel is the only place the user sees it.
+                const row = codeModeCard.callStarted(tool.name);
+                try {
+                  const result = await tool.execute(
+                    `code-mode-${randomUUID()}`,
+                    input,
+                    // Terminating the cell kills the worker, which stops the SCRIPT. This is what also
+                    // stops a nested Bash or MCP call the script had already started.
+                    signal,
+                    undefined,
+                    undefined as never,
+                  );
+                  // A refusal RESOLVES like any other result, which is right for the model and wrong for a
+                  // script: JavaScript would read the refusal sentence as the tool's output and carry on.
+                  // Turned back into a rejection so the failure is impossible to miss inside the cell.
+                  const refusal = refusedToolResultText(result);
+                  if (refusal !== undefined) throw new Error(refusal);
+                  codeModeCard.callSettled(row);
+                  return result;
+                } catch (err) {
+                  codeModeCard.callSettled(row, err instanceof Error ? err.message : String(err));
+                  throw err;
+                }
+              },
+            })),
+            notify: (text) => { codeModeCard.note(text); },
+            // Read per call: a room's tools are composed once, but each sender keeps their own cells.
+            principal: () => String(currentContributionUserId() ?? 'anonymous'),
+          });
+          codeModeToolNames = tools.map((tool) => tool.name);
+          return tools;
+        }
         : undefined,
     });
     // WHOSE skills this session may see. The SAME list has to reach both the awareness block and the
@@ -855,6 +916,12 @@ export class LiveSessionSpawner {
       // The deferred-tool handle (undefined when nothing is deferred). Carried on the live so each turn's
       // visibility pass keeps already-fetched tools advertised and withheld ones hidden.
       toolSearch: toolSearchHandle,
+      // Under code mode the model sees `exec`, `wait` and the always-visible interaction tools; everything
+      // else stays REGISTERED and callable from a script, it is only withheld from the prompt. Expressed in
+      // the deferral shape because it is the same operation, and `activated` stays empty for its whole life.
+      ...(codeModeToolNames.length > 0
+        ? { codeModeVisibility: codeModeVisibilityFor(allTools.map((tool) => tool.name), codeModeToolNames) }
+        : {}),
       // Read-only-ness is declared with the tool, exactly like its icon above: the core co-locates its
       // own, a plugin states its own in the manifest. Assembled once per session so a plugin toggle
       // applies on the next spawn without a daemon restart.
