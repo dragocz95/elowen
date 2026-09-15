@@ -1,7 +1,7 @@
-import { afterAll, describe, it, expect } from 'vitest';
+import { afterAll, describe, it, expect, vi } from 'vitest';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve, dirname, sep } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -27,6 +27,30 @@ const rawGuestWorkflowFile = (contents: string): string => {
   return path;
 };
 const guestWorkflowFile = (definition: unknown): string => rawGuestWorkflowFile(JSON.stringify(definition));
+
+let testPersistCounter = 0;
+const persistedOutputTexts: string[] = [];
+const testTranscriptResults = new Map<string, string>();
+const testPersistToolOutput = async ({ toolCallId, text, sessionId }: { toolCallId: string; text: string; sessionId?: string }) => {
+  persistedOutputTexts.push(text);
+  const sessionKey = (sessionId ?? 'brain-parent').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+  const dir = resolve(workflowFilesDir, 'tool-results', sessionKey);
+  mkdirSync(dir, { recursive: true });
+  const base = toolCallId.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = join(dir, `${base}-${(testPersistCounter++).toString(36)}.txt`);
+  writeFileSync(path, text, { flag: 'wx' });
+  return { path, bytes: Buffer.byteLength(text, 'utf8') };
+};
+const testFormatToolOutputPlaceholder = (path: string, bytes: number, text: string) =>
+  `[Large tool result (${bytes} bytes) saved to disk instead of the context. Full output at: ${path} — read it with the Read tool if needed. First ${Math.min(2000, text.length)} characters below.]\n${text.slice(0, 2000)}`;
+const testPersistSubagentToolOutput = async ({ channelId, toolCallId, text }: { channelId: string; toolCallId: string; text: string }) => {
+  const dir = resolve(workflowFilesDir, 'tool-results', `subagent-${channelId}`);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${toolCallId}-${(testPersistCounter++).toString(36)}.txt`);
+  writeFileSync(path, text, { flag: 'wx' });
+  persistedOutputTexts.push(text);
+  return { path, bytes: Buffer.byteLength(text, 'utf8') };
+};
 
 const assertTestPathAllowed = (path: string): string => {
   const abs = resolve(path);
@@ -71,6 +95,7 @@ interface WorkflowControl {
   /** The engine's liveness seam: does THIS engine still hold the DAG? Status reads consult it instead of
    *  trusting a durable row whose terminal snapshot may never have landed. */
   isWorkflowLive(input: { workflowId: string }): boolean;
+  resumeInterrupted(input: unknown): Promise<{ resumed: boolean; reason?: string }>;
 }
 
 /** When set, the harness `run` parks the matching task on this promise and settles it as an aborted
@@ -95,6 +120,10 @@ function harness(opts: {
   models?: { provider: string; model: string; reasoningLevels?: string[] }[];
   subagentTypes?: { name: string; description: string }[];
   workflowExpansionRpc?: { addNodes(input: { workflowId: string; nodes: unknown[] }): Promise<{ added: string[] }> };
+  readSubagentResult?: (parentSessionId: string, childSessionId: string) => string;
+  persistSubagentToolOutput?: (input: { channelId: string; toolCallId: string; text: string }) => Promise<{ path: string; bytes: number } | null>;
+  outputWriterFails?: boolean;
+  toolResultInlineBytes?: number;
 } = {}) {
   gate = null;
   const tools = new Map<string, Tool>();
@@ -106,6 +135,7 @@ function harness(opts: {
   // A resume test needs a node that fails its FIRST run and succeeds on retry — real recovery, not a
   // second guaranteed failure. FAIL_ONCE tracks attempts per exact task string.
   const attempts = new Map<string, number>();
+  const nodeResults = testTranscriptResults;
   /** Every launch as the host saw it: which channel the node ran in, and the VERBATIM task it received.
    *  A resume is only real if the channel id repeats — that is what puts the retry back in the same session. */
   const runs: { task: string; channelId: string; fullTask: string; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string }[] = [];
@@ -155,9 +185,11 @@ function harness(opts: {
       ? `\n\n**Handover:**\nhandover-of:${task}\n\nFor reference the format is:\n\n\`\`\`md\n## Handover\nquoted-example-not-the-handover\n\`\`\``
       : (task.includes('WITH_HANDOVER') ? `\n\n## Handover\nhandover-of:${task}` : '');
     const bulk = /BULK:(\d+)/.exec(task);
-    return bulk
+    const result = bulk
       ? `done:${task}:${'x'.repeat(Number(bulk[1]))}:CONCLUSION${handover}`
       : `done:${task}${handover}`;
+    nodeResults.set(`s-${task}`, result);
+    return result;
   };
   /** Mutable so a test can call a tool AS one of the workflow's own node sessions. */
   const sessionId = { current: 'brain-parent' };
@@ -181,6 +213,8 @@ function harness(opts: {
   const completions: { toolCallId: string; status: string; result: string; run?: number }[] = [];
   const ctx = {
     dataDir: () => workflowFilesDir,
+    persistToolOutput: testPersistToolOutput,
+    formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
     registerTool: (def: Tool) => { tools.set(def.name, def); },
     registerControl: (name: string, control: WorkflowControl) => { controls.set(name, control); },
     stopSubagent: async (id: string) => {
@@ -193,6 +227,18 @@ function harness(opts: {
     currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
     currentAccess: () => access.current,
     currentModel: () => model.current,
+    captureToolOutputWriter: () => async ({ toolCallId, text }: { toolCallId: string; text: string }) => {
+      if (opts.outputWriterFails) throw new Error('workflow output spill unavailable');
+      return testPersistToolOutput({ toolCallId, text, sessionId: sessionId.current });
+    },
+    persistSubagentToolOutput: opts.persistSubagentToolOutput ?? testPersistSubagentToolOutput,
+    toolResultInlineBytes: () => opts.toolResultInlineBytes ?? 120_000,
+    readSubagentResult: (parentSessionId: string, childSessionId: string) => {
+      if (opts.readSubagentResult) return opts.readSubagentResult(parentSessionId, childSessionId);
+      const result = nodeResults.get(childSessionId);
+      if (result === undefined) throw new Error(`no result for ${childSessionId}`);
+      return result;
+    },
     // The turn's working directory, exactly as the real context resolves it: a managed project's own
     // mount, so guidance can name the directory the caller is actually standing in.
     workDir: () => (access.current.projectRef?.kind === 'managed' ? '/managed-project' : workflowFilesDir),
@@ -231,16 +277,20 @@ function harness(opts: {
     workflowExpansionRpc: () => opts.workflowExpansionRpc ?? null,
     subagentTypes: () => opts.subagentTypes ?? [],
   };
+  const chunkCalls = { value: 0 };
   const helpers = {
     resolveDelegateTools: (_inheritedAllow: string[] | undefined, requested: string[] | undefined) =>
       (requested ? { allow: requested } : { allow: undefined }),
     principalOf: (identity: unknown) => (identity ? 'elowen:1' : null),
-    dependencyContextChunks,
+    dependencyContextChunks: (raw: unknown, totalChars?: number) => {
+      chunkCalls.value += 1;
+      return dependencyContextChunks(raw, totalChars);
+    },
   };
   registerWorkflow(ctx, () => run, helpers);
   /** Everything the node can read, as one string — the chunks are a transport detail, not the content. */
   const contextOf = (task: string) => (contexts.get(task) ?? []).join('\n\n');
-  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, completions, pathGuardCalls, managedReads };
+  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, completions, pathGuardCalls, managedReads, chunkCalls };
 }
 
 describe('workflow engine', () => {
@@ -258,7 +308,8 @@ describe('workflow engine', () => {
     // it here is the only way the model can learn it. Lose the interpolation and the tool still works
     // while quietly sending every definition back into the user's repository.
     expect(start.description).toContain(resolve(workflowFilesDir, 'workflows'));
-    expect(start.parameters?.properties.nodesFile?.description).toContain(resolve(workflowFilesDir, 'workflows'));
+    const nodesFileProperty = start.parameters?.properties?.nodesFile as { description?: string } | undefined;
+    expect(nodesFileProperty?.description ?? '').toContain(resolve(workflowFilesDir, 'workflows'));
 
     await start.execute('shape-array', { background: false, nodesFile: workflowFile([{ id: 'array', task: 'array' }]) });
     await start.execute('shape-object', {
@@ -557,6 +608,23 @@ describe('workflow engine', () => {
     expect(contextOf('gather')).not.toContain('Handovers from the nodes');
   });
 
+  it('keeps a complete node result behind an explicit Read reference while handing over only bounded direct context', async () => {
+    const { tools, contextOf, snapshots } = harness();
+    await tools.get('WorkflowStart')!.execute('t-lossless-node', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'gather', task: 'gather BULK:12000' },
+        { id: 'write', task: 'write', deps: ['gather'] },
+      ]),
+    });
+    const write = contextOf('write');
+    expect(write).toContain('Read({"file_path":');
+    expect(write).toContain('gather');
+    expect(write).not.toContain('done:gather BULK:12000');
+    const gather = snapshots.flatMap((snapshot) => snapshot.nodes).find((node) => node.id === 'gather' && node.status === 'done');
+    expect(gather?.result?.length).toBeLessThanOrEqual(512);
+  });
+
   // Filip's design: an edge carries a HANDOVER, not a report. A node writes the section itself, and only
   // that section travels — the full result stays with the parent's summary. Passing whole results is what
   // filled a dependent's context with three reports about work it was not doing.
@@ -615,9 +683,10 @@ describe('workflow engine', () => {
     expect(write).toMatch(/wrote no handover[^\n]*gather/);
     expect(write).toContain(':CONCLUSION'); // the END of the result, not its head
     expect(write).not.toContain('done:gather BULK:9000'); // …and not the head
-    // Bounded at the handover cap, well under the 8 000-char result cap.
+    // The authored/derived handover remains bounded; the complete-result reference is outside that slice.
     const body = write.split('## Handover from node "gather"\n')[1] ?? '';
-    expect(body.trim().length).toBeLessThanOrEqual(4_000);
+    expect(body.split('\n\nRead({')[0]!.trim().length).toBeLessThanOrEqual(4_000);
+    expect(body).toContain('Read({"file_path":');
   });
 
   // Only DIRECT dependencies. A four-node pipeline used to hand the last node every upstream report, so
@@ -712,26 +781,23 @@ describe('workflow engine', () => {
     for (const id of branches) expect(synthesis).toMatch(new RegExp(`truncated to fit[^\\n]*${id}`));
   });
 
-  // This used to refuse: the divided budget fell below the 400-char floor, the engine applied it anyway,
-  // and the node ran on dependencies it had never been shown. The guard is still there and still fails the
-  // node loudly, but it is now DEFENSIVE — the fixed budget carries the widest DAG the engine allows
-  // (MAX_NODES) above the floor, so the reachable invariant is that a maximum fan-in arrives whole.
-  it('carries the widest fan-in the engine allows without dropping a dependency', async () => {
-    const { tools, launched, contextOf } = harness();
+  // The fixed 40,000-character budget cannot carry 63 dependencies once every block also has an immutable Read
+  // reference. The 400-character floor must therefore refuse this shape before the dependent starts, rather than
+  // lowering the business invariant or letting the final chunker silently drop blocks.
+  it('refuses the widest fan-in when Read references leave less than the 400-char floor', async () => {
+    const { tools, launched, chunkCalls } = harness();
     const branches = Array.from({ length: 63 }, (_, i) => `n${i}`);
     const res = await tools.get('WorkflowStart')!.execute('t-wide', {
       background: false,
       nodesFile: workflowFile([
-        ...branches.map((id) => ({ id, task: `${id} BULK:600` })),
+        ...branches.map((id) => ({ id, task: `${id} BULK:9000` })),
         { id: 'synthesis', task: 'synthesise', deps: branches },
       ]),
     });
-    expect(res.content[0]!.text).toMatch(/status: done/);
-    expect(launched).toContain('synthesise');
-    const synthesis = contextOf('synthesise');
-    for (const id of branches) expect(synthesis).toContain(`## Handover from node "${id}"`);
-    // Nothing shaved off the end by the chunker, which is how the original bug presented.
-    expect(synthesis).not.toContain('further context block');
+    expect(res.content[0]!.text).toMatch(/status: error/);
+    expect(res.content[0]!.text).toContain('below the 400-char minimum');
+    expect(launched).not.toContain('synthesise');
+    expect(chunkCalls.value).toBeLessThan(100);
   });
 
   // A width the budget CAN represent, with every dependency reporting far more than its slice: the packed
@@ -766,7 +832,9 @@ describe('workflow engine', () => {
     const sizes = new Map<string, number>();
     for (const id of ids) {
       const body = context.split(`## Handover from node "${id}"\n`)[1] ?? '';
-      sizes.set(id, body.split('## Handover from node "')[0]!.trim().length);
+      const block = body.split('## Handover from node "')[0]!;
+      const received = block.split('\n\nRead({')[0]!.trim();
+      sizes.set(id, (received.startsWith('[truncated]\n') ? received.slice('[truncated]\n'.length) : received).length);
     }
     return sizes;
   };
@@ -814,10 +882,9 @@ describe('workflow engine', () => {
     expect(synthesis).not.toContain('truncated to fit');
   });
 
-  // A node's report is capped at 8 000 chars before it reaches the parent's summary or any dependent. Over
-  // that cap it has to lose its HEAD: a report's conclusion is its last line, and cutting the tail is exactly
-  // what destroyed a delegated report's conclusion on delivery.
-  it('keeps the END of an over-cap node result, in the summary and in what a dependent reads', async () => {
+  // The UI and prompt previews stay bounded, while the complete node answer is retained at the advertised
+  // Read path for the parent and direct dependents.
+  it('keeps a bounded preview and a Read reference for an over-cap node result', async () => {
     const { tools, contextOf } = harness();
     const res = await tools.get('WorkflowStart')!.execute('t-tail', {
       background: false,
@@ -829,13 +896,75 @@ describe('workflow engine', () => {
     const summary = res.content[0]!.text;
     expect(summary).toContain(':CONCLUSION'); // the end survived
     expect(summary).not.toContain('done:a BULK:9000'); // the head is what paid for it
-    expect(summary).toMatch(/\[truncated: first \d+ chars dropped, end kept — read it in full with DelegateRead\]/);
-    // The dependent reads the same end, marked as cut. It is NOT pointed at DelegateRead: that reads a
-    // session's own children, and the node it depends on is a sibling.
+    expect(summary).toContain('[truncated]');
+    expect(summary).toContain('Read({"file_path":');
     const dependent = contextOf('b');
     expect(dependent).toContain(':CONCLUSION');
-    expect(dependent).toContain('[truncated]');
-    expect(dependent).not.toContain('DelegateRead');
+    expect(dependent).toContain('Read({"file_path":');
+  });
+
+  it('reads a managed direct dependency from the host child transcript, never a journaled host path', async () => {
+    persistedOutputTexts.length = 0;
+    const { tools, contextOf, managedReads, access } = harness({
+      readSubagentResult: (_parent, child) => `authoritative result from ${child}: ${'x'.repeat(9000)}`,
+    });
+    access.current = { ...TEST_ACCESS, projectRef: { kind: 'managed', projectId: 1 } };
+    const definitionPath = guestWorkflowFile([
+      { id: 'a', task: 'a BULK:9000' },
+      { id: 'b', task: 'b', deps: ['a'] },
+    ]);
+    const res = await tools.get('WorkflowStart')!.execute('t-managed-dep', {
+      background: false,
+      nodesFile: definitionPath,
+    });
+    expect(res.content[0]!.text).toMatch(/status: done/);
+    // The dependent receives the bounded handover plus a host-owned Read path. The complete authoritative child
+    // answer is kept in that copied spill, not inserted into the managed project's guest context.
+    expect(contextOf('b')).toContain('Read({"file_path":');
+    expect(managedReads).toEqual([definitionPath]);
+    expect(persistedOutputTexts.join('\\n')).toContain('authoritative result from');
+  });
+
+  it('blocks a dependent when its complete dependency result cannot be copied', async () => {
+    const { tools, launched } = harness({
+      persistSubagentToolOutput: async () => { throw new Error('spill copy unavailable'); },
+    });
+    const res = await tools.get('WorkflowStart')!.execute('t-copy-failure', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'a', task: 'a BULK:9000' },
+        { id: 'b', task: 'b', deps: ['a'] },
+      ]),
+    });
+    expect(res.content[0]!.text).toMatch(/status: error/);
+    expect(res.content[0]!.text).toContain('spill copy unavailable');
+    expect(launched).toEqual(['a BULK:9000']);
+  });
+
+  it('delivers one error completion when a background summary cannot read a node result', async () => {
+    const { tools, completions } = harness({
+      readSubagentResult: () => { throw new Error('child transcript unavailable'); },
+    });
+    await tools.get('WorkflowStart')!.execute('t-summary-read-failure', {
+      background: true,
+      nodesFile: workflowFile([{ id: 'a', task: 'a BULK:9000' }]),
+    });
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    expect(completions[0]).toMatchObject({ status: 'error', run: 0 });
+    expect(completions[0]!.result).toContain('DelegateRead');
+    expect(completions[0]!.result).toContain('child transcript unavailable');
+  });
+
+  it('delivers one error completion when aggregate workflow summary spill fails', async () => {
+    const { tools, completions } = harness({ outputWriterFails: true, toolResultInlineBytes: 1 });
+    await tools.get('WorkflowStart')!.execute('t-summary-spill-failure', {
+      background: true,
+      nodesFile: workflowFile([{ id: 'a', task: 'a' }]),
+    });
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    expect(completions[0]).toMatchObject({ status: 'error', run: 0 });
+    expect(completions[0]!.result).toContain('could not be delivered');
+    expect(completions[0]!.result).toMatch(/Workflow wf-/);
   });
 
   // The budget is an ENGINE CONSTANT now, not an operator setting: it was a knob only while the same
@@ -1012,16 +1141,23 @@ describe('workflow engine', () => {
     const tools = new Map<string, Tool>();
     const launched: string[] = [];
     const snapshots: { id: string; toolCallId: string; status: string }[] = [];
+    const nodeResults = testTranscriptResults;
     let releaseRoot!: () => void;
     const rootGate = new Promise<void>((r) => { releaseRoot = r; });
     const run = async (_s: unknown, task: string, onEvent: (e: unknown) => void) => {
       launched.push(task);
       onEvent({ type: 'session', sessionId: `s-${task}` });
       if (task === 'root') await rootGate; // hold the workflow open so we can extend it mid-flight
-      return `done:${task}`;
+      const result = `done:${task}`;
+      nodeResults.set(`s-${task}`, result);
+      return result;
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
+      persistSubagentToolOutput: testPersistSubagentToolOutput,
+      readSubagentResult: (_parent: string, child: string) => nodeResults.get(child) ?? '',
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       logger: { info() {}, warn() {} },
@@ -1064,6 +1200,7 @@ describe('workflow engine', () => {
     const tools = new Map<string, Tool>();
     const launched: string[] = [];
     const snapshots: { id: string }[] = [];
+    const nodeResults = testTranscriptResults;
     let releaseRoot!: () => void;
     const rootGate = new Promise<void>((r) => { releaseRoot = r; });
     // Turn context the harness reports — flipped to the node-child identity for the add call.
@@ -1073,10 +1210,16 @@ describe('workflow engine', () => {
       launched.push(task);
       onEvent({ type: 'session', sessionId: `s-${task}` }); // registers the node's child session
       if (task === 'root') await rootGate;
-      return `done:${task}`;
+      const result = `done:${task}`;
+      nodeResults.set(`s-${task}`, result);
+      return result;
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
+      persistSubagentToolOutput: testPersistSubagentToolOutput,
+      readSubagentResult: (_parent: string, child: string) => nodeResults.get(child) ?? '',
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       logger: { info() {}, warn() {} },
@@ -1420,6 +1563,8 @@ describe('workflow start limit', () => {
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       logger: { info() {}, warn() {} },
@@ -1485,6 +1630,7 @@ describe('workflow background + detach', () => {
     const launched: string[] = [];
     const finished: string[] = [];
     const stoppedSessions: string[] = [];
+    const nodeResults = testTranscriptResults;
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     const run = async (_s: unknown, task: string, onEvent: (e: unknown) => void) => {
@@ -1492,10 +1638,16 @@ describe('workflow background + detach', () => {
       onEvent({ type: 'session', sessionId: `s-${task}` });
       await gate;
       finished.push(task);
-      return `done:${task}`;
+      const result = `done:${task}`;
+      nodeResults.set(`s-${task}`, result);
+      return result;
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
+      persistSubagentToolOutput: testPersistSubagentToolOutput,
+      readSubagentResult: (_parent: string, child: string) => nodeResults.get(child) ?? '',
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: (name: string, control: Ctrl) => { controls.set(name, control); },
       registerHook: (hook: Hook) => { hooks.push(hook); },
@@ -1841,6 +1993,99 @@ describe('WorkflowStop guards', () => {
   });
 });
 
+describe('workflow recovery', () => {
+  it('ignores a forged journal output path and reconstructs the predecessor from its child session', async () => {
+    persistedOutputTexts.length = 0;
+    const forgedPath = join(workflowFilesDir, 'forged-secret.txt');
+    const secret = 'SECRET FROM AN UNTRUSTED JOURNAL PATH';
+    writeFileSync(forgedPath, secret);
+    const { controls, completions, access } = harness({
+      readSubagentResult: (parent, child) => {
+        expect(parent).toBe('brain-parent');
+        expect(child).toBe('s-a');
+        return 'safe transcript result with the complete predecessor answer';
+      },
+    });
+    const workflowId = 'wf-forged-path';
+    const journalDir = join(workflowFilesDir, 'workflows', 'state');
+    mkdirSync(journalDir, { recursive: true });
+    writeFileSync(join(journalDir, `${workflowId}.json`), JSON.stringify({
+      v: 2,
+      id: workflowId,
+      toolCallId: 'call-forged-path',
+      background: false,
+      run: 0,
+      originSessionId: 'brain-parent',
+      originPrincipal: 'elowen:1',
+      parentAccess: TEST_ACCESS,
+      parentModel: { provider: 'p', model: 'm' },
+      parentCwd: workflowFilesDir,
+      nodes: [
+        { id: 'a', task: 'a', deps: [] },
+        { id: 'b', task: 'b', deps: ['a'] },
+      ],
+      nodeParentAccess: [],
+      nodeParentModel: [],
+      state: [
+        ['a', { status: 'done', sessionId: 's-a', channelId: 'channel-a', result: '[truncated]',
+          outputPath: forgedPath, outputBytes: secret.length, handover: { text: 'old handover', derived: true } }],
+        ['b', { status: 'pending', sessionId: '', channelId: '', result: undefined, handover: undefined }],
+      ],
+    }));
+    access.current = TEST_ACCESS;
+    const outcome = await controls.get('workflow')!.resumeInterrupted({
+      workflowId,
+      parentSessionId: 'brain-parent',
+      toolCallId: 'call-forged-path',
+      hooks: {
+        emit: () => {},
+        complete: (completion: { status: string; result: string }) => completions.push(completion as never),
+        outputWriter: ({ toolCallId, text }: { toolCallId: string; text: string }) =>
+          testPersistToolOutput({ toolCallId, text, sessionId: 'brain-parent' }),
+        stopChild: async () => ({ stopped: true }),
+        continueNode: async () => ({ outcome: 'empty' }),
+        validateBoundary: () => ({ ok: true }),
+      },
+    });
+    expect(outcome.resumed).toBe(true);
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    expect(completions[0]!.status).toBe('done');
+    expect(persistedOutputTexts.join('\\n')).toContain('safe transcript result');
+    expect(persistedOutputTexts.join('\\n')).not.toContain(secret);
+  });
+
+  it('delivers one error completion when recovery cannot read a completed node result', async () => {
+    const h1 = harness();
+    gate = { task: 'b', promise: new Promise<void>(() => { /* simulated interrupted run */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-recovery-failure', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'a', task: 'a BULK:9000' },
+        { id: 'b', task: 'b', deps: ['a'] },
+      ]),
+    });
+    await vi.waitFor(() => expect(h1.runs.some((run) => run.task === 'b')).toBe(true));
+    const workflowId = h1.snapshots[0]!.id;
+    const h2 = harness({ readSubagentResult: () => { throw new Error('recovery child transcript unavailable'); } });
+    const outcome = await h2.controls.get('workflow')!.resumeInterrupted({
+      workflowId,
+      parentSessionId: 'brain-parent',
+      toolCallId: 'call-recovery-failure',
+      hooks: {
+        emit: () => {},
+        complete: (completion: { id: string; toolCallId: string; status: string; result: string; run?: number }) => h2.completions.push(completion),
+        stopChild: async () => ({ stopped: true }),
+        validateBoundary: () => ({ ok: true }),
+      },
+    });
+    expect(outcome).toEqual({ resumed: true });
+    await vi.waitFor(() => expect(h2.completions).toHaveLength(1));
+    expect(h2.completions[0]).toMatchObject({ id: workflowId, toolCallId: 'call-recovery-failure', status: 'error', run: 1 });
+    expect(h2.completions[0]!.result).toContain('DelegateRead');
+    expect(h2.completions[0]!.result).toContain('recovery child transcript unavailable');
+  });
+});
+
 describe('WorkflowResume', () => {
   // Seen in production: a node announced "now writing the report" and ended its turn with nothing, the
   // workflow reported it DONE with "(the node returned nothing)", its dependent got an empty handover, and
@@ -2096,6 +2341,8 @@ describe('WorkflowResume', () => {
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       // Faithful to BrainService.stopSubagent: the parent anchor is read from the turn on the stack, never

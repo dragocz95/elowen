@@ -18,7 +18,7 @@ import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, ty
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
 import { currentIdentity, currentContributionUserId, currentAccountUserId, currentCallApprovedByAsk, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
-import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
+import { clearedToolResultPlaceholder, currentSpillMaxResultBytes, persistToolOutputSpill, spillPreview } from '../brain/session/toolResultClearing.js';
 import { sessionToolResultSpillDir } from '../shared/paths.js';
 import { GUEST_WRITE_OP_BYTES, readManagedGuestArtifact } from '../brain/managedArtifacts.js';
 import { processRegistry } from '../brain/processRegistry.js';
@@ -35,6 +35,15 @@ const log = logger('plugins');
  *  excerpts (the terminal plugin's cap is 60 kB by default) and far below anything that threatens the
  *  data directory, so it bites only on a caller that has lost track of what it is writing. */
 const MAX_PERSISTED_TOOL_OUTPUT_BYTES = 8_000_000;
+
+async function persistToolOutputForSession(sessionId: string | undefined, toolCallId: string, text: string) {
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (bytes > MAX_PERSISTED_TOOL_OUTPUT_BYTES) {
+    throw new Error(`tool output is ${bytes} bytes, above the ${MAX_PERSISTED_TOOL_OUTPUT_BYTES}-byte limit for a persisted tool output`);
+  }
+  if (!sessionId) return null;
+  return persistToolOutputSpill(sessionToolResultSpillDir(process.env, sessionId), toolCallId, text);
+}
 
 /** Canonical JSON of a tool's declared surface, for deciding whether two accounts' same-named personal
  *  tools are the SAME tool. Keys are emitted in sorted order so two structurally identical schemas built
@@ -400,6 +409,13 @@ export class PluginRegistry {
   /** Tool names whose owning plugin declares them deferred into ToolSearch by default. Unlike output
    *  policy patterns, this stores only exact registered names after owner-scoped expansion. */
   readonly toolDeferLoading = new Set<string>();
+
+  /** Persist a host-owned delegated output for recovery code that has no ambient turn. The caller supplies
+   *  an already host-derived receiving session, never a filesystem path; ordinary plugins cannot reach this
+   *  internal registry method through PluginContext. */
+  persistSubagentToolOutputForSession(sessionId: string, toolCallId: string, text: string) {
+    return persistToolOutputForSession(sessionId, toolCallId, text);
+  }
 
   /** Absorb another registry's contributions (the loader stages each plugin and merges on success).
    *  Tools, controls + commands are name-keyed and drive tool dispatch / admin routes / the slash menu, so
@@ -1500,19 +1516,23 @@ export class PluginRegistry {
       // only its tool call and the text, so it can no more write into another conversation's spills than
       // it could name one. Sessionless (worker/cron) turns own no directory and get null rather than a
       // path outside any conversation's reach.
-      persistToolOutput: async ({ toolCallId, text }) => {
-        // The text is plugin-supplied and lands in the daemon's data directory, which nothing else
-        // bounds: one conversation could otherwise fill the disk one tool call at a time. Loud rather
-        // than truncated — a silently shortened file is a worse answer than none, because the excerpt
-        // that names it promises the COMPLETE output.
-        const bytes = Buffer.byteLength(text, 'utf8');
-        if (bytes > MAX_PERSISTED_TOOL_OUTPUT_BYTES) {
-          throw new Error(`tool output is ${bytes} bytes, above the ${MAX_PERSISTED_TOOL_OUTPUT_BYTES}-byte limit for a persisted tool output`);
-        }
+      persistToolOutput: ({ toolCallId, text }) =>
+        persistToolOutputForSession(currentSessionId(), toolCallId, text),
+      // Background subagent producers capture this writer while their parent tool is executing. It keeps
+      // the recipient session host-owned without exposing a caller-selectable session id.
+      captureToolOutputWriter: () => {
         const sessionId = currentSessionId();
-        if (!sessionId) return null;
-        return persistToolOutputSpill(sessionToolResultSpillDir(process.env, sessionId), toolCallId, text);
+        return sessionId
+          ? ({ toolCallId, text }) => persistToolOutputForSession(sessionId, toolCallId, text)
+          : null;
       },
+      // Workflow nodes use their host-minted channel id; the destination session is derived here, not named
+      // by plugin code. This seam is intentionally narrower than the ordinary tool-output writer.
+      persistSubagentToolOutput: ({ channelId, toolCallId, text }) =>
+        persistToolOutputForSession(subagentSessionId(channelId), toolCallId, text),
+      formatToolOutputPlaceholder: (path, bytes, text) =>
+        clearedToolResultPlaceholder(path, bytes, spillPreview(text, path, bytes)),
+      toolResultInlineBytes: currentSpillMaxResultBytes,
       allowedRoots,
       defaultCwd,
       workDir: currentWorkDir,
@@ -1557,6 +1577,10 @@ export class PluginRegistry {
         return artifact.bytes.toString('utf8');
       },
       currentSessionId,
+      readSubagentResult: (parentSessionId, childSessionId) => {
+        if (!delegatedChildren) throw new Error('sub-agent result reading is not available in this process');
+        return delegatedChildren.read(parentSessionId, childSessionId);
+      },
       currentDeliveryTarget,
       // The parent anchor is read from the HOST's own turn scope, never taken from the plugin: that is
       // the whole scoping boundary for all three calls. Outside a prompt turn there is no conversation to

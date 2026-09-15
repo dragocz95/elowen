@@ -348,9 +348,9 @@ export const DEFAULT_BRAIN_LIMITS: BrainLimits = {
   // Above Claude Code's BASH_MAX_OUTPUT_DEFAULT (30 000 chars): a truncated build or test log costs a
   // second run to read the part that was cut, which is dearer than the tokens the headroom spends.
   toolOutputMaxChars: 41_000,
-  // A single result above this is spilled to disk and the model gets a placeholder instead
-  // (toolResultClearing's size trigger). Claude Code's equivalent sits at 50 000.
-  toolResultInlineBytes: 60_000,
+  // A single tool or delegated result above this is spilled to disk and the model gets a placeholder instead
+  // (toolResultClearing's size trigger). The fresh-install default is 120 kB.
+  toolResultInlineBytes: 120_000,
   // Matches Claude Code's per-message budget: four full-size single results, ~50k tokens, the point at
   // which one turn's fan-out alone costs a quarter of a 200k window (toolResultClearing's group trigger).
   toolResultGroupBudgetBytes: 200_000,
@@ -386,12 +386,12 @@ export const DEFAULT_BRAIN_LIMITS: BrainLimits = {
  *  fork per call and an operator who forks constantly can flip this instead. */
 const DEFAULT_FORK_PARENT_CONTEXT = false;
 
-/** Adjustable range of a tuning knob: its default ±50%, derived from the default so raising a default
- *  later carries its bound with it instead of leaving the two to drift apart. `maxOverride` exists for
- *  the one knob whose ceiling is set by a downstream cap rather than by this rule. */
-const band = (key: keyof BrainLimits, maxOverride?: number): [min: number, max: number] => {
+/** Adjustable range of a tuning knob: its default ±50%, with optional explicit max and min overrides.
+ *  The inline-result minimum stays at the historical 30 kB so a legitimate older setting is preserved when
+ *  the fresh default rises. */
+const band = (key: keyof BrainLimits, maxOverride?: number, minOverride?: number): [min: number, max: number] => {
   const def = DEFAULT_BRAIN_LIMITS[key];
-  return [Math.round(def / 2), maxOverride ?? Math.round(def * 1.5)];
+  return [minOverride ?? Math.round(def / 2), maxOverride ?? Math.round(def * 1.5)];
 };
 
 const BRAIN_LIMIT_BOUNDS: Record<keyof BrainLimits, [min: number, max: number]> = {
@@ -401,13 +401,12 @@ const BRAIN_LIMIT_BOUNDS: Record<keyof BrainLimits, [min: number, max: number]> 
   // In the editor's own unit (4 chars per token) that is ~20k tokens of tool output and ~5k of recall.
   toolOutputMaxLines: band('toolOutputMaxLines', 200),
   toolOutputMaxChars: band('toolOutputMaxChars', 80_000),
-  // Plain ±50% rule (25 000–75 000): unlike the transcript-preview caps this is what the model actually
-  // receives inline, so its tuning margin is the default band rather than a raised operator ceiling.
-  toolResultInlineBytes: band('toolResultInlineBytes'),
-  // Plain ±50% rule (100 000–300 000). The floor is what matters: it stays above the per-result ceiling
-  // (90 000), so a group can always hold one full-size inline result and the aggregate layer can never be
-  // tuned into spilling every result it sees. `groupBudgetBytes` re-floors it at the value in force.
-  toolResultGroupBudgetBytes: band('toolResultGroupBudgetBytes'),
+  // Compatibility range 30 000–180 000: the lower edge preserves older installations while the fresh
+  // default is 120 000 bytes.
+  toolResultInlineBytes: band('toolResultInlineBytes', 180_000, 30_000),
+  // Stored range 100 000–300 000. The effective value is re-floored to the selected inline limit below,
+  // so a group never spills a result that the per-result layer would keep inline.
+  toolResultGroupBudgetBytes: band('toolResultGroupBudgetBytes', 300_000, 100_000),
   // Exempt from the ±50% rule: 0 must NOT be reachable — it would trip the breaker before a session ever
   // attempted a compaction, i.e. silently mean "never compact automatically", which is the one outcome
   // this knob exists to prevent. 1 stops after a single failure; 10 is patient without being unbounded.
@@ -456,6 +455,9 @@ function clampBrainLimits(next: unknown, fallback: BrainLimits): BrainLimits {
   for (const key of Object.keys(BRAIN_LIMIT_BOUNDS) as (keyof BrainLimits)[]) {
     out[key] = clampBrainLimit(key, patch[key], out[key]);
   }
+  // The aggregate budget has an independent stored band, but its effective floor follows the selected
+  // inline limit. Apply this after both fields are normalized so partial patches remain deterministic.
+  out.toolResultGroupBudgetBytes = Math.max(out.toolResultGroupBudgetBytes, out.toolResultInlineBytes);
   // RETIRED: the bounded-text hand-over a delegating agent used to pass to its child. Forking replaced it
   // outright — a fork child inherits the parent's whole conversation and its warm cache instead of a
   // budgeted excerpt — so there is nothing to migrate the value INTO. Dropped explicitly, and from

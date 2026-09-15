@@ -1207,6 +1207,8 @@ export interface WorkflowRecoveryControl {
     hooks: {
       emit: (update: WorkflowUpdate) => void;
       complete: (completion: WorkflowCompletion) => void;
+      /** Host-captured recipient writer used by boot recovery, where no ambient prompt turn exists. */
+      outputWriter?: (input: { toolCallId: string; text: string }) => Promise<{ path: string; bytes: number } | null>;
       stopChild: (childSessionId: string) => Promise<{ stopped: boolean }>;
       /** Finish a node's child the way a restart finishes any delegated child, instead of prompting it
        *  with its task again: `answered` when its transcript already ended on a final answer (that text
@@ -1904,6 +1906,20 @@ export interface PluginContext {
    *  a `text` above the host's size ceiling — bounding what it produces is the caller's job, not this
    *  store's. */
   persistToolOutput(input: { toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
+  /** Capture the current conversation's output sink before background work leaves its turn. The returned
+   *  writer has no caller-selectable session or path and is null outside an interactive conversation. */
+  captureToolOutputWriter(): ((input: { toolCallId: string; text: string }) => Promise<{ path: string; bytes: number } | null>) | null;
+  /** Persist output for a workflow node. The host derives the destination session from the node channel id;
+   *  callers cannot choose a session namespace or filesystem path. */
+  persistSubagentToolOutput(input: { channelId: string; toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
+  /** Read a direct child result through the durable parent/child relation, without exposing filesystem access. */
+  readSubagentResult(parentSessionId: string, childSessionId: string): string;
+  /** Render the bounded placeholder for a complete output already persisted by persistToolOutput. The host
+   * owns the wording and preview budget so delegated producers do not duplicate delivery formatting. */
+  formatToolOutputPlaceholder(path: string, bytes: number, text: string): string;
+  /** Current live per-result delivery threshold. Delegated producers use it to preserve small completions
+   *  inline while routing only results that the normal tool-result delivery would spill through the sink. */
+  toolResultInlineBytes(): number;
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */
   allowedRoots(): string[];

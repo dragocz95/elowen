@@ -210,7 +210,7 @@ function interruptedToolResultText(store: BrainStore, sessionId: string, call: {
     const answer = run.status === 'done' ? lastNonEmptyAssistantText(store, run.sessionId) : undefined;
     if (answer) {
       const clipped = answer.length > MAX_INLINE_CHILD_ANSWER_CHARS
-        ? `${answer.slice(0, MAX_INLINE_CHILD_ANSWER_CHARS)}\n[truncated — read the rest with DelegateRead]`
+        ? `${answer.slice(-MAX_INLINE_CHILD_ANSWER_CHARS)}\n[truncated — read the rest with DelegateRead]`
         : answer;
       return `[interrupted, result recovered] A daemon restart interrupted this ${call.name} call, but the sub-agent `
         + `${run.sessionId} had already finished. Its final answer:\n\n${clipped}`;

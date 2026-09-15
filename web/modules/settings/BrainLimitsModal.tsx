@@ -13,7 +13,7 @@ import type { BrainLimits } from '../../lib/types';
 
 /** Fallback for seeding the Limits form before the daemon's config arrives (it always sends real values). */
 export const BRAIN_LIMIT_DEFAULTS: BrainLimits = {
-  toolOutputMaxLines: 100, toolOutputMaxChars: 41000, toolResultInlineBytes: 60000,
+  toolOutputMaxLines: 100, toolOutputMaxChars: 41000, toolResultInlineBytes: 120000,
   toolResultGroupBudgetBytes: 200000, compactionFailureLimit: 3, elicitationTimeoutMs: 21600000,
   memoryRecallCount: 10, memoryRecallChars: 20000,
   memoryLiveRecallPasses: 10, memoryLiveRecallCount: 2, memoryLiveRecallBytes: 20000,
@@ -41,7 +41,7 @@ type BrainLimitField = {
 const BRAIN_LIMIT_FIELDS: BrainLimitField[] = [
   { key: 'toolOutputMaxLines', kind: 'count', min: 50, max: 200, step: 10, icon: AlignLeft },
   { key: 'toolOutputMaxChars', kind: 'size', min: 20500, max: 80000, step: 1000, icon: Type },
-  { key: 'toolResultInlineBytes', kind: 'size', min: 30000, max: 90000, step: 5000, icon: HardDrive },
+  { key: 'toolResultInlineBytes', kind: 'size', min: 30000, max: 180000, step: 5000, icon: HardDrive },
   { key: 'toolResultGroupBudgetBytes', kind: 'size', min: 100000, max: 300000, step: 10000, icon: Layers },
   { key: 'compactionFailureLimit', kind: 'count', min: 1, max: 10, step: 1, icon: ShieldAlert },
   { key: 'elicitationTimeoutMs', kind: 'duration', min: 30000, max: 21600000, step: 30000, icon: Timer },
@@ -95,7 +95,7 @@ export function BrainLimitsModal({ limits, applied, forkParentContext = false, o
   const displayLabel = (field: BrainLimitField, canonical: number): string => {
     const value = canonical / DISPLAY_DIVISORS[field.kind];
     if (field.kind === 'duration') return `${Number(value.toFixed(2))} ${t.brain.limits.minuteUnit}`;
-    if (field.kind === 'size') return `≈ ${formatTokens(Math.round(value))} ${t.brain.limits.tokenUnit}`;
+    if (field.kind === 'size') return `${canonical.toLocaleString()} ${t.brain.limits.byteUnit} (≈ ${formatTokens(Math.round(value))} ${t.brain.limits.tokenUnit})`;
     return String(value);
   };
   return (

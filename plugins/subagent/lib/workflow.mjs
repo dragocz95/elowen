@@ -21,7 +21,6 @@ import {
   TRUNCATION_MARKER,
   resolveContextTotalChars,
 } from './limits.mjs';
-import { clipTail } from './results.mjs';
 import { errorText } from './errors.mjs';
 import { raceDetach } from './detach.mjs';
 import { resolveResultRetentionMs } from './retention.mjs';
@@ -53,6 +52,12 @@ const MAX_HANDOVER_CHARS = 4_000;
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const clip = (text, limit) => (text.length <= limit ? text : `${text.slice(0, limit)}${TRUNCATION_MARKER}`);
+const resultPreview = (text, limit) => {
+  if (text.length <= limit) return text;
+  const marker = `${TRUNCATION_MARKER}\n`;
+  const kept = Math.max(0, limit - marker.length);
+  return `${marker}${kept ? text.slice(-kept) : ''}`;
+};
 /** A dependency block keeps the END of the result for the same reason the result itself does — the finding is
  *  in the last paragraph — but with the bare marker PREPENDED rather than clipTail's note. It costs exactly
  *  TRUNCATION_MARKER.length, which the per-block budget arithmetic below reserves, and DelegateRead would be
@@ -61,12 +66,13 @@ const clip = (text, limit) => (text.length <= limit ? text : `${text.slice(0, li
 const DEP_TRUNCATION_PREFIX = '[truncated]\n';
 const clipDep = (text, limit) => (text.length <= limit ? text : `${DEP_TRUNCATION_PREFIX}${text.slice(-limit)}`);
 const depBlockHeading = (id) => `## Handover from node "${id}"\n`;
+const outputReference = (path, _bytes) => `Read({"file_path":"${path}"})`;
 /** The note introducing the handover blocks: what they are, which were written by the node itself and which
  *  the engine had to derive, and which had to be cut to fit. A node that mistakes a handover for a complete
  *  result reports a partial finding as the whole picture, so the difference is stated rather than implied. */
 const depIntro = (derivedIds, truncatedIds) =>
   'Handovers from the nodes this one depends on follow, one block per node. A handover is the short summary '
-  + 'that node wrote for its successors — NOT its full result, which is not available in this conversation.'
+  + 'that node wrote for its successors. Its complete result is available at the Read path in the block below.'
   + (derivedIds.length
     ? `\n\nThese nodes wrote no handover, so what follows is the plain END of their result: ${derivedIds.join(', ')}.`
     : '')
@@ -133,8 +139,8 @@ const handoverOf = (reply) => {
  *  write for; a node with none is never asked for one. */
 const handoverInstruction = (dependentIds) =>
   `The node${dependentIds.length > 1 ? 's' : ''} ${dependentIds.map((id) => `"${id}"`).join(', ')} depend`
-  + `${dependentIds.length > 1 ? '' : 's'} on this one and will receive ONLY a short handover from you — not `
-  + 'your full result, which they cannot read. So END your final message with a section that starts with the '
+  + `${dependentIds.length > 1 ? '' : 's'} on this one and will receive a short handover from you plus a path to `
+  + 'your complete result. So END your final message with a section that starts with the '
   + `heading "## Handover" and says, in at most ${MAX_HANDOVER_CHARS} characters: what you changed or found `
   + 'and where (exact paths, ids, commands), the decisions they must not undo, and what is still open or '
   + 'unverified. Write it for them, not as a summary for the reader of your report. Without that section '
@@ -469,38 +475,58 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     //
     // DIRECT dependencies only, and only their handovers. A transitive chain used to arrive in full: the
     // fourth node of a pipeline read three complete reports, most of them about work it was not doing.
-    // A handover can arrive from the recovery journal, which is an agent-writable file: take it only when it
-    // still has the shape the blocks below slice, never on truthiness alone.
-    const depResults = (node.deps ?? [])
-      .map((id) => ({ id, handover: wf.state.get(id)?.handover }))
-      .filter((d) => typeof d.handover?.text === 'string' && d.handover.text.length > 0)
-      .map((d) => ({ id: d.id, result: d.handover.text, derived: d.handover.derived === true }));
+    // A handover can arrive from the recovery journal, which is an agent-writable file: take only its small
+    // text shape. The complete answer is reconstructed from the host-validated child transcript, never from a
+    // path or body stored in that journal.
+    const dependentState = wf.state.get(node.id);
+    const depResults = [];
+    for (const id of node.deps ?? []) {
+      const dependency = wf.state.get(id);
+      if (typeof dependency?.handover?.text !== 'string' || dependency.handover.text.length === 0) continue;
+      const result = dependency.handover.text;
+      let reference = 'Complete result reference unavailable in this legacy workflow state.';
+      if (typeof dependency.sessionId === 'string' && dependency.sessionId.length > 0) {
+        if (typeof ctx.readSubagentResult !== 'function' || typeof ctx.persistSubagentToolOutput !== 'function') {
+          throw new Error(`complete result reference for dependency "${id}" cannot be prepared: host sub-agent output support is unavailable`);
+        }
+        try {
+          const full = ctx.readSubagentResult(wf.originSessionId, dependency.sessionId);
+          if (!dependentState?.channelId) throw new Error(`the dependent node "${node.id}" has no host-derived channel for its result reference`);
+          const stored = await ctx.persistSubagentToolOutput({
+            channelId: dependentState.channelId,
+            toolCallId: `${node.id}-${id}-${wf.run ?? 0}`,
+            text: full,
+          });
+          if (!stored) throw new Error(`the complete result from node "${id}" could not be copied for dependent "${node.id}"`);
+          reference = outputReference(stored.path, stored.bytes);
+        } catch (e) {
+          throw new Error(`complete result reference for dependency "${id}" could not be prepared: ${errorText(e)}`);
+        }
+      }
+      depResults.push({ id, result, derived: dependency.handover.derived === true, reference });
+    }
     if (depResults.length) {
       // Each dependency gets its OWN prompt chunk (several share one only when the DAG is wider than the
       // chunk budget), so the per-chunk ceiling bounds a SINGLE result rather than all of them joined.
-      //
-      // The division is against EXACT packaging, not estimates of it: dependencyContextChunks puts the
-      // context header on the first chunk and reserves the truncation marker on every chunk, and a block
-      // costs its own heading plus the node id. Rounded guesses plus a forced minimum slice is what made a
-      // wide fan-in overrun the total — the chunker then clipped and dropped the last groups, and the node
-      // ran on dependencies it had never been shown, with nothing in its context saying so.
+      // Reserve the immutable Read reference line as fixed metadata. Only the handover text is clipped.
       const spent = contextParts.reduce((n, part) => n + part.length + TRUNCATION_MARKER.length,
         CONTEXT_HEADER.length + 1);
-      // Chunks left for the results, after the parts already queued and the note that introduces them.
       const slots = Math.max(1, MAX_CONTEXT_CHUNKS - contextParts.length - 1);
       const perChunk = Math.ceil(depResults.length / slots);
       const groups = Math.ceil(depResults.length / perChunk);
-      // Reserve the note at its WORST case — every dependency named — so the reservation cannot be
-      // undercut by which of them turns out to need truncating.
       const introChars = depIntro(depResults.map((d) => d.id), depResults.map((d) => d.id)).length
         + TRUNCATION_MARKER.length;
+      const referenceSeparatorChars = '\n\n'.length;
+      const referenceChars = depResults.reduce((n, d) => n + d.reference.length + referenceSeparatorChars, 0);
       const blockChars = depResults.reduce((n, d) => n + depBlockHeading(d.id).length + TRUNCATION_MARKER.length, 0)
-        + DEP_BLOCK_SEPARATOR.length * (depResults.length - groups);
+        + DEP_BLOCK_SEPARATOR.length * (depResults.length - groups) + referenceChars;
+      const maxReferenceChars = Math.max(...depResults.map((d) => d.reference.length));
       const perDep = Math.min(
         Math.floor((contextTotal - spent - introChars - groups * TRUNCATION_MARKER.length - blockChars)
           / depResults.length),
         Math.floor((MAX_CONTEXT_CHUNK_CHARS - TRUNCATION_MARKER.length
-          - perChunk * (Math.max(...depResults.map((d) => depBlockHeading(d.id).length)) + TRUNCATION_MARKER.length)
+          - perChunk * (Math.max(...depResults.map((d) => depBlockHeading(d.id).length) )
+            + TRUNCATION_MARKER.length + maxReferenceChars + referenceSeparatorChars)
           - DEP_BLOCK_SEPARATOR.length * (perChunk - 1)) / perChunk),
       );
       // Refuse rather than starve. Below this the node would be reasoning from fragments, and forcing the
@@ -510,15 +536,13 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
           + `${contextTotal}-char context budget: each would get ${Math.max(0, perDep)} chars, below the `
           + `${DEP_MIN_CHARS}-char minimum. Aggregate them through intermediate nodes.`);
       }
-      // Say so IN the context. A node reading a truncated dependency cannot tell whether the finding it is
-      // looking for was absent or merely cut off, and that difference decides whether it should re-derive.
       contextParts.push(depIntro(
         depResults.filter((d) => d.derived).map((d) => d.id),
         depResults.filter((d) => d.result.length > perDep).map((d) => d.id),
       ));
       for (let i = 0; i < depResults.length; i += perChunk) {
         contextParts.push(depResults.slice(i, i + perChunk)
-          .map((d) => `${depBlockHeading(d.id)}${clipDep(d.result, perDep)}`)
+          .map((d) => `${depBlockHeading(d.id)}${clipDep(d.result, perDep)}\n\n${d.reference}`)
           .join(DEP_BLOCK_SEPARATOR));
       }
     }
@@ -586,6 +610,11 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       else if ((e.type === 'step' || e.type === 'idle') && e.usage) { foldEffectiveUsage(ns, e.usage); ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000); snapshot(wf); }
     };
     try {
+      // A node's child session is keyed by this channel id (the host derives the session id from it), so
+      // reusing the id on a resume drops the retry back into the SAME conversation — transcript intact,
+      // nothing to rehydrate. A first run mints a fresh one before dependency references are prepared.
+      const channelId = ns.channelId || `wf-${wf.id}-${node.id}-${randomUUID()}`;
+      ns.channelId = channelId;
       const { access, handover } = await buildNodeAccess(wf, node);
       // buildNodeAccess is an async boundary that can take a while — with an explicit model it may wait on
       // a live /models request — and WorkflowStop or a plugin reload can settle the run inside that window.
@@ -598,11 +627,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ns.model = access.model ? `${access.model.provider}/${access.model.model}` : undefined;
       ns.thinkingLevel = access.thinkingLevel;
       snapshot(wf);
-      // A node's child session is keyed by this channel id (channelSessionId derives one from the other), so
-      // reusing the id on a resume drops the retry back into the SAME conversation — transcript intact,
-      // nothing to rehydrate. A first run mints a fresh one.
-      const channelId = ns.channelId || `wf-${wf.id}-${node.id}-${randomUUID()}`;
-      ns.channelId = channelId;
       const collectSource = { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access };
       const raw = await runNodeTurn(wf, node, ns, collectSource, onEvent, handover);
       // A node whose turn ended with nothing to say has not done its task — its dependents would inherit an
@@ -610,13 +634,19 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // so the summary says so up front and WorkflowResume re-runs it.
       const reply = raw?.trim() ? raw : 'Error: the node ended its turn without returning a result';
       if (reply.startsWith('Error:')) { ns.status = 'error'; ns.error = clip(reply.slice('Error:'.length).trim() || reply, MAX_RESULT_CHARS); }
-      // The node's answer reaches the parent through `summarize`: keep its END, where a report's conclusion
-      // is. An error stays head-first — it leads with what broke. Its DEPENDENTS get the handover instead,
-      // taken from the raw reply so a result clipped for the parent cannot cost them the section too.
-      else { ns.status = 'done'; ns.result = clipTail(reply, MAX_RESULT_CHARS); ns.handover = handoverOf(reply); }
+      // Keep only the bounded display preview in workflow state. The complete answer remains in the durable
+      // child transcript and is reconstructed through the host relation when a dependent or final summary
+      // needs a Read reference.
+      else {
+        ns.status = 'done';
+        ns.result = resultPreview(reply, MAX_RESULT_CHARS);
+        ns.handover = handoverOf(reply);
+      }
     } catch (e) {
+      const message = errorText(e);
       ns.status = 'error';
-      ns.error = clip(errorText(e), MAX_RESULT_CHARS);
+      ns.error = clip(message, MAX_RESULT_CHARS);
+      if (message.startsWith('complete result reference for dependency')) wf.deliveryFailure = message;
     }
     ns.seconds = Math.round((Date.now() - (ns.startedAt ?? Date.now())) / 1000);
     writeJournal(wf); // node terminal: the FULL result must reach the journal — snapshots only carry a preview
@@ -675,12 +705,23 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     wf.resolveDone?.();
   };
 
-  const summarize = (wf) => {
+  const summarize = async (wf) => {
     const lines = [`Workflow ${wf.title ? `"${wf.title}" ` : ''}finished with status: ${wf.status}.`];
     for (const n of wf.nodes) {
       const s = wf.state.get(n.id);
       lines.push('', `[${n.id}] ${s.status.toUpperCase()}${n.deps.length ? ` (after ${n.deps.join(', ')})` : ''}`);
-      if (s.status === 'done') lines.push(s.result || '(no output)');
+      if (s.status === 'done') {
+        lines.push(s.result || '(no output)');
+        if (s.sessionId && s.result?.startsWith(TRUNCATION_MARKER) && wf.outputWriter && ctx.readSubagentResult) {
+          const full = ctx.readSubagentResult(wf.originSessionId, s.sessionId);
+          const stored = await wf.outputWriter({
+            toolCallId: `${wf.toolCallId}-${n.id}-${wf.run ?? 0}`,
+            text: full,
+          });
+          if (!stored) throw new Error(`the complete result for node "${n.id}" could not be persisted for the workflow summary`);
+          lines.push(outputReference(stored.path, stored.bytes));
+        }
+      }
       else if (s.status === 'error') lines.push(`Error: ${s.error}`);
       // A node the cancellation caught mid-run is NOT a node that never ran: it may already have edited
       // files or run commands, and a resume puts it back to work over that partial state. Reporting it as
@@ -691,10 +732,56 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     return lines.join('\n');
   };
 
+  /** Build the bounded failure result shared by foreground returns, background completions and boot recovery. */
+  const workflowFailureResult = (wf, failure, run = wf.run ?? 0) => {
+    const reason = clip(errorText(failure), 1_000);
+    const completed = [...wf.state.values()]
+      .filter((state) => state.status === 'done' && typeof state.sessionId === 'string' && state.sessionId.length > 0)
+      .map((state) => state.sessionId);
+    const transcriptHelp = completed.length
+      ? `Completed node transcripts remain available with ${completed.map((id) => `DelegateRead({"id":"${id}"})`).join(', ')}.`
+      : 'No completed node transcript is available for direct recovery.';
+    return `Workflow ${wf.id} run ${run} finished with status: error. `
+      + `The result could not be delivered: ${reason} ${transcriptHelp} `
+      + `Use WorkflowResume({"workflowId":"${wf.id}"}) to retry unfinished work after resolving the delivery problem.`;
+  };
+
+  const markWorkflowFailure = (wf, failure, run = wf.run ?? 0) => {
+    wf.status = 'error';
+    wf.finished = true;
+    wf.finishedAt ??= Date.now();
+    snapshot(wf);
+    return workflowFailureResult(wf, failure, run);
+  };
+
+  /** Emit exactly one terminal completion for one workflow run. The deduplication marker is set only after the
+   * durable sink accepts the payload, while the in-flight marker closes the async gap between preparation and emission. */
+  const emitWorkflowCompletion = (wf, status, result, run = wf.run ?? 0) => {
+    if (!wf.emitCompletion || wf.completionDeliveredRun === run || wf.completionDeliveringRun === run) return false;
+    wf.completionDeliveringRun = run;
+    try {
+      wf.emitCompletion({
+        id: wf.id,
+        toolCallId: wf.toolCallId,
+        ...(wf.title ? { title: wf.title } : {}),
+        status,
+        result,
+        run,
+      });
+      wf.completionDeliveredRun = run;
+      return true;
+    } catch (e) {
+      ctx.logger.warn(`workflow completion sink failed: ${errorText(e)}`);
+      return false;
+    } finally {
+      if (wf.completionDeliveringRun === run) delete wf.completionDeliveringRun;
+    }
+  };
+
   /** Start the DAG ONCE and resolve with the final summary when it settles. The single `tick(wf)` here is
    *  the only launch point, so a foreground blocking call and a detach/background call share ONE run: a
    *  detach never re-starts the engine, it only stops the parent waiting on it. Settles the terminal
-   *  status, finishes the row (drives retention) and yields the summary the caller returns or delivers. */
+   *  status, finishes the row and yields the summary the caller returns or delivers. */
   const runToCompletion = (wf) => {
     wf.status = 'running';
     snapshot(wf);
@@ -712,21 +799,36 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // Terminal either way (done/error above, cancelled settled by cancelWorkflow): the journal's job is
       // over — a journal on disk at boot is precisely the marker of an INTERRUPTED run.
       deleteJournal(wf.id);
+      if (wf.deliveryFailure) throw new Error(wf.deliveryFailure);
       return summarize(wf);
     });
   };
 
+  const safeCompletion = (wf, run = wf.run ?? 0) => runToCompletion(wf).catch((failure) => markWorkflowFailure(wf, failure, run));
+
   /** Deliver a detached/background workflow's summary through the turn-captured durable host sink, so an
    *  explicit `background` and a Ctrl+B detach follow the exact same result path. A never-detached
    *  foreground workflow returns its summary inline instead, so this is gated on `wf.background`. */
-  const deliverCompletion = (wf, summary) => {
-    if (!wf.background || !wf.emitCompletion) return;
+  const deliverCompletion = async (wf, summary, run = wf.run ?? 0) => {
+    if (!wf.background || wf.completionDeliveredRun === run || wf.completionPreparingRun === run || !wf.emitCompletion) return;
+    wf.completionPreparingRun = run;
     try {
+      let result = summary;
+      const inlineLimit = typeof ctx.toolResultInlineBytes === 'function' ? ctx.toolResultInlineBytes() : 120_000;
+      if (Buffer.byteLength(summary, 'utf8') > inlineLimit) {
+        if (!wf.outputWriter) throw new Error('the complete workflow summary has no host-captured output writer');
+        const stored = await wf.outputWriter({ toolCallId: wf.toolCallId, text: summary });
+        if (!stored) throw new Error('the complete workflow summary could not be persisted');
+        result = ctx.formatToolOutputPlaceholder(stored.path, stored.bytes, summary);
+      }
       // `run` tells the host which run of this DAG the summary closes: a resumed run's summary must reach
       // the parent as a NEW result, not be dropped as a duplicate of the first one it already heard.
-      wf.emitCompletion({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, result: summary, run: wf.run ?? 0 });
+      emitWorkflowCompletion(wf, wf.status, result, run);
     } catch (e) {
-      ctx.logger.warn(`workflow completion persistence failed: ${errorText(e)}`);
+      const errorResult = markWorkflowFailure(wf, e, run);
+      emitWorkflowCompletion(wf, 'error', errorResult, run);
+    } finally {
+      if (wf.completionPreparingRun === run) delete wf.completionPreparingRun;
     }
   };
 
@@ -736,10 +838,14 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
    *  requested up front, returns the handle immediately and delivers the summary through the durable sink
    *  once it lands. */
   const driveResult = async (wf, completion, requestedBackground) => {
+    const completionRun = wf.run ?? 0;
     if (requestedBackground) {
       // No durable sink on this surface (worker/cron) — block rather than silently drop the result.
       if (!wf.emitCompletion) return ok(await completion);
-      void completion.then((summary) => deliverCompletion(wf, summary));
+      void completion.then(
+        (summary) => deliverCompletion(wf, summary, completionRun),
+        (failure) => deliverCompletion(wf, markWorkflowFailure(wf, failure, completionRun), completionRun),
+      ).catch((failure) => ctx.logger.warn(`workflow ${wf.id}: completion observer failed: ${errorText(failure)}`));
       return ok(
         `Started background workflow ${wf.id}.\n`
           + 'Its result is delivered to you automatically in a NEW turn when it finishes — you do not have to '
@@ -750,7 +856,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     }
     const outcome = await raceDetach((resolve) => { wf.resolveDetached = resolve; }, () => completion);
     if (!outcome.detached) return ok(outcome.value);
-    void completion.then((summary) => deliverCompletion(wf, summary));
+    void completion.then(
+      (summary) => deliverCompletion(wf, summary, completionRun),
+      (failure) => deliverCompletion(wf, markWorkflowFailure(wf, failure, completionRun), completionRun),
+    ).catch((failure) => ctx.logger.warn(`workflow ${wf.id}: completion observer failed: ${errorText(failure)}`));
     return ok(
       `The user moved this workflow to the background. It is still running as ${wf.id}; continue helping the `
       + 'user now. Its result is delivered to you automatically in a new turn when it finishes, so once you have '
@@ -898,6 +1007,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // (a cancelled-on-restart one), and this run's must not be dropped as its duplicate.
       run: (Number.isInteger(raw.run) && raw.run >= 0 ? raw.run : 0) + 1,
       emitCompletion: (completion) => hooks.complete(completion),
+      outputWriter: hooks.outputWriter,
       resolveDetached: undefined,
       // Boot-only: nodes whose child session survived get ONE continuation (runNodeTurn) instead of a
       // fresh prompt. Absent on a live WorkflowResume, whose interrupted children were stopped on purpose.
@@ -937,13 +1047,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     }
     workflows.set(wf.id, wf);
     writeJournal(wf);
-    const completion = runToCompletion(wf).catch((e) => {
-      wf.status = 'error';
-      wf.finished = true;
-      wf.finishedAt = Date.now();
-      return `Error: workflow failed: ${errorText(e)}`;
-    });
-    void completion.then((summary) => deliverCompletion(wf, summary));
+    const completionRun = wf.run ?? 0;
+    const completion = safeCompletion(wf, completionRun);
+    void completion.then(
+      (summary) => deliverCompletion(wf, summary, completionRun),
+      (failure) => deliverCompletion(wf, markWorkflowFailure(wf, failure, completionRun), completionRun),
+    ).catch((failure) => ctx.logger.warn(`workflow ${wf.id}: recovery completion observer failed: ${errorText(failure)}`));
     ctx.logger.info(`workflow ${wf.id} resumed from its recovery journal (${done}/${wf.nodes.length} node(s) already done)`);
     return { resumed: true };
   };
@@ -1100,6 +1209,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // no sink cannot promise asynchronous delivery, so its requested background run becomes a real
       // foreground run: abort and Ctrl+B must see the same mode the tool call actually uses.
       const emitCompletion = ctx.workflowCompletionEmitter?.() ?? undefined;
+      const outputWriter = ctx.captureToolOutputWriter?.();
       const background = requestedBackground && Boolean(emitCompletion);
       const wf = {
         id: `wf-${randomUUID()}`,
@@ -1139,18 +1249,15 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         // share ONE run.
         background,
         emitCompletion,
+        outputWriter,
         resolveDetached: undefined,
       };
       workflows.set(wf.id, wf);
       writeJournal(wf);
       // Start the DAG once. This promise settles the terminal status, finishes the row and yields the
       // summary — a foreground blocking call and a detach/background call ride this SAME run.
-      const completion = runToCompletion(wf).catch((e) => {
-        wf.status = 'error';
-        wf.finished = true;
-        wf.finishedAt = Date.now();
-        return `Error: workflow failed: ${errorText(e)}`;
-      });
+      const completionRun = wf.run ?? 0;
+      const completion = safeCompletion(wf, completionRun);
 
       // Foreground blocks on the DAG but lets Ctrl+B detach the wait; background returns the handle right
       // away — driveResult is the shared tail WorkflowResume reuses so both behave identically.
@@ -1240,12 +1347,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (wf.background && !wf.emitCompletion) wf.background = false;
       wf.parentAccess = access;
       writeJournal(wf); // the finish deleted the journal; the resumed run is interruptible again
-      const completion = runToCompletion(wf).catch((e) => {
-        wf.status = 'error';
-        wf.finished = true;
-        wf.finishedAt = Date.now();
-        return `Error: workflow failed: ${errorText(e)}`;
-      });
+      const completionRun = wf.run ?? 0;
+      const completion = safeCompletion(wf, completionRun);
       const res = await driveResult(wf, completion, wf.background === true);
       if (!scopeChanged) return res;
       return ok(

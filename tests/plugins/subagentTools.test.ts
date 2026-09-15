@@ -239,19 +239,18 @@ describe('delegate — the access handed to the child', () => {
     expect(seen.access).toBeUndefined();
   });
 
-  // The incident this exists for: a delegated report reached its parent cut short and the conclusion — the
-  // last paragraph, the only part that mattered — was what got destroyed. Over the stored ceiling the parent
-  // must receive the END of the report, and be told plainly how to page the rest back out of the database.
-  it('returns the END of an over-long child report, with the note that names DelegateRead', async () => {
-    const conclusion = 'CONCLUSION: the retry backoff is the root cause.';
-    childReply = `OPENING: how I looked.\n${'x'.repeat(120_000)}\n${conclusion}`;
+  // A successful foreground answer must reach the host delivery spill before any plugin-local clipping.
+  // The generic afterToolCall path may then replace it with a bounded placeholder, but this plugin must not
+  // destroy the original middle before that path gets a chance to persist it.
+  it('returns an over-long child report losslessly before host delivery processing', async () => {
+    const middle = 'MIDDLE-SENTINEL-' + 'x'.repeat(120_000);
+    childReply = `HEAD-SENTINEL\n${middle}\nTAIL-SENTINEL`;
     try {
       const text = (await delegate({ task: 'write a very long report' })).content[0].text;
-      expect(text.endsWith(conclusion)).toBe(true);
-      expect(childReply.endsWith(text.replace(/^\[truncated:[^\]]*\]\n/, ''))).toBe(true);
-      expect(text).not.toContain('OPENING: how I looked.');
-      expect(text).toMatch(/^\[truncated: first \d+ chars dropped, end kept — read it in full with DelegateRead\]\n/);
-      expect(text.length).toBeLessThanOrEqual(100_000);
+      expect(text).toBe(childReply);
+      expect(text).toContain('HEAD-SENTINEL');
+      expect(text).toContain('MIDDLE-SENTINEL');
+      expect(text).toContain('TAIL-SENTINEL');
     } finally {
       childReply = 'child done';
     }

@@ -1,18 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { resolve, dirname } from 'node:path';
 import { rmSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { type Db } from '../../src/store/db.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore, ProjectExecutionRefError, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
 import { BrainUsageStore, rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
 import { planSlug } from '../../src/shared/planSlug.js';
-
-// The delivery path's tail truncation is a deliberate mirror of the subagent plugin's (neither side can
-// import the other). Loading the plugin copy here is what keeps the two from drifting apart.
-const { clipTail } = await import(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins/subagent/lib/results.mjs')
-) as { clipTail(text: string, limit: number): string };
 
 describe('BrainStore', () => {
   let store: BrainStore;
@@ -440,9 +432,9 @@ describe('BrainStore', () => {
     })).toBe(false);
   });
 
-  // The last bound a delegated result passes before it is delivered to the parent. Over the ceiling it keeps
-  // its END — a report's conclusion is its last paragraph — and says so in the same words the plugin uses.
-  it('keeps the END of an over-long result on the delivery path, exactly as the plugin does', () => {
+  // The store is bounded independently of producer correctness: malformed or legacy callers cannot use one
+  // inbox message to inflate the database. Prepared placeholders are tested separately and remain byte-exact.
+  it('bounds an oversized raw delegated result before it reaches the durable inbox', () => {
     store.createSession({ id: 'root', userId: 1, model: 'm' });
     store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
     store.upsertSubagentRun('root', {
@@ -456,16 +448,12 @@ describe('BrainStore', () => {
     })).toBe(true);
 
     const stored = store.pendingSubagentResults('root')[0]!.result!;
-    expect(stored.endsWith(conclusion)).toBe(true);
-    expect(stored).not.toContain('OPENING: how I looked.');
-    expect(stored).toMatch(/^\[truncated: first \d+ chars dropped, end kept — read it in full with DelegateRead\]\n/);
-    expect(stored.length).toBeLessThanOrEqual(100_000);
-    expect(stored).toBe(clipTail(report, 100_000)); // the two copies must not drift
+    expect(stored).toHaveLength(100_000);
+    expect(stored).toContain('OPENING: how I looked.');
+    expect(stored).not.toContain(conclusion);
   });
 
-  // A DAG summary is every node's result end to end, so it is the payload that really can exceed the
-  // ceiling — and cutting its head costs the FIRST nodes, not the last ones the parent was waiting for.
-  it('keeps the END of an over-long workflow summary too', () => {
+  it('bounds an oversized raw workflow summary before it reaches the durable inbox', () => {
     store.createSession({ id: 'root', userId: 1, model: 'm' });
     expect(store.upsertWorkflowRun('root', { id: 'wf-1', toolCallId: 'wfcall-1', status: 'done', nodes: [] })).toBe(true);
     const lastNode = '[write] DONE\nthe document is published.';
@@ -475,9 +463,34 @@ describe('BrainStore', () => {
     })).toBe(true);
 
     const stored = store.pendingSubagentResults('root')[0]!.result!;
-    expect(stored.endsWith(lastNode)).toBe(true);
-    expect(stored).not.toContain('[gather] DONE');
-    expect(stored).toBe(clipTail(summary, 100_000));
+    expect(stored).toHaveLength(100_000);
+    expect(stored).toContain('[gather] DONE');
+    expect(stored).not.toContain(lastNode);
+  });
+
+  it('preserves a prepared placeholder and its Read path without a second clipping pass', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', {
+      id: 'delegate-1', sessionId: 'child', status: 'done', task: 'inspect', tools: 1, seconds: 1,
+    });
+    const placeholder = '[Large tool result (120001 bytes) saved to disk instead of the context. '
+      + 'Full output at: /data/tool-results/brain-parent/call-1.v1-output-120001.txt — read it with the Read tool if needed. '
+      + 'First 20 characters below.]\\nHEAD-SENTINEL';
+    expect(store.enqueueSubagentResult('root', {
+      id: 'dlg-prepared', toolCallId: 'delegate-1', sessionId: 'child', status: 'done', task: 'inspect',
+      result: placeholder, tools: 1, seconds: 1,
+    })).toBe(true);
+    expect(store.pendingSubagentResults('root')[0]!.result).toBe(placeholder);
+
+    expect(store.upsertWorkflowRun('root', { id: 'wf-prepared', toolCallId: 'wf-prepared-call', status: 'done', nodes: [] })).toBe(true);
+    const workflowPlaceholder = '[Large workflow result (120001 bytes) saved to disk instead of the context. '
+      + 'Full output at: /data/tool-results/brain-parent/wf-prepared.v1-output-120001.txt — read it with the Read tool if needed. '
+      + 'First 20 characters below.]\\nHEAD-SENTINEL';
+    expect(store.enqueueWorkflowResult('root', {
+      id: 'wf-prepared', toolCallId: 'wf-prepared-call', status: 'done', result: workflowPlaceholder,
+    })).toBe(true);
+    expect(store.pendingSubagentResults('root').find((row) => row.kind === 'workflow')!.result).toBe(workflowPlaceholder);
   });
 
   describe('workflow results share the delegated-result inbox with a kind discriminator', () => {
@@ -2117,7 +2130,7 @@ describe('BrainStore', () => {
       expect(good.startedAt).toBe(1700000000000);
       expect(good.result).toHaveLength(600); // bounded, not the raw 701 chars
       expect(run!.nodes.find((n) => n.id === 'bad')!.error).toBe('boom');
-      // Malformed variants of the new fields reject the snapshot rather than coercing.
+      // Malformed variants reject the snapshot rather than coercing.
       expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], startedAt: -5 }] }))).toBe(false);
       expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], result: 42 }] }))).toBe(false);
     });

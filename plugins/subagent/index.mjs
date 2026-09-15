@@ -6,7 +6,6 @@ import { randomUUID } from 'node:crypto';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { registerWorkflow } from './lib/workflow.mjs';
-import { clipTail } from './lib/results.mjs';
 import { errorText } from './lib/errors.mjs';
 import { raceDetach } from './lib/detach.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
@@ -342,14 +341,46 @@ export function register(ctx) {
     }
   };
 
+  /** Persist a successful background answer before it enters the durable completion inbox. Background
+   *  completion runs outside the generic afterToolCall hook, so the host sink receives only a bounded
+   *  placeholder while the exact answer remains in the existing session spill namespace. */
+  const prepareCompletion = async (job) => {
+    if (!job.background || job.status !== 'done' || typeof job.result !== 'string' || job.completionPrepared) return true;
+    try {
+      const fullResult = job.result;
+      if (Buffer.byteLength(fullResult, 'utf8') <= ctx.toolResultInlineBytes()) {
+        job.completionPrepared = true;
+        return true;
+      }
+      const stored = job.outputWriter
+        ? await job.outputWriter({ toolCallId: job.toolCallId, text: fullResult })
+        : null;
+      if (!stored) {
+        job.status = 'error';
+        job.error = `the complete result could not be persisted; use DelegateRead for ${job.sessionId || 'the sub-agent'} to recover it`;
+        delete job.result;
+        return false;
+      }
+      job.result = ctx.formatToolOutputPlaceholder(stored.path, stored.bytes, fullResult);
+      job.completionPrepared = true;
+      return true;
+    } catch (e) {
+      job.status = 'error';
+      job.error = `the complete result could not be persisted: ${errorText(e)}; use DelegateRead for ${job.sessionId || 'the sub-agent'} to recover it`;
+      delete job.result;
+      return false;
+    }
+  };
+
   /** Deliver the terminal result of a detached/background job through the turn-captured durable sink,
    *  shared by runChild and the reload hook. `completionDelivered` keeps the FIRST settlement
    *  authoritative: after the reload hook settles a job as interrupted, runChild finishing later (the
    *  host's abort cascade rejecting the child) must not deliver a second, contradicting completion. */
-  const deliverCompletion = (job) => {
-    if (!job.background || !job.emitCompletion || job.completionDelivered) return;
-    job.completionDelivered = true;
+  const deliverCompletion = async (job) => {
+    if (!job.background || !job.emitCompletion || job.completionDelivered || job.completionDelivering) return;
+    job.completionDelivering = true;
     try {
+      await prepareCompletion(job);
       job.emitCompletion({
         id: job.id,
         toolCallId: job.toolCallId,
@@ -366,8 +397,11 @@ export function register(ctx) {
         seconds: elapsedSeconds(job),
         model: job.model,
       });
+      job.completionDelivered = true;
     } catch (e) {
       ctx.logger.warn(`subagent completion persistence failed: ${errorText(e)}`);
+    } finally {
+      job.completionDelivering = false;
     }
   };
 
@@ -389,7 +423,7 @@ export function register(ctx) {
     job.error = error;
     job.finishedAt = Date.now();
     job.settledExternally = true;
-    if (deliver) { pushJob(job, 'error'); deliverCompletion(job); }
+    if (deliver) { pushJob(job, 'error'); void deliverCompletion(job); }
     return true;
   };
 
@@ -610,6 +644,9 @@ export function register(ctx) {
       const emitCompletion = ctx.subagentCompletionEmitter();
       const originSessionId = ctx.currentSessionId();
       const originPrincipal = principalOf(ctx.currentIdentity());
+      // Capture the host-owned recipient before the child leaves this tool turn. The writer exposes no
+      // session selector to the plugin and remains usable when the background child finishes later.
+      const outputWriter = ctx.captureToolOutputWriter?.();
       // Delegation is ASYNCHRONOUS by default: an omitted `background` starts the child and returns a
       // handle, and the result is delivered in a new turn. Waiting inside the call is the explicit
       // choice (`background: false`).
@@ -662,6 +699,7 @@ export function register(ctx) {
         background,
         autoDeliver: background && !!emitCompletion,
         emitCompletion,
+        outputWriter,
         resolveDetached: undefined,
         startedAt,
         finishedAt: undefined,
@@ -758,9 +796,9 @@ export function register(ctx) {
               state.error = clip(reply.slice('Error:'.length).trim() || reply, MAX_STORED_RESULT_CHARS);
             } else {
               state.status = 'done';
-              // The ONE result the parent reads, foreground return and background delivery alike: keep its END.
-              // An error is left head-first on purpose — what an error says is in its first line, not its last.
-              state.result = clipTail(reply, MAX_STORED_RESULT_CHARS);
+              // Preserve the complete successful answer. Foreground delivery is bounded by the host's
+              // existing afterToolCall spill; background delivery prepares its own bounded placeholder below.
+              state.result = reply;
             }
           }
         } catch (e) {
@@ -781,7 +819,7 @@ export function register(ctx) {
         if (!admissionSettled) {
           settleAdmission({ ok: false, error: state.error || 'the sub-agent ended before its durable run row was created' });
         }
-        deliverCompletion(state);
+        await deliverCompletion(state);
         return state.status === 'done' ? state.result : `Error: ${state.error}`;
       };
 
@@ -1082,6 +1120,7 @@ export function register(ctx) {
       // already exists, so its session id is known up front — no `session` event needed to seed the row.
       const originSessionId = ctx.currentSessionId();
       const originPrincipal = principalOf(ctx.currentIdentity());
+      const outputWriter = ctx.captureToolOutputWriter?.();
       const trackable = Boolean(originSessionId && originPrincipal);
       // Capacity must be reserved BEFORE continueSubagent can steer or start a child turn. Checking after that
       // side effect returned an error while leaving an untracked continuation running outside detach/reload.
@@ -1117,6 +1156,7 @@ export function register(ctx) {
         originPrincipal,
         emit: ctx.subagentEmitter(),
         emitCompletion,
+        outputWriter,
         background: false,
         autoDeliver: false,
         resolveDetached: undefined,
@@ -1185,7 +1225,7 @@ export function register(ctx) {
               { steered: true },
             );
           }
-          state.result = clipTail(res.reply || '(the sub-agent returned nothing)', MAX_STORED_RESULT_CHARS);
+          state.result = res.reply || '(the sub-agent returned nothing)';
           return ok(state.result);
         } catch (e) {
           // A refusal is self-correctable — the agent can wait for a busy child or pick another one — so it
@@ -1196,7 +1236,7 @@ export function register(ctx) {
         } finally {
           state.finishedAt = Date.now();
           push(state.status);
-          deliverCompletion(state);
+          await deliverCompletion(state);
         }
       };
 

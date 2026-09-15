@@ -259,22 +259,6 @@ export const syntheticRestartResultId = (parentSessionId: string, toolCallId: st
 
 const bounded = (value: string, max: number): string => value.length <= max ? value : value.slice(0, max);
 
-/** The delivery-path twin of `bounded` for the one field a parent reads as the ANSWER: an over-long result
- *  keeps its END, because a report's conclusion is its last paragraph. Head-first is still right everywhere a
- *  bound produces a preview (a task line, a snapshot row) and for an error, which leads with what broke.
- *
- *  Deliberate mirror of `clipTail` in plugins/subagent/lib/results.mjs — a plugin may not import daemon
- *  sources and the daemon may not import a plugin's ESM, so the two carry the same note and the same
- *  arithmetic. tests/store/brainStore.test.ts asserts they agree character for character. */
-const truncationNote = (dropped: number): string =>
-  `[truncated: first ${dropped} chars dropped, end kept — read it in full with DelegateRead]\n`;
-const boundedTail = (value: string, max: number): string => {
-  if (value.length <= max) return value;
-  const kept = Math.max(0, max - truncationNote(value.length).length);
-  // `slice(-0)` is `slice(0)` — the whole string — so a zero-width tail has to be spelled out.
-  return `${truncationNote(value.length - kept)}${kept === 0 ? '' : value.slice(-kept)}`;
-};
-
 // Bounds for a persisted workflow snapshot, mirroring the engine's own limits (dag.mjs MAX_NODES /
 // MAX_ID_CHARS, workflow.mjs SNAPSHOT_TASK_PREVIEW). The whole DAG re-fans on every tool event of every
 // node, so an unbounded blob would be a write amplifier as much as a DoS: `deps` dominates the ceiling,
@@ -431,7 +415,7 @@ function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'paren
   return {
     id: o.id, toolCallId: o.toolCallId, sessionId: o.sessionId, status: o.status,
     task: bounded(o.task, 8_000),
-    ...(typeof o.result === 'string' ? { result: boundedTail(o.result, 100_000) } : {}),
+    ...(typeof o.result === 'string' ? { result: bounded(o.result, 100_000) } : {}),
     ...(typeof o.error === 'string' ? { error: bounded(o.error, 100_000) } : {}),
     tools: o.tools, ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
     ...(typeof o.effectiveTps === 'number' ? { effectiveTps: o.effectiveTps } : {}),
@@ -466,9 +450,9 @@ function normalizeWorkflowCompletion(
     toolCallId: o.toolCallId,
     status: o.status === 'done' ? 'done' : 'error',
     task: bounded(title, 8_000),
-    // A DAG summary is every node's result end to end, so it is the one payload here that really can exceed
-    // the ceiling — and cutting its head costs the FIRST nodes, not the last ones the parent was waiting for.
-    result: boundedTail(o.result, 100_000),
+    // The producer normally enqueues a bounded placeholder, but the fixed store bound remains a final guard
+    // for malformed or legacy callers that send an oversized raw summary.
+    result: bounded(o.result, 100_000),
   };
 }
 

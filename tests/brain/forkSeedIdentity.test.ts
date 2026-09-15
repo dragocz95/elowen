@@ -214,7 +214,7 @@ describe('the transcript a fork inherits', () => {
 describe('the first request a fork child sends', () => {
   const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
   const GIF = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-  const OUTPUT = 'y'.repeat(60_000);
+  const OUTPUT = 'y'.repeat(130_000);
 
   let dirs: string[] = [];
   afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });

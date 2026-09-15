@@ -970,6 +970,7 @@ export class BrainService {
           hooks: {
             emit: (update) => { this.publishWorkflowUpdate(wf.parentSessionId, update); },
             complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
+            outputWriter: (input) => this.persistWorkflowOutput(wf.parentSessionId, input.toolCallId, input.text),
             stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
             continueNode: (childSessionId, onEvent) => this.delegated.continueWorkflowNode(wf.parentSessionId, childSessionId, onEvent),
             validateBoundary: (access) => this.journaledBoundaryCheck(wf.parentSessionId, access),
@@ -1418,6 +1419,13 @@ export class BrainService {
     };
     const exceeds = scopeExceedsCurrentAccess(scope, access);
     return exceeds ? { ok: false, reason: `the journaled boundary exceeds the origin's current authority: ${exceeds}` } : { ok: true };
+  }
+
+  /** Persist a recovered workflow output without an ambient prompt turn. The parent session is supplied by
+   *  the host recovery claim, and the registry derives the existing spill namespace from that id. */
+  private async persistWorkflowOutput(parentSessionId: string, toolCallId: string, text: string) {
+    const registry = await this.resolvePlugins();
+    return registry?.persistSubagentToolOutputForSession(parentSessionId, toolCallId, text) ?? null;
   }
 
   /** Deliver a workflow completion durably to its origin conversation on behalf of boot resume, where no
