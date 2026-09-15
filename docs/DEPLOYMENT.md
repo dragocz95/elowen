@@ -118,7 +118,14 @@ Two switches live on an individual entry in `brain.providers` and are written th
 | `hostedToolSearchEnabled` | `false` only | Turns this provider's native hosted tool search off. Omit the key to restore the default. |
 | `codeModeEnabled` | `true` only | Turns code mode on for this provider. Omit the key to turn it off. |
 
-Code mode replaces the model's direct tool surface with a single `exec` tool that takes raw JavaScript, and the script reaches every other tool through a `tools` object. It is off by default because it changes what the model sees on every turn. The switch is necessary but not sufficient: it applies only to the ChatGPT Codex account entry and only to models in the gpt-5.6 family or newer, which are the models trained on that tool surface. On any other provider or an older model the setting has no effect and the session keeps its ordinary tool list. The tools themselves are unchanged: a script's call passes exactly the same permission, deny and approval checks as a direct call, so code mode grants no capability the account does not already have.
+Both switches are also reachable in the interface, under **Tool execution** on every provider and connected account in Settings → Models. A switch is offered only where the daemon reports the feature can apply at all, so the interface can never turn on a route the provider has no way to take.
+
+Code mode replaces the model's direct tool surface with a single `exec` tool that takes raw JavaScript, and the script reaches every other tool through a `tools` object. It is off by default because it changes what the model sees on every turn. The switch is necessary but not sufficient, and the two remaining gates are properties of the wire rather than preferences:
+
+- The provider must speak a **Responses** API. `exec` is declared as a grammar-constrained custom tool, which only `openai-codex-responses`, `openai-responses` and `azure-openai-responses` serialise; Chat Completions has no such concept. That is the ChatGPT account plus any `openai` entry whose `api` resolves to `openai-responses`.
+- The model must be in the **gpt-5.6 family or newer**, the models trained on that tool surface.
+
+On any other provider or an older model the setting has no effect and the session keeps its ordinary tool list. The tools themselves are unchanged: a script's call passes exactly the same permission, deny and approval checks as a direct call, so code mode grants no capability the account does not already have.
 
 ## Registry plugins and compatibility
 

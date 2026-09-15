@@ -1,4 +1,4 @@
-import type { BrainProviderEntry } from '../providers.js';
+import { openAiApiFor, type BrainProviderEntry } from '../providers.js';
 
 /** The tools that stay DIRECTLY visible to the model under code mode, on top of `exec` and `wait`.
  *
@@ -28,11 +28,20 @@ export function isCodeModeCapableModel(modelId: string): boolean {
   return major === MIN_CODE_MODE_MAJOR && minor >= MIN_CODE_MODE_MINOR;
 }
 
-/** Whether this provider serves the ChatGPT Codex endpoint, the only one code mode is enabled for today.
- *  Identified by the OAuth entry type rather than by the wire api, because `BrainProviderApi` covers only
- *  the two key-based OpenAI wires; the Codex responses api is reached exclusively through this entry. */
-function isCodexProvider(entry: BrainProviderEntry): boolean {
-  return entry.type === 'oauth-openai-codex';
+/** Could this provider entry EVER run code mode — ignoring the operator switch and the model gate?
+ *
+ *  `exec` is declared through pi-ai's `constrainedSampling`, and only the Responses wires serialise that
+ *  as an OpenAI custom tool: `openai-codex-responses`, `openai-responses` and `azure-openai-responses`
+ *  each read `model.compat.supportsOpenAIGrammarTools`, while Chat Completions has no such concept and
+ *  would silently drop the grammar. The ChatGPT account is matched by its OAuth entry type rather than by
+ *  the wire, because `BrainProviderApi` covers only the two key-based OpenAI wires; that account's
+ *  Responses endpoint is reached exclusively through the entry type.
+ *
+ *  Exported because the settings surface decides from the SAME answer whether to offer a switch, which is
+ *  what keeps the browser from restating this arithmetic. */
+export function isCodeModeCapableProvider(entry: Pick<BrainProviderEntry, 'type' | 'api' | 'baseUrl'>): boolean {
+  if (entry.type === 'oauth-openai-codex') return true;
+  return entry.type === 'openai' && openAiApiFor(entry) === 'openai-responses';
 }
 
 /** Whether this turn composes its tools in CODE MODE: one `exec` tool taking raw JavaScript, with every
@@ -62,6 +71,6 @@ export function codeModeVisibilityFor(
 export function codeModeApplies(entry: BrainProviderEntry | undefined, modelId: string): boolean {
   if (entry === undefined) return false;
   if (entry.codeModeEnabled !== true) return false;
-  if (!isCodexProvider(entry)) return false;
+  if (!isCodeModeCapableProvider(entry)) return false;
   return isCodeModeCapableModel(modelId);
 }

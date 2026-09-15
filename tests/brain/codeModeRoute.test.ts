@@ -5,6 +5,7 @@ import {
   codeModeApplies,
   codeModeVisibilityFor,
   isCodeModeCapableModel,
+  isCodeModeCapableProvider,
 } from '../../src/brain/session/codeModeRoute.js';
 
 function entry(overrides: Partial<BrainProviderEntry> = {}): BrainProviderEntry {
@@ -54,9 +55,17 @@ describe('codeModeApplies', () => {
     expect(codeModeApplies(without, 'gpt-5.6-sol')).toBe(false);
   });
 
-  it('is off for a provider that is not the ChatGPT Codex endpoint', () => {
-    expect(codeModeApplies(entry({ type: 'openai' }), 'gpt-5.6-sol')).toBe(false);
+  it('is off for a provider whose wire cannot carry a grammar tool', () => {
+    // `exec` is a grammar-constrained custom tool, which only the Responses wires serialise. A default
+    // OpenAI-compatible endpoint is Chat Completions, and Anthropic is neither.
+    expect(codeModeApplies(entry({ type: 'openai', baseUrl: 'https://compat.example/v1' }), 'gpt-5.6-sol')).toBe(false);
     expect(codeModeApplies(entry({ type: 'oauth-anthropic' }), 'gpt-5.6-sol')).toBe(false);
+  });
+
+  it('applies to an API-key provider on the Responses wire', () => {
+    const azure = entry({ type: 'openai', api: 'openai-responses', baseUrl: 'https://r.openai.azure.com/openai/v1' });
+    expect(codeModeApplies(azure, 'gpt-5.6-luna')).toBe(true);
+    expect(codeModeApplies(azure, 'gpt-5.5')).toBe(false);
   });
 
   it('is off for an older model on a qualifying provider', () => {
@@ -90,5 +99,21 @@ describe('codeModeVisibilityFor', () => {
     for (const name of CODE_MODE_ALWAYS_VISIBLE_TOOLS) {
       expect(codeModeVisibilityFor([name], []).deferred.has(name)).toBe(false);
     }
+  });
+});
+
+describe('isCodeModeCapableProvider', () => {
+  it('accepts the ChatGPT account and every Responses endpoint', () => {
+    expect(isCodeModeCapableProvider({ type: 'oauth-openai-codex', baseUrl: '' })).toBe(true);
+    expect(isCodeModeCapableProvider({ type: 'openai', api: 'openai-responses', baseUrl: 'https://r.openai.azure.com/openai/v1' })).toBe(true);
+    // api.openai.com defaults to Responses without an explicit api.
+    expect(isCodeModeCapableProvider({ type: 'openai', baseUrl: 'https://api.openai.com/v1' })).toBe(true);
+  });
+
+  it('rejects Chat Completions and non-OpenAI wires', () => {
+    expect(isCodeModeCapableProvider({ type: 'openai', baseUrl: 'https://openrouter.ai/api/v1' })).toBe(false);
+    expect(isCodeModeCapableProvider({ type: 'openai', api: 'openai-completions', baseUrl: 'https://api.openai.com/v1' })).toBe(false);
+    expect(isCodeModeCapableProvider({ type: 'anthropic', baseUrl: 'https://api.anthropic.com' })).toBe(false);
+    expect(isCodeModeCapableProvider({ type: 'oauth-anthropic', baseUrl: '' })).toBe(false);
   });
 });

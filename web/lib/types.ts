@@ -89,6 +89,10 @@ export interface BrainProvider {
    *  type mirrors the daemon: "on" is the ABSENCE of the field, never a `true`, so nothing a client sends
    *  can grant a route the provider gates have not already earned. */
   hostedToolSearchEnabled?: false;
+  /** Present only when the operator switched code mode ON for this provider. The literal mirrors the
+   *  daemon the other way round from the field above: "off" is the ABSENCE of the field. The switch alone
+   *  grants nothing — the provider wire and the model family still have to pass. */
+  codeModeEnabled?: true;
 }
 /** One Elowen AI (brain) model. `source` = how its provider authenticates (drives the OAuth badge). */
 export interface BrainModelOption {
