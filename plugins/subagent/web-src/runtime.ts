@@ -16,6 +16,23 @@ export interface PluginSubagent {
   body?: string;
 }
 
+/** One pickable brain model, as the host's `/brain/models` serves it. */
+export interface BrainModelOption { provider: string; providerLabel: string; model: string }
+
+/** The account's own values for ONE plugin, as `/plugins/user-config` returns them. `revision` is the CAS
+ *  token a save must carry so a stale tab cannot overwrite a newer one. */
+export interface UserPluginConfigDetail {
+  name: string;
+  config: Record<string, unknown>;
+  revision: number;
+}
+
+/** The provider/model pair encoding every model picker in the app writes. `::` cannot occur in a provider
+ *  id while a model id may contain slashes and colons, which is why the pair is not joined with one; an
+ *  empty key means "no explicit pick". Mirrors the host's `roleKey` and the server-side parser in
+ *  ../lib/typeModel.mjs — a bundle must not import either, so the encoding is restated here. */
+export const roleKey = (providerId: string, model: string): string => (providerId && model ? `${providerId}::${model}` : '');
+
 // ---- hook shapes --------------------------------------------------------------------------------
 
 interface QueryResult<T> { data?: T; isLoading: boolean; isError: boolean; refetch(): void }
@@ -42,6 +59,10 @@ interface SubagentHooks {
   useSavePluginSubagent(): MutationResult<{ name: string; def: { description: string; tools: PluginSubagent['tools']; body: string } }>;
   useDeletePluginSubagent(): MutationResult<string>;
   usePluginStrings(plugin: string): Record<string, string>;
+  useBrainModels(): QueryResult<BrainModelOption[]>;
+  /** The signed-in account's own per-plugin values — the store behind the built-in agent model pins. */
+  useUserPluginConfigs(): QueryResult<UserPluginConfigDetail[]>;
+  useSaveUserPluginConfig(): MutationResult<{ name: string; values: Record<string, unknown>; expectedRevision?: number }>;
 }
 
 // The host components are runtime records; `any` props keep the JSX call sites identical to the
@@ -49,8 +70,10 @@ interface SubagentHooks {
 type AnyComponent = ComponentType<any>;
 
 interface SubagentComponents {
-  Badge: AnyComponent; Input: AnyComponent; Field: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
+  Badge: AnyComponent; Input: AnyComponent; Field: AnyComponent; SettingsGroup: AnyComponent; SettingsRow: AnyComponent;
+  PluginSection: AnyComponent;
   SelectMenu: AnyComponent; MarkdownAssetEditor: AnyComponent; Button: AnyComponent;
+  BrainModelField: AnyComponent; LoadingLine: AnyComponent; ErrorState: AnyComponent;
   ControlSurfaceDocument: AnyComponent;
   WorkspaceShell: AnyComponent; WorkspaceMetric: AnyComponent; AutoSaveStatus: AnyComponent;
 }

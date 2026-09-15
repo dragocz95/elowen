@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Eye, GitFork, Package, Plus, User } from 'lucide-react';
 import { runtime, type PluginSubagent, type SaveStatus } from './runtime';
+import { TypeModelPins } from './TypeModelPins';
 
 type ToolsMode = 'read-only' | 'all' | 'inherit' | 'custom';
 /** `customTools` is a comma-separated tool list, used only when `toolsMode === 'custom'`. */
@@ -18,17 +19,19 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const query = hooks.usePluginSubagents();
   const save = hooks.useSavePluginSubagent();
   const remove = hooks.useDeletePluginSubagent();
+  const savePin = hooks.useSaveUserPluginConfig();
   const [creating, setCreating] = useState(false);
 
   const toolsLabel = (tools: PluginSubagent['tools']): string =>
     Array.isArray(tools) ? tools.join(', ') : { 'read-only': s.toolsReadOnly, all: s.toolsAll, inherit: s.toolsInherit }[tools];
 
-  // On its own page nothing above this component reports a save any more, so the outcome of the two
-  // mutations that write agents is read straight off them. Both are watched: deleting an agent is as
-  // much a save as editing one, and a failed delete with no indicator looks like nothing happened.
-  const saveStatus: SaveStatus = save.isPending || remove.isPending ? 'saving'
-    : save.isError || remove.isError ? 'error'
-    : save.isSuccess || remove.isSuccess ? 'saved'
+  // On its own page nothing above this component reports a save any more, so the outcome of the
+  // mutations that write is read straight off them. All three are watched: deleting an agent is as
+  // much a save as editing one, a failed delete with no indicator looks like nothing happened, and
+  // picking an agent's model writes immediately and deserves the same single indicator.
+  const saveStatus: SaveStatus = save.isPending || remove.isPending || savePin.isPending ? 'saving'
+    : save.isError || remove.isError || savePin.isError ? 'error'
+    : save.isSuccess || remove.isSuccess || savePin.isSuccess ? 'saved'
     : 'idle';
 
   const agents: PluginSubagent[] = query.data ?? [];
@@ -39,6 +42,9 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
 
   const surfaceDocument = (
     <C.ControlSurfaceDocument>
+      {/* The built-in agents' models come first: they are a short, settled list of choices about agents
+          the page then goes on to list, where the register below is a workspace for editing your own. */}
+      <TypeModelPins agents={agents} />
       <C.MarkdownAssetEditor
         query={query}
         creating={creating}
