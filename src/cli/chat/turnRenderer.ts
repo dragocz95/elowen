@@ -10,7 +10,7 @@ import { ensureLang } from './codeHighlight.js';
 import { color, modalRow } from './theme.js';
 import { prettyCwd } from './projectDir.js';
 import { activeKeymap } from './keys.js';
-import { composingLabel, type ComposeLocale } from './composeLabels.js';
+import { composingLabel, toolRowLabel, type ComposeLocale } from './composeLabels.js';
 import { settledTurnMeta } from './composeLines.js';
 import type { InlineArtifactCollection } from './inlineArtifacts.js';
 
@@ -62,8 +62,12 @@ export interface TurnRenderOptions {
  *  per-tool marker glyph instead. This is the split the user asked for: output → arrow, no output → icon. */
 const SHOWN_OUTPUT_CONNECTOR = '←';
 
-export function toolRowSpec(name: string, detail?: string): { glyph: string; title: string } {
-  const safeName = terminalInlineText(name);
+export function toolRowSpec(
+  name: string, detail?: string, reason?: string, locale: ComposeLocale = 'en',
+): { glyph: string; title: string } {
+  // `toolRowLabel` renames only the rows whose tool name says nothing (code mode's `exec`/`wait`); every
+  // other tool keeps its literal name. The glyph below stays keyed on the REAL name.
+  const safeName = terminalInlineText(toolRowLabel(name, reason, locale));
   const safeDetail = detail ? terminalInlineText(detail) : '';
   // Title is the tool's literal name (+ detail); only the glyph is inferred from the name (a monochrome
   // direction hint). Substring labels used to misname tools — `CreateSkill`/`TodoWrite` read as a file
@@ -242,8 +246,8 @@ export class TurnRenderer {
             // every shown-output tool. Console tools pass the name ONLY: their `$ command` echo already
             // carries the detail, so folding it into the header too would just repeat it.
             const outHeading = item.output.kind === 'console'
-              ? toolRowSpec(item.name).title
-              : toolRowSpec(item.name, item.detail).title;
+              ? toolRowSpec(item.name, undefined, item.reason, options.locale ?? 'en').title
+              : toolRowSpec(item.name, item.detail, item.reason, options.locale ?? 'en').title;
             for (const line of toolOutputBlock(item.output, width, options.expandedTools.has(key), outHeading, SHOWN_OUTPUT_CONNECTOR)) add(line);
             if (item.output.fullText && item.output.fullText !== item.output.text) {
               for (let index = before; index < rows.length; index++) {
@@ -264,7 +268,7 @@ export class TurnRenderer {
                 }
               }
             } else {
-              const spec = toolRowSpec(item.name, item.detail);
+              const spec = toolRowSpec(item.name, item.detail, item.reason, options.locale ?? 'en');
               const suffix = group.count > 1 ? ` ${color.faint(`×${group.count}`)}` : '';
               add(`${TOOL_INDENT}${color.faint(spec.glyph)} ${color.dim(truncateToWidth(spec.title, Math.max(12, width - 10), '…'))}${suffix}`);
             }

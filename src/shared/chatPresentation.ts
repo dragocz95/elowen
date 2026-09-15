@@ -131,6 +131,26 @@ export function composingLabel(
   return composeLabel(name, detail, locale);
 }
 
+/** Tools whose NAME tells the reader nothing, because the call is a wrapper around work it performs
+ *  itself: code mode's `exec` (a script) and `wait` (that script yielding). The calls the script made
+ *  draw their own rows, so this row only appears when it recorded none — and then the bare word `exec`
+ *  is the least useful thing it could say. The model's own status note takes the row instead, with
+ *  these phrases standing in when it authored none (`exec` is grammar-constrained and cannot carry one
+ *  at all). */
+const OPAQUE_ROW_TOOLS: Record<string, Record<ComposeLocale, string>> = {
+  exec: { en: 'Running tools…', cs: 'Spouštím nástroje…', sk: 'Spúšťam nástroje…' },
+  wait: { en: 'Waiting for the script…', cs: 'Čekám na skript…', sk: 'Čakám na skript…' },
+};
+
+/** What a settled tool row is TITLED: the tool's own name, except for the opaque wrappers above, where
+ *  the model's note wins and a localized phrase is the fallback. The glyph stays keyed on the real
+ *  name — this renames the row, it does not disguise which tool ran. */
+export function toolRowLabel(name: string, reason: string | undefined, locale: ComposeLocale): string {
+  const phrase = OPAQUE_ROW_TOOLS[name];
+  if (!phrase) return name;
+  return reason?.trim() || phrase[locale];
+}
+
 export interface TodoPreviewItem {
   readonly status?: 'pending' | 'in_progress' | 'completed';
 }

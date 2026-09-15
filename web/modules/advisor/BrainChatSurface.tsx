@@ -50,6 +50,7 @@ import {
   TODO_CARD_ID,
   TODO_PREVIEW_ITEMS,
   composingLabel,
+  toolRowLabel,
   todoPreviewItems,
   type ComposeLocale,
   type TodoPreviewItem,
@@ -502,7 +503,7 @@ const TranscriptAmbientExtras = memo(function TranscriptAmbientExtras({
  *  (pl-4) so they sit visually deeper than the assistant's prose. The diff/output/progress blocks
  *  inherit this wrapper's mono type, so the full page's slightly larger log size flows into them. */
 function ToolPills({ tools, full, live }: { tools: ToolItem[]; full?: boolean; live?: boolean }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   // Consecutive calls of the same tool fold into ONE row carrying a `×N` count (the CLI's grouped pills);
   // recomputed every render so a streaming run's count and latest argument stay live.
   const groups = groupToolItems(tools);
@@ -522,7 +523,8 @@ function ToolPills({ tools, full, live }: { tools: ToolItem[]; full?: boolean; l
             {running
               ? <Spinner size="xs" tone="text-warning" label={t.brainChat.toolRunning} />
               : <span aria-hidden className="shrink-0 select-none opacity-70">{toolGlyph(tool.name)}</span>}
-            <span className="shrink-0 text-muted-foreground">{tool.name}</span>
+            {/* Named by the tool, except for the rows whose name says nothing — see `toolRowLabel`. */}
+            <span className="shrink-0 text-muted-foreground">{toolRowLabel(tool.name, tool.reason, locale as ComposeLocale)}</span>
             {tool.detail ? <span className="truncate opacity-60">{tool.detail}</span> : null}
             {group.count > 1 ? <span className="shrink-0 tabular-nums opacity-50">×{group.count}</span> : null}
           </>

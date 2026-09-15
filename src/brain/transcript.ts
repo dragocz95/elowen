@@ -33,7 +33,10 @@ export interface ToolItem { name: string; detail?: string; diff?: string; icon?:
   plan?: string;
   /** Live rolling tail of a still-running `Bash` (from the `tool_progress` event), shown under the
    *  tool row while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
-  progress?: string }
+  progress?: string;
+  /** The status note the model authored for the call (`_reason`). Carried live on the `tool` event and
+   *  durably on the segment, so `toolRowLabel` reads the same value in both. */
+  reason?: string }
 
 /** The plan a tool item submitted, or undefined when it submitted none. Keyed on the tool name as well
  *  as the field, so no other tool can raise a plan panel by shipping a `plan` of its own. */
@@ -160,7 +163,7 @@ export interface HistoryMessage {
   text: string;
   segments?: (
     | { kind: 'text'; text: string }
-    | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState; wf?: WorkflowState; plan?: string }
+    | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState; wf?: WorkflowState; plan?: string; reason?: string }
     | { kind: 'image'; image: { url: string; mimeType: string }; caption?: string; preview?: true }
     | { kind: 'file'; file: { url: string; name: string; size: number }; caption?: string }
   )[];
@@ -248,7 +251,7 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
         // share never disappears silently on a client that cannot fetch authenticated file refs yet.
         segments.push({ kind: 'text', text: `📎 ${seg.caption?.trim() || seg.file.name}` });
       } else {
-        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub, wf: seg.wf, plan: seg.plan };
+        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub, wf: seg.wf, plan: seg.plan, reason: seg.reason };
         const tail = segments[segments.length - 1];
         if (tail?.kind === 'tools') tail.items.push(item);
         else segments.push({ kind: 'tools', items: [item] });

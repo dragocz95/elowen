@@ -5,5 +5,6 @@ export {
   LONG_COMPOSE_TOOLS,
   composeLabel,
   composingLabel,
+  toolRowLabel,
   type ComposeLocale,
 } from '../../shared/chatPresentation.js';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { composeLabel, composingLabel, LONG_COMPOSE_TOOLS } from '../../../src/cli/chat/composeLabels.js';
+import { composeLabel, composingLabel, toolRowLabel, LONG_COMPOSE_TOOLS } from '../../../src/cli/chat/composeLabels.js';
 
 /** Every label is at most four whitespace-separated words and ends with the ellipsis char. */
 const wellFormed = (label: string): void => {
@@ -21,6 +21,22 @@ describe('composingLabel', () => {
   it('returns undefined when neither a reason nor a long-tool label applies (caller then uses a neutral hint)', () => {
     expect(composingLabel(undefined, 'Read', 'a.ts', 'en')).toBeUndefined();
     expect(composingLabel(undefined, undefined, undefined, 'en')).toBeUndefined();
+  });
+});
+
+describe('toolRowLabel', () => {
+  it('names an ordinary row after its tool, note or not', () => {
+    expect(toolRowLabel('Bash', undefined, 'cs')).toBe('Bash');
+    expect(toolRowLabel('Bash', 'Spouštím testy…', 'cs')).toBe('Bash');
+  });
+
+  it('gives a code-mode wrapper the model note, and a localized phrase when it authored none', () => {
+    expect(toolRowLabel('wait', 'Čekám na volbu…', 'cs')).toBe('Čekám na volbu…');
+    expect(toolRowLabel('wait', '   ', 'cs')).toBe('Čekám na skript…');
+    // `exec` is grammar-constrained: it has no arguments at all, so it can never carry a note.
+    expect(toolRowLabel('exec', undefined, 'cs')).toBe('Spouštím nástroje…');
+    expect(toolRowLabel('exec', undefined, 'en')).toBe('Running tools…');
+    expect(toolRowLabel('exec', undefined, 'sk')).toBe('Spúšťam nástroje…');
   });
 });
 
