@@ -38,10 +38,7 @@ describe('plugin UI runtime', () => {
     // covers, and deliberately contentless — the app's own translated line plus a callback that brings the
     // real card back, so nothing about the question crosses into a bundle. 16 publishes the canonical
     // ProjectIcon so plugins render project identity through the same cached image and fallback path.
-    // 17 publishes the ACCOUNT's own per-plugin values — `useUserPluginConfigs` / `useSaveUserPluginConfig`
-    // — so a plugin page can own a setting that belongs to the person rather than to the instance, through
-    // the same store, revision CAS and validation the Account form writes with.
-    expect(PLUGIN_UI_API_VERSION).toBe(17);
+    expect(PLUGIN_UI_API_VERSION).toBe(16);
     expect(PLUGIN_UI_API_VERSION).toBe(KIT_PLUGIN_UI_API_VERSION);
     expect(window.ElowenUiRuntime?.apiVersion).toBe(KIT_PLUGIN_UI_API_VERSION);
     expect(window.ElowenUiRuntime?.components).toEqual(expect.objectContaining({

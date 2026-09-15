@@ -11,7 +11,7 @@ import type { ComponentType } from 'react';
  *  Deliberately a LITERAL type: the web app re-declares the value and annotates it with
  *  `typeof PLUGIN_UI_API_VERSION`, so a kit bump that forgets the host fails the web typecheck instead
  *  of drifting silently. */
-export declare const PLUGIN_UI_API_VERSION: 17;
+export declare const PLUGIN_UI_API_VERSION: 16;
 
 /** Public props of `ElowenUiRuntime.components.Slider`. */
 export interface SliderProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'type'> {
