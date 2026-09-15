@@ -10,6 +10,7 @@ const read = (path: string): string => readFileSync(join(root, path), 'utf8');
 const placeholders: Record<string, Record<string, number>> = {
   'elowen.md': { '{{agentName}}': 2, '{{userName}}': 1, '{{productName}}': 3, '{{personality}}': 1 },
   'elowen-platform.md': { '{{ownerName}}': 2, '{{productName}}': 1, '{{agentName}}': 1 },
+  'elowen-codex.md': { '{{agentName}}': 2, '{{userName}}': 1, '{{productName}}': 4, '{{personality}}': 1 },
   'scheduled.md': { '{{agentName}}': 1, '{{userName}}': 1, '{{personality}}': 1 },
   'cli/plan-mode.md': { '{{planFile}}': 1, '{{planState}}': 1 },
   'cli/plan-mode-sparse.md': { '{{planFile}}': 1 },

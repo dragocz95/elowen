@@ -178,7 +178,9 @@ Capabilities are deny-by-default:
 }
 ```
 
-`mutates` values currently include `prompt`, `turnContext`, `tools`, `memory`, `events`, `workflow-dag`, and `users`. The host requires explicit, all-or-nothing acknowledgement when enabling or re-enabling a plugin that declares `tools`, `memory`, `events`, `workflow-dag`, or `users` mutation authority. A warning badge is not consent; turning a plugin off needs no acknowledgement.
+`mutates` values are `prompt`, `turnContext`, `tools`, `events`, `workflow-dag`, and `users`. The host requires explicit, all-or-nothing acknowledgement when enabling or re-enabling a plugin that declares `prompt`, `tools`, `events`, `workflow-dag`, or `users` mutation authority. A warning badge is not consent; turning a plugin off needs no acknowledgement.
+
+Only `turnContext` is exempt from that acknowledgement, because it reaches no further than one turn's prompt. `prompt` is not exempt: it grants a persistent template overlay and a per-session system-prompt replacement, so it can rewrite who the agent is until the plugin is removed. There is no `memory` value; it gated nothing while still demanding consent, and it returns the day a `memory.*` hook actually fires.
 
 `reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data.
 
@@ -321,6 +323,38 @@ A request carries `providerId`, `model`, `prompt`, and optional `size`, `quality
 `ctx.emitCard(card)` pushes a structured card to the current conversation's clients, keyed by `card.id`. Re-emitting the same id replaces the card, and emitting an empty card removes it. Web and Discord render every card; the CLI shows only `pinned` cards, in its fixed panel above the status bar, so a non-pinned card never surfaces there. The call is a no-op outside an interactive prompt turn; cron and worker sessions wire no emitter.
 
 `ctx.chatArtifacts` attaches artifacts beside the durable tool segment of the conversation rather than in an out-of-band panel. `open(toolCallId, artifact)` is valid only inside a prompt tool execution and throws otherwise; `update(ref, update)` and `close(ref)` take an opaque serializable ref that can be used later from an API route, a cleanup job, or boot reconciliation. Core stamps the plugin name, authorizes every ref mutation, and enforces expiry independently of plugin liveness. All three throw when the host seam is unwired.
+
+### Rows for work the model did not call
+
+A tool the model calls produces a provider tool event, and every surface already draws it. Work performed
+without such an event draws nothing: a code-mode script calling `tools.*`, or a plugin doing a batch
+behind one call, leaves the user with a single opaque row. `src/brain/toolTrace/` turns that work into
+ordinary tool rows, and the `codeMode` control is its first consumer.
+
+Two halves, and a producer owes both:
+
+- **Live.** The host hands the producer a sink per producer id (`request.trace(producerId)` on the
+  `codeMode` composition request). `sink.call(name, args, execute)` opens the row, runs the call, settles
+  the row with the result, and records the durable twin; `sink.note(text)` adds a progress line. The
+  callback receives the ROW ID and should pass it as the call id the tool sees, so anything the tool keys
+  on its call id (delegated sub-agent progress, a workflow run, an inline artifact) lands on the row the
+  user is watching.
+- **Durable.** `sink.drain()` returns the records not yet reported; put them on the reporting tool
+  result's `details.toolTrace`. The host expands them in place of that call's own row on reload, and
+  keeps the call's own row when it recorded nothing. `details` never reaches the model, so the payload
+  costs no tokens and no prompt-cache churn.
+
+Three invariants a producer must honour, all three of them enforced by the host but easy to defeat:
+
+1. Report each record exactly ONCE. One sink serves a producer that reports across several calls (an
+   `exec` and then each `wait` on the same cell), and `drain()` is what keeps a row from being drawn
+   twice.
+2. Never publish a row you did not record. A live-only row works until the user reloads.
+3. Let the host mint the ids. They travel inside the record; recomputing one on the reading side is how
+   the streamed row and the reloaded row stop being the same row.
+
+The payload is capped (100 records, 128 KiB per producer) and truncation is stated in a visible note
+rather than dropped silently.
 
 ## Authenticated routes and webhooks
 
@@ -548,10 +582,13 @@ The file is `<dir>/<name>.md`. Names are bare, lowercase template names; a user'
 
 Register a hook with a name from the typed union in `src/plugins/api.ts`. Current hook families cover platform ingress, brain session/turn lifecycle, tool registry and calls, memory I/O, and plugin reloads.
 
-Two hook mutations are runtime-wired. A hook handler may return `{ patch?, annotations?, audit? }`, and the patch carries `appendContext` and `denyToolCall`:
+Three hook mutations are runtime-wired. A hook handler may return `{ patch?, annotations?, audit? }`, and the patch carries `appendContext`, `denyToolCall` and `persona`:
 
 - `appendContext` from a turn-context hook, gated by `mutates: ["turnContext"]`.
 - `denyToolCall` from `tools.call.before`, gated by `mutates: ["tools"]`.
+- `persona` from `brain.session.beforeSpawn`, gated by `mutates: ["prompt"]`. The payload is `{ sessionId, provider, model, persona }`, where `persona` is the system prompt the host resolved for that session from the surface and the model. Returning a non-empty string replaces it for that session only. First writer wins, and an empty string is ignored: a session with no system prompt has no identity.
+
+Note which hook names actually fire today. Most of the union does not: the wired points are `brain.session.beforeSpawn`, `brain.session.afterSpawn`, `brain.turn.contextBuilt`, `tools.call.before`, `tools.call.after`, `plugin.reload.before` and `plugin.reload.after`. The rest are reserved names, and a handler registered for one of them is never called.
 
 A hook may also be a pure observer. Hook failures do not grant permission or block a call; implement critical enforcement in the tool or route's own authorization path.
 

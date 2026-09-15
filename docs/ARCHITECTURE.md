@@ -139,6 +139,12 @@ When the provider offers native hosted tool search, `src/brain/session/hostedToo
 
 Plan mode keeps the tool list stable for prompt-cache reasons. Mutating calls are refused at execution time, while `Write` and `Edit` are clamped to the current conversation's plan file. Do not treat the advertised tool list as sufficient enforcement.
 
+Which system-prompt template a session runs on is decided in one place, `src/brain/session/personaRoute.ts`: a scheduled turn gets the focused `scheduled` template, a shared room appends the platform overlay, and a session where code mode is active gets `elowen-codex`, the codex-family variant whose work rules are written in the vocabulary those models were trained against. A plugin holding `mutates:['prompt']` may replace the resolved prompt for one session through the `brain.session.beforeSpawn` hook. Every branch there moves a whole cached prompt prefix, so each one is narrow on purpose.
+
+Tool activity the PROVIDER never saw is rendered by `src/brain/toolTrace/`. A code-mode script calling `tools.*` produces no provider tool event, so without it the transcript shows one opaque wrapper row; the module turns each such call into the same `BrainEvent` stream and the same `BrainSegment` a direct call produces, built from the same formatters. A producer draws its rows through a sink and reports the durable records on its own tool result's `details.toolTrace`, which the hydration expands in place of the wrapper row.
+
+The durable half cannot be delegated to a plugin, and that is a constraint rather than a preference. `shapeBrainMessages` is a pure fold over stored rows, called from the history endpoint, the status service and the session export, long after any turn and for conversations whose plugin may be disabled, uninstalled or mid-reload. A plugin therefore supplies the DATA for a durable row and core owns its SHAPE; a row whose shape only a plugin knows disappears the moment the user reloads.
+
 Prompt inputs have distinct lifetimes:
 
 - stable system and tool content is composed at spawn time;
