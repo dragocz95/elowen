@@ -82,6 +82,10 @@ export interface SpawnEventReducerDeps {
   store: BrainStore;
   providerId: string | undefined;
   iconOf: ToolIconResolver;
+  /** Whether a tool name belongs to code mode (`exec`, `wait`). Such a call is a WRAPPER around work the
+   *  script performed itself: its rows are published by the trace sink (see `src/brain/toolTrace/`), so
+   *  the wrapper's own live row would sit above them saying nothing. Absent outside code mode. */
+  isCodeModeTool?: (name: string) => boolean;
   queuedSteer: QueuedMsg[];
   queuedFollowUp: QueuedMsg[];
   maxSteps?: () => number;
@@ -96,6 +100,10 @@ export interface SpawnEventReducerDeps {
  *  (`deferredOverflowError`, `terminalIdleDeferred`, `steps`, `agentRunOpen`, `deferredCompacted`) across
  *  the agent_start/message/agent_end(overflow, willRetry)/compaction/agent_settled/auto_retry sequences.
  *  The factory owns the reducer's private state so each spawned session gets its own instance. */
+/** The PI events that exist only to DRAW a tool call. Dropping these hides a row without touching
+ *  persistence, retries or the turn lifecycle. */
+const TOOL_DISPLAY_EVENTS = new Set(['tool_execution_start', 'tool_execution_update', 'tool_execution_end']);
+
 export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentSessionEvent) => void {
   const { replay, getLive, model, sessionId, session, store, providerId, iconOf, queuedSteer, queuedFollowUp } = deps;
   // PI decides overflow compact-and-retry only after emitting the errored agent_end. Hold that error
@@ -265,6 +273,11 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       const message = (e as unknown as { message: Parameters<typeof extractText>[0] }).message;
       deliverQueuedUserEcho(store, live, extractText(message));
     }
+    // Drop the wrapper's own live row — see `isCodeModeTool`. Only the DISPLAY events are dropped; the
+    // durable rows are written from `message_end` as usual, which is what lets the hydration decide the
+    // same thing again on reload (and keep the wrapper row when the script called nothing).
+    const toolName = (e as { toolName?: unknown }).toolName;
+    if (typeof toolName === 'string' && deps.isCodeModeTool?.(toolName) === true && raw !== undefined && TOOL_DISPLAY_EVENTS.has(raw)) return;
     const be = toBrainEvent(e, Date.now(), deps.chatImagesDir);
     if (!be) return;
     if (be.type === 'image') {

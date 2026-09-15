@@ -6,6 +6,7 @@ import { INVALID_PLUGIN_SKILL_OVERRIDES, pluginSkillAvailabilityKey } from './sk
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginImages, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginSkillCatalogEntry, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import { webSocketTickets } from './wsTickets.js';
+import { promptsPath } from '../prompts/index.js';
 import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
@@ -1412,6 +1413,13 @@ export class PluginRegistry {
           // Fail at register time, not first render: a missing template would otherwise surface as a
           // mid-turn read error long after the toggle that broke it.
           if (!existsSync(file)) { scoped.warn(`registerPrompts refused: "${clean}" has no template file at ${file}`); continue; }
+          // A CORE template name is refused outright. The overlay is consulted ahead of the core file on
+          // every render (`prompts/index.ts`), so claiming `elowen` silently replaced the agent's whole
+          // persona for every conversation — a global, permanent swap the duplicate check below never saw,
+          // because it only guards against a SECOND plugin. A plugin that legitimately wants a different
+          // system prompt returns `patch.persona` from `brain.session.beforeSpawn`, which is scoped to the
+          // session it answers for.
+          if (existsSync(promptsPath(`${clean}.md`))) { scoped.warn(`registerPrompts refused: "${clean}" is a core template`); continue; }
           if (this.promptSources.has(clean)) { scoped.warn(`registerPrompts refused: duplicate template "${clean}"`); continue; }
           this.promptSources.set(clean, { plugin: name, file });
           this.promptEntries.push({ plugin: name, entry: { ...entry, name: clean } });

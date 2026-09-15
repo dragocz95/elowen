@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resolveGrammarConstrainedSampling } from '../../node_modules/@earendil-works/pi-ai/dist/api/constrained-sampling.js';
 import { buildCodeModeTools, type NestedToolBinding } from '../../plugins/code-mode/src/tools.js';
 import { CodeModeSession } from '../../plugins/code-mode/src/runtime/session.js';
+import { createToolTraceSink } from '../../src/brain/toolTrace/sink.js';
 
 const sessions: CodeModeSession[] = [];
 
@@ -16,15 +17,16 @@ interface Harness {
   exec: { name: string; description: string; parameters: unknown; constrainedSampling?: unknown; execute: Function };
   wait: { name: string; execute: Function };
   session: CodeModeSession;
-  notifications: string[];
-  reported: { name: string; ok: boolean; error?: string }[][];
+}
+
+/** The rows one result reports, as the transcript would draw them. */
+function rowsOf(result: { details: Record<string, unknown> }): { kind: string; name?: string; row?: string; text?: string }[] {
+  return (result.details.toolTrace as { kind: string; name?: string; row?: string; text?: string }[] | undefined) ?? [];
 }
 
 function harness(overrides: { nested?: NestedToolBinding[]; codeModeOnly?: boolean } = {}): Harness {
   const session = new CodeModeSession();
   sessions.push(session);
-  const notifications: string[] = [];
-  const reported: { name: string; ok: boolean; error?: string }[][] = [];
   const nested = overrides.nested ?? [
     {
       name: 'read_file',
@@ -41,10 +43,10 @@ function harness(overrides: { nested?: NestedToolBinding[]; codeModeOnly?: boole
     session: () => session,
     nested,
     codeModeOnly: overrides.codeModeOnly ?? true,
-    notify: (text) => notifications.push(text),
-    reportNestedCalls: (calls) => reported.push(calls),
+    // The REAL core sink, so this exercises the contract the daemon passes in rather than a stub.
+    trace: (producerId) => createToolTraceSink(producerId),
   });
-  return { exec: exec as never, wait: wait as never, session, notifications, reported };
+  return { exec: exec as never, wait: wait as never, session };
 }
 
 function textOf(result: { content: { type: string; text?: string }[] }): string[] {
@@ -105,16 +107,16 @@ describe('exec execution', () => {
   });
 
   it('dispatches a nested call through the binding and reports it', async () => {
-    const { exec, reported } = harness();
+    const { exec } = harness();
     const result = await exec.execute('call-1', {
       source: "const file = await tools.read_file({ path: 'a.txt' });\ntext(file.content);",
     });
     expect(textOf(result)[1]).toBe('contents of a.txt');
-    expect(reported).toEqual([[{ name: 'read_file', ok: true }]]);
+    expect(rowsOf(result)).toMatchObject([{ kind: 'call', row: 'call-1:0', name: 'read_file' }]);
   });
 
   it('surfaces a denied nested call as a rejection inside the script', async () => {
-    const { exec, reported } = harness({
+    const { exec } = harness({
       nested: [{
         name: 'Bash',
         globalName: 'Bash',
@@ -130,9 +132,8 @@ describe('exec execution', () => {
       source: "try { await tools.Bash({ command: 'ls' }); text('RAN'); } catch (error) { text('refused: ' + error); }",
     });
     expect(textOf(result)[1]).toBe('refused: Tool Bash is not permitted in this conversation.');
-    expect(reported[0]).toEqual([
-      { name: 'Bash', ok: false, error: 'Tool Bash is not permitted in this conversation.' },
-    ]);
+    // The refusal is the row's story too: an errored row with the refusal as its output.
+    expect(rowsOf(result)).toMatchObject([{ kind: 'call', row: 'call-1:0', name: 'Bash', isError: true }]);
   });
 
   it('reports a script exception as a failed result without failing the turn', async () => {
@@ -166,10 +167,32 @@ describe('exec execution', () => {
     expect(textOf(result).join('\n')).toContain('tokens truncated');
   });
 
-  it('delivers notify() to the host while the script runs', async () => {
-    const { exec, notifications } = harness();
-    await exec.execute('call-1', { source: "notify('halfway');\ntext('done');" });
-    expect(notifications).toEqual(['halfway']);
+  it('reports notify() as a progress record on the call that saw it', async () => {
+    const { exec } = harness();
+    const result = await exec.execute('call-1', { source: "notify('halfway');\ntext('done');" });
+    expect(rowsOf(result)).toEqual([{ kind: 'note', text: 'halfway' }]);
+  });
+
+  it('reports each nested call as a row prefixed with the calling exec id', async () => {
+    const { exec } = harness();
+    const result = await exec.execute('call-1', { source: "const r = await tools.read_file({path:'/a'});\ntext(r);" });
+
+    expect(rowsOf(result)).toMatchObject([{ kind: 'call', row: 'call-1:0', name: 'read_file', detail: '/a' }]);
+  });
+
+  it('hands a cell\'s later rows to the wait that reports for it, never twice', async () => {
+    const { exec, wait } = harness();
+    const yielded = await exec.execute('call-1', {
+      source: `// @exec: {"yield_time_ms": 60}\nawait tools.read_file({path:'/first'});\nawait new Promise((r) => setTimeout(r, 250));\nawait tools.read_file({path:'/second'});`,
+    });
+    expect(rowsOf(yielded).map((r) => r.row)).toEqual(['call-1:0']);
+
+    const cellId = (textOf(yielded)[0] ?? '').slice('Script running with cell ID '.length).split('\n')[0]!;
+    const resumed = await wait.execute('call-2', { cell_id: cellId, yield_time_ms: 5_000 });
+
+    // The rows belong to the CELL, so the second one keeps the exec call's prefix and the first is not
+    // repeated: a repeat would draw the same row twice in the transcript.
+    expect(rowsOf(resumed).map((r) => r.row)).toEqual(['call-1:1']);
   });
 
   it('returns an image block for an image item', async () => {
@@ -193,6 +216,26 @@ describe('exec yielding and wait', () => {
     const resumed = await wait.execute('call-2', { cell_id: cellId, yield_time_ms: 5_000 });
     expect(textOf(resumed)[0]).toMatch(/^Script completed\n/);
     expect(textOf(resumed)[1]).toBe('second');
+  });
+
+  it('does not hand one sender the rows another sender\'s cell recorded', async () => {
+    // Cell ids are a PER-SESSION counter, so both senders own a cell called "1". A trace store keyed by
+    // cell id alone would report A's tool names, arguments and diffs inside B's result.
+    const a = harness();
+    const b = harness();
+    const yielded = await a.exec.execute('call-a', {
+      // The nested call happens AFTER the yield, so its row is still unreported while B waits.
+      source: `// @exec: {"yield_time_ms": 60}\ntext('up');\nawait new Promise((r) => setTimeout(r, 300));\nawait tools.read_file({path:'/secret'});`,
+    }) as { content: { type: string; text?: string }[]; details: Record<string, unknown> };
+    const cellId = (textOf(yielded)[0] ?? '').slice('Script running with cell ID '.length).split('\n')[0]!;
+
+    const foreign = await b.wait.execute('call-b', { cell_id: cellId }) as { details: Record<string, unknown> };
+    expect(rowsOf(foreign)).toEqual([]);
+    // B's own session never started that cell, so the wait is honestly a miss.
+    expect(JSON.stringify(foreign)).not.toContain('/secret');
+
+    const own = await a.wait.execute('call-a2', { cell_id: cellId, yield_time_ms: 5_000 }) as { details: Record<string, unknown> };
+    expect(rowsOf(own).map((r) => r.row)).toEqual(['call-a:0']);
   });
 
   it('reports an unknown cell with the Codex wording and marks the result failed', async () => {

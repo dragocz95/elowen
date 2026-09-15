@@ -1050,6 +1050,9 @@ export class ChannelSessionService {
           ? (qs: AskQuestion[]) => this.d.elicitation!.ask(sessionId, qs, (e) => ch.replay.publish(e))
           : undefined;
         const emitCard = (raw: unknown) => { const card = this.d.cards.set(sessionId, raw); if (card) ch.replay.publish({ type: 'card', card }); };
+        // Rows for tool activity the provider never saw (see src/brain/toolTrace/); the producer shapes
+        // the event, this side only fans it to the room's clients.
+        const emitToolTrace = (event: BrainEvent) => { ch.replay.publish(event); };
         // Mirror owner-chat delegation tracking: the progress event is both the live UI seam and the
         // abort tree. A channel can delegate recursively, so every channel node owns its direct children.
         // The identity read is the same one the owner chat wires — one authoritative source for what a
@@ -1263,7 +1266,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               this.d.registry.throwIfPendingAbort(sessionId);
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, projectRef: effectiveWorkDir.projectRef, resolveProjectRef: () => resolveWorkDir().projectRef, settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, ...(forkChild ? { forkChild: true } : {}), model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitToolTrace, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, projectRef: effectiveWorkDir.projectRef, resolveProjectRef: () => resolveWorkDir().projectRef, settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, ...(forkChild ? { forkChild: true } : {}), model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',

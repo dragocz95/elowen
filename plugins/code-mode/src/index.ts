@@ -63,7 +63,7 @@ function toBindings(nested: CodeModeCompositionRequest['nested']): NestedToolBin
       kind: 'function',
       ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema as JsonValue }),
       deferred: tool.deferred,
-      invoke: (input: unknown, signal: AbortSignal) => tool.invoke(input, signal),
+      invoke: (input: unknown, signal: AbortSignal, callId?: string) => tool.invoke(input, signal, callId),
     });
   }
   return bindings;
@@ -78,7 +78,9 @@ export function register(ctx: PluginContext): void {
         session: () => sessionFor(request.sessionId, request.principal()),
         nested: toBindings(request.nested),
         codeModeOnly: request.codeModeOnly,
-        notify: request.notify,
+        // One sink per CELL: core mints the row ids from the producer id we pass, draws the live rows and
+        // hands back the records each result must report.
+        trace: request.trace,
       });
     },
     shutdownSession(sessionId: string): void {

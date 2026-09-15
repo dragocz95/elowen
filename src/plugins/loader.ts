@@ -1,3 +1,4 @@
+import { stripRetiredMutates } from './api.js';
 import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
@@ -243,13 +244,18 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Stage the plugin's contributions in a scratch registry and merge only after a clean
         // register() — a plugin that throws halfway must not leave half its tools live.
         const staging = new PluginRegistry();
+        // RETIRED capability values are dropped here, once, so nothing downstream has to know they
+        // existed: `memory` gated no host capability while still forcing an operator consent prompt.
+        const capabilities = stripRetiredMutates(manifest.capabilities, (value) => {
+          opts.logger?.warn(`plugin "${name}" declares the retired capability mutates:['${value}'], which grants nothing and is ignored`);
+        });
         // Pass the manifest's declared capabilities + provides so the context can enforce them at
         // registration/resolve time (deny-by-default). Absent blocks default to unconstrained tools/
         // platforms and a deny-all provider gate.
         // `toolNames` deliberately closes over the MERGED registry, not this plugin's staging one: a plugin
         // asks it at tool-execute time, long after every plugin has merged, and needs the whole live
         // toolset (the subagent plugin validates a caller's `tools` allow-list against it).
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig, () => registry.tools.map((t) => t.name), opts.timezone, opts.subagentTypes, opts.requestReload,
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, capabilities, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig, () => registry.tools.map((t) => t.name), opts.timezone, opts.subagentTypes, opts.requestReload,
           // Like `toolNames`, this closes over the MERGED registry (not the staging one): the adapter reads it
           // long after every plugin has merged, so it must see the whole live set of plugin prompt commands.
           // `kind` rides along: it decides whether the published projection is a prompt macro or a
@@ -282,7 +288,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
         // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
-        registry.setCapabilities(name, manifest.capabilities ?? {});
+        registry.setCapabilities(name, capabilities);
         registry.setUserGrantable(name, manifest.userGrantable);
         // A plugin that keeps state PER ACCOUNT has to be told when an account goes away — nothing else
         // reaps its folders or rows. The two manifest flags that mean "this plugin is per-account" are the

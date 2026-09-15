@@ -303,19 +303,19 @@ describe('PluginsSection grant consent', () => {
   });
 
   it('asks before handing over declared powers and replays the enable with the acknowledgement', async () => {
-    refuseOnce(['memory', 'workflow-dag']);
+    refuseOnce(['prompt', 'workflow-dag']);
     renderSection();
     fireEvent.click(screen.getByLabelText(`risky: ${en.plugins.enable}`));
 
     expect(await screen.findByText(en.plugins.grantsTitle.replace('{name}', 'risky'))).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(en.plugins.grantMemory))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(en.plugins.grantPrompt))).toBeInTheDocument();
     expect(screen.getByText(new RegExp(en.plugins.grantWorkflowDag))).toBeInTheDocument();
     expect(toggleMutate).toHaveBeenCalledTimes(1);
     expect(toggleMutate.mock.calls[0][0]).toEqual({ name: 'risky', enabled: true });
 
     fireEvent.click(screen.getByRole('button', { name: en.plugins.grantsConfirm }));
     await waitFor(() => expect(toggleMutate).toHaveBeenCalledTimes(2));
-    expect(toggleMutate.mock.calls[1][0]).toEqual({ name: 'risky', enabled: true, acknowledgeGrants: ['memory', 'workflow-dag'] });
+    expect(toggleMutate.mock.calls[1][0]).toEqual({ name: 'risky', enabled: true, acknowledgeGrants: ['prompt', 'workflow-dag'] });
   });
 
   it('shows a grant it does not have a translation for rather than dropping it from the list', async () => {

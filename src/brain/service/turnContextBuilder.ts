@@ -9,7 +9,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { CardRegistry } from '../cards.js';
 import type { ElicitationRegistry } from '../elicitation.js';
-import type { AskQuestion, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from '../events.js';
+import type { AskQuestion, BrainEvent, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from '../events.js';
 import type { IdentityResolver } from '../identity.js';
 import type { MemoryService } from '../memoryService.js';
 import type { MemoryCategoryStore } from '../../store/memoryCategoryStore.js';
@@ -284,6 +284,10 @@ export class TurnContextBuilder {
       const card = this.d.cards.set(live.sessionId, raw);
       if (card) live.replay.publish({ type: 'card', card });
     };
+    // Rows for tool activity the provider never saw (see src/brain/toolTrace/). A plain publish: the
+    // producer has already shaped the event, because it is the only side that knows the owning call and
+    // the icon map for the session.
+    const emitToolTrace = (event: BrainEvent): void => { live.replay.publish(event); };
     const emitSubagent = (update: SubagentUpdate): boolean => {
       // The child's own model + effective reasoning effort are read in ONE place, shared with the channel
       // surface — see delegatedChildIdentity. A delegated child is a channel session, so the read must
@@ -372,6 +376,7 @@ export class TurnContextBuilder {
         identity,
         elicit,
         emitCard,
+        emitToolTrace,
         emitSubagent,
         emitSubagentCompletion,
         emitWorkflow,

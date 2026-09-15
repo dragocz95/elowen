@@ -96,6 +96,11 @@ export type PluginSkill = Skill;
  *  (create if absent) to annotate the transcript — e.g. the formatters plugin formats files written by
  *  the files plugin and notes "formatted <file> with <name>".
  *
+ *  `brain.session.beforeSpawn` fires while a session is being assembled, with
+ *  `{ sessionId, provider, model, persona }` — the resolved system prompt the host is about to use. A
+ *  subscriber whose plugin declared `mutates:['prompt']` may return `patch.persona` to replace it for
+ *  that session; anything else it returns is observational.
+ *
  *  `brain.session.afterSpawn` fires once a live session is assembled, with `{ sessionId, messages }`
  *  where `messages` is its REHYDRATED history, and is AWAITED before the caller may run a turn. It is
  *  the seam for per-conversation state that lives in daemon memory while its evidence lives in the
@@ -117,7 +122,7 @@ export type PluginHookName =
   | 'memory.write.before' | 'memory.write.after'
   | 'plugin.reload.before' | 'plugin.reload.after';
 
-/** A patch a hook may return to change the live turn. Two are wired:
+/** A patch a hook may return to change the live turn. Three are wired:
  *
  *  `appendContext` (needs `mutates:['turnContext']`) — the string is appended, UNTRUSTED-framed, to the
  *  live prompt in owner chat; never persisted, never the system prompt.
@@ -127,8 +132,12 @@ export type PluginHookName =
  *  instead of retrying blindly. Deliberately runs AFTER the permission gate: permissions are the
  *  user's own policy and no plugin may widen or override them — a hook may only refuse further.
  *
- *  `prompt`/`memory` remain declarable capability VALUES without a patch shape yet. */
-export interface HookPatch { appendContext?: string; denyToolCall?: string }
+ *  `persona` (needs `mutates:['prompt']`) — returned from a `brain.session.beforeSpawn` hook, it replaces
+ *  the session's SYSTEM PROMPT, whose default the host resolves per surface and per model. The same grant
+ *  already lets a plugin shadow a prompt template globally through `registerPrompts`, so this is the
+ *  narrower per-session form of a reach it holds anyway. First writer wins; an empty string is ignored,
+ *  because a session with no system prompt has no identity. */
+export interface HookPatch { appendContext?: string; denyToolCall?: string; persona?: string }
 
 /** What a hook may return. `patch` is the runtime-wired mutation (gated by the owner's declared
  *  capabilities); `annotations`/`audit` are free-form observability the host may record. A hook that
@@ -157,7 +166,11 @@ export interface PluginHook { name: PluginHookName; run: (payload: unknown) => H
  *  a hardcoded plugin name so ownership of the workflow surface can move, be renamed or be replaced
  *  without core knowing who holds it. */
 export interface PluginCapabilities {
-  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events' | 'workflow-dag' | 'users')[];
+  // `memory` is deliberately absent: it gated NOTHING — no enforcement site ever read it — while sitting
+  // in CONSENT_REQUIRED_MUTATES, so declaring it cost an operator a consent prompt and bought the plugin
+  // no capability at all. The four `memory.*` hook names are likewise unwired; the value is re-added the
+  // day one of them fires and a patch shape needs a grant.
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'events' | 'workflow-dag' | 'users')[];
   reads?: string[];
   network?: boolean;
 }
@@ -168,10 +181,37 @@ export interface PluginCapabilities {
  *  the keys it means. A red badge in the settings UI is not consent — nothing forces a reader to see it,
  *  and a marketplace install is one POST away from never showing it at all.
  *
- *  `prompt` and `turnContext` are deliberately absent: they ride the ephemeral prompt of a single turn
- *  and leave nothing behind, which is the reach any instruction in the chat already has. */
+ *  `turnContext` is deliberately absent: it rides the ephemeral prompt of a single turn and leaves
+ *  nothing behind, which is the reach any instruction in the chat already has.
+ *
+ *  `prompt` IS required, and used not to be. The exemption was written for that same one-turn reach, but
+ *  `prompt` does not have it: `registerPrompts` installs a persistent template overlay that is resolved
+ *  ahead of the core file on every render, and `patch.persona` replaces a session's system prompt — so
+ *  the grant can rewrite who the agent is, for every conversation, until the plugin is removed. */
+/** Capability values that used to exist and no longer grant anything. A manifest may still declare one —
+ *  it was written against an older daemon — so the loader drops it and warns instead of refusing to load
+ *  a plugin whose only sin is naming a dead power. */
+const RETIRED_MUTATES: readonly string[] = ['memory'];
+
+/** Drop retired `mutates` values from a manifest's declared capabilities, reporting each one once.
+ *  Returns the capabilities unchanged when there is nothing to strip, so the common path allocates
+ *  nothing and `undefined` stays the deny-by-default empty claim. */
+export function stripRetiredMutates(
+  capabilities: PluginCapabilities | undefined,
+  onRetired?: (value: string) => void,
+): PluginCapabilities {
+  const declared: readonly string[] = capabilities?.mutates ?? [];
+  const retired = declared.filter((value) => RETIRED_MUTATES.includes(value));
+  if (retired.length === 0) return capabilities ?? {};
+  for (const value of retired) onRetired?.(value);
+  return {
+    ...capabilities,
+    mutates: declared.filter((value) => !RETIRED_MUTATES.includes(value)) as NonNullable<PluginCapabilities['mutates']>,
+  };
+}
+
 export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
-  ['tools', 'memory', 'events', 'workflow-dag', 'users'];
+  ['prompt', 'tools', 'events', 'workflow-dag', 'users'];
 
 export interface PlatformHistoryMessage {
   /** Stable platform message id when the API exposes one. */
@@ -1266,8 +1306,31 @@ export interface CodeModeNestedTool {
   /** True for a tool withheld from the prompt today (a deferred MCP tool). It stays callable and stays
    *  listed for runtime discovery, but spends no tokens on a declaration. */
   deferred: boolean;
-  /** The signal aborts when the cell dies, so a nested call cannot outlive the script. */
-  invoke(input: unknown, signal: AbortSignal): Promise<unknown>;
+  /** The signal aborts when the cell dies, so a nested call cannot outlive the script.
+   *
+   *  `callId` is the id the tool itself sees as its call id, and a caller that draws a row for this call
+   *  should pass that ROW's id: anything the tool keys on its call id — delegated sub-agent progress, a
+   *  workflow run, an inline artifact — then lands on the row the user is looking at instead of on an id
+   *  no row carries. Omitted, the host mints a unique one. */
+  invoke(input: unknown, signal: AbortSignal, callId?: string): Promise<unknown>;
+}
+
+/** Turns work the model did not call directly into ordinary transcript rows — see `src/brain/toolTrace/`.
+ *
+ *  One sink per PRODUCER (a code-mode cell), not per tool call: a cell keeps working after `exec` has
+ *  yielded, so its rows are reported by `exec` and then by each `wait`. {@link drain} returns only what
+ *  has not been reported yet, and the payload it returns belongs on the reporting tool result's
+ *  `details.toolTrace`, where the host expands it on reload. Reporting it twice draws the rows twice;
+ *  not reporting it at all leaves rows that vanish when the user reloads. */
+export interface CodeModeTraceSink {
+  /** Run one call as a row. Rethrows a failure after recording it as an errored row. */
+  call<T>(name: string, args: unknown, execute: (rowId: string | undefined) => Promise<T>): Promise<T>;
+  /** A progress line for the user, shown live under the rows it sits between. */
+  note(text: string): void;
+  /** The records not yet reported. Put them on the reporting result's `details.toolTrace`. */
+  drain(): unknown[];
+  /** Whether any call was recorded, i.e. whether the reporting call's own row is redundant. */
+  hasCalls(): boolean;
 }
 
 /** NOT IMPLEMENTED YET, and deliberately so rather than by oversight: Codex withholds an `exec` result
@@ -1283,8 +1346,10 @@ export interface CodeModeCompositionRequest {
   nested: CodeModeNestedTool[];
   /** True when the nested tools are hidden from the model, so the script is the only way to reach them. */
   codeModeOnly: boolean;
-  /** Injects an extra tool output for the running call, the way a script's `notify()` does. */
-  notify(text: string): void;
+  /** A transcript sink for one producer — pass `trace` to each `invoke` the producer makes, report its
+   *  `drain()` on the result that reports for it, and use `note()` for a script's `notify()`. The id is
+   *  the producer's own (the tool call that created the cell), and it prefixes every row id. */
+  trace(producerId: string): CodeModeTraceSink;
   /** WHO is speaking, read per call rather than per composition. A shared room composes its tools once
    *  and serves many senders, so this is what keeps one sender's cells and stored values their own. */
   principal(): string;

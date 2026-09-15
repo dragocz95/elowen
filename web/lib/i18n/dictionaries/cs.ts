@@ -1470,7 +1470,7 @@ export const cs = {
     grantsIntro: 'Tento plugin žádá o přístup, který přetrvá i po skončení odpovědi. Zapnutím mu udělíte:',
     grantsConfirm: 'Zapnout a udělit',
     grantTools: 'Měnit nástroje dostupné agentovi včetně nahrazení stávajících',
-    grantMemory: 'Číst a zapisovat uložené vzpomínky',
+    grantPrompt: 'Nahradit systémový prompt a promptové šablony',
     grantEvents: 'Zapisovat do protokolu aktivity',
     grantWorkflowDag: 'Měnit běžící workflow dílčích agentů',
     dependencyOn: 'Tento doplněk vyžaduje, aby byl nejprve zapnutý doplněk {plugin} — ten poskytuje {control}.',

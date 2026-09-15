@@ -46,9 +46,11 @@ function setup(overrides: { pluginDataRoot?: string } = {}) {
   // named after the other.
   makePlugin(root, 'mirror', { requiresControls: ['cloudIdentity'] });
   makePlugin(root, 'identity', { provides: { tools: ['identity_tool'], controls: ['cloudIdentity'] } });
-  // Claims two powers that outlive a turn (stored memory, the live workflow DAG) plus one that does not
-  // (`prompt`), so the consent tests can prove the line is drawn by REACH and not by "declares anything".
-  makePlugin(root, 'risky', { capabilities: { mutates: ['prompt', 'memory', 'workflow-dag'] } });
+  // Claims two powers that outlive a turn (the system prompt, the live workflow DAG), one RETIRED value
+  // an older manifest may still name, and one that reaches no further than a turn (`turnContext`) — so
+  // the consent tests prove the line is drawn by REACH, and that a dead value neither grants nor blocks.
+  makePlugin(root, 'risky', { capabilities: { mutates: ['prompt', 'memory', 'turnContext', 'workflow-dag'] } });
+  makePlugin(root, 'shaper', { capabilities: { mutates: ['turnContext'] } });
   makePlugin(root, 'discord', {
     configSchema: [
       { key: 'botToken', label: 'Bot token', type: 'secret', required: true },
@@ -95,7 +97,7 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins', auth(adminTok));
     expect(res.status).toBe(200);
     const list = await res.json() as { name: string; enabled: boolean; configurable: boolean; provides: { tools?: string[] } }[];
-    expect(list.map((p) => p.name).sort()).toEqual(['discord', 'files', 'identity', 'mirror', 'risky', 'skills']);
+    expect(list.map((p) => p.name).sort()).toEqual(['discord', 'files', 'identity', 'mirror', 'risky', 'shaper', 'skills']);
     expect(list.every((p) => !p.enabled)).toBe(true);
     expect(list.find((p) => p.name === 'files')?.provides.tools).toEqual(['files_tool']);
     expect(list.find((p) => p.name === 'discord')?.configurable).toBe(true);
@@ -266,16 +268,16 @@ describe('plugin routes', () => {
     const bare = await app.request('/plugins/risky', patch(adminTok, { enabled: true }));
     expect(bare.status).toBe(409);
     // The answer names what it wants, or the caller is left guessing at a list it cannot see.
-    expect(await bare.json()).toEqual({ error: 'grants require consent', grants: ['memory', 'workflow-dag'] });
+    expect(await bare.json()).toEqual({ error: 'grants require consent', grants: ['prompt', 'workflow-dag'] });
     expect(config.get().plugins.enabled).toEqual([]);
     expect(reloadPlugins).not.toHaveBeenCalled();
 
     // Half a consent is no consent: acknowledging one power must not smuggle the other past.
-    const partial = await app.request('/plugins/risky', patch(adminTok, { enabled: true, acknowledgeGrants: ['memory'] }));
+    const partial = await app.request('/plugins/risky', patch(adminTok, { enabled: true, acknowledgeGrants: ['prompt'] }));
     expect(partial.status).toBe(409);
     expect(config.get().plugins.enabled).toEqual([]);
 
-    const full = await app.request('/plugins/risky', patch(adminTok, { enabled: true, acknowledgeGrants: ['memory', 'workflow-dag'] }));
+    const full = await app.request('/plugins/risky', patch(adminTok, { enabled: true, acknowledgeGrants: ['prompt', 'workflow-dag'] }));
     expect(full.status).toBe(200);
     expect(config.get().plugins.enabled).toEqual(['risky']);
   });
@@ -417,10 +419,11 @@ describe('plugin routes', () => {
 
     // Disabling only ever removes reach.
     expect((await app.request('/plugins/risky', patch(adminTok, { enabled: false }))).status).toBe(200);
-    // `prompt`/`turnContext` leave nothing behind after the turn — the reach any chat message has — so
-    // gating them would train the operator to click through a dialog that never means anything.
-    expect((await app.request('/plugins/skills', patch(adminTok, { enabled: true }))).status).toBe(200);
-    expect(config.get().plugins.enabled).toEqual(['skills']);
+    // `turnContext` leaves nothing behind after the turn — the reach any chat message has — so gating it
+    // would train the operator to click through a dialog that never means anything. `prompt` is NOT in
+    // that company: it can replace the agent's persona until the plugin is removed.
+    expect((await app.request('/plugins/shaper', patch(adminTok, { enabled: true }))).status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual(['shaper']);
   });
 
   it('answers 202 pending — not an error — when the live swap has to wait for running work', async () => {

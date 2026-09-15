@@ -1465,7 +1465,7 @@ export const sk = {
     grantsIntro: 'Tento plugin žiada o prístup, ktorý pretrvá aj po skončení odpovede. Zapnutím mu udelíte:',
     grantsConfirm: 'Zapnúť a udeliť',
     grantTools: 'Meniť nástroje dostupné agentovi vrátane nahradenia existujúcich',
-    grantMemory: 'Čítať a zapisovať uložené spomienky',
+    grantPrompt: 'Nahradiť systémový prompt a promptové šablóny',
     grantEvents: 'Zapisovať do protokolu aktivity',
     grantWorkflowDag: 'Meniť bežiace workflow čiastkových agentov',
     dependencyOn: 'Tento doplnok vyžaduje, aby bol najprv zapnutý doplnok {plugin} — ten poskytuje {control}.',
