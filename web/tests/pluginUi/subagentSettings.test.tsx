@@ -15,8 +15,16 @@ ensurePluginUiRuntime();
 
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
 
+// The page now opens with the account's own agent-model pins above the register, so it reads the signed-in
+// account, the brain catalog and that account's plugin settings. Authoring is administrative, hence an
+// admin here — the non-admin view has its own suite (subagentTypeModelPins.test.tsx).
 const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'subagent', url: '/plugins/subagent/web/index.js', apiVersion: 1, nav: [], settings: [], strings }])),
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'root', is_admin: true } })),
+  http.get('*/api/brain/models', () => HttpResponse.json([])),
+  http.get('*/api/plugins/user-config', () => HttpResponse.json([
+    { name: 'subagent', userConfigSchema: [], config: {}, secretsSet: [], revision: 0, placement: 'pluginPage' },
+  ])),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -34,7 +42,8 @@ describe('subagent SubagentsSettings', () => {
   it('lists built-in and user agents with their tools badge', async () => {
     server.use(http.get('*/api/plugins/agents/list', () => HttpResponse.json(AGENTS)));
     mount();
-    expect(await screen.findByText('explore')).toBeInTheDocument();
+    // `explore` names both its model-pin row above and its register row; only the register lists `triage`.
+    expect(await screen.findByRole('cell', { name: 'explore' })).toBeInTheDocument();
     expect(screen.getByText('triage')).toBeInTheDocument();
     expect(screen.getByText(strings.toolsReadOnly!)).toBeInTheDocument(); // preset keyword resolves to its label
     expect(screen.getByText('Read, Search')).toBeInTheDocument();         // custom list renders verbatim

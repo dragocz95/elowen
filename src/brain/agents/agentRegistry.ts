@@ -141,7 +141,10 @@ export function resolveAgentTools(def: AgentDef): readonly string[] | undefined 
   return def.toolsSpec;
 }
 
-/** The catalog the subagent plugin advertises in its tool description (name + one-line description). */
-export function subagentCatalog(reg: Map<string, AgentDef>): { name: string; description: string }[] {
-  return [...reg.values()].map((d) => ({ name: d.name, description: d.description }));
+/** The catalog the subagent plugin advertises in its tool description (name + one-line description).
+ *  `source` travels with it because the plugin treats the two provenances differently: a SHIPPED type is
+ *  the one an account may pin a fixed model to, while a user `.md` type — including one that shadows a
+ *  built-in name — stays entirely the caller's choice. */
+export function subagentCatalog(reg: Map<string, AgentDef>): { name: string; description: string; source: AgentDef['source'] }[] {
+  return [...reg.values()].map((d) => ({ name: d.name, description: d.description, source: d.source }));
 }

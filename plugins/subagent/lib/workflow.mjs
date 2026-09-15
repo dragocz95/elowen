@@ -14,6 +14,7 @@ import { validateWorkflowNodes, mergeWorkflowNodes, readyNodeIds } from './dag.m
 import { toolListCovers, toolPolicyAllows } from './toolLists.mjs';
 import { foldEffectiveUsage, foldToolDetail } from './progress.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './thinking.mjs';
+import { TYPE_MODEL_HINT, readTypeModelPin, resolveTypeModel, typeModelPinsSnapshot } from './typeModel.mjs';
 import {
   CONTEXT_HEADER,
   MAX_CONTEXT_CHUNK_CHARS,
@@ -223,7 +224,7 @@ const NODE_SHAPE = Type.Object({
   id: Type.String({ description: 'Short unique id for this node (referenced by other nodes\' deps).' }),
   task: Type.String({ description: 'The complete, self-contained instruction for this node\'s sub-agent — it cannot see the conversation.' }),
   deps: Type.Optional(Type.Array(Type.String(), { description: 'Ids of nodes that must finish before this one starts. Omit for a root node.' })),
-  model: Type.Optional(Type.String({ description: 'Run this node on a DIFFERENT model (value from DelegateModels). Omit to inherit yours.' })),
+  model: Type.Optional(Type.String({ description: `Run this node on a DIFFERENT model (value from DelegateModels). Omit to inherit yours. ${TYPE_MODEL_HINT}` })),
   thinkingLevel: Type.Optional(Type.String({ minLength: 1, description: THINKING_LEVEL_HINT })),
   fork: Type.Optional(Type.Boolean({ description: 'FORK the conversation this workflow was started from: this node begins with that conversation\'s system prompt, tools and full history, and its task becomes the directive. Fork a node whose work depends on what the origin conversation already knows; leave it off for an independent step. Refused together with tools, read_only or subagent_type, each of which would rewrite the prompt cache the fork exists to reuse.' })),
   read_only: Type.Optional(Type.Boolean({ description: 'Give this node read-only tools and the non-destructive shell clamp (explore/report, no delegation). The clamp denies destructive commands; it does not prevent writing a file through redirection.' })),
@@ -280,6 +281,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         parentAccess: wf.parentAccess ?? null,
         parentModel: wf.parentModel ?? null,
         parentCwd: wf.parentCwd ?? null,
+        typeModelPins: wf.typeModelPins ?? {},
         nodes: wf.nodes,
         nodeParentAccess: [...wf.nodeParentAccess],
         nodeParentModel: [...wf.nodeParentModel],
@@ -408,10 +410,30 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     const parentAccess = wf.nodeParentAccess.get(node.id) ?? wf.parentAccess;
     const parentModel = wf.nodeParentModel.get(node.id) ?? wf.parentModel;
     let model = parentModel ? { provider: parentModel.provider, model: parentModel.model } : undefined;
-    // One catalog read for the model override and the level check, which is measured against whichever
-    // model this node ends up on.
-    const list = node.model || node.thinkingLevel ? await ctx.listModels().catch(() => []) : [];
-    if (node.model) {
+    // A named sub-agent TYPE, validated against the live catalog exactly as the delegate tool does — the
+    // host resolves the name into the node's role prompt, toolset and (for a read-only type) boundary.
+    // Resolved BEFORE the model, because a built-in type the account pinned decides which model this node
+    // runs on at all.
+    let agentType;
+    if (node.subagentType) {
+      const types = ctx.subagentTypes?.() ?? [];
+      if (!types.some((t) => t.name === node.subagentType)) {
+        throw new Error(`unknown subagent_type "${node.subagentType}" for node "${node.id}". Available: ${types.map((t) => t.name).join(', ') || '(none)'}.`);
+      }
+      agentType = node.subagentType;
+    }
+    // The pins captured from the account that scheduled this node — a node starting after a dependency, or
+    // after a restart, has no live turn scope of its own to read them from.
+    const typePin = readTypeModelPin(ctx, agentType, wf.typeModelPins ?? {});
+    // One catalog read for the model override, the pin check and the level check, which is measured against
+    // whichever model this node ends up on.
+    const list = node.model || node.thinkingLevel || typePin ? await ctx.listModels().catch(() => []) : [];
+    if (typePin) {
+      const pinned = resolveTypeModel({ agentType, pin: typePin, requestedModel: node.model, models: list });
+      if (pinned.error) throw new Error(`${pinned.error} (node "${node.id}")`);
+      model = pinned.model;
+    }
+    else if (node.model) {
       const hit = list.find((m) => `${m.provider}/${m.model}` === node.model || m.model === node.model);
       if (!hit) throw new Error(`model "${node.model}" is not available for node "${node.id}"`);
       model = { provider: hit.provider, model: hit.model };
@@ -422,16 +444,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     const resolvedThinking = resolveThinkingLevel(node.thinkingLevel, parentModel?.thinkingLevel, model, list);
     if (resolvedThinking.error) throw new Error(`${resolvedThinking.error} (node "${node.id}")`);
     const thinkingLevel = resolvedThinking.level;
-    // A named sub-agent TYPE, validated against the live catalog exactly as the delegate tool does — the
-    // host resolves the name into the node's role prompt, toolset and (for a read-only type) boundary.
-    let agentType;
-    if (node.subagentType) {
-      const types = ctx.subagentTypes?.() ?? [];
-      if (!types.some((t) => t.name === node.subagentType)) {
-        throw new Error(`unknown subagent_type "${node.subagentType}" for node "${node.id}". Available: ${types.map((t) => t.name).join(', ') || '(none)'}.`);
-      }
-      agentType = node.subagentType;
-    }
     // Remote expansion is offered only when BOTH routing and reverse-channel capability agree. This keeps
     // old/unwired runners on the conservative deny path, while a current runner reaches this process-local
     // DAG through the daemon-owned RPC endpoint. Both reads are deterministic capability checks; no
@@ -993,6 +1005,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       parentAccess: raw.parentAccess,
       parentModel: isRecord(raw.parentModel) ? raw.parentModel : undefined,
       parentCwd: typeof raw.parentCwd === 'string' && raw.parentCwd ? raw.parentCwd : undefined,
+      // Journal-carried and agent-unreachable, but read back defensively all the same: only string values
+      // survive, and an absent field (a journal written before pins existed) means no pin — which is what
+      // that run was started under.
+      typeModelPins: isRecord(raw.typeModelPins)
+        ? Object.fromEntries(Object.entries(raw.typeModelPins).filter(([, v]) => typeof v === 'string' && v))
+        : {},
       emit: (update) => hooks.emit(update),
       originSessionId: parentSessionId,
       originPrincipal: raw.originPrincipal,
@@ -1124,7 +1142,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     description: [
       `Run a DAG of sub-agents whose complete definition lives in a JSON file. Before calling this tool, use Write to create that file, then pass its path as nodesFile. Do not pass nodes inline. Inside a MANAGED project, write it into the project itself, for example the relative path workflow.json: that is where your Write lands and the only filesystem readable there, so the host path below does not exist for you. Otherwise, when your session has unrestricted filesystem access, write it under ${workflowDir} (it already exists) so the run leaves nothing behind in the user's project; a project-scoped session cannot write there and must use a path inside an accessible repository, which is also the right choice for a definition you want to keep and version.`,
       'The file may contain either a JSON array of node objects, or an object shaped as { title?, fork?, nodes: [...], background? }. Explicit title, fork, or background tool arguments override the corresponding values from the file, so one file can be reused as a template; a `background: false` in the file is honored just like the argument.',
-      'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, thinkingLevel, fork, read_only, tools and subagent_type. thinkingLevel sets that node\'s reasoning effort — omit it (or keep it low) for mechanical nodes, raise it for a node that has to design, debug something unexplained or review security-sensitive work; omitted, the node inherits your own. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation, so put everything it needs in its task — unless you set fork, which starts it from this conversation\'s own prompt, tools and history.',
+      `Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, thinkingLevel, fork, read_only, tools and subagent_type. ${TYPE_MODEL_HINT}`,
+      'thinkingLevel sets that node\'s reasoning effort — omit it (or keep it low) for mechanical nodes, raise it for a node that has to design, debug something unexplained or review security-sensitive work; omitted, the node inherits your own. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation, so put everything it needs in its task — unless you set fork, which starts it from this conversation\'s own prompt, tools and history.',
       'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. Independent nodes run in parallel, and a dependent receives a short handover from each of its DIRECT dependencies (not their full results, and nothing from further upstream) — so a node whose task needs an earlier finding must be reachable from it through the deps chain. For fully independent tasks, plain parallel delegate calls are simpler.',
       'By default the call is ASYNCHRONOUS: it returns a handle immediately and the summary of every node is delivered to you in a NEW turn when the DAG finishes, so do other work and then end your turn rather than polling. Set background=false (as an argument, or in the file) to BLOCK until the whole DAG has finished and get every node\'s result inline. On a surface that cannot deliver a later turn, the call blocks instead so the summary is not lost. Either way the DAG itself is unchanged: independent nodes still run in parallel and a dependent node still waits for the nodes it depends on. A node whose dependency failed is reported as skipped.',
       'If the result names failed or skipped nodes and the workflow is still held in memory, use WorkflowResume instead of starting over — it re-runs only unfinished nodes and leaves every completed node unchanged.',
@@ -1228,6 +1247,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         // The origin turn's working directory, inherited by every node so a node's tools resolve against
         // the SAME project the workflow was launched in, never the daemon's `/`.
         parentCwd: ctx.currentWorkDir?.(),
+        // The origin account's built-in sub-agent type pins, captured here because a node that starts
+        // later — after a dependency, or after a restart — has no turn scope to read them from.
+        typeModelPins: typeModelPinsSnapshot(ctx),
         emit: ctx.workflowEmitter(),
         originSessionId,
         originPrincipal,
@@ -1338,6 +1360,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       wf.finished = false;
       wf.finishedAt = undefined;
       wf.run = (wf.run ?? 0) + 1;
+      // Re-capture the resuming account's type pins on THIS turn, for the same reason the emitters below
+      // are re-captured: the unfinished nodes are about to be spawned afresh under the caller now present,
+      // and a journal restored at boot carries whatever was current when the run last had a turn.
+      wf.typeModelPins = typeModelPinsSnapshot(ctx);
       // Re-capture BOTH turn-scoped emitters on THIS (resuming) turn, exactly like WorkflowStart does —
       // the ones captured at the original Start are bound to a turn that is long over.
       wf.emit = ctx.workflowEmitter();

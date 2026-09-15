@@ -390,6 +390,10 @@ export interface UserPluginConfigDetail {
   config: Record<string, unknown>;
   secretsSet: string[];
   revision: number;
+  /** Where these values are EDITED (manifest `userConfigPlacement`). `pluginPage` means the plugin's own
+   *  page presents them, so the Account rail must not offer a second form for the same setting. Absent on
+   *  an older daemon, which is the `account` default. */
+  placement?: 'account' | 'pluginPage';
   i18n?: Record<string, PluginI18n>;
 }
 

@@ -794,9 +794,13 @@ describe('sub-agent (typed .md) routes', () => {
   const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
   const valid = { description: 'Read-only explorer', tools: 'read-only', body: 'You explore.' };
 
-  it('rejects a non-admin (403) on list, create and delete — these write agent-definition files', async () => {
+  // Create and delete WRITE the shared agent-definition files and stay administrative. Reading the
+  // catalog does not: every account may open the Agents page to choose which model a built-in agent runs
+  // on for them, and the page needs the agents' names to label those choices (see
+  // tests/api/subagentAgentsAccess.test.ts for what a non-admin listing may and may not contain).
+  it('rejects a non-admin (403) on create and delete — these write agent-definition files', async () => {
     const { app, amyTok, userAgentsDir } = agentSetup();
-    expect((await app.request('/plugins/agents/list', auth(amyTok))).status).toBe(403);
+    expect((await app.request('/plugins/agents/list', auth(amyTok))).status).toBe(200);
     expect((await app.request('/plugins/agents/mine', put(amyTok, valid))).status).toBe(403);
     expect((await app.request('/plugins/agents/mine', del(amyTok))).status).toBe(403);
     expect(existsSync(userAgentsDir)).toBe(false); // nothing was written

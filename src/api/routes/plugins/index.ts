@@ -15,6 +15,8 @@ import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../../brain/tools/index
 import { makeToolIconResolver } from '../../../brain/toolIcons.js';
 import { logger } from '../../../shared/logger.js';
 import { ConfigRevisionConflict } from '../../../store/configStore.js';
+import { configuredBrainProviders } from '../../../brain/config.js';
+import { isExecAllowedForUser } from '../../../shared/execs.js';
 import { UserPluginConfigRevisionConflict } from '../../../store/userPluginConfigStore.js';
 
 /** What a data summary is allowed to cost. A plugin detail page is a look, not a scan. */
@@ -73,7 +75,27 @@ function invalidField(field: PluginConfigField, message: string): never {
   throw new PluginConfigValueError(`invalid value for "${field.key}": ${message}`);
 }
 
-function validateConfigValue(field: PluginConfigField, value: unknown): void {
+/** Whether a brain `model` value is one THIS account may actually be spawned on — the caller supplies the
+ *  same predicate `/brain/models` filters its catalog with, so the picker and the write path answer the
+ *  same question. */
+type BrainModelGate = (exec: string) => boolean;
+
+/** A brain `model` field stores one exec (`<provider>/<model>`) chosen from the account's own catalog.
+ *  The browser only ever offers catalog entries, but the form is not the boundary: a value posted
+ *  straight to the API becomes a model the runtime is later asked to spawn on, and a model that does not
+ *  exist here fails at spawn time with no way back to the form that stored it.
+ *
+ *  Empty is the inherit/Automatic sentinel and always passes. An IMAGE model (`modelKind: 'image'`) is a
+ *  bare id from a separate allowlisted catalog, not a brain exec, and is deliberately untouched. */
+function validateBrainModelValue(field: PluginConfigField, value: unknown, gate: BrainModelGate | undefined): void {
+  if (field.type !== 'model' || field.modelKind === 'image' || !gate) return;
+  if (typeof value !== 'string') invalidField(field, 'expected a string');
+  const exec = value.trim();
+  if (!exec) return;
+  if (!gate(exec)) invalidField(field, `"${exec}" is not a model this account can use`);
+}
+
+function validateConfigValue(field: PluginConfigField, value: unknown, brainModelGate?: BrainModelGate): void {
   if (value === null || value === undefined) {
     if (field.required) invalidField(field, 'value is required');
     return;
@@ -81,6 +103,7 @@ function validateConfigValue(field: PluginConfigField, value: unknown): void {
   if (field.type === 'number') validateNumberValue(field, value);
   validateTimezoneValue(field, value);
   validateTokenListValue(field, value);
+  validateBrainModelValue(field, value, brainModelGate);
   switch (field.type) {
     case 'boolean': if (typeof value !== 'boolean') invalidField(field, 'expected a boolean'); break;
     case 'number': break;
@@ -133,6 +156,7 @@ function applyConfigPatch(
   schema: PluginConfigField[],
   stored: Record<string, unknown>,
   values: Record<string, unknown>,
+  brainModelGate?: BrainModelGate,
 ): Record<string, unknown> {
   const next = { ...stored };
   for (const f of schema) {
@@ -141,7 +165,7 @@ function applyConfigPatch(
     if (f.type === 'secret' && (v === '' || v === null)) continue;
     if (v === null) { if (f.required) invalidField(f, 'value is required'); delete next[f.key]; continue; }
     const effectiveCurrent = stored[f.key] !== undefined ? stored[f.key] : f.default;
-    if (!Object.is(v, effectiveCurrent) || f.required) validateConfigValue(f, v);
+    if (!Object.is(v, effectiveCurrent) || f.required) validateConfigValue(f, v, brainModelGate);
     next[f.key] = v;
   }
   return next;
@@ -205,6 +229,16 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   // The plugin config/enable routes must be reachable during first-run onboarding, so they use the
   // setup-tolerant admin gate (the shared `notAdminUnlessSetup`, previously a private copy of it here).
   const { d, notAdminUnlessSetup: notAdmin } = ctx;
+
+  /** The gate a `model` config field is written through: the SAME predicate `/brain/models` filters its
+   *  catalog with, resolved live per request so a provider removed a minute ago cannot still be saved.
+   *  `isExecAllowedForUser` applies the existence bound before the admin bypass, so an administrator can
+   *  still pick anything this installation actually has and nothing it does not. */
+  const brainModelGate = (user: { is_admin: boolean; allowed_execs: readonly string[] } | null | undefined): BrainModelGate => {
+    const providers = configuredBrainProviders(d.config, d.brainAuth);
+    const globalExecs = d.config.get().allowedExecs;
+    return (exec) => isExecAllowedForUser(user ?? null, globalExecs, exec, providers);
+  };
 
   /** One admin-only catalog across every enabled platform plugin. The target `value` is opaque and already
    *  carries its platform routing, so consumers never concatenate or inspect delivery ids themselves. */
@@ -531,6 +565,9 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!user || !store) return c.json([]);
     return c.json(userConfigurablePlugins(user).map((p) => ({
       ...(() => { const snapshot = store.snapshot(user.id, p.manifest.name); return userConfigView(p.manifest.name, p.manifest.userConfigSchema ?? [], snapshot.config, snapshot.revision); })(),
+      // Where these values are EDITED. Presentation metadata, so the listing still carries every plugin
+      // the account may configure — a plugin page reads its OWN values from exactly this response.
+      ...(p.manifest.userConfigPlacement ? { placement: p.manifest.userConfigPlacement } : {}),
       // Two distinct strings, deliberately: `label` is the short name the Account rail shows, `description`
       // the sentence the selected panel carries. Collapsing them is what put a whole English paragraph in
       // the rail. Both are English here; `i18n` holds the per-locale overrides the client resolves.
@@ -558,7 +595,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const schema = plugin.manifest.userConfigSchema ?? [];
     const baseline = store.snapshot(user.id, name);
     let next: Record<string, unknown>;
-    try { next = applyConfigPatch(schema, baseline.config, b.values); }
+    try { next = applyConfigPatch(schema, baseline.config, b.values, brainModelGate(user)); }
     catch (error) {
       if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
       throw error;
@@ -682,7 +719,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
         return c.json({ error: 'conflict', current: { ...maskedConfigView(schema, baseline.config), revision: baseline.revision } }, 409);
       }
       let stored: Record<string, unknown>;
-      try { stored = applyConfigPatch(schema, baseline.config, b.values); }
+      try { stored = applyConfigPatch(schema, baseline.config, b.values, brainModelGate(c.get('user'))); }
       catch (error) {
         if (error instanceof PluginConfigValueError) return c.json({ error: error.message }, 400);
         throw error;

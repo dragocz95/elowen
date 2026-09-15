@@ -179,6 +179,15 @@ export interface PluginManifest {
    *  `i18n/<lang>.json` → `userConfigLabel`; absent, the host falls back to the plugin name rather than
    *  guessing a title from the slug. */
   userConfigLabel?: string;
+  /** WHERE these per-account fields are EDITED, exactly as `web.settings[].placement` decides where a
+   *  settings section is offered. `account` (the default, and what a host too old to know the field does)
+   *  gives them their own entry in the Account rail. `pluginPage` says the plugin's own page already
+   *  presents them — next to the thing each value belongs to, with the states a generic form cannot show
+   *  — so the Account rail must not offer a SECOND editor for the same values.
+   *
+   *  Presentation only: the storage, the read route, the write route and its validation are identical for
+   *  either placement, so nothing about who may change what moves with this field. */
+  userConfigPlacement?: 'account' | 'pluginPage';
   // @platform-keep plugin-user-config :: userGrantable?: boolean && user_plugin_config
   /** Generic per-user plugin platform for future github/sandblox consumers; zero in-repo callers is expected.
    *
@@ -350,6 +359,8 @@ const ManifestSchema = Type.Object({
   userConfigSchema: Type.Optional(Type.Array(ConfigFieldSchema)),
   /** Short menu name for those per-account settings; the description stays the sentence. */
   userConfigLabel: Type.Optional(Type.String({ minLength: 1 })),
+  /** Where they are edited: the Account rail (default) or the plugin's own page. */
+  userConfigPlacement: Type.Optional(Type.Union([Type.Literal('account'), Type.Literal('pluginPage')])),
   userGrantable: Type.Optional(Type.Boolean()),
   capabilities: Type.Optional(Type.Object({
     mutates: Type.Optional(Type.Array(Type.Union([

@@ -118,7 +118,10 @@ function harness(opts: {
   /** The model catalog `ctx.listModels()` serves — a node's own `thinkingLevel` is validated against the
    *  ladder of whichever entry its model resolves to. */
   models?: { provider: string; model: string; reasoningLevels?: string[] }[];
-  subagentTypes?: { name: string; description: string }[];
+  subagentTypes?: { name: string; description: string; source?: 'builtin' | 'user' }[];
+  /** The acting account's own slice of this plugin's config, where built-in type model pins live.
+   *  A function so a test can change the pin mid-run and prove what a node actually reads. */
+  userConfig?: () => Record<string, unknown> | null;
   workflowExpansionRpc?: { addNodes(input: { workflowId: string; nodes: unknown[] }): Promise<{ added: string[] }> };
   readSubagentResult?: (parentSessionId: string, childSessionId: string) => string;
   persistSubagentToolOutput?: (input: { channelId: string; toolCallId: string; text: string }) => Promise<{ path: string; bytes: number } | null>;
@@ -276,6 +279,7 @@ function harness(opts: {
     delegatedWorkflowExpansionAvailable: () => opts.delegatedRpcAvailable === true,
     workflowExpansionRpc: () => opts.workflowExpansionRpc ?? null,
     subagentTypes: () => opts.subagentTypes ?? [],
+    userConfig: () => opts.userConfig?.() ?? null,
   };
   const chunkCalls = { value: 0 };
   const helpers = {
@@ -2722,5 +2726,157 @@ describe('workflow recovery journal + boot resume', () => {
     });
     expect(noJournal.resumed).toBe(false);
     expect(noJournal.reason).toBeTruthy();
+  });
+});
+
+/** A workflow node carrying `subagent_type` spawns through the SAME per-account pin resolver the Delegate
+ *  tool uses (plugins/subagent/lib/typeModel.mjs). These prove the node path reaches it, including the
+ *  nodes that start long after the turn that scheduled them. */
+describe('workflow nodes — built-in sub-agent type model pins', () => {
+  const MODELS = [
+    { provider: 'p', model: 'm' },
+    { provider: 'anthropic', model: 'claude-opus-4' },
+    { provider: 'openai', model: 'gpt-5' },
+  ];
+  const TYPES = [
+    { name: 'plan', description: 'planner', source: 'builtin' as const },
+    { name: 'triage', description: 'user triage', source: 'user' as const },
+  ];
+  /** The effective model of one node, as the engine reports it on its snapshots. */
+  const modelOf = (snapshots: { nodes: { id: string; model?: string; error?: string }[] }[], id: string) =>
+    [...snapshots].reverse().map((s) => s.nodes.find((n) => n.id === id)).find((n) => n?.model)?.model;
+  const errorOf = (snapshots: { nodes: { id: string; model?: string; error?: string }[] }[], id: string) =>
+    [...snapshots].reverse().map((s) => s.nodes.find((n) => n.id === id)).find((n) => n?.error)?.error;
+
+  it('runs a pinned typed node on the pinned model, and an unpinned one on the inherited model', async () => {
+    const h = harness({
+      models: MODELS, subagentTypes: TYPES,
+      userConfig: () => ({ 'typeModel.plan': 'anthropic/claude-opus-4' }),
+    });
+    await h.tools.get('WorkflowStart')!.execute('pins', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'pinned', task: 'pinned', subagent_type: 'plan' },
+        { id: 'custom', task: 'custom', subagent_type: 'triage' },
+        { id: 'plain', task: 'plain' },
+      ]),
+    });
+    expect(modelOf(h.snapshots, 'pinned')).toBe('anthropic/claude-opus-4');
+    expect(modelOf(h.snapshots, 'custom')).toBe('p/m');
+    expect(modelOf(h.snapshots, 'plain')).toBe('p/m');
+  });
+
+  it('lets an unpinned typed node name any configured model', async () => {
+    const h = harness({ models: MODELS, subagentTypes: TYPES, userConfig: () => ({}) });
+    await h.tools.get('WorkflowStart')!.execute('free', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'n', subagent_type: 'plan', model: 'openai/gpt-5' }]),
+    });
+    expect(modelOf(h.snapshots, 'n')).toBe('openai/gpt-5');
+  });
+
+  it('fails a node that asks for a model the pin forbids, instead of quietly overriding it', async () => {
+    const h = harness({
+      models: MODELS, subagentTypes: TYPES,
+      userConfig: () => ({ 'typeModel.plan': 'anthropic/claude-opus-4' }),
+    });
+    await h.tools.get('WorkflowStart')!.execute('conflict', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'n', subagent_type: 'plan', model: 'openai/gpt-5' }]),
+    });
+    expect(errorOf(h.snapshots, 'n')).toMatch(/pinned to anthropic\/claude-opus-4/);
+    expect(h.launched).not.toContain('n');
+  });
+
+  it('fails a node whose pinned model is no longer configured rather than substituting one', async () => {
+    const h = harness({
+      models: MODELS, subagentTypes: TYPES,
+      userConfig: () => ({ 'typeModel.plan': 'anthropic/retired' }),
+    });
+    await h.tools.get('WorkflowStart')!.execute('gone', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'n', subagent_type: 'plan' }]),
+    });
+    expect(errorOf(h.snapshots, 'n')).toMatch(/\/p\/subagent/);
+    expect(h.launched).not.toContain('n');
+  });
+
+  // A dependent node starts after its dependency finished, outside the turn that scheduled the DAG — the
+  // pins are captured at start so it resolves the same way the first node did.
+  it('applies the pin to a node that starts only after its dependency, with no live turn scope', async () => {
+    let live: Record<string, unknown> | null = { 'typeModel.plan': 'anthropic/claude-opus-4' };
+    const h = harness({ models: MODELS, subagentTypes: TYPES, userConfig: () => live });
+    const started = h.tools.get('WorkflowStart')!.execute('later', {
+      background: false,
+      nodesFile: workflowFile([
+        { id: 'first', task: 'first' },
+        { id: 'second', task: 'second', deps: ['first'], subagent_type: 'plan' },
+      ]),
+    });
+    // Whatever the account's config does after the DAG was scheduled, this run keeps what it started with.
+    live = null;
+    await started;
+    expect(modelOf(h.snapshots, 'second')).toBe('anthropic/claude-opus-4');
+  });
+
+  const settle = async (cond: () => boolean): Promise<void> => {
+    for (let i = 0; i < 400 && !cond(); i += 1) await new Promise((r) => setTimeout(r, 5));
+    if (!cond()) throw new Error('condition never became true');
+  };
+
+  // A node resolves its model once, before it is launched. Clearing the pin while that node is mid-flight
+  // must not rewrite the model it is already running on.
+  it('leaves an already-started node on the model it was launched with when the account changes its pin', async () => {
+    let live: Record<string, unknown> | null = { 'typeModel.plan': 'anthropic/claude-opus-4' };
+    const h = harness({ models: MODELS, subagentTypes: TYPES, userConfig: () => live });
+    let release!: () => void;
+    gate = { task: 'running', promise: new Promise<void>((r) => { release = r; }) };
+    const started = h.tools.get('WorkflowStart')!.execute('midflight', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'running', subagent_type: 'plan' }]),
+    });
+    await settle(() => modelOf(h.snapshots, 'n') !== undefined);
+    live = { 'typeModel.plan': 'openai/gpt-5' };
+    release();
+    await started;
+    expect(modelOf(h.snapshots, 'n')).toBe('anthropic/claude-opus-4');
+  });
+
+  // The recovery journal is the engine's own file, but a pin in it is a CLAIM about the catalog, not an
+  // authority over it: a reboot re-checks it against the models this installation has now.
+  it('revalidates a journaled pin against the live catalog instead of replaying it', async () => {
+    const h1 = harness({ models: MODELS, subagentTypes: TYPES, userConfig: () => ({ 'typeModel.plan': 'anthropic/claude-opus-4' }) });
+    gate = { task: 'parked', promise: new Promise<void>(() => { /* never released — the crash */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-journal-pin', {
+      background: false,
+      nodesFile: workflowFile([{ id: 'n', task: 'parked', subagent_type: 'plan' }]),
+    });
+    await settle(() => h1.runs.some((r) => r.task === 'parked'));
+    const wfId = h1.snapshots[0]!.id;
+    const journal = JSON.parse(readFileSync(resolve(workflowFilesDir, 'workflows', 'state', `${wfId}.json`), 'utf8')) as
+      { typeModelPins?: Record<string, string> };
+    expect(journal.typeModelPins).toEqual({ 'typeModel.plan': 'anthropic/claude-opus-4' });
+
+    // The model is gone from this installation by the time the run is picked back up, and the resuming
+    // process has no account scope of its own — the journal is all there is, and it is not enough.
+    gate = null;
+    const h2 = harness({ models: [{ provider: 'p', model: 'm' }], subagentTypes: TYPES });
+    const control = h2.controls.get('workflow') as unknown as {
+      resumeInterrupted(input: unknown): Promise<{ resumed: boolean; reason?: string }>;
+    };
+    const completions: { status: string; result: string }[] = [];
+    const outcome = await control.resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-parent', toolCallId: 'call-journal-pin',
+      hooks: {
+        emit: () => {}, complete: (c: { status: string; result: string }) => completions.push(c),
+        stopChild: async () => ({ stopped: true }), validateBoundary: () => ({ ok: true }),
+      },
+    });
+    expect(outcome).toEqual({ resumed: true });
+    await settle(() => completions.length === 1);
+    expect(completions[0]!.status).toBe('error');
+    expect(completions[0]!.result).toMatch(/pinned to anthropic\/claude-opus-4/);
+    expect(completions[0]!.result).toMatch(/\/p\/subagent/);
+    expect(h2.launched).not.toContain('parked');
   });
 });

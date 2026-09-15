@@ -16,8 +16,25 @@
     "stallMinutes": {
       "label": "Časový limit zaseknutí (minuty)",
       "hint": "Jak dlouho může delegovaný subagent být bez známky činnosti (žádné spuštění nástroje, žádné hranice kroků), než se přeruší jako zaseknutý. Verdikt je zotavitelný nástrojem DelegateContinue, takže jde jen o pojistku proti opravdu zamrzlému subagentovi — u hlubších analýz, které přemýšlejí dlouho, hodnotu zvyšte. Rozsah 5 minut až 4 hodiny, výchozí 1 hodina."
+    },
+    "sec_typeModels": {
+      "label": "Modely vestavěných agentů",
+      "hint": "Určete, na kterém modelu poběží jednotliví vestavění agenti. Volba platí pouze pro vaše delegace."
+    },
+    "typeModel.explore": {
+      "label": "Explore",
+      "hint": "Model, na kterém poběží každý nový subagent typu explore. Bez vyplnění vybere asistent model podle úkolu, případně zdědí model konverzace."
+    },
+    "typeModel.plan": {
+      "label": "Plan",
+      "hint": "Model, na kterém poběží každý nový subagent typu plan. Bez vyplnění vybere asistent model podle úkolu, případně zdědí model konverzace."
+    },
+    "typeModel.review": {
+      "label": "Review",
+      "hint": "Model, na kterém poběží každý nový subagent typu review. Bez vyplnění vybere asistent model podle úkolu, případně zdědí model konverzace."
     }
   },
+  "userConfigLabel": "Agenti",
   "web": {
     "settings": {
       "subagents": "Agenti"
@@ -54,7 +71,12 @@
       "helpDescription": "Jedna věta: kdy delegovat tomuto agentovi (podle ní volí asistent).",
       "helpBody": "Systémový prompt agenta: jeho role, omezení a způsob reportování.",
       "workspaceEyebrow": "Agenti",
-      "workspaceReady": "Agenti načteni"
+      "workspaceReady": "Agenti načteni",
+      "pinsTitle": "Modely vestavěných agentů",
+      "pinsHint": "Vyberte model, na kterém poběží každý vestavěný agent. Volba platí pouze pro vaše delegace; při volbě Automaticky zvolí model asistent podle úkolu.",
+      "pinsUnavailable": "Nastavení agentů pro tento účet není k dispozici.",
+      "pinAutomatic": "Automaticky",
+      "pinUnavailable": "Již není nakonfigurován"
     }
   }
 }

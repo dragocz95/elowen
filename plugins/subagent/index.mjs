@@ -14,6 +14,7 @@ import { toolListCovers } from './lib/toolLists.mjs';
 import { foldEffectiveUsage, foldToolDetail } from './lib/progress.mjs';
 import { resolveSubagentName } from './lib/name.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './lib/thinking.mjs';
+import { TYPE_MODEL_HINT, readTypeModelPin, resolveTypeModel } from './lib/typeModel.mjs';
 import {
   CONTEXT_HEADER,
   MAX_CONTEXT_CHUNK_CHARS,
@@ -437,10 +438,14 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'DelegateModels', label: 'List sub-agent models',
     description: 'List the models a sub-agent can be run on — the exact "provider/model" values accepted by '
-      + 'the `model` argument of Delegate, DelegateContinue and a workflow node. Consult it ONLY when the '
-      + 'user explicitly asked to run a sub-agent on a different model, or when a delegation was refused '
-      + 'because the model you named is not configured; by default a sub-agent inherits your own model and '
-      + 'you should not pass `model` at all. It takes no arguments and returns one line per configured '
+      + 'the `model` argument of Delegate, DelegateContinue and a workflow node. Consult it when you are '
+      + 'choosing the model for a BUILT-IN sub-agent type and the task makes one a better fit than your own '
+      + '(a cheap model for a mechanical pass, a stronger one for design or review), when the user asked for '
+      + 'a particular model, or when a delegation was refused because the model you named is not configured. '
+      + 'A generic, untyped or custom-type sub-agent inherits your own model and needs no `model` at all, and '
+      + 'a built-in type an account has PINNED runs on its pinned model whatever this list says — a '
+      + 'conflicting `model` is refused, so do not use this list to work around a pin. '
+      + 'It takes no arguments and returns one line per configured '
       + 'model with its provider label and, where the model has one, the reasoning levels its `thinkingLevel` '
       + 'accepts — or a note that none are configured. This is a read-only lookup of '
       + 'what this Elowen instance has wired up — it does not switch YOUR model, change any setting, or say '
@@ -460,11 +465,16 @@ export function register(ctx) {
   // The typed sub-agent catalog (built-in explore/plan/review + user `.md` types), read once at register time so
   // the tool description can list them. The host resolves the chosen name into the child's role prompt,
   // toolset and permission boundary — the plugin only forwards it.
+  // A type's provenance rides on the line because it decides who picks the child's model: a BUILT-IN type
+  // may be pinned to a fixed model by the account, a user-defined one never is. The pin itself is
+  // per-account and this description is registered once for the whole instance, so the effective model is
+  // resolved (and any conflict reported) when the call runs, not named here.
   const agentTypes = ctx.subagentTypes?.() ?? [];
   const agentTypeLine = agentTypes.length
     ? ' You may run the sub-agent as a named TYPE via subagent_type — each carries its own role prompt and toolset. Available types: '
-      + agentTypes.map((t) => `"${t.name}" (${t.description})`).join('; ')
+      + agentTypes.map((t) => `"${t.name}"${t.source === 'builtin' ? ' [built-in]' : ''} (${t.description})`).join('; ')
       + '. A read-only type (e.g. explore) gets read-only tools plus the non-destructive shell clamp no matter what you hold. Omit subagent_type for a generic sub-agent that inherits your own tools.'
+      + ' A built-in type may be pinned to a fixed model for this account; see `model`.'
     : '';
 
   ctx.registerTool(defineTool({
@@ -507,8 +517,10 @@ export function register(ctx) {
           + 'is available only in this conversation: a forked worker cannot fork again.',
       })),
       model: Type.Optional(Type.String({
-        description: 'Run the sub-agent on a DIFFERENT model — pass this ONLY when the user explicitly asked for it. '
-          + 'Value from DelegateModels ("provider/model" or a bare model id). Omit it to inherit your own model.',
+        description: 'Run the sub-agent on a DIFFERENT model. Value from DelegateModels ("provider/model" or a '
+          + 'bare model id). Omit it to inherit your own model — which is what a generic, untyped or '
+          + 'custom-type sub-agent should do unless the user asked for a specific model. '
+          + TYPE_MODEL_HINT,
       })),
       thinkingLevel: Type.Optional(Type.String({ minLength: 1, description: THINKING_LEVEL_HINT })),
       background: Type.Optional(Type.Boolean({
@@ -580,10 +592,18 @@ export function register(ctx) {
       // self-correct (or relay the list to the user).
       const parentTurn = ctx.currentModel() ?? undefined;
       let model = parentTurn ? { provider: parentTurn.provider, model: parentTurn.model } : undefined;
-      // One catalog read for both checks below: the level is validated against the ladder of the model
+      // A BUILT-IN type this account pinned to a fixed model: the pin decides, and it needs the catalog to
+      // be verified against even when nothing else in this call would have read it.
+      const typePin = readTypeModelPin(ctx, agentType);
+      // One catalog read for every check below: the level is validated against the ladder of the model
       // this delegation actually resolves to, so it has to be resolved first.
-      const list = p.model || p.thinkingLevel ? await ctx.listModels().catch(() => []) : [];
-      if (p.model) {
+      const list = p.model || p.thinkingLevel || typePin ? await ctx.listModels().catch(() => []) : [];
+      if (typePin) {
+        const pinned = resolveTypeModel({ agentType, pin: typePin, requestedModel: p.model, models: list });
+        if (pinned.error) return ok(`Error: ${pinned.error}`);
+        model = pinned.model;
+      }
+      else if (p.model) {
         const want = p.model.trim();
         const hit = list.find((m) => `${m.provider}/${m.model}` === want || m.model === want);
         if (!hit) {
@@ -1347,9 +1367,20 @@ export function register(ctx) {
     return jsonRes({ error: result.error }, result.status);
   };
 
+  // READING the catalog is open to any authenticated account: the page every account may open needs the
+  // built-in agents' names and descriptions to label their model pickers, and those two fields are
+  // already in front of that account on every turn (they ride in the Delegate tool description that tells
+  // the assistant which types it may use). A user agent's BODY is not — it is the authored system prompt,
+  // and it is only ever sent to the administrators who may edit it. Creating, overwriting and deleting a
+  // definition stays admin-only below: those write instance-wide files.
   ctx.registerApiRoute({
-    rootMount: '/plugins/agents/list', path: '', method: 'GET', access: 'admin',
-    handler: async (req) => (req.path === '' ? jsonRes(catalog().list()) : jsonRes({ error: 'not found' }, 404)),
+    rootMount: '/plugins/agents/list', path: '', method: 'GET', access: 'user',
+    handler: async (req) => {
+      if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
+      const entries = catalog().list();
+      if (req.auth.admin) return jsonRes(entries);
+      return jsonRes(entries.map(({ body: _body, ...rest }) => ({ ...rest, canDelete: false })));
+    },
   });
 
   ctx.registerApiRoute({

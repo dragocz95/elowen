@@ -87,6 +87,34 @@
       "hint": "How long a delegated sub-agent may go with no sign of life (no tool starts, no step boundaries) before it is aborted as stalled. The verdict is recoverable with DelegateContinue, so it is only a safety net for a genuinely wedged child — raise it for deep analyses that think for long stretches. Range 5 minutes to 4 hours, default 1 hour."
     }
   ],
+  "userConfigLabel": "Agents",
+  "userConfigPlacement": "pluginPage",
+  "userConfigSchema": [
+    {
+      "key": "sec_typeModels",
+      "label": "Built-in agent models",
+      "type": "section",
+      "hint": "Fix which model each built-in agent runs on. Your choice applies to your own delegations only."
+    },
+    {
+      "key": "typeModel.explore",
+      "label": "Explore",
+      "type": "model",
+      "hint": "Model every new explore sub-agent runs on. Leave it unset to let the assistant pick a model that suits the task, or inherit the conversation's own."
+    },
+    {
+      "key": "typeModel.plan",
+      "label": "Plan",
+      "type": "model",
+      "hint": "Model every new plan sub-agent runs on. Leave it unset to let the assistant pick a model that suits the task, or inherit the conversation's own."
+    },
+    {
+      "key": "typeModel.review",
+      "label": "Review",
+      "type": "model",
+      "hint": "Model every new review sub-agent runs on. Leave it unset to let the assistant pick a model that suits the task, or inherit the conversation's own."
+    }
+  ],
   "capabilities": {
     "mutates": [
       "workflow-dag"
@@ -99,7 +127,6 @@
   "web": {
     "entry": "web/index.js",
     "requiresApiVersion": 8,
-    "adminOnly": true,
     "settings": [
       {
         "id": "subagents",
@@ -139,7 +166,12 @@
       "helpDescription": "One line: when to delegate to this agent (the assistant reads it to choose).",
       "helpBody": "The agent’s system prompt — its role, constraints and how to report back.",
       "workspaceEyebrow": "Agents",
-      "workspaceReady": "Agents loaded"
+      "workspaceReady": "Agents loaded",
+      "pinsTitle": "Models for built-in agents",
+      "pinsHint": "Choose the model each built-in agent runs on. The choice applies to your own delegations only; on Automatic the assistant picks a model to suit the task.",
+      "pinsUnavailable": "Per-account agent settings are not available for this account.",
+      "pinAutomatic": "Automatic",
+      "pinUnavailable": "No longer configured"
     }
   }
 }

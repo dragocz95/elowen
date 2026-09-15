@@ -21,7 +21,7 @@ afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true
 /** A plugin that keeps per-ACCOUNT credentials: one secret, one plain field, and a route that echoes back
  *  whatever `ctx.userConfig()` resolves for whoever is calling. It declares NO `reads` capability — reading
  *  its own per-account slice must not require the database grant. */
-function crmPluginDir(opts: { userGrantable?: boolean; userConfigLabel?: string; i18n?: Record<string, unknown> } = {}): string {
+function crmPluginDir(opts: { userGrantable?: boolean; userConfigLabel?: string; i18n?: Record<string, unknown>; userConfigPlacement?: string } = {}): string {
   const root = tmpDir('usercfg-plugins');
   const dir = join(root, 'crmdemo');
   mkdirSync(dir, { recursive: true });
@@ -33,6 +33,7 @@ function crmPluginDir(opts: { userGrantable?: boolean; userConfigLabel?: string;
     name: 'crmdemo', version: '1.0.0', apiVersion: '1', description: 'crm demo', entry: 'index.mjs',
     ...(opts.userGrantable ? { userGrantable: true } : {}),
     ...(opts.userConfigLabel ? { userConfigLabel: opts.userConfigLabel } : {}),
+    ...(opts.userConfigPlacement ? { userConfigPlacement: opts.userConfigPlacement } : {}),
     provides: { apiRoutes: ['/crmdemo'] },
     userConfigSchema: [
       { key: 'apiKey', label: 'API key', type: 'secret' },
@@ -40,6 +41,8 @@ function crmPluginDir(opts: { userGrantable?: boolean; userConfigLabel?: string;
       { key: 'timezone', label: 'Timezone', type: 'timezone' },
       { key: 'paths', label: 'Paths', type: 'tokenList' },
       { key: 'seats', label: 'Seats', type: 'number', min: 1, max: 10, step: 1, default: 3 },
+      { key: 'chatModel', label: 'Chat model', type: 'model' },
+      { key: 'pictureModel', label: 'Picture model', type: 'model', modelKind: 'image' },
     ],
   }));
   writeFileSync(join(dir, 'index.mjs'), `
@@ -52,7 +55,7 @@ export function register(ctx) {
   return root;
 }
 
-function setup(opts: { userGrantable?: boolean; userConfigLabel?: string; i18n?: Record<string, unknown> } = {}) {
+function setup(opts: { userGrantable?: boolean; userConfigLabel?: string; i18n?: Record<string, unknown>; brainProviders?: { id: string; models: string[] }[]; userConfigPlacement?: string } = {}) {
   const pluginsDir = crmPluginDir(opts);
   const dataRoot = tmpDir('usercfg-data');
   const db = openPluginTablesDb(':memory:');
@@ -64,6 +67,11 @@ function setup(opts: { userGrantable?: boolean; userConfigLabel?: string; i18n?:
   const userPluginConfig = new UserPluginConfigStore(db);
   const config = new ConfigStore(db);
   config.update({ plugins: { enabled: ['crmdemo'] } });
+  if (opts.brainProviders) {
+    config.update({ brain: { providers: opts.brainProviders.map((p) => ({
+      id: p.id, label: p.id, type: 'openai', baseUrl: 'https://ai.example/v1', models: p.models, apiKey: 'sek',
+    })) } });
+  }
   const provider = new PluginRegistryProvider(() => loadPlugins({
     dirs: [pluginsDir], enabled: ['crmdemo'], dataRoot,
     host: { userPluginConfig: (userId, plugin) => userPluginConfig.get(userId, plugin) },
@@ -257,6 +265,82 @@ describe('per-user plugin config', () => {
     expect(listing[0]!.i18n?.cs).toMatchObject({ userConfigLabel: 'CRM demo', description: 'Osobní přístup k CRM demo.' });
     // English stays on the record itself as the fallback for a locale the plugin does not translate.
     expect(listing[0]).toMatchObject({ label: 'CRM Demo', description: 'crm demo' });
+  });
+
+  /** A `model` field names a brain model this installation can actually run for THIS account. It is the
+   *  one invariant behind every model picker, so the write path enforces it rather than trusting the
+   *  browser that drew the list — a value hand-posted to the API is the same value the runtime would
+   *  later be asked to spawn on. */
+  describe('model fields', () => {
+    const providers = [{ id: 'relay', models: ['m1', 'm2'] }];
+
+    it('stores a configured provider/model pair and reads it back', async () => {
+      const { app, userPluginConfig, amy, amyTok } = setup({ brainProviders: providers });
+      const saved = await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { chatModel: 'relay/m1' } }));
+      expect(saved.status).toBe(200);
+      expect(userPluginConfig.get(amy.id, 'crmdemo').chatModel).toBe('relay/m1');
+    });
+
+    it('accepts an empty value as "no pick" and clears a stored one', async () => {
+      const { app, userPluginConfig, amy, amyTok } = setup({ brainProviders: providers });
+      await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { chatModel: 'relay/m1' } }));
+      expect((await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { chatModel: '' } }))).status).toBe(200);
+      expect(userPluginConfig.get(amy.id, 'crmdemo').chatModel).toBe('');
+      expect((await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { chatModel: null } }))).status).toBe(200);
+      expect(userPluginConfig.get(amy.id, 'crmdemo').chatModel).toBeUndefined();
+    });
+
+    it('refuses a model no configured provider offers, and writes nothing at all', async () => {
+      const { app, userPluginConfig, amy, amyTok } = setup({ brainProviders: providers });
+      await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { region: 'cz' } }));
+      for (const bogus of ['relay/nope', 'ghost/m1', 'm1', 'relay/', '/m1', 42]) {
+        const rejected = await app.request('/plugins/crmdemo/user-config', patch(amyTok, {
+          values: { region: 'must-not-land', chatModel: bogus },
+        }));
+        expect(rejected.status, JSON.stringify(bogus)).toBe(400);
+        expect(userPluginConfig.get(amy.id, 'crmdemo')).toEqual({ region: 'cz' });
+      }
+    });
+
+    it('refuses a model the account\'s own allow-list excludes, while the admin keeps it', async () => {
+      const { app, users, amy, amyTok, adminTok } = setup({ brainProviders: providers });
+      users.setAllowedExecs(amy.id, ['relay/m2']);
+      expect((await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { chatModel: 'relay/m1' } }))).status).toBe(400);
+      expect((await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { chatModel: 'relay/m2' } }))).status).toBe(200);
+      expect((await app.request('/plugins/crmdemo/user-config', patch(adminTok, { values: { chatModel: 'relay/m1' } }))).status).toBe(200);
+    });
+
+    // An IMAGE model is a bare model id from a separate allowlisted catalog, not a brain exec. The brain
+    // bound must not be applied to it.
+    it('leaves an image model field alone', async () => {
+      const { app, userPluginConfig, amy, amyTok } = setup({ brainProviders: providers });
+      expect((await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { pictureModel: 'gpt-image-1' } }))).status).toBe(200);
+      expect(userPluginConfig.get(amy.id, 'crmdemo').pictureModel).toBe('gpt-image-1');
+    });
+
+    // Legacy values already on disk stay readable: only a CHANGED value is judged, the same rule every
+    // other field type here follows.
+    it('keeps an unchanged stale model while another field is saved', async () => {
+      const { app, userPluginConfig, amy, amyTok } = setup({ brainProviders: providers });
+      userPluginConfig.set(amy.id, 'crmdemo', { chatModel: 'retired/old', region: 'old' });
+      const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as View[];
+      const saved = await app.request('/plugins/crmdemo/user-config', patch(amyTok, { values: { ...listing[0]!.config, region: 'new' } }));
+      expect(saved.status).toBe(200);
+      expect(userPluginConfig.get(amy.id, 'crmdemo')).toMatchObject({ chatModel: 'retired/old', region: 'new' });
+    });
+  });
+
+  // WHERE the values are edited is presentation metadata: the listing still carries the plugin, because
+  // its OWN page reads its values from exactly this response. Only the Account rail acts on the field.
+  it('reports where a plugin\'s per-account fields are edited, without withholding them', async () => {
+    const { app, amyTok } = setup({ userConfigPlacement: 'pluginPage' });
+    const listing = await (await app.request('/plugins/user-config', auth(amyTok))).json() as (View & { placement?: string })[];
+    expect(listing[0]).toMatchObject({ name: 'crmdemo', placement: 'pluginPage' });
+    expect(listing[0]!.userConfigSchema.length).toBeGreaterThan(0);
+
+    const plain = setup();
+    const plainListing = await (await plain.app.request('/plugins/user-config', auth(plain.amyTok))).json() as (View & { placement?: string })[];
+    expect(plainListing[0]!.placement).toBeUndefined();
   });
 
   it('answers nothing for a plugin that declares no per-account fields', async () => {
