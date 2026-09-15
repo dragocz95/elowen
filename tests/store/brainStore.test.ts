@@ -2096,7 +2096,8 @@ describe('BrainStore', () => {
     it('round-trips startedAt and bounded result/error previews on nodes', () => {
       store.createSession({ id: 'root', userId: 1, model: 'm' });
       const nodes = [
-        { id: 'good', task: 't', status: 'done', deps: [], startedAt: 1700000000000, result: `r${'x'.repeat(700)}` },
+        { id: 'good', task: 't', status: 'done', deps: [], startedAt: 1700000000000, result: `r${'x'.repeat(700)}`,
+          outputPath: '/data/tool-results/node-result.txt', outputBytes: 701 },
         { id: 'bad', task: 't', status: 'error', deps: [], error: 'boom' },
       ];
       expect(store.upsertWorkflowRun('root', wf({ nodes }))).toBe(true);
@@ -2104,10 +2105,14 @@ describe('BrainStore', () => {
       const good = run!.nodes.find((n) => n.id === 'good')!;
       expect(good.startedAt).toBe(1700000000000);
       expect(good.result).toHaveLength(600); // bounded, not the raw 701 chars
+      expect(good.outputPath).toBe('/data/tool-results/node-result.txt');
+      expect(good.outputBytes).toBe(701);
       expect(run!.nodes.find((n) => n.id === 'bad')!.error).toBe('boom');
       // Malformed variants of the new fields reject the snapshot rather than coercing.
       expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], startedAt: -5 }] }))).toBe(false);
       expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], result: 42 }] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], outputPath: '' }] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], outputBytes: -1 }] }))).toBe(false);
     });
 
     /** Same whitelist hazard for the node's reasoning effort. Dropped on persist, the level would exist

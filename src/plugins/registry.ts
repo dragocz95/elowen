@@ -18,7 +18,7 @@ import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, ty
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
 import { currentIdentity, currentContributionUserId, currentAccountUserId, currentCallApprovedByAsk, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
-import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
+import { clearedToolResultPlaceholder, currentSpillMaxResultBytes, persistToolOutputSpill, spillPreview } from '../brain/session/toolResultClearing.js';
 import { sessionToolResultSpillDir } from '../shared/paths.js';
 import { GUEST_WRITE_OP_BYTES, readManagedGuestArtifact } from '../brain/managedArtifacts.js';
 import { processRegistry } from '../brain/processRegistry.js';
@@ -1499,7 +1499,7 @@ export class PluginRegistry {
       // only its tool call and the text, so it can no more write into another conversation's spills than
       // it could name one. Sessionless (worker/cron) turns own no directory and get null rather than a
       // path outside any conversation's reach.
-      persistToolOutput: async ({ toolCallId, text }) => {
+      persistToolOutput: async ({ toolCallId, text, sessionId: requestedSessionId }) => {
         // The text is plugin-supplied and lands in the daemon's data directory, which nothing else
         // bounds: one conversation could otherwise fill the disk one tool call at a time. Loud rather
         // than truncated — a silently shortened file is a worse answer than none, because the excerpt
@@ -1508,10 +1508,16 @@ export class PluginRegistry {
         if (bytes > MAX_PERSISTED_TOOL_OUTPUT_BYTES) {
           throw new Error(`tool output is ${bytes} bytes, above the ${MAX_PERSISTED_TOOL_OUTPUT_BYTES}-byte limit for a persisted tool output`);
         }
-        const sessionId = currentSessionId();
+        // A detached producer may outlive the AsyncLocalStorage turn that launched it. The optional
+        // session id is accepted only as a host-captured selector; normal callers continue to resolve the
+        // ambient session. It never supplies a path or changes the current project/permission scope.
+        const sessionId = requestedSessionId ?? currentSessionId();
         if (!sessionId) return null;
         return persistToolOutputSpill(sessionToolResultSpillDir(process.env, sessionId), toolCallId, text);
       },
+      formatToolOutputPlaceholder: (path, bytes, text) =>
+        clearedToolResultPlaceholder(path, bytes, spillPreview(text, path, bytes)),
+      toolResultInlineBytes: currentSpillMaxResultBytes,
       allowedRoots,
       defaultCwd,
       workDir: currentWorkDir,
@@ -1556,6 +1562,7 @@ export class PluginRegistry {
         return artifact.bytes.toString('utf8');
       },
       currentSessionId,
+      subagentSessionId,
       currentDeliveryTarget,
       // The parent anchor is read from the HOST's own turn scope, never taken from the plugin: that is
       // the whole scoping boundary for all three calls. Outside a prompt turn there is no conversation to

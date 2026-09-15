@@ -1851,7 +1851,13 @@ export interface PluginContext {
    *  name. The caller keeps whatever it does without a stored path. Rejects on a real write failure, and on
    *  a `text` above the host's size ceiling — bounding what it produces is the caller's job, not this
    *  store's. */
-  persistToolOutput(input: { toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
+  persistToolOutput(input: { toolCallId: string; text: string; sessionId?: string }): Promise<{ path: string; bytes: number } | null>;
+  /** Render the bounded placeholder for a complete output already persisted by persistToolOutput. The host
+   * owns the wording and preview budget so delegated producers do not duplicate delivery formatting. */
+  formatToolOutputPlaceholder(path: string, bytes: number, text: string): string;
+  /** Current live per-result delivery threshold. Delegated producers use it to preserve small completions
+   *  inline while routing only results that the normal tool-result delivery would spill through the sink. */
+  toolResultInlineBytes(): number;
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */
   allowedRoots(): string[];
@@ -1954,6 +1960,9 @@ export interface PluginContext {
    *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
    *  from (a cron wake-up records it as the job's origin and the reply lands there). */
   currentSessionId(): string | undefined;
+  /** Resolve the host-derived session id for a delegated channel id. Used only to place workflow output
+   *  in a dependent node's own spill namespace; the plugin cannot choose an account or filesystem path. */
+  subagentSessionId(channelId: string): string;
   /** Opaque outbound destination for the current verified direct platform chat. Persist and return it to
    *  the host for scheduled delivery; never parse or construct it. Undefined elsewhere. */
   currentDeliveryTarget(): string | undefined;

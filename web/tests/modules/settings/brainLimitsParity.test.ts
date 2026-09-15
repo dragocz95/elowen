@@ -36,8 +36,8 @@ const boundsBlock = objectBlock(daemon, 'const BRAIN_LIMIT_BOUNDS: Record<keyof 
  *  the expected bound has to be derived here too. The rule is pinned as TEXT first: were the arithmetic to
  *  change, this fails loudly rather than leaving the test computing a bound the daemon no longer applies. */
 function daemonBandRule(): { minOf: (def: number) => number; maxOf: (def: number) => number } {
-  const band = /const band = \(key: keyof BrainLimits, maxOverride\?: number\)[^}]+}/.exec(daemon)?.[0] ?? '';
-  expect(band, 'the band() helper is not in the shape this test derives bounds from').toContain('Math.round(def / 2)');
+  const band = /const band = \(key: keyof BrainLimits, maxOverride\?: number, minOverride\?: number\)[^}]+}/.exec(daemon)?.[0] ?? '';
+  expect(band, 'the band() helper is not in the shape this test derives bounds from').toContain('minOverride ?? Math.round(def / 2)');
   expect(band).toContain('maxOverride ?? Math.round(def * 1.5)');
   return { minOf: (def) => Math.round(def / 2), maxOf: (def) => Math.round(def * 1.5) };
 }
@@ -48,11 +48,11 @@ function daemonBounds(): Record<string, [min: number, max: number]> {
   for (const [, key, expression] of boundsBlock.matchAll(/^ {2}(\w+): (.+),$/gm)) {
     const explicit = /^\[([\d_]+), ([\d_]+)\]$/.exec(expression);
     if (explicit) { out[key] = [num(explicit[1]), num(explicit[2])]; continue; }
-    const banded = new RegExp(`^band\\('${key}'(?:, ([\\d_]+))?\\)$`).exec(expression);
+    const banded = new RegExp(`^band\\('${key}'(?:, ([\\d_]+))?(?:, ([\\d_]+))?\\)$`).exec(expression);
     expect(banded, `unrecognised bound expression for ${key}: ${expression}`).toBeTruthy();
     const def = daemonDefaults[key];
     expect(def, `${key} has a bound but no default`).toBeTypeOf('number');
-    out[key] = [minOf(def!), banded?.[1] ? num(banded[1]) : maxOf(def!)];
+    out[key] = [banded?.[2] ? num(banded[2]) : minOf(def!), banded?.[1] ? num(banded[1]) : maxOf(def!)];
   }
   return out;
 }

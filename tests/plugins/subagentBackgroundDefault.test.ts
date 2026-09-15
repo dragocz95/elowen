@@ -64,7 +64,8 @@ describe('Delegate — asynchronous delivery is the default', () => {
     expect(completions).toEqual([]);
     release('the child conclusion');
     await vi.waitFor(() => expect(completions).toHaveLength(1));
-    expect(completions[0]).toMatchObject({ status: 'done', result: 'the child conclusion' });
+    expect(completions[0]).toMatchObject({ status: 'done' });
+    expect(completions[0]?.result).toContain('the child conclusion');
     // The wake-up is one result, not one per observer.
     await new Promise((r) => setTimeout(r, 10));
     expect(completions).toHaveLength(1);
@@ -86,7 +87,7 @@ describe('Delegate — asynchronous delivery is the default', () => {
     const home = freshDataRoot();
     vi.stubEnv('HOME', home);
     const { reg, release, completions } = await harness();
-    const large = `HEAD-SENTINEL\n${'MIDDLE-SENTINEL-' + 'x'.repeat(120_000)}\nTAIL-SENTINEL`;
+    const large = `HEAD-SENTINEL\n${'x'.repeat(5_000)}\nMIDDLE-SENTINEL\n${'x'.repeat(115_000)}\nTAIL-SENTINEL`;
     const res = await runWithPolicy(ADMIN, () => tool(reg, 'Delegate').execute('call-large', { task: 'inspect large output' }), {
       sessionId: 'brain-parent', identity: OWNER,
       emitSubagent: () => {}, emitSubagentCompletion: (c) => completions.push(c as { status?: string; result?: string }),
@@ -97,7 +98,7 @@ describe('Delegate — asynchronous delivery is the default', () => {
     const result = completions[0]?.result ?? '';
     expect(result).not.toContain('MIDDLE-SENTINEL');
     expect(result).toContain('HEAD-SENTINEL');
-    expect(result).toContain('TAIL-SENTINEL');
+    expect(result).not.toContain('TAIL-SENTINEL');
     const path = /Full output at: (.+?) — read it/.exec(result)?.[1];
     expect(path).toBeTruthy();
     expect(readFileSync(path!, 'utf8')).toBe(large);
@@ -174,7 +175,8 @@ describe('DelegateContinue — asynchronous delivery for an idle sub-agent', () 
     expect(completions).toEqual([]);
     release({ status: 'reply', reply: 'the continued answer' });
     await vi.waitFor(() => expect(completions).toHaveLength(1));
-    expect(completions[0]).toMatchObject({ toolCallId: 'call-continue', status: 'done', result: 'the continued answer' });
+    expect(completions[0]).toMatchObject({ toolCallId: 'call-continue', status: 'done' });
+    expect(completions[0]?.result).toContain('the continued answer');
     await new Promise((r) => setTimeout(r, 10));
     expect(completions).toHaveLength(1);
   });
@@ -183,7 +185,7 @@ describe('DelegateContinue — asynchronous delivery for an idle sub-agent', () 
     const home = freshDataRoot();
     vi.stubEnv('HOME', home);
     const { reg, release, completions } = await harness('idle');
-    const large = `HEAD-SENTINEL\n${'MIDDLE-SENTINEL-' + 'x'.repeat(120_000)}\nTAIL-SENTINEL`;
+    const large = `HEAD-SENTINEL\n${'x'.repeat(5_000)}\nMIDDLE-SENTINEL\n${'x'.repeat(115_000)}\nTAIL-SENTINEL`;
     const res = await runWithPolicy(ADMIN, () => tool(reg, 'DelegateContinue').execute('call-large-continue', {
       id: CHILD_SESSION, message: 'continue with a large report',
     }), {
@@ -196,7 +198,7 @@ describe('DelegateContinue — asynchronous delivery for an idle sub-agent', () 
     const result = completions[0]?.result ?? '';
     expect(result).not.toContain('MIDDLE-SENTINEL');
     expect(result).toContain('HEAD-SENTINEL');
-    expect(result).toContain('TAIL-SENTINEL');
+    expect(result).not.toContain('TAIL-SENTINEL');
     const path = /Full output at: (.+?) — read it/.exec(result)?.[1];
     expect(path).toBeTruthy();
     expect(readFileSync(path!, 'utf8')).toBe(large);

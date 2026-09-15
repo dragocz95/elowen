@@ -1,7 +1,7 @@
 import { afterAll, describe, it, expect } from 'vitest';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve, dirname, sep } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -27,6 +27,19 @@ const rawGuestWorkflowFile = (contents: string): string => {
   return path;
 };
 const guestWorkflowFile = (definition: unknown): string => rawGuestWorkflowFile(JSON.stringify(definition));
+
+let testPersistCounter = 0;
+const testPersistToolOutput = async ({ toolCallId, text, sessionId }: { toolCallId: string; text: string; sessionId?: string }) => {
+  const sessionKey = (sessionId ?? 'brain-parent').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+  const dir = resolve(workflowFilesDir, 'tool-results', sessionKey);
+  mkdirSync(dir, { recursive: true });
+  const base = toolCallId.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = join(dir, `${base}-${(testPersistCounter++).toString(36)}.txt`);
+  writeFileSync(path, text, { flag: 'wx' });
+  return { path, bytes: Buffer.byteLength(text, 'utf8') };
+};
+const testFormatToolOutputPlaceholder = (path: string, bytes: number, text: string) =>
+  `[Large tool result (${bytes} bytes) saved to disk instead of the context. Full output at: ${path} — read it with the Read tool if needed. First ${Math.min(2000, text.length)} characters below.]\n${text.slice(0, 2000)}`;
 
 const assertTestPathAllowed = (path: string): string => {
   const abs = resolve(path);
@@ -181,6 +194,8 @@ function harness(opts: {
   const completions: { toolCallId: string; status: string; result: string; run?: number }[] = [];
   const ctx = {
     dataDir: () => workflowFilesDir,
+    persistToolOutput: testPersistToolOutput,
+    formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
     registerTool: (def: Tool) => { tools.set(def.name, def); },
     registerControl: (name: string, control: WorkflowControl) => { controls.set(name, control); },
     stopSubagent: async (id: string) => {
@@ -568,11 +583,10 @@ describe('workflow engine', () => {
     });
     const write = contextOf('write');
     expect(write).toContain('Read({"file_path":');
-    expect(write).toContain('complete result');
     expect(write).toContain('gather');
     expect(write).not.toContain('done:gather BULK:12000');
     const gather = snapshots.flatMap((snapshot) => snapshot.nodes).find((node) => node.id === 'gather' && node.status === 'done');
-    expect(gather?.result?.length).toBeLessThanOrEqual(500);
+    expect(gather?.result?.length).toBeLessThanOrEqual(512);
   });
 
   // Filip's design: an edge carries a HANDOVER, not a report. A node writes the section itself, and only
@@ -633,9 +647,10 @@ describe('workflow engine', () => {
     expect(write).toMatch(/wrote no handover[^\n]*gather/);
     expect(write).toContain(':CONCLUSION'); // the END of the result, not its head
     expect(write).not.toContain('done:gather BULK:9000'); // …and not the head
-    // Bounded at the handover cap, well under the 8 000-char result cap.
+    // The authored/derived handover remains bounded; the complete-result reference is outside that slice.
     const body = write.split('## Handover from node "gather"\n')[1] ?? '';
-    expect(body.trim().length).toBeLessThanOrEqual(4_000);
+    expect(body.split('\n\nRead({')[0]!.trim().length).toBeLessThanOrEqual(4_000);
+    expect(body).toContain('Read({"file_path":');
   });
 
   // Only DIRECT dependencies. A four-node pipeline used to hand the last node every upstream report, so
@@ -784,7 +799,9 @@ describe('workflow engine', () => {
     const sizes = new Map<string, number>();
     for (const id of ids) {
       const body = context.split(`## Handover from node "${id}"\n`)[1] ?? '';
-      sizes.set(id, body.split('## Handover from node "')[0]!.trim().length);
+      const block = body.split('## Handover from node "')[0]!;
+      const received = block.split('\n\nRead({')[0]!.trim();
+      sizes.set(id, (received.startsWith('[truncated]\n') ? received.slice('[truncated]\n'.length) : received).length);
     }
     return sizes;
   };
@@ -832,10 +849,9 @@ describe('workflow engine', () => {
     expect(synthesis).not.toContain('truncated to fit');
   });
 
-  // A node's report is capped at 8 000 chars before it reaches the parent's summary or any dependent. Over
-  // that cap it has to lose its HEAD: a report's conclusion is its last line, and cutting the tail is exactly
-  // what destroyed a delegated report's conclusion on delivery.
-  it('keeps the END of an over-cap node result, in the summary and in what a dependent reads', async () => {
+  // The UI and prompt previews stay bounded, while the complete node answer is retained at the advertised
+  // Read path for the parent and direct dependents.
+  it('keeps a bounded preview and a Read reference for an over-cap node result', async () => {
     const { tools, contextOf } = harness();
     const res = await tools.get('WorkflowStart')!.execute('t-tail', {
       background: false,
@@ -847,13 +863,11 @@ describe('workflow engine', () => {
     const summary = res.content[0]!.text;
     expect(summary).toContain(':CONCLUSION'); // the end survived
     expect(summary).not.toContain('done:a BULK:9000'); // the head is what paid for it
-    expect(summary).toMatch(/\[truncated: first \d+ chars dropped, end kept — read it in full with DelegateRead\]/);
-    // The dependent reads the same end, marked as cut. It is NOT pointed at DelegateRead: that reads a
-    // session's own children, and the node it depends on is a sibling.
+    expect(summary).toContain('[truncated]');
+    expect(summary).toContain('Read({"file_path":');
     const dependent = contextOf('b');
     expect(dependent).toContain(':CONCLUSION');
-    expect(dependent).toContain('[truncated]');
-    expect(dependent).not.toContain('DelegateRead');
+    expect(dependent).toContain('Read({"file_path":');
   });
 
   // The budget is an ENGINE CONSTANT now, not an operator setting: it was a knob only while the same
@@ -1040,6 +1054,8 @@ describe('workflow engine', () => {
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       logger: { info() {}, warn() {} },
@@ -1095,6 +1111,8 @@ describe('workflow engine', () => {
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       logger: { info() {}, warn() {} },
@@ -1438,6 +1456,8 @@ describe('workflow start limit', () => {
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       logger: { info() {}, warn() {} },
@@ -1514,6 +1534,8 @@ describe('workflow background + detach', () => {
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: (name: string, control: Ctrl) => { controls.set(name, control); },
       registerHook: (hook: Hook) => { hooks.push(hook); },
@@ -2114,6 +2136,8 @@ describe('WorkflowResume', () => {
     };
     const ctx = {
       dataDir: () => workflowFilesDir,
+      persistToolOutput: testPersistToolOutput,
+      formatToolOutputPlaceholder: testFormatToolOutputPlaceholder,
       registerTool: (def: Tool) => { tools.set(def.name, def); },
       registerControl: () => {},
       // Faithful to BrainService.stopSubagent: the parent anchor is read from the turn on the stack, never

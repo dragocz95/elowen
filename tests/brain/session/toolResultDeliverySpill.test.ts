@@ -243,7 +243,7 @@ describe('the spill directory in production wiring', () => {
 });
 
 describe('a real session delivering an oversized tool result', () => {
-  const OUTPUT = `HEAD-${'z'.repeat(60_000)}-TAIL`;
+  const OUTPUT = `HEAD-${'z'.repeat(130_000)}-TAIL`;
   /** A real 1×1 PNG: the store names an image file after its own bytes, so the bytes have to be real. */
   const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 

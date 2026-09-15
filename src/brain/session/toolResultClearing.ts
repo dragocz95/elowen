@@ -74,13 +74,12 @@ export const COLD_CLEAR_MIN_BYTES = 1024;
  *  for the idle gate: at ~12k tokens one result of this size costs more context than the whole rest of
  *  a typical turn, and the model can read it back in full from the spill path.
  *
- *  50 000 is Claude Code's DEFAULT_MAX_RESULT_SIZE_CHARS, kept as the DEFAULT of the operator-tunable
- *  `toolResultInlineBytes` knob (Elowen AI → Limits) — `toolOutputMaxChars` caps the TRANSCRIPT preview,
- *  not what the model receives, so it neither bounds nor competes with this. Measured in bytes rather than
- *  characters because this module already measures in bytes (textBytes, CLEAR_MIN_BYTES); for the
- *  ASCII-dominant output that reaches this size the two differ by a rounding error, and one measure beats
- *  two. */
-export const SPILL_MAX_RESULT_BYTES = 50_000;
+ *  The fresh default is 120 000 bytes and the live operator setting is read through
+ *  `setSpillMaxResultBytes`. `toolOutputMaxChars` caps the TRANSCRIPT preview, not what the model receives,
+ *  so it neither bounds nor competes with this. Measured in bytes because this module already measures in
+ *  bytes.
+ */
+export const SPILL_MAX_RESULT_BYTES = 120_000;
 
 /** Aggregate cap on ONE wire-level tool-result message. pi-ai's Anthropic converter coalesces every RUN
  *  of consecutive `toolResult` messages into a single `user` message (`convertMessages`), so the parallel
@@ -105,6 +104,7 @@ export function setToolResultGroupBudget(resolve: () => number): void { toolResu
  *  keep the historical behaviour. */
 let spillMaxResultBytes: () => number = () => SPILL_MAX_RESULT_BYTES;
 export function setSpillMaxResultBytes(resolve: () => number): void { spillMaxResultBytes = resolve; }
+export function currentSpillMaxResultBytes(): number { return spillMaxResultBytes(); }
 
 /** How much of a size-spilled result the placeholder carries, so the model can tell what it got — and
  *  whether it is worth a Read — without the full text. 2 000 matches Claude Code's preview budget.
