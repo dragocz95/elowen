@@ -529,22 +529,17 @@ describe('brain routes', () => {
     config.update({ brain: { providers: [
       { id: 'azure', label: 'Azure', type: 'openai', api: 'openai-responses', baseUrl: 'https://test.openai.azure.com/openai/v1', models: ['gpt-5.6-luna', 'gpt-5.5'], apiKey: 'k', codeModeEnabled: true },
       { id: 'compat', label: 'Compat', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', models: ['gpt-5.6'], apiKey: 'k' },
-      { id: 'old', label: 'Old models', type: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5'], apiKey: 'k', codeModeEnabled: true },
+      { id: 'dashscope', label: 'Alibaba', type: 'openai', api: 'openai-responses', baseUrl: 'https://token-plan.example/compatible-mode/v1', models: ['qwen3.8-flash'], apiKey: 'k' },
     ] } } as never);
 
     expect((await app.request('/brain/providers/code-mode/status', auth(amyTok))).status).toBe(403);
     expect(await (await app.request('/brain/providers/code-mode/status', auth(adminTok))).json()).toEqual({
       providers: [
-        // One model routes, so the provider is active even though the other does not.
-        { providerId: 'azure', enabled: true, effective: 'active', models: [
-          { modelId: 'gpt-5.6-luna', status: 'supported' },
-          { modelId: 'gpt-5.5', status: 'unsupported' },
-        ] },
-        // `compat` is absent entirely: Chat Completions cannot carry the grammar tool, so there is no
-        // switch to offer. `old` is capable but every model it serves is too old.
-        { providerId: 'old', enabled: true, effective: 'unsupported', models: [
-          { modelId: 'gpt-5.5', status: 'unsupported' },
-        ] },
+        { providerId: 'azure', enabled: true },
+        // `compat` is absent entirely: Chat Completions cannot carry the tool, so there is no switch to
+        // offer. A third-party Responses endpoint serving a non-GPT model IS offered one — there is no
+        // model gate, so the answer never depends on which models the entry lists.
+        { providerId: 'dashscope', enabled: false },
       ],
     });
   });

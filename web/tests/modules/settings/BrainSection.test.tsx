@@ -72,26 +72,16 @@ const hostedMocks = vi.hoisted(() => ({
     .mockResolvedValue({ providers: [] }),
 }));
 
-type CodeModeStatusProvider = {
-  providerId: string;
-  enabled: boolean;
-  effective: 'active' | 'off' | 'unsupported';
-  models: { modelId: string; status: 'supported' | 'unsupported' }[];
-};
+type CodeModeStatusProvider = { providerId: string; enabled: boolean };
 const codeModeMocks = vi.hoisted(() => ({
-  status: vi.fn<() => Promise<{ providers: {
-    providerId: string;
-    enabled: boolean;
-    effective: 'active' | 'off' | 'unsupported';
-    models: { modelId: string; status: 'supported' | 'unsupported' }[];
-  }[] }>>()
+  status: vi.fn<() => Promise<{ providers: { providerId: string; enabled: boolean }[] }>>()
     .mockResolvedValue({ providers: [] }),
 }));
 
 /** One provider record of GET /brain/providers/code-mode/status, defaulted to a capable provider whose
  *  switch is still OFF — code mode is opt-in, so that is the state every account starts in. */
 const codeModeProvider = (providerId: string, overrides: Partial<CodeModeStatusProvider> = {}): CodeModeStatusProvider => ({
-  providerId, enabled: false, effective: 'off', models: [], ...overrides,
+  providerId, enabled: false, ...overrides,
 });
 
 /** One provider record of GET /brain/providers/hosted-tool-search/status, defaulted to the shape the
@@ -340,7 +330,7 @@ describe('BrainSection — OAuth account model picker', () => {
       { id: 'legacy', label: 'Legacy', type: 'openai', api: 'openai-completions', baseUrl: 'https://legacy.example/v1', models: ['gpt-5.6'], apiKeySet: true },
     );
     codeModeMocks.status.mockResolvedValue({ providers: [
-      codeModeProvider('openai', { models: [{ modelId: 'gpt-5.6', status: 'supported' }] }),
+      codeModeProvider('openai'),
     ] });
 
     renderSection();
@@ -358,8 +348,8 @@ describe('BrainSection — OAuth account model picker', () => {
       baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6'], apiKeySet: true,
     });
     codeModeMocks.status
-      .mockResolvedValueOnce({ providers: [codeModeProvider('openai', { models: [{ modelId: 'gpt-5.6', status: 'supported' }] })] })
-      .mockResolvedValue({ providers: [codeModeProvider('openai', { enabled: true, effective: 'active', models: [{ modelId: 'gpt-5.6', status: 'supported' }] })] });
+      .mockResolvedValueOnce({ providers: [codeModeProvider('openai')] })
+      .mockResolvedValue({ providers: [codeModeProvider('openai', { enabled: true })] });
 
     renderSection();
     fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
@@ -378,9 +368,7 @@ describe('BrainSection — OAuth account model picker', () => {
       id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
       baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6'], apiKeySet: true, codeModeEnabled: true,
     });
-    codeModeMocks.status.mockResolvedValue({ providers: [codeModeProvider('openai', {
-      enabled: true, effective: 'active', models: [{ modelId: 'gpt-5.6', status: 'supported' }],
-    })] });
+    codeModeMocks.status.mockResolvedValue({ providers: [codeModeProvider('openai', { enabled: true })] });
 
     renderSection();
     fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
@@ -390,21 +378,19 @@ describe('BrainSection — OAuth account model picker', () => {
     expect(saveProviders.mock.calls[0]?.[0][0]).not.toHaveProperty('codeModeEnabled');
   });
 
-  it('says so when the provider is capable but none of its models are', async () => {
+  it('offers the switch on a capable provider whatever models it serves', async () => {
     (CONFIG.brain.providers as unknown[]).push({
       id: 'openai', label: 'OpenAI', type: 'openai', api: 'openai-responses',
       baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5'], apiKeySet: true, codeModeEnabled: true,
     });
-    codeModeMocks.status.mockResolvedValue({ providers: [codeModeProvider('openai', {
-      enabled: true, effective: 'unsupported', models: [{ modelId: 'gpt-5.5', status: 'unsupported' }],
-    })] });
+    codeModeMocks.status.mockResolvedValue({ providers: [codeModeProvider('openai', { enabled: true })] });
 
     renderSection();
     fireEvent.click(await screen.findByRole('button', { name: `${en.brain.toolExecutionSettings}: OpenAI` }));
     const dialog = await screen.findByRole('dialog', { name: en.brain.toolExecutionSettings });
-    // The switch is on and the feature still does nothing — exactly the state a badge has to carry.
+    // Membership in the status response IS the whole answer: no per-model verdict reaches the browser,
+    // because code mode has no model gate to report.
     expect(within(dialog).getByRole('switch', { name: `${en.brain.codeModeTitle}: OpenAI` })).toBeChecked();
-    expect(within(dialog).getByText(en.brain.codeModeUnsupported)).toBeInTheDocument();
   });
 
   it('turns it back on by omitting the field rather than sending true', async () => {

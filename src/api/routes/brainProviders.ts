@@ -1,7 +1,7 @@
 import { brainConfigFromElowen, configuredBrainProviders } from '../../brain/config.js';
 import { probeAzureHostedToolSearch } from '../../brain/hostedToolSearchProbe.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
-import { isCodeModeCapableModel, isCodeModeCapableProvider } from '../../brain/session/codeModeRoute.js';
+import { isCodeModeCapableProvider } from '../../brain/session/codeModeRoute.js';
 import { hostedToolSearchFingerprint, isAzureOpenAIResponsesProvider, isHostedToolSearchCapableProvider, passesHostedToolSearchModelGate } from '../../brain/session/hostedToolSearch.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
 import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/hostedToolSearchProtocol.js';
@@ -94,26 +94,15 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
   });
 
   // Every provider code mode can apply to at all, resolved from the same brain config a session spawns
-  // against, so a connected account with no explicit row is reported under its synthetic entry. Both gates
-  // come from the route resolver — the settings surface must not restate which wires carry a grammar tool
-  // or which model families were trained on the single-`exec` surface.
+  // against, so a connected account with no explicit row is reported under its synthetic entry. The gate
+  // comes from the route resolver — the settings surface must not restate which wires carry a grammar tool.
+  // There is no per-model answer to report: the switch is a property of the provider entry, and which of
+  // its models are worth running this way is for the operator to measure.
   app.get('/brain/providers/code-mode/status', c => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const providers = (brainConfigFromElowen(d.config, d.brainAuth)?.providers ?? [])
       .filter(isCodeModeCapableProvider)
-      .map((provider) => {
-        const enabled = provider.codeModeEnabled === true;
-        const models = provider.models.map((modelId) => ({
-          modelId,
-          status: isCodeModeCapableModel(modelId) ? 'supported' as const : 'unsupported' as const,
-        }));
-        // An empty model list means the account's whole catalog is offered and the per-model gate decides
-        // at spawn, so the provider counts as active. Otherwise "active" needs one model that really routes.
-        const effective = !enabled ? 'off' as const
-          : models.length === 0 || models.some((model) => model.status === 'supported') ? 'active' as const
-            : 'unsupported' as const;
-        return { providerId: provider.id, enabled, effective, models };
-      });
+      .map((provider) => ({ providerId: provider.id, enabled: provider.codeModeEnabled === true }));
     return c.json({ providers });
   });
 

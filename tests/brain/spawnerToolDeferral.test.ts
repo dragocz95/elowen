@@ -85,6 +85,24 @@ function makeSpawner(
   };
 }
 
+/** Stand in for the code-mode plugin's control: it only has to exist and report what core handed it.
+ *  Returns a reader for the nested tool names core composed into the script API. */
+function stubCodeModeControl(registry: PluginRegistry): () => string[] {
+  let composed: string[] = [];
+  registry.contextFor('code-mode', {}, { info() {}, warn() {}, error() {} })
+    .registerControl('codeMode', {
+      compose: (request: { nested: { name: string }[] }) => {
+        composed = request.nested.map((tool) => tool.name);
+        return [pairTool('exec'), pairTool('wait')];
+      },
+      // The registry verifies the WHOLE contract before handing a control out, so the stub carries
+      // every method the key promises (KNOWN_CONTROL_METHODS.codeMode).
+      shutdownSession: () => {},
+      activeCount: () => 0,
+    } as never);
+  return () => composed;
+}
+
 /** A minimal stand-in for one of the two tools the code-mode plugin composes. */
 function pairTool(name: string): ToolDefinition {
   return defineTool({
@@ -98,6 +116,15 @@ const codexConfig = (codeModeEnabled: boolean): BrainRuntimeConfig => ({
   providers: [{
     id: 'chatgpt', label: 'ChatGPT', type: 'oauth-openai-codex' as const,
     baseUrl: '', models: ['gpt-5.6-luna'], apiKey: null, codeModeEnabled,
+  }],
+});
+
+/** A third-party OpenAI-compatible Responses endpoint, shaped like Alibaba's DashScope: it can carry the
+ *  `exec` tool, its model is not a GPT at all, and it does NOT understand Codex's `additional_tools`. */
+const compatConfig = (codeModeEnabled: boolean): BrainRuntimeConfig => ({
+  providers: [{
+    id: 'alibaba', label: 'Alibaba', type: 'openai' as const, api: 'openai-responses' as const,
+    baseUrl: 'https://token-plan.example/compatible-mode/v1', models: ['qwen3.8-flash'], apiKey: 'k', codeModeEnabled,
   }],
 });
 
@@ -176,18 +203,7 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     // A stand-in for the code-mode plugin's control: it only has to exist and report what core handed it.
     // Six MCP tools over a threshold of five are exactly what tool search would withhold, which is what
     // makes the two spawns below comparable.
-    let composed: { name: string }[] = [];
-    registry.contextFor('code-mode', {}, { info() {}, warn() {}, error() {} })
-      .registerControl('codeMode', {
-        compose: (request: { nested: { name: string }[] }) => {
-          composed = request.nested.map((tool) => ({ name: tool.name }));
-          return [pairTool('exec'), pairTool('wait')];
-        },
-        // The registry verifies the WHOLE contract before handing a control out, so the stub carries
-        // every method the key promises (KNOWN_CONTROL_METHODS.codeMode).
-        shutdownSession: () => {},
-        activeCount: () => 0,
-      } as never);
+    const composedNames = stubCodeModeControl(registry);
 
     const withCodeMode = makeSpawner(registry, () => runtime(5), codexConfig(true));
     const live = await withCodeMode.spawn();
@@ -201,7 +217,7 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     expect((withCodeMode.create.mock.calls.at(-1)?.[0] as { codexDeveloperPlacement?: unknown }).codexDeveloperPlacement).toBe(true);
     // The prize: the tools that WOULD have been withheld reach the script API, so the exec catalogue
     // declares their full signature instead of hiding them behind a search the model cannot use.
-    expect(composed.map((tool) => tool.name)).toEqual(expect.arrayContaining(['mcp__github__op_0', 'mcp__github__op_5']));
+    expect(composedNames()).toEqual(expect.arrayContaining(['mcp__github__op_0', 'mcp__github__op_5']));
 
     // The same account with the switch off keeps the provider's own hosted search, which is what put
     // `{type: 'tool_search'}` on the wire and `defer_loading` on `wait` before this change.
@@ -209,6 +225,24 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     await withoutCodeMode.spawn();
     expect((withoutCodeMode.create.mock.calls.at(-1)?.[0] as { hostedToolSearch?: unknown }).hostedToolSearch).toBe('openai');
     expect((withoutCodeMode.create.mock.calls.at(-1)?.[0] as { codexDeveloperPlacement?: unknown }).codexDeveloperPlacement).toBe(false);
+  });
+
+  it('runs code mode on a third-party Responses provider without sending Codex request shape there', async () => {
+    const registry = registryWithMcpTools(2);
+    stubCodeModeControl(registry);
+
+    const spawner = makeSpawner(registry, () => runtime(5), compatConfig(true));
+    await spawner.spawn();
+    const spec = spawner.create.mock.calls.at(-1)?.[0] as {
+      tools: ToolDefinition[]; codexDeveloperPlacement?: unknown;
+    };
+
+    // A non-GPT model on a Responses endpoint composes the `exec` surface: there is no model gate, because
+    // pi-ai degrades the grammar tool into an ordinary function tool wherever the model cannot take one.
+    expect(spec.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['exec', 'wait']));
+    // But Codex's own request arrangement stays behind: this endpoint ignores `additional_tools`, so sending
+    // it would leave the model with no tools at all.
+    expect(spec.codexDeveloperPlacement).toBe(false);
   });
 
   it('wires the production ToolSearch handle with plugin ownership and wildcard permission semantics', async () => {

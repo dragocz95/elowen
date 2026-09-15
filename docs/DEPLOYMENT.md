@@ -120,12 +120,15 @@ Two switches live on an individual entry in `brain.providers` and are written th
 
 Both switches are also reachable in the interface, under **Tool execution** on every provider and connected account in Settings → Models. A switch is offered only where the daemon reports the feature can apply at all, so the interface can never turn on a route the provider has no way to take.
 
-Code mode replaces the model's direct tool surface with a single `exec` tool that takes raw JavaScript, and the script reaches every other tool through a `tools` object. It is off by default because it changes what the model sees on every turn. The switch is necessary but not sufficient, and the two remaining gates are properties of the wire rather than preferences:
+Code mode replaces the model's direct tool surface with a single `exec` tool that takes raw JavaScript, and the script reaches every other tool through a `tools` object. It is off by default because it changes what the model sees on every turn. One gate remains beyond the switch, and it is a property of the wire rather than a preference:
 
-- The provider must speak a **Responses** API. `exec` is declared as a grammar-constrained custom tool, which only `openai-codex-responses`, `openai-responses` and `azure-openai-responses` serialise; Chat Completions has no such concept. That is the ChatGPT account plus any `openai` entry whose `api` resolves to `openai-responses`.
-- The model must be in the **gpt-5.6 family or newer**, the models trained on that tool surface.
+- The provider must speak a **Responses** API. `exec` is declared through constrained sampling, which only `openai-codex-responses`, `openai-responses` and `azure-openai-responses` serialise; Chat Completions has no such concept. That is the ChatGPT account plus any `openai` entry whose `api` resolves to `openai-responses`.
 
-On any other provider or an older model the setting has no effect and the session keeps its ordinary tool list. The tools themselves are unchanged: a script's call passes exactly the same permission, deny and approval checks as a direct call, so code mode grants no capability the account does not already have.
+There is deliberately **no model gate**. Where a model's catalog entry does not claim grammar-tool support, `exec` goes out as an ordinary function tool taking the script as a string, so nothing on the wire breaks; the models trained on this surface (gpt-5.6 and newer) simply drive it best. On any other model the switch still applies, so compare a real task before leaving it on.
+
+Codex's own request arrangement — an empty `instructions`, with the prompt and the tool declarations as `developer` items inside `input` — is sent only on the ChatGPT account, the one endpoint that understands it. Any other Responses provider receives its tools the ordinary way, at the top level.
+
+On a provider that is not on a Responses wire the setting has no effect and the session keeps its ordinary tool list. The tools themselves are unchanged: a script's call passes exactly the same permission, deny and approval checks as a direct call, so code mode grants no capability the account does not already have.
 
 ## Registry plugins and compatibility
 

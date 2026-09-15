@@ -9,26 +9,21 @@ import { openAiApiFor, type BrainProviderEntry } from '../providers.js';
  *  ToolDefinitions at all, so they are never hidden by this and need no entry here. */
 export const CODE_MODE_ALWAYS_VISIBLE_TOOLS: readonly string[] = ['AskUserQuestion'];
 
-/** The oldest model family trained on the single-`exec` tool surface. */
-const MIN_CODE_MODE_MAJOR = 5;
-const MIN_CODE_MODE_MINOR = 6;
-
-/** Whether a model id names a GPT release at or after gpt-5.6.
+/** Does this provider entry speak Codex's own request dialect?
  *
- *  Matched on the family prefix rather than a fixed list so a later release works without a code change,
- *  which is deliberate: the tool surface is a training-time property of the family, and every gpt-5.6 and
- *  gpt-6 variant in the Codex catalog carries it. Anything that is not a `gpt-<major>[.<minor>]` id — a
- *  Claude model, a local model, an unrecognised alias — reads as unsupported. */
-export function isCodeModeCapableModel(modelId: string): boolean {
-  const match = /^gpt-(\d+)(?:\.(\d+))?/.exec(modelId);
-  if (match === null) return false;
-  const major = Number(match[1]);
-  const minor = match[2] === undefined ? 0 : Number(match[2]);
-  if (major > MIN_CODE_MODE_MAJOR) return true;
-  return major === MIN_CODE_MODE_MAJOR && minor >= MIN_CODE_MODE_MINOR;
+ *  Only the ChatGPT account does. Codex's `use_responses_lite` shape — an empty `instructions`, with the
+ *  prompt and the tool declarations as `developer` items inside `input` — is understood by the ChatGPT
+ *  backend and by nothing else: measured against a third-party Responses endpoint (Alibaba DashScope,
+ *  2026-09-15), a tool declared only in `additional_tools` made the model answer that it "isn't an available
+ *  tool". Code mode on any other provider therefore declares its tools the ordinary way, at the top level.
+ *
+ *  Separate from `isCodeModeCapableProvider` on purpose: carrying an `exec` tool and speaking Codex's
+ *  request dialect are two different capabilities, and only the ChatGPT account has both. */
+export function usesCodexRequestShape(entry: Pick<BrainProviderEntry, 'type'>): boolean {
+  return entry.type === 'oauth-openai-codex';
 }
 
-/** Could this provider entry EVER run code mode — ignoring the operator switch and the model gate?
+/** Could this provider entry EVER run code mode — ignoring the operator switch?
  *
  *  `exec` is declared through pi-ai's `constrainedSampling`, and only the Responses wires serialise that
  *  as an OpenAI custom tool: `openai-codex-responses`, `openai-responses` and `azure-openai-responses`
@@ -44,13 +39,6 @@ export function isCodeModeCapableProvider(entry: Pick<BrainProviderEntry, 'type'
   return entry.type === 'openai' && openAiApiFor(entry) === 'openai-responses';
 }
 
-/** Whether this turn composes its tools in CODE MODE: one `exec` tool taking raw JavaScript, with every
- *  other tool hidden from the model but still callable from inside a script.
- *
- *  Three independent gates, all required. The operator switch is opt-in and absent by default, so an
- *  installation that does nothing keeps its current tool surface byte for byte. The provider gate keeps it
- *  to the endpoint whose models were trained on this surface. The model gate does the same within that
- *  endpoint, because an older model on the same account would see a tool it cannot drive. */
 /** The visibility narrowing for a code-mode session, in the shape the per-turn pass already consumes.
  *
  *  Everything except the code-mode pair and the always-visible interaction tools is listed as withheld:
@@ -68,9 +56,21 @@ export function codeModeVisibilityFor(
   };
 }
 
-export function codeModeApplies(entry: BrainProviderEntry | undefined, modelId: string): boolean {
+/** Whether this turn composes its tools in CODE MODE: one `exec` tool taking raw JavaScript, with every
+ *  other tool hidden from the model but still callable from inside a script.
+ *
+ *  Two gates, both required, and NEITHER of them is the model. The operator switch is opt-in and absent by
+ *  default, so an installation that does nothing keeps its current tool surface byte for byte. The provider
+ *  gate keeps it to the wires that can carry the tool at all.
+ *
+ *  There is deliberately no model gate. `exec` degrades on its own where a model cannot drive it: pi-ai
+ *  serialises it as a grammar tool only for a model whose catalog entry claims `supportsOpenAIGrammarTools`
+ *  and otherwise as an ordinary function tool taking the script as a string (`constrained-sampling.js`), and
+ *  a model that ignores the tool simply answers directly. Which models are worth running this way is a
+ *  measurement, not an invariant — a live probe of `qwen3.8-flash` on 2026-09-15 batched seven nested calls
+ *  into one script — so the operator decides it per provider entry instead of the code guessing from an id. */
+export function codeModeApplies(entry: BrainProviderEntry | undefined): boolean {
   if (entry === undefined) return false;
   if (entry.codeModeEnabled !== true) return false;
-  if (!isCodeModeCapableProvider(entry)) return false;
-  return isCodeModeCapableModel(modelId);
+  return isCodeModeCapableProvider(entry);
 }

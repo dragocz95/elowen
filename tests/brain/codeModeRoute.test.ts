@@ -4,8 +4,8 @@ import {
   CODE_MODE_ALWAYS_VISIBLE_TOOLS,
   codeModeApplies,
   codeModeVisibilityFor,
-  isCodeModeCapableModel,
   isCodeModeCapableProvider,
+  usesCodexRequestShape,
 } from '../../src/brain/session/codeModeRoute.js';
 
 function entry(overrides: Partial<BrainProviderEntry> = {}): BrainProviderEntry {
@@ -21,59 +21,52 @@ function entry(overrides: Partial<BrainProviderEntry> = {}): BrainProviderEntry 
   } as BrainProviderEntry;
 }
 
-describe('isCodeModeCapableModel', () => {
-  it('accepts gpt-5.6 and newer', () => {
-    expect(isCodeModeCapableModel('gpt-5.6-sol')).toBe(true);
-    expect(isCodeModeCapableModel('gpt-5.6-terra')).toBe(true);
-    expect(isCodeModeCapableModel('gpt-5.6')).toBe(true);
-    expect(isCodeModeCapableModel('gpt-6-astra')).toBe(true);
-    expect(isCodeModeCapableModel('gpt-7')).toBe(true);
-  });
-
-  it('rejects older GPT models', () => {
-    expect(isCodeModeCapableModel('gpt-5.5')).toBe(false);
-    expect(isCodeModeCapableModel('gpt-5.4-mini')).toBe(false);
-    expect(isCodeModeCapableModel('gpt-5')).toBe(false);
-    expect(isCodeModeCapableModel('gpt-4.1')).toBe(false);
-  });
-
-  it('rejects anything that is not a gpt id', () => {
-    expect(isCodeModeCapableModel('claude-opus-5')).toBe(false);
-    expect(isCodeModeCapableModel('glm-5.3')).toBe(false);
-    expect(isCodeModeCapableModel('')).toBe(false);
+describe('usesCodexRequestShape', () => {
+  it('is the ChatGPT account and nothing else', () => {
+    expect(usesCodexRequestShape({ type: 'oauth-openai-codex' })).toBe(true);
+    // A third-party Responses endpoint can carry `exec` but ignores `additional_tools` outright, so it
+    // must keep the ordinary top-level tool declaration.
+    expect(usesCodexRequestShape({ type: 'openai' })).toBe(false);
+    expect(usesCodexRequestShape({ type: 'oauth-anthropic' })).toBe(false);
   });
 });
 
 describe('codeModeApplies', () => {
-  it('needs all three gates', () => {
-    expect(codeModeApplies(entry(), 'gpt-5.6-sol')).toBe(true);
+  it('needs both gates', () => {
+    expect(codeModeApplies(entry())).toBe(true);
   });
 
   it('is off without the operator switch', () => {
     const without = entry();
     delete (without as { codeModeEnabled?: true }).codeModeEnabled;
-    expect(codeModeApplies(without, 'gpt-5.6-sol')).toBe(false);
+    expect(codeModeApplies(without)).toBe(false);
   });
 
-  it('is off for a provider whose wire cannot carry a grammar tool', () => {
-    // `exec` is a grammar-constrained custom tool, which only the Responses wires serialise. A default
+  it('is off for a provider whose wire cannot carry the tool', () => {
+    // `exec` is declared through constrained sampling, which only the Responses wires serialise. A default
     // OpenAI-compatible endpoint is Chat Completions, and Anthropic is neither.
-    expect(codeModeApplies(entry({ type: 'openai', baseUrl: 'https://compat.example/v1' }), 'gpt-5.6-sol')).toBe(false);
-    expect(codeModeApplies(entry({ type: 'oauth-anthropic' }), 'gpt-5.6-sol')).toBe(false);
+    expect(codeModeApplies(entry({ type: 'openai', baseUrl: 'https://compat.example/v1' }))).toBe(false);
+    expect(codeModeApplies(entry({ type: 'oauth-anthropic' }))).toBe(false);
   });
 
   it('applies to an API-key provider on the Responses wire', () => {
-    const azure = entry({ type: 'openai', api: 'openai-responses', baseUrl: 'https://r.openai.azure.com/openai/v1' });
-    expect(codeModeApplies(azure, 'gpt-5.6-luna')).toBe(true);
-    expect(codeModeApplies(azure, 'gpt-5.5')).toBe(false);
+    expect(codeModeApplies(entry({ type: 'openai', api: 'openai-responses', baseUrl: 'https://r.openai.azure.com/openai/v1' }))).toBe(true);
   });
 
-  it('is off for an older model on a qualifying provider', () => {
-    expect(codeModeApplies(entry(), 'gpt-5.5')).toBe(false);
+  it('has no model gate: the operator decides which models are worth running this way', () => {
+    // A third-party Responses endpoint serving a non-GPT model is exactly the case this allows. pi-ai
+    // downgrades the grammar tool to a plain function tool when the model cannot take one, so nothing on
+    // the wire breaks; whether the model BATCHES well is a measurement, not a property of its id.
+    const dashscope = entry({
+      type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://token-plan.example/compatible-mode/v1', models: ['qwen3.8-flash'],
+    });
+    expect(codeModeApplies(dashscope)).toBe(true);
+    expect(codeModeApplies(entry({ models: ['gpt-5.5'] }))).toBe(true);
   });
 
   it('is off when the provider is unknown', () => {
-    expect(codeModeApplies(undefined, 'gpt-5.6-sol')).toBe(false);
+    expect(codeModeApplies(undefined)).toBe(false);
   });
 });
 

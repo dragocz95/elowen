@@ -26,7 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { currentContributionUserId, currentWorkDir, currentToolPolicy, currentPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
 import { createProjectExecutionBoundary } from '../session/projectExecutionBoundary.js';
 import { buildProjectTool } from '../tools/projectTool.js';
-import { codeModeApplies, codeModeVisibilityFor } from '../session/codeModeRoute.js';
+import { codeModeApplies, codeModeVisibilityFor, usesCodexRequestShape } from '../session/codeModeRoute.js';
 import { personaTemplatesFor, PERSONA_SCHEDULED } from '../session/personaRoute.js';
 import { createToolTraceSink } from '../toolTrace/sink.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
@@ -390,7 +390,7 @@ export class LiveSessionSpawner {
     // config change applies on the next respawn and never mid-turn. The control is absent whenever the
     // plugin is not loaded, which reads as "code mode unavailable" and leaves the direct tool surface.
     // Resolved HERE, before tool search, because the two are mutually exclusive (see below).
-    const codeModeControl = codeModeApplies(providerEntry, model.id) ? plugins?.control('codeMode') : undefined;
+    const codeModeControl = codeModeApplies(providerEntry) ? plugins?.control('codeMode') : undefined;
     let codeModeToolNames: string[] = [];
     // TOOL SEARCH, and why a code-mode session has none.
     //
@@ -742,11 +742,11 @@ export class LiveSessionSpawner {
     // opener's edited template, one line away from the style itself.
     //
     // WHICH templates apply is decided in one named place (`personaTemplatesFor`), because the answer now
-    // depends on the model too; only the RENDERING stays here, with the same variables per template as
+    // depends on the route too; only the RENDERING stays here, with the same variables per template as
     // before. A FORK child takes the owner-chat shape: the overlay tells a session it is answering OTHER
     // people in a shared room, which is false for a fork and — being system-prompt bytes — would move the
     // whole cached prefix out from under the parent's cache.
-    const templates = personaTemplatesFor({ scheduled: opts.scheduled === true, ownerChatShape, provider: providerEntry, modelId: model.id });
+    const templates = personaTemplatesFor({ scheduled: opts.scheduled === true, ownerChatShape, provider: providerEntry });
     // Every part takes the same variables: an unreferenced placeholder is simply not substituted, and one
     // variable set keeps a per-user override of any part rendering the same way it did as one file. The
     // scheduled template is the exception it always was — it names no product on purpose.
@@ -831,9 +831,10 @@ export class LiveSessionSpawner {
         }),
       } : {}),
       tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,
-      // The same predicate that composed the `exec` surface also chooses the request SHAPE, so a session
-      // never gets one half of Codex's arrangement without the other.
-      codexDeveloperPlacement: codeModeControl !== undefined,
+      // Codex's request SHAPE rides along with the `exec` surface, but only on the account that understands
+      // it. A third-party Responses endpoint ignores `additional_tools` outright, so sending it there would
+      // leave the model with no tools at all — see `usesCodexRequestShape`.
+      codexDeveloperPlacement: codeModeControl !== undefined && providerEntry !== undefined && usesCodexRequestShape(providerEntry),
       thinkingLevel: opts.thinkingLevel, requestProfile,
       fastMode: { enabled: fastEnabled, routeFor: fastRouteFor },
       autoCompact: opts.autoCompact, autoCompactAtPct,
