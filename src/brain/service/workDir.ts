@@ -169,6 +169,7 @@ export function selectableProjectTargets(
   if (!projects) return [];
   return projects.list()
     .filter((project) => project.lifecycle === 'active')
+    .sort((a, b) => a.id - b.id)
     .flatMap((project): SelectableProjectTarget[] => {
       if (project.executionKind === 'managed') {
         const ref: ProjectExecutionRef = { kind: 'managed', projectId: project.id };
