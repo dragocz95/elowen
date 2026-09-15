@@ -64,9 +64,12 @@ test('the calendar workbench is framed at the workbench measure, with one frame'
   const frame = app.locator('[data-page-measure]');
   await expect(frame).toHaveAttribute('data-page-measure', 'workbench');
   expect(await frame.count()).toBe(1);
-  // One frame, not two: the plugin owns its surface and the host adds no second page column around a
-  // page that declares the workbench.
-  expect(await app.evaluate(() => document.querySelectorAll('.workspace-shell').length)).toBe(1);
+  // One frame, not two: the plugin owns its surface under `WorkspacePage`/`WorkspaceHero`, and the
+  // host adds no second page column (or a register-style WorkspaceShell) around a workbench page.
+  expect(await app.evaluate(() => {
+    return document.querySelectorAll('.workspace-shell').length
+      + document.querySelectorAll('[data-page-measure]').length;
+  })).toBe(1);
 });
 
 test('the month grid is the runtime Calendar: a real grid with seven weekday headers', async ({ app, seed }, testInfo) => {
@@ -78,11 +81,20 @@ test('the month grid is the runtime Calendar: a real grid with seven weekday hea
   // The grid semantics come from the host Calendar (data-slot="calendar" is the shadcn Root marker the
   // runtime primitive sets), NOT from a hand-rolled table: one grid, seven weekday headers.
   await openCalendar(app, '[data-page-measure="workbench"] [role="grid"]');
-  expect(await app.evaluate(() => document.querySelectorAll('[role="grid"][data-slot="calendar"]').length)).toBe(1);
-  await expect(app.locator('[role="grid"] [role="columnheader"]')).toHaveCount(7);
+  // The grid lives INSIDE the shadcn Root marker the runtime Calendar sets (`data-slot="calendar"`).
+  expect(await app.evaluate(() => document.querySelectorAll('[data-slot="calendar"] [role="grid"]').length)).toBe(1);
+  // Seven weekday labels: react-day-picker v9 names them grid columnheaders, falling back to its
+  // `colgroup` columns on builds that render weekdays as plain <col> cells.
+  const weekdayLabels = await app.evaluate(() => {
+    const headers = document.querySelectorAll('[data-slot="calendar"] thead th');
+    return headers.length === 7 ? 'th'
+      : document.querySelectorAll('[data-slot="calendar"] colgroup col').length === 7 ? 'col' : 'none';
+  });
+  expect(weekdayLabels !== 'none', `the runtime Calendar rendered no weekday labels (shape: ${weekdayLabels})`).toBe(true);
 });
 
 test('day targets meet the 44px floor on a coarse pointer', async ({ browser, seed }, testInfo) => {
+  test.setTimeout(180_000); // a phone flow boots the app shell AND the workbench inside its window
   authedOnly(testInfo);
   test.skip(!workbenchCronjob(), 'needs a registry checkout that declares the workbench calendar');
   await seed.realPlugins();
@@ -93,7 +105,10 @@ test('day targets meet the 44px floor on a coarse pointer', async ({ browser, se
   try {
     await page.goto('/p/cronjob');
     await expect(page.locator('h1')).toBeVisible();
-    const day = page.locator('[role="grid"][data-slot="calendar"] [role="gridcell"] button').first();
+    // Mobile is agenda-first: the month grid lives INSIDE the host Modal its `Date` chooser opens.
+    await page.getByRole('button', { name: 'Date' }).click();
+    await expect(page.locator('[data-slot="calendar"]')).toBeVisible();
+    const day = page.locator('[data-slot="calendar"] [role="grid"] button').first();
     await expect(day).toBeVisible();
     const box = (await day.boundingBox())!;
     expect(box.width, 'a mobile day target is a full touch target').toBeGreaterThanOrEqual(44);
