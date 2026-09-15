@@ -6,8 +6,11 @@ const RULES: [RegExp, string][] = [
   [/deepseek/i, 'deepseek'],
   [/claude[\s_-]?code|claudecode/i, 'claudecode'],
   [/claude|anthropic|sonnet|opus|haiku/i, 'claude'],
-  [/codex/i, 'codex'],
-  [/gpt|openai|chatgpt|\bo[1-4]\b/i, 'openai'],
+  // Codex is OpenAI's own product line, so it wears the OpenAI mark: the standalone lobe `codex` glyph is
+  // not used anywhere. The id alone has to match — `openai-codex` (PI provider id), `codex:gpt-5.5` (CLI
+  // engine) and `gpt-5.1-codex` are covered by their other keywords, but a bare `codex` row would otherwise
+  // fall all the way through to the generic chip glyph.
+  [/gpt|openai|chatgpt|codex|\bo[1-4]\b/i, 'openai'],
   // The Kimi Code endpoint names its models `k3` / `k2p7` and says "kimi" nowhere, so the brand has to be
   // recognised from the bare id too. Anchored to a whole segment: a loose `k\d` would brand half the
   // catalog. `k2p7` also defeats `\bk2\b` — the `p` leaves no word boundary — hence the explicit shape.
