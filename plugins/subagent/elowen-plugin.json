@@ -167,8 +167,10 @@
       "helpBody": "The agent’s system prompt — its role, constraints and how to report back.",
       "workspaceEyebrow": "Agents",
       "workspaceReady": "Agents loaded",
-      "pinsTitle": "Models for built-in agents",
-      "pinsHint": "Choose the model each built-in agent runs on. The choice applies to your own delegations only; on Automatic the assistant picks a model to suit the task.",
+      "identityTitle": "Agent",
+      "builtinReadOnly": "Ships with Elowen and cannot be edited",
+      "pinLabel": "Model",
+      "pinHint": "The model every new sub-agent of this type runs on for you. The choice applies to your own delegations only; on Automatic the assistant picks a model to suit the task.",
       "pinsUnavailable": "Per-account agent settings are not available for this account.",
       "pinAutomatic": "Automatic",
       "pinUnavailable": "No longer configured"

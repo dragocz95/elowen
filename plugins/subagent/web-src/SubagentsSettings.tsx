@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Eye, GitFork, Package, Plus, User } from 'lucide-react';
 import { runtime, type PluginSubagent, type SaveStatus } from './runtime';
-import { TypeModelPins } from './TypeModelPins';
+import { AgentModelPinField, useAgentModelPins } from './AgentModelPin';
 
 type ToolsMode = 'read-only' | 'all' | 'inherit' | 'custom';
 /** `customTools` is a comma-separated tool list, used only when `toolsMode === 'custom'`. */
@@ -10,12 +10,17 @@ const EMPTY_FORM: SubagentForm = { editing: null, name: '', description: '', bod
 
 /** Sub-agents manager (the subagent plugin's own page).
  *
- *  Two audiences, one page and one permission model — the host's. Everybody who may open the page chooses
- *  which model each BUILT-IN agent runs on for them: that is their own account setting and needs no
- *  administrator. Authoring agents edits instance-wide definition files, so the register that creates,
- *  edits and deletes them is drawn only for an administrator, and its API refuses the writes for everyone
- *  else regardless of what the page draws. Nothing instance-wide — another account's runs, delegation
- *  history, plugin controls — is on this page at all. */
+ *  ONE register of agents, and one place per agent. Opening a row opens that agent's detail rail: for a
+ *  built-in agent it states what the agent is and carries the only control the reader owns over it — the
+ *  model it runs on for THEM; for a custom agent an administrator gets the authoring form there instead.
+ *  The models deliberately do not have a panel of their own above the register: that listed the same three
+ *  names twice and read as a locked settings block detached from the agents it was about.
+ *
+ *  Two audiences, one page and one permission model — the host's. Choosing a model is an account setting
+ *  and needs no administrator. Authoring agents edits instance-wide definition files, so the create/edit/
+ *  delete controls belong to administrators, and the API refuses those writes for everyone else
+ *  regardless of what the page draws. Nothing instance-wide — another account's runs, delegation history,
+ *  plugin controls — is on this page at all. */
 export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings('subagent');
@@ -25,7 +30,7 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const remove = hooks.useDeletePluginSubagent();
   const me = hooks.useMe();
   const canAuthor = me.data?.user?.is_admin === true;
-  const [pinSave, setPinSave] = useState({ saving: false, error: false, success: false });
+  const pins = useAgentModelPins();
   const [creating, setCreating] = useState(false);
 
   const toolsLabel = (tools: PluginSubagent['tools']): string =>
@@ -35,9 +40,9 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   // mutations that write is read straight off them. All three are watched: deleting an agent is as
   // much a save as editing one, a failed delete with no indicator looks like nothing happened, and
   // picking an agent's model writes immediately and deserves the same single indicator.
-  const saveStatus: SaveStatus = save.isPending || remove.isPending || pinSave.saving ? 'saving'
-    : save.isError || remove.isError || pinSave.error ? 'error'
-    : save.isSuccess || remove.isSuccess || pinSave.success ? 'saved'
+  const saveStatus: SaveStatus = save.isPending || remove.isPending || pins.saving ? 'saving'
+    : save.isError || remove.isError || pins.saveError ? 'error'
+    : save.isSuccess || remove.isSuccess || pins.saveSuccess ? 'saved'
     : 'idle';
 
   const agents: PluginSubagent[] = query.data ?? [];
@@ -50,10 +55,7 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
 
   const surfaceDocument = (
     <C.ControlSurfaceDocument>
-      {/* The built-in agents' models come first: they are a short, settled list of choices about agents
-          the page then goes on to list, where the register below is a workspace for editing your own. */}
-      <TypeModelPins agents={agents} onSaveState={setPinSave} />
-      {!canAuthor ? null : <C.MarkdownAssetEditor
+      <C.MarkdownAssetEditor
         query={query}
         creating={creating}
         onCreatingChange={setCreating}
@@ -92,6 +94,32 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
         })}
         extraValid={(form: SubagentForm) => form.toolsMode !== 'custom' || form.customTools.trim() !== ''}
         renderBadges={(agent: PluginSubagent) => <C.Badge tone="default">{toolsLabel(agent.tools)}</C.Badge>}
+        // A shipped agent's definition is not editable by anyone, but its model IS the reader's, so its
+        // row opens a rail that states what the agent is and then lets them set that one thing. A custom
+        // agent nobody here may author opens nothing: there would be nothing in it.
+        inspect={{
+          has: (agent: PluginSubagent) => agent.source === 'builtin',
+          render: (agent: PluginSubagent) => (
+            <div className="flex min-w-0 flex-col gap-4">
+              {/* Read-only identity. The rail's header already carries the agent's name and its
+                  one-line description, so this states only what the header cannot: where the agent comes
+                  from, what it may touch, and that neither is anyone's to change here. */}
+              <C.SettingsGroup title={s.identityTitle} description={s.builtinReadOnly}>
+                <C.SettingsRow
+                  label={t.assetEditor.colSource}
+                  icon={Package}
+                  control={<C.Badge tone="default">{s.badgeBuiltin}</C.Badge>}
+                />
+                <C.SettingsRow
+                  label={s.tools}
+                  icon={Eye}
+                  control={<C.Badge tone="default">{toolsLabel(agent.tools)}</C.Badge>}
+                />
+              </C.SettingsGroup>
+              <AgentModelPinField agent={agent} pins={pins} />
+            </div>
+          ),
+        }}
         renderFieldsBeforeBody={(form: SubagentForm, patch: (p: Partial<SubagentForm>) => void) => (
           <>
             <C.Field label={s.tools} hint={s.toolsHint}>
@@ -125,7 +153,7 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
         }}
         saving={save.isPending}
         onDelete={(agent: PluginSubagent, callbacks: { onSuccess: () => void; onError: (e: unknown) => void }) => remove.mutate(agent.name, callbacks)}
-      />}
+      />
     </C.ControlSurfaceDocument>
   );
 

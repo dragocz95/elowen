@@ -14,6 +14,7 @@ import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '..
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { PageFilterChips, PageFilters, type PageFilterField } from '../../components/ui/PageFilters';
 import { ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
+import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -102,6 +103,16 @@ export interface MarkdownAssetEditorProps<T extends MarkdownAsset, E> {
     label: (item: T) => string;
     scopes: { value: string; label: string; matches: (item: T) => boolean }[];
   };
+  /** Detail rail for a row this caller may NOT edit but which still carries a setting of its own — a
+   *  sub-agent's per-account model belongs beside the agent it applies to, not in a second panel stacked
+   *  above the register listing the same names again. `has` decides which read-only rows open at all, so
+   *  an asset type without such a setting (skills) keeps today's behaviour: a read-only row has no
+   *  chevron and does not open. The rail's body is the caller's; the register only frames it, in the same
+   *  drawer an editable row opens. */
+  inspect?: {
+    has: (item: T) => boolean;
+    render: (item: T) => ReactNode;
+  };
   /** Extra form fields rendered between the name/description grid and the body textarea. */
   renderFieldsBeforeBody?: (form: AssetForm<E>, patch: (p: Partial<AssetForm<E>>) => void) => ReactNode;
   /** Extra form fields rendered after the body textarea. */
@@ -130,7 +141,7 @@ export interface MarkdownAssetEditorProps<T extends MarkdownAsset, E> {
  *  injected by the caller. Built-in entries ship read-only: their rows carry no controls and do not
  *  open. */
 export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
-  query, labels, emptyForm, formFromItem, extraValid, renderBadges, renderRowControl, ownership,
+  query, labels, emptyForm, formFromItem, extraValid, renderBadges, renderRowControl, ownership, inspect,
   renderFieldsBeforeBody, renderFieldsAfterBody, onSave, saving, onDelete, creating, onCreatingChange,
   addAction,
 }: MarkdownAssetEditorProps<T, E>) {
@@ -139,6 +150,9 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
   const [form, setForm] = useState<AssetForm<E> | null>(null);
   // The item behind the open form / the pending delete, not just its name — see `assetKey`.
   const [editing, setEditing] = useState<T | null>(null);
+  // The row open in the read-only rail. Separate from `editing` because the two rails are different
+  // things: one edits a definition, the other inspects one and adjusts what belongs to the reader.
+  const [inspecting, setInspecting] = useState<T | null>(null);
   const [pendingDelete, setPendingDelete] = useState<T | null>(null);
   const [search, setSearch] = useState('');
   const [source, setSource] = useState<SourceFilter>('all');
@@ -178,6 +192,8 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
 
   const patch = (p: Partial<AssetForm<E>>) => setForm((cur) => (cur ? { ...cur, ...p } : cur));
   const closeForm = () => { setForm(null); setEditing(null); onCreatingChange(false); };
+  // Opening either rail closes the other: two drawers over one register is never what a click meant.
+  const openInspect = (item: T) => { setForm(null); setEditing(null); setInspecting(item); };
   const nameValid = form !== null && NAME_RE.test(form.name.trim());
   const savable = form !== null && (form.editing !== null || nameValid)
     && form.description.trim() !== '' && form.body.trim() !== '' && (extraValid?.(form) ?? true);
@@ -294,8 +310,14 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   // somebody who may not edit it is still a custom skill, not a built-in one.
                   const isUser = item.source === 'user';
                   const editable = isUser && item.canDelete !== false;
-                  const open = () => { setForm(formFromItem(item)); setEditing(item); };
-                  const isOpen = editing !== null && assetKey(editing) === assetKey(item);
+                  // A row nobody may edit can still be worth opening when the caller has something to
+                  // show or set on it; without that it stays closed, as it always has.
+                  const inspectable = !editable && inspect?.has(item) === true;
+                  const open = editable
+                    ? () => { setInspecting(null); setForm(formFromItem(item)); setEditing(item); }
+                    : () => openInspect(item);
+                  const openedRow = editing ?? inspecting;
+                  const isOpen = openedRow !== null && assetKey(openedRow) === assetKey(item);
                   const cells = (
                     <>
                       {renderRowControl ? (
@@ -327,9 +349,9 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                           <Button variant="ghost-danger" icon={Trash2} aria-label={labels.remove} onClick={() => setPendingDelete(item)} />
                         ) : null}
                       </DataTableCell>
-                      {/* A built-in entry does not open, so it gets the track without the affordance —
-                          a chevron on a row nothing happens to is a promise the register cannot keep. */}
-                      {editable ? <DataTableChevronCell /> : <DataTableCell aria-hidden lines="auto">{null}</DataTableCell>}
+                      {/* An entry that opens neither rail gets the track without the affordance — a
+                          chevron on a row nothing happens to is a promise the register cannot keep. */}
+                      {editable || inspectable ? <DataTableChevronCell /> : <DataTableCell aria-hidden lines="auto">{null}</DataTableCell>}
                     </>
                   );
                   // `onOpen` and `openLabel` are one structurally typed pair, so the two cases are two
@@ -337,7 +359,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   // a built-in row carries neither. The label comes from the host dictionary, not from
                   // `labels`: a new required entry there would be a contract change every plugin
                   // embedding this register would have to ship before its rows could open again.
-                  return editable ? (
+                  return editable || inspectable ? (
                     <DataTableRow
                       key={assetKey(item)}
                       selected={isOpen}
@@ -412,6 +434,20 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
             <Button onClick={submit} disabled={!savable || saving}>{labels.save}</Button>
           </ModalFooter>
         </Modal>
+      ) : null}
+
+      {/* The read-only rail: the SAME detail drawer an editable row opens, so a reader who may only look
+          at an entry still meets it in the place the register always puts a record. Its header already
+          carries the name and the one-line description, so the caller's body starts at what it came for. */}
+      {inspecting && inspect ? (
+        <WorkspaceDetailRail
+          label={inspecting.name}
+          description={inspecting.description || undefined}
+          closeLabel={t.common.close}
+          onClose={() => setInspecting(null)}
+        >
+          {inspect.render(inspecting)}
+        </WorkspaceDetailRail>
       ) : null}
 
       <ConfirmDialog
